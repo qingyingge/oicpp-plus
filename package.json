@@ -3,10 +3,10 @@
   "version": "1.5.4",
   "description": "OICPP-Plus for competitive programming",
   "author": {
-    "name": "mywwzh",
-    "email": "mywwzh@163.com"
+    "name": "qingyingge",
+    "email": ""
   },
-  "homepage": "https://oicpp.mywwzh.top/",
+  "homepage": "https://github.com/qingyingge/oicpp-plus",
   "license": "GPL-3.0-only",
   "main": "src/main.js",
   "scripts": {
@@ -132,5 +132,12 @@
         "glibc"
       ]
     }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qingyingge/oicpp-plus.git"
+  },
+  "bugs": {
+    "url": "https://github.com/qingyingge/oicpp-plus/issues"
   }
 }

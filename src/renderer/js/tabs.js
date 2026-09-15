@@ -5196,7 +5196,7 @@ void hello() {
                 
                 <div class="welcome-footer">
                     <p>OICPP-Plus - 为 OIer 优化的 C++ 编程环境</p>
-                    <p>版本 1.5.4 (v49), Copyright (C) 2025 mywwzh.</p>
+                    <p>版本 1.5.4 (v49), Copyright (C) 2026 qingyingge.</p>
                 </div>
             </div>
         `;
