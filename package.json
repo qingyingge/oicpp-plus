@@ -3,9 +3,14 @@
   "version": "1.5.4",
   "description": "OICPP-Plus for competitive programming",
   "author": {
-    "name": "qingyingge",
-    "email": ""
+    "name": "mywwzh",
+    "email": "mywwzh@163.com"
   },
+  "contributors": [
+    {
+      "name": "qingyingge"
+    }
+  ],
   "homepage": "https://github.com/qingyingge/oicpp-plus",
   "license": "GPL-3.0-only",
   "main": "src/main.js",

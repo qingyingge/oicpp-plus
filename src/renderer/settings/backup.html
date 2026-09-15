@@ -18,31 +18,31 @@
                 <div id="backup-section" class="settings-section active">
                     <div class="section-title" data-i18n="menu.backupSettings">设置备份</div>
 
-                    <div class="setting-group">
-                        <label class="checkbox-label">
-                            <input type="checkbox" id="auto-backup-settings">
-                            <span class="checkmark"></span>
-                            <span data-i18n="backup.autoBackup">启用自动备份设置到云空间</span>
-                        </label>
-                        <div class="hint" style="margin-left: 28px;" data-i18n="backup.autoBackupDesc">开启后会自动备份 settings.json</div>
-                    </div>
-
-                    <div class="setting-group">
-                        <label data-i18n="backup.backupNow">备份设置</label>
-                        <div class="input-group">
-                            <button id="backup-now" class="btn btn-secondary" data-i18n="backup.backupNowBtn">立即备份到云空间</button>
+<div class="setting-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="auto-backup-settings" disabled>
+                                <span class="checkmark"></span>
+                                <span data-i18n="backup.autoBackup">启用自动备份设置到云空间</span>
+                            </label>
+                            <div class="hint" style="margin-left: 28px;" data-i18n="backup.autoBackupDesc">开启后会自动备份 settings.json</div>
                         </div>
-                        <div class="hint" data-i18n="backup.backupNowDesc">会覆盖云端已有的设置备份</div>
-                    </div>
 
-                    <div class="setting-group">
-                        <label data-i18n="backup.syncSettings">从云空间同步设置</label>
-                        <div class="input-group">
-                            <button id="sync-settings" class="btn btn-secondary" data-i18n="backup.syncSettingsBtn">从云空间同步设置</button>
+                        <div class="setting-group">
+                            <label data-i18n="backup.backupNow">备份设置</label>
+                            <div class="input-group">
+                                <button id="backup-now" class="btn btn-secondary" data-i18n="backup.backupNowBtn" disabled>立即备份到云空间</button>
+                            </div>
+                            <div class="hint" data-i18n="backup.backupNowDesc">会覆盖云端已有的设置备份</div>
                         </div>
-                        <div class="hint" data-i18n="backup.syncSettingsDesc">将云端最近备份覆盖当前设置</div>
-                        <div class="hint" id="latest-backup-info" data-i18n="backup.latestBackup">最近备份：--</div>
-                    </div>
+
+                        <div class="setting-group">
+                            <label data-i18n="backup.syncSettings">从云空间同步设置</label>
+                            <div class="input-group">
+                                <button id="sync-settings" class="btn btn-secondary" data-i18n="backup.syncSettingsBtn" disabled>从云空间同步设置</button>
+                            </div>
+                            <div class="hint" data-i18n="backup.syncSettingsDesc">将云端最近备份覆盖当前设置</div>
+                            <div class="hint" id="latest-backup-info" data-i18n="backup.latestBackup">最近备份：--</div>
+                        </div>
                 </div>
             </div>
         </div>

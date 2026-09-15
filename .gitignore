@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+out/
+*.tgz
+*.log
+
+# 运行时下载的 clangd 压缩包
+build/clangd/_download/
+
+# 二进制可执行文件（源码见 src/utils/consolepauser-source.js）
+ConsolePauser.exe
+
+# opencode 工具配置
+.opencode/
+
+# 操作系统/编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

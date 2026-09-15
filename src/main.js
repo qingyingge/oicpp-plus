@@ -3375,17 +3375,18 @@ function setupIPC() {
     });
 
     ipcMain.handle('ide-login-start', async () => {
-        return startIdeLoginFlow();
+        // OICPP-Plus: 云服务已禁用
+        return { success: false, message: '云服务已禁用，登录不可用' };
     });
 
     ipcMain.handle('ide-login-status', () => {
-        const user = getLoggedInUser();
-        const loginToken = getLoginToken();
-        return { loggedIn: !!user && !!loginToken, user, loginToken };
+        // OICPP-Plus: 云服务已禁用（无独立服务），恒返回未登录
+        return { loggedIn: false, user: null, loginToken: '' };
     });
 
     ipcMain.handle('cloud-sync-request', async (_event, payload) => {
-        return callCloudSyncApi(payload || {});
+        // OICPP-Plus: 云服务已禁用
+        return { success: false, message: '云服务已禁用，暂不可用' };
     });
 
     ipcMain.handle('backup-settings-to-cloud', async () => {
@@ -8578,7 +8579,7 @@ app.whenReady().then(() => {
 
     handleCommandLineArgs();
 
-    startHeartbeatService();
+    // startHeartbeatService();  // OICPP-Plus: 已禁用云服务（认证/云同步/心跳），避免依赖原作者服务器
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) {

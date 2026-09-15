@@ -272,12 +272,7 @@ class OICPPApp {
                 await this.openIntegratedTerminal();
                 break;
             case 'cloud-compile':
-                if (!this.ensureLocalFileForFeature(window.i18n ? window.i18n.t('message.cloudCompile') : '云端编译')) {
-                    break;
-                }
-                if (this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                    this.compilerManager.cloudCompileCurrentFile();
-                }
+                this.showMessage(window.i18n ? window.i18n.t('message.cloudCompileUnavailable') : '云端编译暂不可用', 'warning');
                 break;
             case 'find-replace':
                 this.showFindReplace();
@@ -1339,7 +1334,7 @@ class OICPPApp {
             if (matches('runCode') && !this.isDebugging) return handle(() => this.runCode());
             if (matches('compileCode')) return handle(() => this.compileCode());
             if (matches('runAllSamples')) return handle(() => this.runAllSamples());
-            if (matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
+            if (false && matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
                 return handle(() => this.compilerManager.cloudCompileCurrentFile());
             }
             if (matches('openTerminal')) return handle(() => this.openIntegratedTerminal());
@@ -1405,7 +1400,7 @@ class OICPPApp {
             if (matches('runCode') && !this.isDebugging) return handle(() => this.runCode());
             if (matches('compileCode')) return handle(() => this.compileCode());
             if (matches('runAllSamples')) return handle(() => this.runAllSamples());
-            if (matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
+            if (false && matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
                 return handle(() => this.compilerManager.cloudCompileCurrentFile());
             }
             if (matches('openTerminal')) return handle(() => this.openIntegratedTerminal());
@@ -3641,7 +3636,7 @@ ${data.message || '程序已加载，等待开始执行'}
         const openIssueBtn = dialog.querySelector('#open-issue-from-trace-btn');
         if (openIssueBtn) {
             openIssueBtn.addEventListener('click', async () => {
-                const url = 'https://github.com/mywwzh/oicpp/issues';
+                const url = 'https://github.com/qingyingge/oicpp-plus/issues';
                 try {
                     if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
                         await window.electronAPI.openExternal(url);
@@ -3684,7 +3679,7 @@ ${data.message || '程序已加载，等待开始执行'}
 
         const openGithubBtn = dialog.querySelector('#open-github-btn');
         openGithubBtn.addEventListener('click', async () => {
-            const url = 'https://github.com/mywwzh/oicpp/issues';
+            const url = 'https://github.com/qingyingge/oicpp-plus/issues';
             try {
                 logInfo('[主进程] 检查 window.electron:', typeof window.electron);
                 logInfo('[主进程] 检查 window.electron.shell:', typeof window.electron?.shell);

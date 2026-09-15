@@ -3,7 +3,7 @@ description: 反馈 OICPP 中的错误和问题
 title: "[Bug] "
 labels: ["待处理"]
 assignees:
-  - mywwzh
+  - qingyingge
 body:
   - type: markdown
     attributes:

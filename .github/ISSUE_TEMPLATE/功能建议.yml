@@ -3,7 +3,7 @@ description: 为新功能提出建议
 title: "[Feature] "
 labels: ["待处理"]
 assignees:
-  - mywwzh
+  - qingyingge
 body:
   - type: markdown
     attributes:

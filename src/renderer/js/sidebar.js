@@ -507,7 +507,7 @@ class SidebarManager {
     }
 
     setCloudPanelVisible(visible) {
-        const show = !!visible;
+        const show = false; // OICPP-Plus: 云服务已禁用（无独立服务，避免依赖原作者服务器）
         const icon = document.querySelector('.sidebar-icon.cloud-sync-icon');
         const panel = document.getElementById('cloud-panel');
         if (icon) {
