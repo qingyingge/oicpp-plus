@@ -1325,9 +1325,9 @@ class MonacoEditorManager {
         let virtualPath = fileName;
         if (workspaceRoot) {
             if (window.electronAPI?.pathJoin) {
-                virtualPath = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp', 'lsp', fileName);
+                virtualPath = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus', 'lsp', fileName);
             } else {
-                virtualPath = `${workspaceRoot}/.oicpp/lsp/${fileName}`;
+                virtualPath = `${workspaceRoot}/.oicpp-plus/lsp/${fileName}`;
             }
         }
         const fileUri = this._buildCleanFileUri(virtualPath);
@@ -7072,7 +7072,7 @@ class MonacoEditorManager {
                     }
                     const res = await window.electronAPI.walkDirectory(root, {
                         includeExts: ['.h', '.hpp', '.hh', '.hxx', '.c', '.cc', '.cpp', '.cxx'],
-                        excludeGlobs: ['node_modules', '.git', '.oicpp', '.vscode'],
+                        excludeGlobs: ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode'],
                         maxFiles: 5000
                     });
                     if (res && res.success && Array.isArray(res.files)) {

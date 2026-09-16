@@ -3705,7 +3705,7 @@ ${data.message || '程序已加载，等待开始执行'}
 
 
     async showAbout() {
-        const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: '未知', author: 'qingyingge' };
+        const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh (修改: qingyingge)' };
         let buildInfo = { ...fallbackBuildInfo };
         try {
             const buildInfoData = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
@@ -3750,7 +3750,7 @@ ${data.message || '程序已加载，等待开始执行'}
                         <p><strong>${this.t('app.developer', null, 'Developer')}:</strong> ${buildInfo.author}</p>
                         <p><strong>${this.t('app.description', null, 'Description')}:</strong> ${this.t('app.descriptionText', null, 'C++ development environment optimized for OI competitors')}</p>
                         <p><strong>${this.t('app.qqGroup', null, 'QQ Group')}:</strong> 931577836</p>
-                        <p><strong>${this.t('app.website', null, 'Website')}:</strong> https://oicpp.mywwzh.top</p>
+                        <p><strong>${this.t('app.website', null, 'Website')}:</strong> https://github.com/qingyingge/oicpp-plus</p>
                     </div>
                 </div>
                 <div  class="about-footer">

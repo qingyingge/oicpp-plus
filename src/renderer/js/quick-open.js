@@ -78,7 +78,7 @@
         if (!indexDirty && indexedRoot === root && allFiles.length > 0) return true;
         indexedRoot = root;
         try {
-            const res = await window.electronAPI.walkDirectory(root, { excludeGlobs: ['node_modules', '.git', '.oicpp', '.vscode'] });
+            const res = await window.electronAPI.walkDirectory(root, { excludeGlobs: ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode'] });
             if (res && res.success) {
                 allFiles = res.files || [];
                 indexDirty = false;

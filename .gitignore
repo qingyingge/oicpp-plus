@@ -13,6 +13,9 @@ build/clangd/_download/
 # 二进制可执行文件（源码见 src/utils/consolepauser-source.js）
 ConsolePauser.exe
 
+# 本地编译的 native 模块（平台相关，勿提交）
+fastspawn.node
+
 # opencode 工具配置
 .opencode/
 

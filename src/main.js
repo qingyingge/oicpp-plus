@@ -23,6 +23,7 @@ const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 
 const APP_VERSION = '1.5.4';
+const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
 const EXTERNAL_OPEN_DEDUP_WINDOW_MS = 800;
 const recentExternalOpens = new Map();
@@ -68,7 +69,7 @@ async function openExternalOnce(url) {
 }
 
 function getUserIconPath() {
-    const userIconPath = path.join(os.homedir(), '.oicpp', 'oicpp.ico');
+    const userIconPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp.ico');
     if (fs.existsSync(userIconPath)) {
         return userIconPath;
     }
@@ -194,7 +195,7 @@ function resolveClangdRootFromBundle() {
 }
 
 function getUserClangdRoot() {
-    return path.join(os.homedir(), '.oicpp', 'LSP');
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP');
 }
 
 function resolveClangdExecutable(rootDir) {
@@ -2044,7 +2045,7 @@ function findConsolePauser() {
 }
 
 function getConsolePauserTargetPath() {
-    return path.join(os.homedir(), '.oicpp', 'consolepauser.exe');
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'consolepauser.exe');
 }
 
 function getCompilerRuntimeBinPaths(compilerPath) {
@@ -2271,7 +2272,7 @@ ipcMain.handle('get-build-info', () => {
     } catch (error) {
         logger.logwarn('读取构建信息失败:', error);
     }
-    return { version: '1.5.4 (v49)', buildTime: '未知', author: 'qingyingge' };
+    return { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh (修改: qingyingge)' };
 });
 
 function requestSaveAllAndClose(context = '关闭窗口') {
@@ -3907,14 +3908,14 @@ function setupIPC() {
         saveAsFile();
     });
 
-    const tempDir = path.join(os.homedir(), '.oicpp', 'codeTemp');
+    const tempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
     }
 
     ipcMain.handle('save-temp-file', async (event, filePath, content) => {
         try {
-            const tempPath = path.join(os.homedir(), '.oicpp', 'codeTemp', filePath);
+            const tempPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp', filePath);
             const tempDir = path.dirname(tempPath);
 
             if (!fs.existsSync(tempDir)) {
@@ -3935,7 +3936,7 @@ function setupIPC() {
             if (!base64Data || typeof base64Data !== 'string') {
                 throw new Error('缺少文件数据');
             }
-            const tempDirPath = path.join(os.homedir(), '.oicpp', 'codeTemp');
+            const tempDirPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
             if (!fs.existsSync(tempDirPath)) {
                 fs.mkdirSync(tempDirPath, { recursive: true });
             }
@@ -3977,7 +3978,7 @@ function setupIPC() {
             if (path.isAbsolute(filePath)) {
                 tempPath = filePath;
             } else {
-                tempPath = path.join(os.homedir(), '.oicpp', 'codeTemp', filePath);
+                tempPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp', filePath);
             }
 
             if (fs.existsSync(tempPath)) {
@@ -4250,7 +4251,7 @@ function setupIPC() {
     ipcMain.handle('walk-directory', async (event, dirPath, options = {}) => {
         const {
             includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py'],
-            excludeGlobs = ['node_modules', '.git', '.oicpp', '.vscode', '.dsym'],
+            excludeGlobs = ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode', '.dsym'],
             maxFiles = 5000
         } = options || {};
 
@@ -5390,7 +5391,7 @@ function setupIPC() {
         logInfo('[获取已下载编译器] 开始获取已下载编译器列表');
         try {
             const userHome = os.homedir();
-            const compilersDir = path.join(userHome, '.oicpp', 'Compilers');
+            const compilersDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers');
             logInfo('[获取已下载编译器] 编译器目录:', compilersDir);
 
             if (!fs.existsSync(compilersDir)) {
@@ -5413,7 +5414,7 @@ function setupIPC() {
 
     ipcMain.handle('download-compiler', async (event, { url, version, name }) => {
         if (process.platform !== 'win32') {
-            return { success: false, error: '非 Windows 平台已禁用内置编译器下载，请访问官网获取: https://oicpp.mywwzh.top/' };
+            return { success: false, error: '非 Windows 平台已禁用内置编译器下载，请前往 GitHub Releases 获取: https://github.com/qingyingge/oicpp-plus/releases' };
         }
         logInfo('[编译器下载] 开始下载请求:', { version, name });
 
@@ -5424,7 +5425,7 @@ function setupIPC() {
 
         return new Promise(async (resolve) => {
             const userHome = os.homedir();
-            const compilersDir = path.join(userHome, '.oicpp', 'Compilers');
+            const compilersDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers');
             const versionDir = path.join(compilersDir, version);
 
             logInfo('[编译器下载] 目录路径:', { compilersDir, versionDir });
@@ -5771,7 +5772,7 @@ function setupIPC() {
         logInfo('[选择编译器] 开始选择编译器，版本:', version);
         try {
             const userHome = os.homedir();
-            const versionDir = path.join(userHome, '.oicpp', 'Compilers', version);
+            const versionDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers', version);
 
             if (!fs.existsSync(versionDir)) {
                 return { success: false, error: '编译器版本不存在' };
@@ -5796,7 +5797,7 @@ function setupIPC() {
     ipcMain.handle('get-downloaded-testlibs', async (event) => {
         try {
             const userHome = os.homedir();
-            const testlibsDir = path.join(userHome, '.oicpp', 'Testlibs');
+            const testlibsDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs');
 
             if (!fs.existsSync(testlibsDir)) {
                 return [];
@@ -5823,7 +5824,7 @@ function setupIPC() {
 
         return new Promise(async (resolve) => {
             const userHome = os.homedir();
-            const testlibsDir = path.join(userHome, '.oicpp', 'Testlibs');
+            const testlibsDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs');
             const versionDir = path.join(testlibsDir, version);
 
             logInfo('[testlib下载] 目录路径:', { testlibsDir, versionDir });
@@ -6164,7 +6165,7 @@ function setupIPC() {
         logInfo('[选择testlib] 开始选择testlib，版本:', version);
         try {
             const userHome = os.homedir();
-            const versionDir = path.join(userHome, '.oicpp', 'Testlibs', version);
+            const versionDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs', version);
             logInfo('[选择testlib] 检查版本目录:', versionDir);
 
             if (!fs.existsSync(versionDir)) {
@@ -6943,7 +6944,7 @@ async function checkForUpdates(isManual = false) {
 
 async function cleanupOldInstallers(keepFile = null) {
     try {
-        const userOicppDir = path.join(os.homedir(), '.oicpp');
+        const userOicppDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
         if (!fs.existsSync(userOicppDir)) {
             return;
         }
@@ -7100,7 +7101,7 @@ async function downloadAndInstallUpdate(updateInfo = null, options = {}) {
             return;
         }
 
-        const userOicppDir = path.join(os.homedir(), '.oicpp');
+        const userOicppDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
         if (!fs.existsSync(userOicppDir)) fs.mkdirSync(userOicppDir, { recursive: true });
         
         // 在下载新安装包之前，清理旧的安装包
@@ -7299,7 +7300,7 @@ function restoreSettingsBackupLinux() {
 function ensureUserIconForLinux() {
     if (process.platform !== 'linux') return;
     try {
-        const userIcon = path.join(os.homedir(), '.oicpp', 'oicpp.ico');
+        const userIcon = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp.ico');
         if (!fs.existsSync(userIcon)) {
             const srcIcon = path.join(__dirname, '../oicpp.ico');
             if (fs.existsSync(srcIcon)) {
@@ -7399,7 +7400,7 @@ async function checkDailyUpdate() {
 }
 
 function getSettingsPath() {
-    const settingsDir = path.join(os.homedir(), '.oicpp');
+    const settingsDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
     if (!fs.existsSync(settingsDir)) {
         fs.mkdirSync(settingsDir, { recursive: true });
     }
@@ -8356,7 +8357,7 @@ async function runExecutable(options) {
 
             if (!consolePauserPath) {
                 logInfo('错误: 未找到consolepauser.exe');
-                reject(new Error('未找到consolepauser.exe，无法启动程序。请确保%userprofile%/.oicpp/consolepauser.exe已正确生成。'));
+                reject(new Error('未找到consolepauser.exe，无法启动程序。请确保%userprofile%/.oicpp-plus/consolepauser.exe已正确生成。'));
                 return;
             }
             command = 'cmd';
@@ -8607,7 +8608,7 @@ app.on('before-quit', () => {
     try { terminalManager.disposeAll(); } catch (_) { }
     try { clangdLspManager.stop(); } catch (_) { }
     try {
-        const tempDir = path.join(os.homedir(), '.oicpp', 'codeTemp');
+        const tempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
         fs.rmSync(tempDir, { recursive: true, force: true });
         logInfo('[退出] 已清理临时目录及编译产物:', tempDir);
     } catch (error) {
@@ -9688,7 +9689,7 @@ async function uploadClientLogFile(filePath) {
 }
 
 function listClientLogFiles() {
-    const logDir = path.join(os.homedir(), '.oicpp', 'logs');
+    const logDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'logs');
     try {
         if (!fs.existsSync(logDir)) {
             return { success: true, logs: [] };

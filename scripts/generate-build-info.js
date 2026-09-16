@@ -51,7 +51,9 @@ function formatDateTimeInTimeZone(date, timeZone) {
 const buildInfo = {
     version: packageJson.version,
     buildTime: formatDateTimeInTimeZone(new Date(), 'Asia/Shanghai'),
-    author: packageJson.author.name
+    author: packageJson.author.name + (packageJson.contributors && packageJson.contributors.length
+        ? ' (修改: ' + packageJson.contributors.map(c => c.name).join(', ') + ')'
+        : '')
 };
 
 const outputPath = path.join(__dirname, '../src/build-info.json');

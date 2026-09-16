@@ -637,7 +637,7 @@ class CompilerSettings {
                 };
                 
                 const currentPath = normalizePathPath(settings.compilerPath);
-                const expectedPath = normalizePathPath(`${userHome}/.oicpp/Compilers/${version}`);
+                const expectedPath = normalizePathPath(`${userHome}/.oicpp-plus/Compilers/${version}`);
                 
                 const isMatch = currentPath.includes(expectedPath);
                 

@@ -530,7 +530,7 @@ class SampleTester {
                 relativePath = this.currentFile.replace(/[:\\]/g, '_');
             }
 
-            const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp');
+            const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus');
             const sampleTesterDir = await window.electronAPI.pathJoin(oicppDir, 'sampleTester');
 
             await window.electronAPI.ensureDirectory(oicppDir);
@@ -564,7 +564,7 @@ class SampleTester {
             relativePath = filePath.replace(/[:\\]/g, '_');
         }
 
-        const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp');
+        const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus');
         const sampleTesterDir = await window.electronAPI.pathJoin(oicppDir, 'sampleTester');
 
         await window.electronAPI.ensureDirectory(oicppDir);
@@ -1333,7 +1333,7 @@ class SampleTester {
             throw new Error((window.i18n ? window.i18n.t('tester.noWorkspaceForSample') : '未打开工作区，无法写入大样例文件'));
         }
 
-        const rootDir = await window.electronAPI.pathJoin(workspacePath, '.oicpp', 'sampleTester', 'zip-imports');
+        const rootDir = await window.electronAPI.pathJoin(workspacePath, '.oicpp-plus', 'sampleTester', 'zip-imports');
         await window.electronAPI.ensureDirectory(rootDir);
 
         let zipBaseName = 'zip';
@@ -1712,7 +1712,7 @@ class SampleTester {
         }
 
         const userHome = await window.electronAPI.getUserHome();
-        const baseDir = await window.electronAPI.pathJoin(userHome, '.oicpp', 'sampleTester', 'freopen_runs');
+        const baseDir = await window.electronAPI.pathJoin(userHome, '.oicpp-plus', 'sampleTester', 'freopen_runs');
         const runDirName = `sample_${sample?.id || 'x'}`;
         const runDir = await window.electronAPI.pathJoin(baseDir, runDirName);
 
@@ -2756,7 +2756,7 @@ class SampleTester {
         }
 
         const currentFilePathInfo = await window.electronAPI.getPathInfo(this.currentFile);
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp', 'codeTemp');
+        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(tempDir, cachedExeName);
 
@@ -3296,7 +3296,7 @@ class SampleTester {
         }
 
         const isWin2 = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp', 'codeTemp');
+        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(tempDir, `spj_${cacheKey}${isWin2 ? '.exe' : ''}`);
         const spjPathInfo = await window.electronAPI.getPathInfo(spjPath);
@@ -3400,7 +3400,7 @@ class SampleTester {
         }
 
         const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp', 'codeTemp');
+        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(
             tempDir,

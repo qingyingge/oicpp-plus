@@ -5,7 +5,7 @@ const os = require('os');
 class Logger {
     constructor() {
         this.initialized = false;
-        this.logDir = path.join(os.homedir(), '.oicpp', 'logs');
+        this.logDir = path.join(os.homedir(), '.oicpp-plus', 'logs');
         this.logFile = null;
         this._buffer = [];
         this._batchSize = 200;
