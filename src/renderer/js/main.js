@@ -3750,7 +3750,6 @@ ${data.message || '程序已加载，等待开始执行'}
                         <p><strong>${this.t('app.buildTime', null, 'Build Time')}:</strong> ${buildInfo.buildTime}</p>
                         <p><strong>${this.t('app.developer', null, 'Developer')}:</strong> ${buildInfo.author}</p>
                         <p><strong>${this.t('app.description', null, 'Description')}:</strong> ${this.t('app.descriptionText', null, 'C++ development environment optimized for OI competitors')}</p>
-                        <p><strong>${this.t('app.qqGroup', null, 'QQ Group')}:</strong> 931577836</p>
                         <p><strong>${this.t('app.website', null, 'Website')}:</strong> https://github.com/qingyingge/oicpp-plus</p>
                     </div>
                 </div>
