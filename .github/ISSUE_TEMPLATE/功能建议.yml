@@ -8,7 +8,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        感谢您为 OICPP 提出功能建议！
+        感谢您为 OICPP-Plus 提出功能建议！
   
   - type: textarea
     id: description

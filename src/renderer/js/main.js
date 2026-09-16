@@ -415,6 +415,9 @@ class OICPPApp {
     }
 
     openIdeAccount() {
+        // OICPP-Plus: 云服务已禁用（登录不可用），不跳转原版账户中心
+        this.showMessage(this.t('message.loginRequired', null, 'Please log in first'), 'warning');
+        return;
         if (!this.accountLoggedIn) {
             this.showMessage(this.t('message.loginRequired', null, 'Please log in first'), 'warning');
             return;
