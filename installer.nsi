@@ -33,7 +33,7 @@ SetCompressor lzma
 
 ; MUI Settings
 !define MUI_ABORTWARNING
-!define MUI_ICON "oicpp.ico"
+!define MUI_ICON "oicpp-plus.ico"
 !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
 
 ; Welcome page
@@ -165,7 +165,7 @@ Section "OICPP 主程序" SEC01
   SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus"
   SetOverwrite on
   File "dist\win-unpacked\ConsolePauser.exe"
-  File "oicpp.ico"
+  File "oicpp-plus.ico"
   SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
   SetOverwrite on
   File /r "dist\win-unpacked\resources\clangd\*"

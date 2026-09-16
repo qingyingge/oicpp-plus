@@ -1,5 +1,5 @@
 {
-  "name": "oicpp-plus",
+  "name": "oicpp-plus-ide",
   "version": "1.5.4",
   "description": "OICPP-Plus for competitive programming",
   "author": {
@@ -23,7 +23,7 @@
     "build": "npm run prebuild:buildinfo && npm run prebuild:icons && npm run prebuild:clangd && electron-builder"
   },
   "devDependencies": {
-    "electron": "^37.2.0",
+    "electron": "^37.10.3",
     "electron-builder": "^26.0.0",
     "html-webpack-plugin": "^5.6.3",
     "icojs": "^0.16.1",
@@ -65,7 +65,7 @@
       "src/**/*",
       "src/lang/**/*",
       "node_modules/**/*",
-      "oicpp.ico"
+      "oicpp-plus.ico"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**/*"
@@ -73,7 +73,7 @@
     "artifactName": "${productName}-${version}-Setup.${ext}",
     "win": {
       "target": "nsis",
-      "icon": "oicpp.ico",
+      "icon": "oicpp-plus.ico",
       "forceCodeSigning": false,
       "signExts": [
         ".exe",
@@ -144,5 +144,11 @@
   },
   "bugs": {
     "url": "https://github.com/qingyingge/oicpp-plus/issues"
+  },
+  "allowScripts": {
+    "electron@37.10.3": true,
+    "node-pty@1.1.0": true,
+    "sharp@0.33.5": true,
+    "electron-winstaller@5.4.0": true
   }
 }

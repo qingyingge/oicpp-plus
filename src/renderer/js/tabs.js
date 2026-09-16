@@ -4851,7 +4851,7 @@ class TabManager {
             const prefix = encoded.startsWith('/') ? 'file://' : 'file:///';
             img.src = `${prefix}${encoded}`;
         } else {
-            img.src = '../../build/icons/png/128x128.png';
+            img.src = '../../oicpp-plus.ico';
         }
     }
 

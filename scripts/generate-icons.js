@@ -4,9 +4,9 @@ const icojs = require('icojs');
 
 (async function main() {
   const root = process.cwd();
-  const icoPath = path.join(root, 'oicpp.ico');
+  const icoPath = path.join(root, 'oicpp-plus.ico');
   if (!fs.existsSync(icoPath)) {
-    console.log('[icons] oicpp.ico not found, skip');
+    console.log('[icons] oicpp-plus.ico not found, skip');
     process.exit(0);
   }
   const outDir = path.join(root, 'build', 'icons');

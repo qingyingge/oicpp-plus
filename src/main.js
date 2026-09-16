@@ -69,11 +69,11 @@ async function openExternalOnce(url) {
 }
 
 function getUserIconPath() {
-    const userIconPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp.ico');
+    const userIconPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp-plus.ico');
     if (fs.existsSync(userIconPath)) {
         return userIconPath;
     }
-    return path.join(__dirname, '../oicpp.ico');
+    return path.join(__dirname, '../oicpp-plus.ico');
 }
 
 function getClangdPlatformKey() {
@@ -7302,9 +7302,9 @@ function restoreSettingsBackupLinux() {
 function ensureUserIconForLinux() {
     if (process.platform !== 'linux') return;
     try {
-        const userIcon = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp.ico');
+        const userIcon = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp-plus.ico');
         if (!fs.existsSync(userIcon)) {
-            const srcIcon = path.join(__dirname, '../oicpp.ico');
+            const srcIcon = path.join(__dirname, '../oicpp-plus.ico');
             if (fs.existsSync(srcIcon)) {
                 const dir = path.dirname(userIcon);
                 if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
