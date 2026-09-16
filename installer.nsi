@@ -175,7 +175,7 @@ Section "OICPP 主程序" SEC01
   File "dist\win-unpacked\chrome_200_percent.pak"
 
   CreateDirectory "$SMPROGRAMS\OICPP-Plus IDE"
-  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
+  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
 
   File "dist\win-unpacked\d3dcompiler_47.dll"
   File "dist\win-unpacked\ffmpeg.dll"
@@ -293,7 +293,7 @@ Function MyCppAssocShow
   ${NSD_CreateLabel} 0 40u 100% 12u "其他选项："
   Pop $2
 
-  ${NSD_CreateCheckBox} 0 58u 100% 12u "在资源管理器右键菜单加入 OICPP 操作"
+  ${NSD_CreateCheckBox} 0 58u 100% 12u "在资源管理器右键菜单加入 OICPP-Plus 操作"
   Pop $CONTEXT_MENU_CHECKBOX
   ${NSD_Check} $CONTEXT_MENU_CHECKBOX
 
@@ -318,17 +318,17 @@ Function MyCppAssocLeave
   ${NSD_GetState} $CONTEXT_MENU_CHECKBOX $2
   StrCmp $2 1 0 +14
     ; File context menu
-    WriteRegStr HKCR "*\\shell\\OICPP_OpenFile" "" "在 OICPP 中打开文件"
+    WriteRegStr HKCR "*\\shell\\OICPP_OpenFile" "" "在 OICPP-Plus 中打开文件"
     WriteRegStr HKCR "*\\shell\\OICPP_OpenFile" "Icon" "$INSTDIR\\OICPP-Plus IDE.exe,0"
     StrCpy $R1 '"$INSTDIR\\OICPP-Plus IDE.exe" "%1"'
     WriteRegStr HKCR "*\\shell\\OICPP_OpenFile\\command" "" $R1
     ; Folder context menu
-    WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder" "" "在 OICPP 中打开文件夹"
+    WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder" "" "在 OICPP-Plus 中打开文件夹"
     WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder" "Icon" "$INSTDIR\\OICPP-Plus IDE.exe,0"
     StrCpy $R2 '"$INSTDIR\\OICPP-Plus IDE.exe" "%1"'
     WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder\\command" "" $R2
     ; Background context menu
-    WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder" "" "在 OICPP 中打开文件夹"
+    WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder" "" "在 OICPP-Plus 中打开文件夹"
     WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder" "Icon" "$INSTDIR\\OICPP-Plus IDE.exe,0"
     StrCpy $R3 '"$INSTDIR\\OICPP-Plus IDE.exe" "%V"'
     WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder\\command" "" $R3
@@ -339,7 +339,7 @@ Function MyCppAssocLeave
 FunctionEnd
 
 Function CreateDesktopShortcut
-  CreateShortCut "$DESKTOP\OICPP IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
+  CreateShortCut "$DESKTOP\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
 FunctionEnd
 
 Function un.onUninstSuccess
@@ -439,8 +439,8 @@ Section Uninstall
 
   Delete "$SMPROGRAMS\OICPP-Plus IDE\Uninstall.lnk"
   Delete "$SMPROGRAMS\OICPP-Plus IDE\Website.lnk"
-  Delete "$DESKTOP\OICPP IDE.lnk"
-  Delete "$SMPROGRAMS\OICPP-Plus IDE\OICPP IDE.lnk"
+  Delete "$DESKTOP\OICPP-Plus IDE.lnk"
+  Delete "$SMPROGRAMS\OICPP-Plus IDE\OICPP-Plus IDE.lnk"
 
   RMDir "$SMPROGRAMS\OICPP-Plus IDE"
   RMDir /r "$INSTDIR\resources\app.asar.unpacked"

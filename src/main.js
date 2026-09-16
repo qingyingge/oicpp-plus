@@ -3391,7 +3391,8 @@ function setupIPC() {
     });
 
     ipcMain.handle('backup-settings-to-cloud', async () => {
-        return backupSettingsToCloud({ manual: true });
+        // OICPP-Plus: 云服务已禁用（无独立服务），不上传设置备份
+        return { success: false, message: '云服务已禁用，云备份不可用' };
     });
 
     ipcMain.handle('get-settings-backup-info', async () => {
@@ -3399,7 +3400,8 @@ function setupIPC() {
     });
 
     ipcMain.handle('sync-settings-from-cloud', async () => {
-        return syncSettingsFromCloud();
+        // OICPP-Plus: 云服务已禁用（无独立服务），不从云端恢复设置
+        return { success: false, message: '云服务已禁用，云恢复不可用' };
     });
 
     ipcMain.handle('ide-logout', () => {
@@ -9801,7 +9803,8 @@ ipcMain.handle('get-device-info', () => {
 });
 
 ipcMain.handle('upload-client-log', async (_event, filePath) => {
-    return uploadClientLogFile(filePath);
+    // OICPP-Plus: 云服务已禁用（无独立服务），日志不上传
+    return { success: false, message: '云服务已禁用，日志上传不可用' };
 });
 
 ipcMain.handle('list-client-logs', () => {
