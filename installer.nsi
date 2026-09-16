@@ -158,15 +158,15 @@ Function EnsureInstallDirectoryAccess
 FunctionEnd
 Section "OICPP 主程序" SEC01
   Call EnsureInstallDirectoryAccess
-  IfFileExists "$OICPP_USER_PROFILE\.oicpp\settings.json" 0 +3
+  IfFileExists "$OICPP_USER_PROFILE\.oicpp-plus\settings.json" 0 +3
     CreateDirectory "$TEMP\oicpp_backup"
-    CopyFiles "$OICPP_USER_PROFILE\.oicpp\settings.json" "$TEMP\oicpp_backup\settings.json"
+    CopyFiles "$OICPP_USER_PROFILE\.oicpp-plus\settings.json" "$TEMP\oicpp_backup\settings.json"
   
-  SetOutPath "$OICPP_USER_PROFILE\.oicpp"
+  SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus"
   SetOverwrite on
   File "dist\win-unpacked\ConsolePauser.exe"
   File "oicpp.ico"
-  SetOutPath "$OICPP_USER_PROFILE\.oicpp\LSP"
+  SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
   SetOverwrite on
   File /r "dist\win-unpacked\resources\clangd\*"
   SetOutPath "$INSTDIR"
@@ -175,7 +175,7 @@ Section "OICPP 主程序" SEC01
   File "dist\win-unpacked\chrome_200_percent.pak"
 
   CreateDirectory "$SMPROGRAMS\OICPP-Plus IDE"
-  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp\oicpp.ico"
+  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
 
   File "dist\win-unpacked\d3dcompiler_47.dll"
   File "dist\win-unpacked\ffmpeg.dll"
@@ -255,7 +255,7 @@ Section "OICPP 主程序" SEC01
   File "dist\win-unpacked\vulkan-1.dll"
   
   IfFileExists "$TEMP\oicpp_backup\settings.json" 0 +3
-    CopyFiles "$TEMP\oicpp_backup\settings.json" "$OICPP_USER_PROFILE\.oicpp\settings.json"
+    CopyFiles "$TEMP\oicpp_backup\settings.json" "$OICPP_USER_PROFILE\.oicpp-plus\settings.json"
     RMDir /r "$TEMP\oicpp_backup" 
 SectionEnd
 
@@ -270,7 +270,7 @@ Section -Post
   WriteRegStr HKCU "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\OICPP-Plus IDE.exe"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
-  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$OICPP_USER_PROFILE\.oicpp\oicpp.ico"
+  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "URLInfoAbout" "${PRODUCT_WEB_SITE}"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
@@ -339,7 +339,7 @@ Function MyCppAssocLeave
 FunctionEnd
 
 Function CreateDesktopShortcut
-  CreateShortCut "$DESKTOP\OICPP IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp\oicpp.ico"
+  CreateShortCut "$DESKTOP\OICPP IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
 FunctionEnd
 
 Function un.onUninstSuccess
@@ -432,10 +432,10 @@ Section Uninstall
   Delete "$INSTDIR\d3dcompiler_47.dll"
   Delete "$INSTDIR\chrome_200_percent.pak"
   Delete "$INSTDIR\chrome_100_percent.pak"
-  Delete "$OICPP_USER_PROFILE\.oicpp\ConsolePauser.exe"
-  Delete "$OICPP_USER_PROFILE\.oicpp\oicpp.ico"
-  RMDir /r "$OICPP_USER_PROFILE\.oicpp\LSP"
-  RMDir "$OICPP_USER_PROFILE\.oicpp"
+  Delete "$OICPP_USER_PROFILE\.oicpp-plus\ConsolePauser.exe"
+  Delete "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
+  RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
+  RMDir "$OICPP_USER_PROFILE\.oicpp-plus"
 
   Delete "$SMPROGRAMS\OICPP-Plus IDE\Uninstall.lnk"
   Delete "$SMPROGRAMS\OICPP-Plus IDE\Website.lnk"
