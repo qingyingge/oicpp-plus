@@ -6349,6 +6349,10 @@ function setupIPC() {
         engine.on('error', (data) => {
             try { mainWindow?.webContents.send('compare-error', data); } catch(_) {}
         });
+        engine.on('stopped', (data) => {
+            try { mainWindow?.webContents.send('compare-complete', { ...data, stopped: true }); } catch(_) {}
+            activeEngine = null;
+        });
         engine.on('complete', (data) => {
             try { mainWindow?.webContents.send('compare-complete', data); } catch(_) {}
             activeEngine = null;

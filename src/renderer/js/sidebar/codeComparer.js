@@ -643,15 +643,20 @@ class CodeComparer {
                 }
             };
 
-            const cleanups = [];
+            let cleanupProgress, cleanupError, cleanupComplete;
+            const cleanupAllListeners = () => {
+                try { cleanupProgress?.(); } catch(_) {}
+                try { cleanupError?.(); } catch(_) {}
+                try { cleanupComplete?.(); } catch(_) {}
+            };
 
-            cleanups.push(window.electronAPI.onCompareProgress((data) => {
+            cleanupProgress = window.electronAPI.onCompareProgress((data) => {
                 task.state.currentTest = data.current;
                 this.updateProgress(data.current, data.total);
                 this.updateTaskStatus(task, window.i18n ? window.i18n.t('compare.testGroup', { i: data.testIndex }) : `Test ${data.testIndex}`);
-            }));
+            });
 
-            cleanups.push(window.electronAPI.onCompareError((error) => {
+            cleanupError = window.electronAPI.onCompareError((error) => {
                 task.state.errorResult = {
                     testNumber: error.testNumber,
                     input: error.input || '',
@@ -662,9 +667,11 @@ class CodeComparer {
                 };
                 task.state.mode = 'error';
                 this.renderIfActive(task);
-            }));
+                cleanupAllListeners();
+                this.finishCompareTask(task);
+            });
 
-            cleanups.push(window.electronAPI.onCompareComplete((result) => {
+            cleanupComplete = window.electronAPI.onCompareComplete((result) => {
                 if (result.warning) {
                     task.state.warningMessage = result.warning;
                 }
@@ -673,22 +680,23 @@ class CodeComparer {
                     logInfo(`对拍完成！共执行 ${result.completed} 组测试`);
                 }
                 this.renderIfActive(task);
-            }));
+                cleanupAllListeners();
+                this.finishCompareTask(task);
+            });
 
-            try {
-                await window.electronAPI.startCompare(config);
-            } finally {
-                cleanups.forEach(fn => { try { fn(); } catch(_) {} });
-            }
-        } finally {
-            task.state.isRunning = false;
-            if (task.state.mode === 'running') {
-                task.state.mode = 'idle';
-            }
-            await this.cleanupCompiledExecutables(task);
-            if (this.activeTaskKey === task.key) {
-                this.updateUIForTask(task);
-            }
+            await window.electronAPI.startCompare(config);
+        } catch (error) {
+            logError('对拍过程出错:', error);
+            this.showTaskCompileError(task, 'general', (window.i18n ? window.i18n.t('compare.compareError') : 'Comparison error: ') + (error?.message || String(error)));
+            await this.finishCompareTask(task);
+        }
+    }
+
+    async finishCompareTask(task) {
+        task.state.isRunning = false;
+        await this.cleanupCompiledExecutables(task);
+        if (this.activeTaskKey === task.key) {
+            this.updateUIForTask(task);
         }
     }
 
