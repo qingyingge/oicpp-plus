@@ -440,9 +440,7 @@ class OICPPApp {
         } catch (error) {
             this.showMessage(this.t('message.logoutFailed', { error: error?.message || error }, `Failed to log out: ${error?.message || error}`), 'error');
         } finally {
-            if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
-                try { window.electronAPI.openExternal('https://auth.mywwzh.top/logout'); } catch (_) { }
-            }
+            // OICPP-Plus: 云服务已禁用（无独立认证服务），不跳转原版退出页
         }
     }
 

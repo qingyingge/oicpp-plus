@@ -7358,6 +7358,9 @@ function getLastUpdateCheckTimestamp() {
 }
 
 function scheduleNextUpdateCheck(delayMs = UPDATE_CHECK_INTERVAL_MS) {
+    // OICPP-Plus: 云服务已禁用（无独立更新服务），不调度自动检查
+    return;
+
     if (updateCheckTimerId) {
         clearTimeout(updateCheckTimerId);
     }
@@ -7369,6 +7372,9 @@ function scheduleNextUpdateCheck(delayMs = UPDATE_CHECK_INTERVAL_MS) {
 }
 
 async function checkDailyUpdate() {
+    // OICPP-Plus: 云服务已禁用（无独立更新服务），不调度自动检查
+    return;
+
     if (hasPendingUpdateToInstall()) {
         logInfo('已有待安装更新，停止自动检查更新直到安装完成');
         return;
