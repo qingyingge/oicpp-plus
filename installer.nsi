@@ -175,7 +175,7 @@ Section "OICPP 主程序" SEC01
   File "dist\win-unpacked\chrome_200_percent.pak"
 
   CreateDirectory "$SMPROGRAMS\OICPP-Plus IDE"
-  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
+  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
 
   File "dist\win-unpacked\d3dcompiler_47.dll"
   File "dist\win-unpacked\ffmpeg.dll"
@@ -270,7 +270,7 @@ Section -Post
   WriteRegStr HKCU "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\OICPP-Plus IDE.exe"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
-  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
+  WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "URLInfoAbout" "${PRODUCT_WEB_SITE}"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
@@ -339,7 +339,7 @@ Function MyCppAssocLeave
 FunctionEnd
 
 Function CreateDesktopShortcut
-  CreateShortCut "$DESKTOP\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
+  CreateShortCut "$DESKTOP\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
 FunctionEnd
 
 Function un.onUninstSuccess
@@ -433,7 +433,7 @@ Section Uninstall
   Delete "$INSTDIR\chrome_200_percent.pak"
   Delete "$INSTDIR\chrome_100_percent.pak"
   Delete "$OICPP_USER_PROFILE\.oicpp-plus\ConsolePauser.exe"
-  Delete "$OICPP_USER_PROFILE\.oicpp-plus\oicpp.ico"
+  Delete "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
   RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
   RMDir "$OICPP_USER_PROFILE\.oicpp-plus"
 
