@@ -24,11 +24,16 @@ class Logger {
     _flush() {
         if (this._buffer.length === 0) return;
         const lines = this._buffer;
-        this._buffer = [];
         try {
             if (!this.initialized) this.init();
             if (this.logFile) fs.appendFileSync(this.logFile, lines.join(''), 'utf8');
-        } catch (e) { }
+            this._buffer = [];
+        } catch (e) {
+            console.error('[Logger] 写入日志失败:', e.message || e);
+            if (this._buffer.length > 5000) {
+                this._buffer = this._buffer.slice(Math.floor(this._buffer.length / 2));
+            }
+        }
     }
 
     flushSync() {

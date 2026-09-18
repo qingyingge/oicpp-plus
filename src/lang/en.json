@@ -656,6 +656,7 @@
     "errorGeneratorOutput": "Generator Output/Error",
     "errorStdTestOutput": "Standard/Test Program Output",
     "errorDataGeneratorPrefix": "Data Generator",
+    "engineError": "Engine Error",
     "lineCharDiff": "Difference at line {line}, char {char}",
     "completedWithWarning": "Completed {count} tests, no differences found<br><span style=\"color: #ffc107; font-size: 11px; margin-top: 4px; display: inline-block;\">{warning}</span>"
   },

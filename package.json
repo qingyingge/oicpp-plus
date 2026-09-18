@@ -20,7 +20,8 @@
     "prebuild:icons": "node scripts/generate-icons.js",
     "prebuild:buildinfo": "node scripts/generate-build-info.js",
     "prebuild:clangd": "node scripts/download-clangd.js",
-    "build": "npm run prebuild:buildinfo && npm run prebuild:icons && npm run prebuild:clangd && electron-builder"
+    "prebuild:native": "node-gyp rebuild",
+    "build": "npm run prebuild:native || echo 'native build skipped'; npm run prebuild:buildinfo && npm run prebuild:icons && npm run prebuild:clangd && electron-builder"
   },
   "devDependencies": {
     "electron": "^37.10.3",
@@ -65,10 +66,12 @@
       "src/**/*",
       "src/lang/**/*",
       "node_modules/**/*",
-      "oicpp-plus.ico"
+      "oicpp-plus.ico",
+      "fastspawn.node"
     ],
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "fastspawn.node"
     ],
     "artifactName": "${productName}-${version}-Setup.${ext}",
     "win": {

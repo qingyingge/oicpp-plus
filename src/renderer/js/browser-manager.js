@@ -91,7 +91,7 @@ class BrowserManager {
         webview.setAttribute('partition', 'persist:oicpp-browser');
         const browserUserAgent = navigator.userAgent
             .replace(/\sElectron\/\S+/i, '')
-            .replace(/\soicpp-plus\/\S+/i, '');
+            .replace(/\soicpp-plus-ide\/\S+/i, '');
         webview.setAttribute('useragent', browserUserAgent);
         webview.setAttribute('src', initialUrl);
         // 允许 guest 打开新窗口（target="_blank" / window.open），

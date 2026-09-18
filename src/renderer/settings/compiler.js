@@ -1,3 +1,4 @@
+// 编译器/Testlib 列表下载依赖上游服务 oicpp.mywwzh.top，fork 需自建列表源
 class CompilerSettings {
     constructor() {
         this.settings = {
