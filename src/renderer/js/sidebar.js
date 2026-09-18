@@ -18,6 +18,7 @@ class SidebarManager {
     init() {
         this.setupEventListeners();
         this.setupActiveFileListener();
+        this.setupLanguageListener();
         this.setupResizer();
         this.showPanel('files');
         this.bootstrapCloudVisibility();
@@ -77,6 +78,18 @@ class SidebarManager {
             this.updateCloudPanelLocks();
             if (isCloudFile && ['debug', 'samples', 'compare'].includes(this.currentPanel)) {
                 this.showPanel('files');
+            }
+        });
+    }
+
+    setupLanguageListener() {
+        document.addEventListener('i18n-language-changed', () => {
+            this.updateCloudPanelLocks();
+            if (this.currentPanel && this.panels[this.currentPanel]) {
+                const panel = this.panels[this.currentPanel];
+                if (typeof panel.activate === 'function') {
+                    panel.activate();
+                }
             }
         });
     }
@@ -406,7 +419,8 @@ class SidebarManager {
         this.updateCloudPanelLocks();
         if (this.isCloudFileActive() && ['debug', 'samples', 'compare'].includes(panelName)) {
             if (window.oicppApp?.showMessage) {
-                window.oicppApp.showMessage('云文件仅支持基础编辑与手动保存，请下载到本地再使用该面板。', 'warning');
+                const msg = window.i18n ? window.i18n.t('sidebar.cloudFileLocalOnly', { feature: panelName }) : '云文件仅支持基础编辑与手动保存，请下载到本地再使用该面板。';
+                window.oicppApp.showMessage(msg, 'warning');
             }
             return;
         }
@@ -496,7 +510,7 @@ class SidebarManager {
             if (!icon) return;
             if (locked) {
                 icon.classList.add('disabled');
-                icon.setAttribute('title', '云文件仅支持基础编辑与手动保存');
+                icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.cloudFileLocalOnly', { feature: panel }) : '云文件仅支持基础编辑与手动保存');
             } else {
                 icon.classList.remove('disabled');
                 if (panel === 'debug') icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.debug') : 'Debug');

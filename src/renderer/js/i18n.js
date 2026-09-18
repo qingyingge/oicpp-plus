@@ -190,6 +190,11 @@ class I18nManager {
                 listener(this._currentLang);
             } catch (_) {}
         }
+        try {
+            document.dispatchEvent(new CustomEvent('i18n-language-changed', {
+                detail: { language: this._currentLang }
+            }));
+        } catch (_) {}
     }
 
     /**
