@@ -27,6 +27,7 @@ const tag = readArg('tag', process.env.CLANGD_TAG || version);
 const repo = readArg('repo', process.env.CLANGD_REPO || 'clangd/clangd');
 const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANGD_PLATFORM || process.platform));
 const outputRoot = path.resolve(readArg('output', process.env.CLANGD_OUTPUT || path.join(__dirname, '..', 'build', 'clangd')));
+const skipSslVerify = process.env.OICPP_SKIP_SSL_VERIFY === '1' || process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';
 const tempRoot = path.join(outputRoot, '_download');
 
 const platformPatterns = {
@@ -69,6 +70,7 @@ const requestJson = (url, token, retriesLeft = 3) => new Promise((resolve, rejec
         headers.Authorization = `Bearer ${token}`;
     }
     opts.headers = headers;
+    if (skipSslVerify) opts.rejectUnauthorized = false;
     https.get(opts, (res) => {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
@@ -100,6 +102,7 @@ const downloadFile = (url, dest, token, retriesLeft = 3) => new Promise((resolve
         headers.Authorization = `Bearer ${token}`;
     }
     opts.headers = headers;
+    if (skipSslVerify) opts.rejectUnauthorized = false;
 
     https.get(opts, (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -203,6 +206,10 @@ const walkForClangdRoot = (baseDir) => {
 const main = async () => {
     if (!platformPatterns[platform]) {
         throw new Error(`Unsupported platform: ${platform}`);
+    }
+
+    if (skipSslVerify) {
+        console.warn('[clangd] SSL certificate verification disabled (OICPP_SKIP_SSL_VERIFY=1)');
     }
 
     const targetRoot = path.join(outputRoot, platform);

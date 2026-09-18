@@ -21,7 +21,7 @@
     "prebuild:buildinfo": "node scripts/generate-build-info.js",
     "prebuild:clangd": "node scripts/download-clangd.js",
     "prebuild:native": "node-gyp rebuild",
-    "build": "npm run prebuild:native || echo 'native build skipped'; npm run prebuild:buildinfo && npm run prebuild:icons && npm run prebuild:clangd && electron-builder",
+    "build": "npm run prebuild:buildinfo && npm run prebuild:icons && npm run prebuild:clangd && electron-builder",
     "ci": "powershell -ExecutionPolicy Bypass -File scripts/ci-local.ps1"
   },
   "devDependencies": {
