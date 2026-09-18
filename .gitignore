@@ -17,6 +17,9 @@ ci-output.txt
 # 二进制可执行文件（源码见 src/utils/consolepauser-source.js）
 ConsolePauser.exe
 
+# native 模块构建配置（POSIX-only，npm install 不应触发）
+binding.posix.gyp
+
 # 本地编译的 native 模块（平台相关，勿提交）
 fastspawn.node
 
