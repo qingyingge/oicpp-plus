@@ -194,6 +194,9 @@ class LspClientBridge {
                         }
                     },
                     references: {},
+                    rename: {
+                        prepareSupport: true
+                    },
                     semanticTokens: {
                         requests: { full: true },
                         tokenTypes: [],

@@ -3626,25 +3626,19 @@ class MonacoEditorManager {
         }
     }
 
-    applyLspDiagnostics(uri, diagnostics = []) {
+    findModelByLspUri(uri) {
         try {
-            if (typeof monaco === 'undefined' || !monaco.editor) return;
-            if (!uri || typeof uri !== 'string') return;
-            if (!this._syntaxCheckEnabled) return;
-
+            if (typeof monaco === 'undefined' || !monaco.editor || !uri) return null;
             const isWin = !!(typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
             const normalizeFilePath = (rawUri) => {
                 try {
                     let pathStr = rawUri;
-                    // 去掉 file:// 前缀
                     if (pathStr.startsWith('file://')) {
                         pathStr = pathStr.slice('file://'.length);
                     } else if (pathStr.startsWith('file:')) {
                         pathStr = pathStr.slice('file:'.length);
                     }
-                    // URL 解码（处理 %3A 等）
                     pathStr = decodeURIComponent(pathStr);
-                    // Windows: 去掉驱动器号前的 /
                     if (/^\/[a-zA-Z]:[/\\]/.test(pathStr) || /^\/[a-zA-Z]:$/.test(pathStr)) {
                         pathStr = pathStr.slice(1);
                     }
@@ -3657,40 +3651,44 @@ class MonacoEditorManager {
                 }
             };
 
-            const targetPath = normalizeFilePath(uri);
-            const targetPathLower = targetPath.toLowerCase();
+            let model = null;
+            try { model = monaco.editor.getModel(monaco.Uri.parse(uri)); } catch (_) {}
+            if (model) return model;
 
-            let model = monaco.editor.getModel(monaco.Uri.parse(uri));
-
-            if (!model) {
-                const allModels = monaco.editor.getModels();
-                for (const m of allModels) {
-                    const mFsPath = (m.uri?.fsPath || m.uri?.path || '').replace(/\//g, '\\');
-                    if (mFsPath.toLowerCase() === targetPathLower) {
-                        model = m;
-                        break;
-                    }
-
-                    const lspUri = m.__oicppLspUri;
-                    if (lspUri) {
-                        const lspPath = normalizeFilePath(lspUri);
-                        if (lspPath.toLowerCase() === targetPathLower) {
-                            model = m;
-                            break;
-                        }
-                    }
-
-                    const mUri = (m.uri?.toString() || '').toLowerCase();
-                    const decodedUri = decodeURIComponent(uri).toLowerCase();
-                    if (mUri === uri.toLowerCase() || mUri === decodedUri) {
-                        model = m;
-                        break;
+            const targetPathLower = normalizeFilePath(uri).toLowerCase();
+            for (const m of monaco.editor.getModels()) {
+                const mFsPath = (m.uri?.fsPath || m.uri?.path || '').replace(/\//g, '\\');
+                if (mFsPath.toLowerCase() === targetPathLower) {
+                    return m;
+                }
+                const lspUri = m.__oicppLspUri;
+                if (lspUri) {
+                    const lspPath = normalizeFilePath(lspUri);
+                    if (lspPath.toLowerCase() === targetPathLower) {
+                        return m;
                     }
                 }
+                const mUri = (m.uri?.toString() || '').toLowerCase();
+                const decodedUri = decodeURIComponent(uri).toLowerCase();
+                if (mUri === uri.toLowerCase() || mUri === decodedUri) {
+                    return m;
+                }
             }
+            return null;
+        } catch (_) {
+            return null;
+        }
+    }
 
+    applyLspDiagnostics(uri, diagnostics = []) {
+        try {
+            if (typeof monaco === 'undefined' || !monaco.editor) return;
+            if (!uri || typeof uri !== 'string') return;
+            if (!this._syntaxCheckEnabled) return;
+
+            const model = this.findModelByLspUri(uri);
             if (!model) {
-                logWarn('[LSP] 无法找到诊断对应的模型, uri:', uri, 'targetPath:', targetPath);
+                logWarn('[LSP] 无法找到诊断对应的模型, uri:', uri);
                 return;
             }
 
@@ -5339,6 +5337,12 @@ class MonacoEditorManager {
                 return;
             }
 
+            // 优先使用 LSP 进行作用域感知的符号重命名（可跨文件、自动跳过注释/字符串）。
+            if (await this.renameViaLsp(model, pos, newName)) {
+                return;
+            }
+
+            // 回退方案：在当前文件内进行简单的正则替换。
             const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const matches = model.findMatches(`\\b${escaped}\\b`, true, true, true, null, true);
             const edits = [];
@@ -5351,6 +5355,79 @@ class MonacoEditorManager {
             editor.executeEdits('rename-identifier', edits);
         } catch (e) {
             logWarn('重命名失败:', e);
+        }
+    }
+
+    async renameViaLsp(model, position, newName) {
+        try {
+            if (!model || model.isDisposed?.() || !this.lspClient) return false;
+            const lspReady = await this._ensureLspDocumentReady(model);
+            if (!lspReady || !this.lspClient || model.isDisposed?.()) return false;
+            const uri = await this.getDocumentUriForModel(model);
+            if (!uri) return false;
+            const pos = { line: position.lineNumber - 1, character: position.column - 1 };
+
+            try {
+                await this.lspClient.request('textDocument/prepareRename', {
+                    textDocument: { uri },
+                    position: pos
+                });
+            } catch (_) {
+                return false;
+            }
+
+            const result = await this.lspClient.request('textDocument/rename', {
+                textDocument: { uri },
+                position: pos,
+                newName
+            });
+            if (!result) return false;
+
+            const editByUri = new Map();
+            if (result.changes && typeof result.changes === 'object') {
+                for (const [editUri, edits] of Object.entries(result.changes)) {
+                    if (Array.isArray(edits) && edits.length) {
+                        const existing = editByUri.get(editUri) || [];
+                        editByUri.set(editUri, existing.concat(edits));
+                    }
+                }
+            }
+            if (Array.isArray(result.documentChanges)) {
+                for (const dc of result.documentChanges) {
+                    const editUri = dc.textDocument?.uri;
+                    if (editUri && Array.isArray(dc.edits) && dc.edits.length) {
+                        const existing = editByUri.get(editUri) || [];
+                        editByUri.set(editUri, existing.concat(dc.edits));
+                    }
+                }
+            }
+            if (editByUri.size === 0) return false;
+
+            const toRange = (range) => new monaco.Range(
+                (range?.start?.line || 0) + 1,
+                (range?.start?.character || 0) + 1,
+                (range?.end?.line || 0) + 1,
+                (range?.end?.character || 0) + 1
+            );
+
+            let appliedFiles = 0;
+            let appliedEdits = 0;
+            for (const [editUri, edits] of editByUri) {
+                const targetModel = this.findModelByLspUri(editUri);
+                if (!targetModel || targetModel.isDisposed?.()) continue;
+                const modelEdits = edits.map((e) => ({ range: toRange(e.range), text: e.newText || '' }));
+                targetModel.pushEditOperations([], modelEdits, () => null);
+                appliedFiles++;
+                appliedEdits += modelEdits.length;
+            }
+            if (appliedEdits > 0) {
+                logInfo('[LSP] 通过 LSP 重命名标识符完成: ' + appliedFiles + ' 个文件, ' + appliedEdits + ' 处替换');
+                return true;
+            }
+            return false;
+        } catch (err) {
+            logWarn('[LSP] LSP 重命名失败，回退到本地重命名:', err?.message || err);
+            return false;
         }
     }
 
