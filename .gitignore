@@ -11,6 +11,9 @@ out/
 # 运行时下载的 clangd 压缩包
 build/clangd/_download/
 
+# CI 输出
+ci-output.txt
+
 # 二进制可执行文件（源码见 src/utils/consolepauser-source.js）
 ConsolePauser.exe
 
