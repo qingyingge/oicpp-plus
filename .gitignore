@@ -2,6 +2,7 @@
 node_modules/
 
 # 构建产物
+build/
 dist/
 out/
 *.tgz

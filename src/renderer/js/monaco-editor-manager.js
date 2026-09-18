@@ -786,7 +786,12 @@ class MonacoEditorManager {
             await this.openLspDocument(model);
             return false;
         }
-        await this.ensureLspReady();
+        try {
+            await this.ensureLspReady();
+        } catch (lspErr) {
+            logWarn('[LSP] ensureLspReady 失败:', lspErr?.message || lspErr);
+            return false;
+        }
         if (this._lspDocuments.has(model)) return true;
         try {
             const filePath = this.getModelFilePath(model);
@@ -2872,7 +2877,11 @@ class MonacoEditorManager {
                 ? this.assessLspDocumentSafety(content)
                 : { safe: true };
             if (lspDocumentSafety.safe) {
-                await this.ensureLspReady();
+                try {
+                    await this.ensureLspReady();
+                } catch (lspErr) {
+                    logWarn('[LSP] ensureLspReady 失败，编辑器将无 LSP 支持:', lspErr?.message || lspErr);
+                }
                 this.registerCppSemanticHighlightingProviders();
             }
 
@@ -4216,7 +4225,11 @@ class MonacoEditorManager {
             if (typeof monaco === 'undefined') {
                 await this.waitForMonaco();
             }
-            await this.ensureLspReady();
+            try {
+                await this.ensureLspReady();
+            } catch (lspErr) {
+                logWarn('[LSP] ensureLspReady 失败，diff 编辑器将无 LSP 支持:', lspErr?.message || lspErr);
+            }
             this.registerCppSemanticHighlightingProviders();
 
             const originalPath = options.originalPath || '';
