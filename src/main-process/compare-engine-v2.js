@@ -17,6 +17,7 @@ class CompareEngineV2 extends EventEmitter {
         this._total = 0;
         this._errors = 0;
         this._stopRequested = false;
+        this._fastspawnErrorForwarded = false;
     }
 
     get state() { return this._state; }
@@ -25,6 +26,7 @@ class CompareEngineV2 extends EventEmitter {
         if (this._state === 'running') throw new Error('Engine already running');
         this._state = 'running';
         this._stopRequested = false;
+        this._fastspawnErrorForwarded = false;
         this._completed = 0;
         this._total = config.totalTests;
         this._errors = 0;
@@ -39,12 +41,17 @@ class CompareEngineV2 extends EventEmitter {
                 if (typeof exe === 'string') return exe;
                 return exe.executablePath || exe.path || '';
             };
-            const genPath = resolvePath(config.generator);
+
+            const gen = config.generator;
             const stdPath = resolvePath(config.stdExe);
             const testPath = resolvePath(config.testExe);
+            const hasGen = typeof gen === 'string'
+                ? gen.trim().length > 0
+                : !!(gen && (gen.executablePath || gen.path || gen.exe));
 
-            if (!genPath || !stdPath || !testPath) {
-                throw new Error('Missing executable paths: gen=' + genPath + ' std=' + stdPath + ' test=' + testPath);
+            if (!hasGen || !stdPath || !testPath) {
+                const genDesc = typeof gen === 'string' ? gen : ((gen && gen.executablePath) || '');
+                throw new Error('Missing executable paths: gen=' + genDesc + ' std=' + stdPath + ' test=' + testPath);
             }
 
             const donePromises = [];
@@ -58,6 +65,12 @@ class CompareEngineV2 extends EventEmitter {
                 this._workers.push(worker);
 
                 const donePromise = new Promise((resolve) => {
+                    const settle = () => {
+                        worker.removeListener('message', handler);
+                        worker.removeListener('error', onWorkerError);
+                        worker.removeListener('exit', onWorkerExit);
+                        resolve();
+                    };
                     const handler = (msg) => {
                         if (msg.type === 'progress') {
                             this._completed++;
@@ -65,29 +78,50 @@ class CompareEngineV2 extends EventEmitter {
                         } else if (msg.type === 'error') {
                             this._errors++;
                             this.emit('error', {
-                                testNumber: msg.testIndex, type: msg.kind, message: msg.message,
-                                stdOutput: msg.stdOutput || '', testOutput: msg.testOutput || ''
+                                testNumber: msg.testIndex,
+                                type: msg.kind,
+                                message: msg.message,
+                                stdOutput: msg.stdOutput || '',
+                                testOutput: msg.testOutput || '',
+                                input: msg.input || '',
+                                genMs: msg.genMs,
+                                stdMs: msg.stdMs,
+                                testMs: msg.testMs
                             });
+                        } else if (msg.type === 'fastspawn-load-error') {
+                            if (!this._fastspawnErrorForwarded) {
+                                this._fastspawnErrorForwarded = true;
+                                this.emit('error', {
+                                    testNumber: 0,
+                                    type: 'engine',
+                                    message: 'fastspawn load failed: ' + (msg.message || 'unknown error'),
+                                    input: ''
+                                });
+                            }
                         } else if (msg.type === 'done') {
-                            worker.removeListener('message', handler);
-                            resolve();
+                            settle();
                         }
                     };
+                    const onWorkerError = (err) => {
+                        if (!this._stopRequested) {
+                            this._errors++;
+                            this.emit('error', { testNumber: 0, type: 'worker_crash', message: err.message, input: '' });
+                        }
+                        settle();
+                    };
+                    const onWorkerExit = () => settle();
                     worker.on('message', handler);
-                    worker.on('error', (err) => {
-                        this._errors++;
-                        this.emit('error', { testNumber: 0, type: 'worker_crash', message: err.message });
-                        worker.removeListener('message', handler);
-                        resolve();
-                    });
+                    worker.on('error', onWorkerError);
+                    worker.on('exit', onWorkerExit);
                 });
 
                 donePromises.push(donePromise);
                 worker.postMessage({
                     type: 'run-tests',
                     startIdx, count,
-                    genPath, stdPath, testPath,
-                    timeout: config.timeLimit || 5000
+                    gen, stdPath, testPath,
+                    timeout: config.timeLimit || 5000,
+                    generatorTimeout: config.generatorTimeout || 5000
                 });
             }
 
@@ -102,7 +136,7 @@ class CompareEngineV2 extends EventEmitter {
                 });
             }
         } catch (error) {
-            this.emit('error', { testNumber: 0, type: 'engine', message: error.message });
+            this.emit('error', { testNumber: 0, type: 'engine', message: error.message, input: '' });
         } finally {
             this._workers.forEach(w => { try { w.terminate(); } catch(_) {} });
             this._workers = [];
@@ -111,9 +145,14 @@ class CompareEngineV2 extends EventEmitter {
     }
 
     async stop() {
+        if (this._state !== 'running' && this._state !== 'stopping') return;
         this._stopRequested = true;
         this._state = 'stopping';
-        this._workers.forEach(w => { try { w.postMessage({ type: 'stop' }); } catch(_) {} });
+        const workers = this._workers.slice();
+        workers.forEach(w => { try { w.postMessage({ type: 'stop' }); } catch(_) {} });
+        setTimeout(() => {
+            workers.forEach(w => { try { w.terminate(); } catch(_) {} });
+        }, 2000).unref();
     }
 }
 

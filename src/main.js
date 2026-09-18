@@ -3377,7 +3377,7 @@ function setupIPC() {
 
     ipcMain.handle('ide-login-start', async () => {
         // OICPP-Plus: 云服务已禁用
-        return { success: false, message: '云服务已禁用，登录不可用' };
+        return { ok: false, message: '云服务已禁用，登录不可用' };
     });
 
     ipcMain.handle('ide-login-status', () => {
@@ -6349,6 +6349,10 @@ function setupIPC() {
         engine.on('error', (data) => {
             try { mainWindow?.webContents.send('compare-error', data); } catch(_) {}
         });
+        engine.on('stopped', (data) => {
+            try { mainWindow?.webContents.send('compare-complete', { ...data, stopped: true }); } catch(_) {}
+            activeEngine = null;
+        });
         engine.on('complete', (data) => {
             try { mainWindow?.webContents.send('compare-complete', data); } catch(_) {}
             activeEngine = null;
@@ -6368,6 +6372,22 @@ function setupIPC() {
         }
         return { stopped: true };
     });
+}
+
+function ensureLegacyDataMigration() {
+    try {
+        const legacyDir = path.join(os.homedir(), '.oicpp');
+        const newDir = path.join(os.homedir(), '.oicpp-plus');
+        const newSettings = path.join(newDir, 'settings.json');
+        if (!fs.existsSync(legacyDir) || fs.existsSync(newSettings)) return;
+        const legacySettings = path.join(legacyDir, 'settings.json');
+        if (!fs.existsSync(legacySettings)) return;
+        fs.mkdirSync(newDir, { recursive: true });
+        fs.copyFileSync(legacySettings, newSettings);
+        logInfo('[Migration] 已从 ~/.oicpp 迁移 settings.json 到 ~/.oicpp-plus');
+    } catch (e) {
+        logWarn('[Migration] 迁移旧版设置失败:', e.message || e);
+    }
 }
 
 function normalizeDroppedPath(filePath) {
@@ -6956,7 +6976,7 @@ async function cleanupOldInstallers(keepFile = null) {
         
         // 匹配安装包文件名模式: OICPP-x.y.z-Setup.exe/.deb/.rpm/.dmg/.pkg/.zip
         // 使用更严格的版本号格式：主版本.次版本.修订号
-        const installerPattern = /^OICPP-\d+\.\d+\.\d+-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
+        const installerPattern = /^OICPP(?:-Plus)?-\d+\.\d+\.\d+-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
         
         const deletePromises = [];
         
@@ -8575,6 +8595,7 @@ function compareVersions(currentVersion, latestVersion, allowBetaUpdates = false
 }
 
 app.whenReady().then(() => {
+    ensureLegacyDataMigration();
     app.commandLine.appendSwitch('charset', 'utf-8');
     try {
         const clangdStatus = ensureClangdUserBundle();

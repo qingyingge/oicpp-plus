@@ -618,11 +618,27 @@ class CodeComparer {
     }
 
     async runTask(task, effectiveTimeLimit, workerCount, maxParallel) {
+        let cleanupProgress, cleanupError, cleanupComplete;
+        const cleanupAllListeners = () => {
+            try { cleanupProgress?.(); } catch(_) {}
+            try { cleanupError?.(); } catch(_) {}
+            try { cleanupComplete?.(); } catch(_) {}
+        };
+
         try {
             logInfo(`开始对拍！计划执行 ${task.state.totalTests} 组测试，时间限制 ${task.config.timeLimit}ms`);
 
             const compiledPrograms = await this.compilePrograms(task);
             if (!compiledPrograms) {
+                return;
+            }
+
+            // 新引擎（compare-engine-v2/compare-worker-v6）不实现 useTestlib(SPJ) 与 freopen 文件IO，
+            // 检测到这些配置时回退到旧引擎 runComparison（完整支持 prepareFreopenContext/judgeWithSpj/首错即停/错误带 input）
+            if (task.config.useTestlib || task.config.freopenInputFile || task.config.freopenOutputFile) {
+                logInfo('[对拍器] 检测到 useTestlib/freopen 配置，回退到旧引擎 runComparison');
+                await this.runComparison(task, compiledPrograms, effectiveTimeLimit, workerCount, maxParallel);
+                await this.finishCompareTask(task);
                 return;
             }
 
@@ -643,15 +659,13 @@ class CodeComparer {
                 }
             };
 
-            const cleanups = [];
-
-            cleanups.push(window.electronAPI.onCompareProgress((data) => {
+            cleanupProgress = window.electronAPI.onCompareProgress((data) => {
                 task.state.currentTest = data.current;
                 this.updateProgress(data.current, data.total);
                 this.updateTaskStatus(task, window.i18n ? window.i18n.t('compare.testGroup', { i: data.testIndex }) : `Test ${data.testIndex}`);
-            }));
+            });
 
-            cleanups.push(window.electronAPI.onCompareError((error) => {
+            cleanupError = window.electronAPI.onCompareError(async (error) => {
                 task.state.errorResult = {
                     testNumber: error.testNumber,
                     input: error.input || '',
@@ -662,9 +676,14 @@ class CodeComparer {
                 };
                 task.state.mode = 'error';
                 this.renderIfActive(task);
-            }));
+                cleanupAllListeners();
+                try {
+                    await window.electronAPI.stopCompare();
+                } catch (_) { }
+                await this.finishCompareTask(task);
+            });
 
-            cleanups.push(window.electronAPI.onCompareComplete((result) => {
+            cleanupComplete = window.electronAPI.onCompareComplete((result) => {
                 if (result.warning) {
                     task.state.warningMessage = result.warning;
                 }
@@ -673,26 +692,39 @@ class CodeComparer {
                     logInfo(`对拍完成！共执行 ${result.completed} 组测试`);
                 }
                 this.renderIfActive(task);
-            }));
+                cleanupAllListeners();
+                this.finishCompareTask(task);
+            });
 
-            try {
-                await window.electronAPI.startCompare(config);
-            } finally {
-                cleanups.forEach(fn => { try { fn(); } catch(_) {} });
-            }
-        } finally {
-            task.state.isRunning = false;
-            if (task.state.mode === 'running') {
-                task.state.mode = 'idle';
-            }
-            await this.cleanupCompiledExecutables(task);
-            if (this.activeTaskKey === task.key) {
-                this.updateUIForTask(task);
-            }
+            await window.electronAPI.startCompare(config);
+        } catch (error) {
+            logError('对拍过程出错:', error);
+            this.showTaskCompileError(task, 'general', (window.i18n ? window.i18n.t('compare.compareError') : 'Comparison error: ') + (error?.message || String(error)));
+            cleanupAllListeners();
+            await this.finishCompareTask(task);
+        }
+    }
+
+    async finishCompareTask(task) {
+        task.state.isRunning = false;
+        await this.cleanupCompiledExecutables(task);
+        if (this.activeTaskKey === task.key) {
+            this.updateUIForTask(task);
         }
     }
 
     async compilePrograms(task) {
+        const generatedFiles = [];
+        const cleanupPartialCompiles = async () => {
+            for (const filePath of generatedFiles) {
+                try {
+                    if (await window.electronAPI.checkFileExists(filePath)) {
+                        await window.electronAPI.deleteFile(filePath);
+                    }
+                } catch (_) { }
+            }
+        };
+
         try {
             const settings = await window.electronAPI.getAllSettings();
             const compilerPath = settings.compilerPath;
@@ -716,6 +748,7 @@ class CodeComparer {
             const testExe = await window.electronAPI.pathJoin(tempDir, `test_${timestamp}${exeSuffix}`);
             let generatorExe = null;
             let generatorRunTarget = null;
+            generatedFiles.push(stdExe, testExe);
 
             this.updateTaskStatus(task, window.i18n ? window.i18n.t('compare.compileStd') : 'Compiling standard program...');
             const stdResult = await window.electronAPI.compileFile({
@@ -728,6 +761,7 @@ class CodeComparer {
 
             if (!stdResult.success) {
                 this.showTaskCompileError(task, 'standard', stdResult.stderr || stdResult.stdout || '编译失败');
+                await cleanupPartialCompiles();
                 return null;
             }
 
@@ -742,6 +776,7 @@ class CodeComparer {
 
             if (!testResult.success) {
                 this.showTaskCompileError(task, 'test', testResult.stderr || testResult.stdout || '编译失败');
+                await cleanupPartialCompiles();
                 return null;
             }
 
@@ -750,6 +785,7 @@ class CodeComparer {
                 const interpreterPath = String(settings.pythonInterpreterPath || '').trim();
                 if (!interpreterPath) {
                     await this.promptMissingPythonInterpreter(task);
+                    await cleanupPartialCompiles();
                     return null;
                 }
                 const interpreterExists = await window.electronAPI.checkFileExists(interpreterPath);
@@ -758,6 +794,7 @@ class CodeComparer {
                     try {
                         await window.electronAPI?.openCompilerSettings?.();
                     } catch (_) { }
+                    await cleanupPartialCompiles();
                     return null;
                 }
 
@@ -769,6 +806,7 @@ class CodeComparer {
                 };
             } else {
                 generatorExe = await window.electronAPI.pathJoin(tempDir, `generator_${timestamp}${exeSuffix}`);
+                generatedFiles.push(generatorExe);
                 this.updateTaskStatus(task, window.i18n ? window.i18n.t('compare.compileGen') : 'Compiling data generator...');
                 const generatorResult = await window.electronAPI.compileFile({
                     inputFile: task.config.generatorPath,
@@ -780,6 +818,7 @@ class CodeComparer {
 
                 if (!generatorResult.success) {
                     this.showTaskCompileError(task, 'generator', generatorResult.stderr || generatorResult.stdout || '编译失败');
+                    await cleanupPartialCompiles();
                     return null;
                 }
                 generatorRunTarget = generatorExe;
@@ -790,6 +829,7 @@ class CodeComparer {
             if (task.config.useTestlib && task.config.spjPath) {
                 this.updateTaskStatus(task, window.i18n ? window.i18n.t('compare.compileSpj') : 'Compiling Special Judge...');
                 spjExe = await window.electronAPI.pathJoin(tempDir, `spj_${timestamp}${exeSuffix}`);
+                generatedFiles.push(spjExe);
 
                 let spjCompilerArgs = compilerArgs;
 
@@ -816,6 +856,7 @@ class CodeComparer {
 
                 if (!spjResult.success) {
                     this.showTaskCompileError(task, 'spj', spjResult.stderr || spjResult.stdout || '编译失败');
+                    await cleanupPartialCompiles();
                     return null;
                 }
             }
@@ -838,6 +879,7 @@ class CodeComparer {
         } catch (error) {
             logError('编译程序失败:', error);
             this.showTaskCompileError(task, 'general', (window.i18n ? window.i18n.t('compare.compileError') : 'Compilation failed') + ': ' + error.message);
+            await cleanupPartialCompiles();
             return null;
         }
     }
@@ -1459,6 +1501,14 @@ class CodeComparer {
                         'general': window.i18n ? window.i18n.t('compare.compileFail') : 'Compilation failed'
                     };
                     errorTitle.textContent = compileTypeMap[errorResult.compileType] || (window.i18n ? window.i18n.t('compare.compileFail') : 'Compilation failed');
+                } else if (errType === 'generator') {
+                    errorTitle.textContent = (window.i18n ? window.i18n.t('compare.errorDataGeneratorPrefix') : 'Data Generator') + (window.i18n ? window.i18n.t('compare.errorRuntime') : 'Run Error (RE)');
+                } else if (errType === 'std_tle' || errType === 'test_tle') {
+                    errorTitle.textContent = window.i18n ? window.i18n.t('compare.errorRunTimeout') : 'Run timeout/error';
+                } else if (errType === 'std_re' || errType === 'test_re') {
+                    errorTitle.textContent = window.i18n ? window.i18n.t('compare.errorRuntime') : 'Run Error (RE)';
+                } else if (errType === 'worker_crash' || errType === 'engine' || errType === 'exception') {
+                    errorTitle.textContent = window.i18n ? window.i18n.t('compare.engineError') : 'Engine Error';
                 } else {
                     errorTitle.textContent = window.i18n ? window.i18n.t('compare.foundDiff') : 'Difference Found';
                 }
@@ -1491,6 +1541,12 @@ class CodeComparer {
                     stdOutputDiff.textContent = errorResult.stdOutputExpanded ? stdFullOutput : this.limitOutputLines(stdFullOutput, 100);
                     if (stdOutputDiffLabel) {
                         stdOutputDiffLabel.textContent = window.i18n ? window.i18n.t('compare.errorStandardOutput') : 'Standard Program Output';
+                    }
+                } else if (this.isEngineErrorType(errType)) {
+                    const engineMessage = errorResult.errorMessage || '';
+                    stdOutputDiff.textContent = errorResult.stdOutputExpanded ? engineMessage : this.limitOutputLines(engineMessage, 100);
+                    if (stdOutputDiffLabel) {
+                        stdOutputDiffLabel.textContent = this.getEngineErrorLabel(errType, 'std');
                     }
                 } else {
                     if (errorResult.usedSpj) {
@@ -1537,6 +1593,12 @@ class CodeComparer {
                     if (testOutputDiffLabel) {
                         testOutputDiffLabel.textContent = window.i18n ? window.i18n.t('compare.errorTestOutput') : 'Test Program Output';
                     }
+                } else if (this.isEngineErrorType(errType)) {
+                    const engineMessage = errorResult.errorMessage || '';
+                    testOutputDiff.textContent = errorResult.testOutputExpanded ? engineMessage : this.limitOutputLines(engineMessage, 100);
+                    if (testOutputDiffLabel) {
+                        testOutputDiffLabel.textContent = this.getEngineErrorLabel(errType, 'test');
+                    }
                 } else {
                     if (errorResult.usedSpj) {
                         if (testOutputDiffLabel) {
@@ -1570,6 +1632,24 @@ class CodeComparer {
 
         this.hideStatus();
         this.hideComplete();
+    }
+
+    isEngineErrorType(errType) {
+        return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'worker_crash', 'engine', 'exception'].includes(errType);
+    }
+
+    getEngineErrorLabel(errType, panel) {
+        const isStd = panel === 'std';
+        if (errType === 'generator') {
+            return window.i18n ? window.i18n.t('compare.errorGeneratorOutput') : 'Generator Output/Error';
+        }
+        if (errType === 'std_tle' || errType === 'std_re') {
+            return window.i18n ? window.i18n.t(isStd ? 'compare.errorStandardOutput' : 'compare.errorStdTestOutput') : (isStd ? 'Standard Program Output' : 'Standard/Test Program Output');
+        }
+        if (errType === 'test_tle' || errType === 'test_re') {
+            return window.i18n ? window.i18n.t(isStd ? 'compare.errorStdTestOutput' : 'compare.errorTestOutput') : (isStd ? 'Standard/Test Program Output' : 'Test Program Output');
+        }
+        return window.i18n ? window.i18n.t('compare.engineError') : 'Engine Error';
     }
 
     hideError() {
@@ -1751,9 +1831,14 @@ class CodeComparer {
             ? (errorResult.stdOutput || '')
             : (errorResult.testOutput || '');
         const errType = errorResult.errorType;
+        const isEngineErr = this.isEngineErrorType(errType);
 
         if (errType === 'compile_error') {
             return false;
+        }
+
+        if (isEngineErr) {
+            return this.isLineLimitedOutputTruncated(errorResult.errorMessage || '', 100);
         }
 
         if (errType === 'generator_program_error' || errType === 'standard_program_error' || errType === 'test_program_error' || errorResult.usedSpj) {

@@ -1,3 +1,4 @@
+// 云编译/结果拉取依赖上游服务 oicpp.mywwzh.top，fork 需自建后端
 class CompilerManager {
     t(key, params, fallback) {
         return window.i18n?.t?.(key, params) || fallback || key;

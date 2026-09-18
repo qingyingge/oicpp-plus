@@ -639,6 +639,7 @@
     "errorGeneratorOutput": "数据生成器输出/错误",
     "errorStdTestOutput": "标准/待测程序输出",
     "errorDataGeneratorPrefix": "数据生成器",
+    "engineError": "引擎错误",
     "lineCharDiff": "第 {line} 行第 {char} 个字符处存在差异",
     "completedWithWarning": "已完成 {count} 组测试，未发现差异<br><span style=\"color: #ffc107; font-size: 11px; margin-top: 4px; display: inline-block;\">{warning}</span>"
   },

@@ -11,39 +11,132 @@
 #include <errno.h>
 #include <time.h>
 #include <pthread.h>
+#include <signal.h>
 
 #define MAX_OUTPUT (64 * 1024 * 1024)
 
-static void drainFd(int fd, char** out, size_t* outLen) {
-    size_t cap = 8192, len = 0;
-    char* buf = (char*)malloc(cap);
-    if (!buf) { *out = NULL; *outLen = 0; return; }
-    for (;;) {
-        if (len >= cap) {
-            if (cap >= MAX_OUTPUT) break;
-            cap *= 2;
-            buf = (char*)realloc(buf, cap);
+static int64_t nowMs(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+}
+
+static void closePair(int p[2]) {
+    if (p[0] >= 0) close(p[0]);
+    if (p[1] >= 0) close(p[1]);
+}
+
+struct DrainBuf {
+    char* buf;
+    size_t len;
+    size_t cap;
+    int drop;
+};
+
+static void drainAppend(DrainBuf* b, const char* data, size_t n) {
+    if (b->drop) return;
+    if (b->len + n > b->cap) {
+        size_t ncap = b->cap ? b->cap : 8192;
+        while (ncap < b->len + n) {
+            if (ncap >= MAX_OUTPUT) { b->drop = 1; break; }
+            ncap *= 2;
         }
-        ssize_t r = read(fd, buf + len, cap - len);
-        if (r > 0) { len += (size_t)r; continue; }
-        if (r == 0) break;
-        if (errno == EINTR) continue;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            struct pollfd pfd = { fd, POLLIN, 0 };
-            int pr = poll(&pfd, 1, 500);
-            if (pr == 0) break;
-            continue;
+        if (!b->drop) {
+            char* nb = (char*)realloc(b->buf, ncap);
+            if (!nb) { b->drop = 1; return; }
+            b->buf = nb;
+            b->cap = ncap;
         }
-        break;
+        if (b->drop) return;
     }
-    *out = buf; *outLen = len;
+    memcpy(b->buf + b->len, data, n);
+    b->len += n;
+}
+
+// Drain stdout and stderr concurrently via poll(), bounded by deadlineMs.
+// Returns 0 when both pipes reach EOF, -3 on timeout (child killed & reaped).
+static int drainBoth(int outFd, int errFd, int64_t deadlineMs, pid_t pid,
+                     char** out, size_t* outLen, char** errOut, size_t* errLen) {
+    DrainBuf ob = { NULL, 0, 0, 0 }, eb = { NULL, 0, 0, 0 };
+    int outOpen = 1, errOpen = 1;
+    for (;;) {
+        if (!outOpen && !errOpen) break;
+        struct pollfd pfds[2];
+        int n = 0;
+        if (outOpen) { pfds[n].fd = outFd; pfds[n].events = POLLIN; pfds[n].revents = 0; n++; }
+        if (errOpen) { pfds[n].fd = errFd; pfds[n].events = POLLIN; pfds[n].revents = 0; n++; }
+        int64_t remain = deadlineMs - nowMs();
+        if (remain <= 0) {
+            kill(pid, SIGKILL);
+            int status = 0;
+            for (;;) {
+                pid_t w2 = waitpid(pid, &status, 0);
+                if (w2 == pid) break;
+                if (w2 < 0 && errno == EINTR) continue;
+                break;
+            }
+            *out = ob.buf; *outLen = ob.len;
+            if (errOut) { *errOut = eb.buf; *errLen = eb.len; }
+            else if (eb.buf) free(eb.buf);
+            return -3;
+        }
+        int to = (remain > 500) ? 500 : (int)remain;
+        int pr = poll(pfds, n, to);
+        if (pr < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (pr == 0) continue;
+        for (int i = 0; i < n; i++) {
+            if (!(pfds[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+            int fd = pfds[i].fd;
+            DrainBuf* b = (fd == outFd) ? &ob : &eb;
+            int* open = (fd == outFd) ? &outOpen : &errOpen;
+            char chunk[65536];
+            ssize_t r;
+            do {
+                r = read(fd, chunk, sizeof(chunk));
+            } while (r < 0 && errno == EINTR);
+            if (r > 0) drainAppend(b, chunk, (size_t)r);
+            else *open = 0;   // EOF or read error: stop polling this fd
+        }
+    }
+    *out = ob.buf; *outLen = ob.len;
+    if (errOut) { *errOut = eb.buf; *errLen = eb.len; }
+    else if (eb.buf) free(eb.buf);
+    return 0;
+}
+
+// Poll waitpid until deadline; on timeout kill and reap. Returns exit code, -2, or -3.
+static int waitpidTimed(pid_t pid, int64_t deadlineMs) {
+    int status = 0;
+    for (;;) {
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            return -2;
+        }
+        if (nowMs() >= deadlineMs) {
+            kill(pid, SIGKILL);
+            for (;;) {
+                pid_t w2 = waitpid(pid, &status, 0);
+                if (w2 == pid) break;
+                if (w2 < 0 && errno == EINTR) continue;
+                break;
+            }
+            return -3;
+        }
+        usleep(1000);
+    }
 }
 
 static int runOne(const char* path, const char* input, size_t inputLen,
                    int64_t timeoutMs, char** out, size_t* outLen) {
     *out = NULL; *outLen = 0;
-    int inPipe[2], outPipe[2], errPipe[2];
+    int inPipe[2] = {-1, -1}, outPipe[2] = {-1, -1}, errPipe[2] = {-1, -1};
     if (pipe2(inPipe, O_CLOEXEC) != 0 || pipe2(outPipe, O_CLOEXEC) != 0 || pipe2(errPipe, O_CLOEXEC) != 0) {
+        closePair(inPipe); closePair(outPipe); closePair(errPipe);
         return -2;
     }
 
@@ -57,14 +150,11 @@ static int runOne(const char* path, const char* input, size_t inputLen,
     char* argvChild[] = { (char*)path, NULL };
     extern char** environ;
     int rc = posix_spawn(&pid, path, &actions, NULL, argvChild, environ);
+    posix_spawn_file_actions_destroy(&actions);
     if (rc != 0) {
-        close(inPipe[0]); close(inPipe[1]);
-        close(outPipe[0]); close(outPipe[1]);
-        close(errPipe[0]); close(errPipe[1]);
-        posix_spawn_file_actions_destroy(&actions);
+        closePair(inPipe); closePair(outPipe); closePair(errPipe);
         return -2;
     }
-    posix_spawn_file_actions_destroy(&actions);
 
     close(inPipe[0]); close(outPipe[1]); close(errPipe[1]);
 
@@ -74,31 +164,35 @@ static int runOne(const char* path, const char* input, size_t inputLen,
             ssize_t w = write(inPipe[1], input + off, inputLen - off);
             if (w > 0) { off += (size_t)w; continue; }
             if (errno == EINTR) continue;
-            break;
+            break;   // EPIPE (child exited) or error
         }
     }
     close(inPipe[1]);
 
+    int64_t deadlineMs = nowMs() + timeoutMs;
+
     char* outBuf = NULL; size_t outLen_ = 0;
     char* errBuf = NULL; size_t errLen = 0;
-    drainFd(outPipe[0], &outBuf, &outLen_);
-    drainFd(errPipe[0], &errBuf, &errLen);
-    close(outPipe[0]); close(errPipe[0]);
-
-    int code = -1;
-    struct timespec start, now;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    for (;;) {
+    int code;
+    if (drainBoth(outPipe[0], errPipe[0], deadlineMs, pid, &outBuf, &outLen_, &errBuf, &errLen) == -3) {
+        code = -3;
+    } else {
         int status = 0;
-        pid_t w = waitpid(pid, &status, WNOHANG);
-        if (w == pid) { code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status); break; }
-        if (w < 0) { code = -2; break; }
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        int64_t elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
-        if (elapsed >= timeoutMs) { kill(pid, SIGKILL); waitpid(pid, &status, 0); code = -3; break; }
-        usleep(1000);
+        pid_t w;
+        for (;;) {
+            w = waitpid(pid, &status, WNOHANG);
+            if (w >= 0 || errno != EINTR) break;
+        }
+        if (w == pid) {
+            code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+        } else if (w == 0) {
+            code = waitpidTimed(pid, deadlineMs);
+        } else {
+            code = -2;
+        }
     }
 
+    close(outPipe[0]); close(errPipe[0]);
     if (errBuf) free(errBuf);
     *out = outBuf; *outLen = outLen_;
     return code;
@@ -241,8 +335,9 @@ static napi_value Spawn(napi_env env, napi_callback_info info) {
     char* pathBuf = (char*)malloc(pathLen + 1);
     napi_get_value_string_utf8(env, argv[0], pathBuf, pathLen + 1, &pathLen);
     pathBuf[pathLen] = '\0';
-    int inPipe[2], outPipe[2], errPipe[2];
+    int inPipe[2] = {-1, -1}, outPipe[2] = {-1, -1}, errPipe[2] = {-1, -1};
     if (pipe2(inPipe, O_CLOEXEC) != 0 || pipe2(outPipe, O_CLOEXEC) != 0 || pipe2(errPipe, O_CLOEXEC) != 0) {
+        closePair(inPipe); closePair(outPipe); closePair(errPipe);
         napi_throw_error(env, NULL, "pipe2"); free(pathBuf); return NULL;
     }
     posix_spawn_file_actions_t actions;
@@ -296,24 +391,12 @@ static napi_value WaitpidBlocking(napi_env env, napi_callback_info info) {
     napi_get_value_int64(env, argv[0], &pid);
     int64_t timeoutMs = 10000;
     if (argc > 1) { int64_t v; if (napi_get_value_int64(env, argv[1], &v) == napi_ok) timeoutMs = v; }
-    struct timespec start, now;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    for (;;) {
-        int status = 0;
-        pid_t w = waitpid((pid_t)pid, &status, WNOHANG);
-        if (w == pid) {
-            int code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
-            napi_value r; napi_create_int32(env, code, &r); return r;
-        }
-        if (w < 0) { napi_value r; napi_create_int32(env, -2, &r); return r; }
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        int64_t elapsed = (now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000;
-        if (elapsed >= timeoutMs) { kill((pid_t)pid, SIGKILL); waitpid((pid_t)pid, &status, 0); int code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status); napi_value r; napi_create_int32(env, -3, &r); return r; }
-        usleep(1000);
-    }
+    int code = waitpidTimed((pid_t)pid, nowMs() + timeoutMs);
+    napi_value r; napi_create_int32(env, code, &r); return r;
 }
 
 static napi_value Init(napi_env env, napi_value exports) {
+    signal(SIGPIPE, SIG_IGN);
     napi_property_descriptor descs[5] = {
         { "run", NULL, Run, NULL, NULL, NULL, napi_default, NULL },
         { "runPair", NULL, RunPair, NULL, NULL, NULL, napi_default, NULL },

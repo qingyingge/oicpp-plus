@@ -164,7 +164,6 @@ Section "OICPP 主程序" SEC01
   
   SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus"
   SetOverwrite on
-  File "dist\win-unpacked\ConsolePauser.exe"
   File "oicpp-plus.ico"
   SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
   SetOverwrite on
