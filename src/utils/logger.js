@@ -43,9 +43,9 @@ class Logger {
     static timestampFilename(date = new Date()) {
         const pad = (n) => String(n).padStart(2, '0');
         const toCN = (d) => {
-            const offsetMin = d.getTimezoneOffset();
-            const delta = (8 * 60 + offsetMin) * 60000; // 本地时间转为北京时间
-            return new Date(d.getTime() + delta);
+            const utcMs = d.getTime() + d.getTimezoneOffset() * 60000;
+            const delta = 8 * 3600000;
+            return new Date(utcMs + delta);
         };
         const d8 = toCN(date);
         const YYYY = d8.getFullYear();

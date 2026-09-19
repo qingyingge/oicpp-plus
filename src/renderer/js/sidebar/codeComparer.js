@@ -927,6 +927,7 @@ class CodeComparer {
                             generatorErrorType: generatorType
                         };
                         task.state.mode = 'error';
+                        failedGenerations++;
                         errorOccurred = true;
                         this.renderIfActive(task);
                         return;

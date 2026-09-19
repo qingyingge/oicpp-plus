@@ -415,9 +415,44 @@ try {
     }, true);
 } catch (_) { }
 
+const ALLOWED_SEND_CHANNELS = new Set([
+    'open-file-dialog', 'open-folder-dialog', 'save-file-as',
+    'toggle-devtools', 'minimize-window', 'maximize-window', 'close-window',
+    'window-focus', 'window-blur', 'toggle-always-on-top',
+    'open-external-terminal', 'run-code', 'compile-and-run',
+    'request-kill-process', 'save-binary-temp-file',
+    'theme-changed', 'settings-changed', 'file-renamed', 'file-deleted', 'file-created'
+]);
+
+const ALLOWED_INVOKE_CHANNELS = new Set([
+    'save-file', 'save-as-file', 'read-file-content', 'read-file-buffer',
+    'read-zip-text-files', 'open-path', 'show-open-dialog', 'show-save-dialog',
+    'save-temp-file', 'save-binary-temp-file', 'load-temp-file', 'delete-temp-file',
+    'get-compiler-info', 'detect-compilers', 'get-compiler-include-paths',
+    'validate-file-name', 'start-debug-session', 'stop-debug-session',
+    'debug-continue', 'debug-pause', 'debug-step-over', 'debug-step-into',
+    'debug-step-out', 'debug-restart', 'debug-set-breakpoint', 'debug-remove-breakpoint',
+    'debug-get-threads', 'debug-switch-thread', 'debug-evaluate',
+    'debug-expand-variable', 'debug-add-watch', 'debug-remove-watch',
+    'test-compiler', 'get-language-file', 'get-workspace-info',
+    'get-font-list', 'check-font-exists', 'get-installed-fonts',
+    'get-global-settings', 'save-global-settings', 'get-user-data-path',
+    'get-app-version', 'get-app-path', 'check-for-updates'
+]);
+
 const safeIpcRenderer = {
-    send: (channel, ...args) => ipcRenderer.send(channel, ...args),
-    invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
+    send: (channel, ...args) => {
+        if (ALLOWED_SEND_CHANNELS.has(channel)) {
+            return ipcRenderer.send(channel, ...args);
+        }
+        console.warn(`IPC send blocked: ${channel}`);
+    },
+    invoke: (channel, ...args) => {
+        if (ALLOWED_INVOKE_CHANNELS.has(channel)) {
+            return ipcRenderer.invoke(channel, ...args);
+        }
+        return Promise.reject(new Error(`IPC invoke blocked: ${channel}`));
+    },
     on: (channel, listener) => ipcRenderer.on(channel, listener),
     once: (channel, listener) => ipcRenderer.once(channel, listener),
     removeListener: (channel, listener) => ipcRenderer.removeListener(channel, listener),

@@ -202,38 +202,41 @@ class CompilerManager {
         if (window.electron && window.electron.ipcRenderer) {
             const ipcRenderer = window.electron.ipcRenderer;
 
-            ipcRenderer.on('compile-result', (result) => {
-                this.handleCompileResult(result);
-            });
-
-            ipcRenderer.on('compile-error', (error) => {
-                this.handleCompileError(error);
-            });
-
-            ipcRenderer.on('run-result', (result) => {
-                this.handleRunResult(result);
-            });
-
-            ipcRenderer.on('run-error', (error) => {
-                this.handleRunError(error);
-            });
-
-            ipcRenderer.on('settings-changed', (_event, _settingsType, newSettings) => {
-                logInfo('编译管理器收到设置变化通知:', newSettings);
-                if (newSettings && (newSettings.compilerPath !== undefined || newSettings.compilerArgs !== undefined || newSettings.runMode !== undefined)) {
-                    this.updateSettings({
-                        compilerPath: newSettings.compilerPath !== undefined ? newSettings.compilerPath : this.settings.compilerPath,
-                        compilerArgs: newSettings.compilerArgs !== undefined ? newSettings.compilerArgs : this.settings.compilerArgs,
-                        runMode: newSettings.runMode !== undefined ? newSettings.runMode : this.settings.runMode
-                    });
-                    logInfo('编译管理器设置已更新:', this.settings);
+            this._ipcListeners = {
+                'compile-result': (result) => this.handleCompileResult(result),
+                'compile-error': (error) => this.handleCompileError(error),
+                'run-result': (result) => this.handleRunResult(result),
+                'run-error': (error) => this.handleRunError(error),
+                'settings-changed': (_event, _settingsType, newSettings) => {
+                    logInfo('编译管理器收到设置变化通知:', newSettings);
+                    if (newSettings && (newSettings.compilerPath !== undefined || newSettings.compilerArgs !== undefined || newSettings.runMode !== undefined)) {
+                        this.updateSettings({
+                            compilerPath: newSettings.compilerPath !== undefined ? newSettings.compilerPath : this.settings.compilerPath,
+                            compilerArgs: newSettings.compilerArgs !== undefined ? newSettings.compilerArgs : this.settings.compilerArgs,
+                            runMode: newSettings.runMode !== undefined ? newSettings.runMode : this.settings.runMode
+                        });
+                        logInfo('编译管理器设置已更新:', this.settings);
+                    }
                 }
-            });
+            };
+
+            for (const [channel, handler] of Object.entries(this._ipcListeners)) {
+                ipcRenderer.on(channel, handler);
+            }
 
             logInfo('编译管理器 IPC 监听器已设置');
         } else {
             logWarn('Electron 环境不可用，跳过 IPC 监听器设置');
         }
+    }
+
+    removeEventListeners() {
+        if (!this._ipcListeners || !window.electron || !window.electron.ipcRenderer) return;
+        const ipcRenderer = window.electron.ipcRenderer;
+        for (const [channel, handler] of Object.entries(this._ipcListeners)) {
+            ipcRenderer.removeListener(channel, handler);
+        }
+        this._ipcListeners = null;
     }
 
     async loadSettings() {

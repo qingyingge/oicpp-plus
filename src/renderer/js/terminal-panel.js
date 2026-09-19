@@ -76,9 +76,8 @@ class IntegratedTerminalPanel {
         });
         this._resizeObserver.observe(this.panel);
 
-        window.addEventListener('resize', () => {
-            this.fitActiveTerminal();
-        });
+        this._windowResizeHandler = () => this.fitActiveTerminal();
+        window.addEventListener('resize', this._windowResizeHandler);
     }
 
     startResizeDrag(event) {

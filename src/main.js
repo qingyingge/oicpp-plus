@@ -323,7 +323,7 @@ function collectStdCxxIncludeDirs(compilerPath) {
         if (!fs.existsSync(rootDir)) {
             continue;
         }
-        const depth = rootDir.endsWith(path.join('include', 'c++')) ? 4 : 4;
+        const depth = rootDir.endsWith(path.join('include', 'c++')) ? 4 : 3;
         scanDirTree(rootDir, depth);
     }
 
@@ -3931,7 +3931,14 @@ function setupIPC() {
 
     ipcMain.handle('save-temp-file', async (event, filePath, content) => {
         try {
-            const tempPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp', filePath);
+            if (!filePath || typeof filePath !== 'string') {
+                throw new Error('无效的文件路径');
+            }
+            const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+            const tempPath = path.resolve(codeTempDir, filePath);
+            if (!tempPath.startsWith(codeTempDir)) {
+                throw new Error('非法路径: 路径遍历攻击被阻止');
+            }
             const tempDir = path.dirname(tempPath);
 
             if (!fs.existsSync(tempDir)) {
@@ -3973,7 +3980,14 @@ function setupIPC() {
 
     ipcMain.handle('load-temp-file', async (event, filePath) => {
         try {
-            const tempPath = path.join(os.homedir(), filePath);
+            if (!filePath || typeof filePath !== 'string') {
+                throw new Error('无效的文件路径');
+            }
+            const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+            const tempPath = path.resolve(codeTempDir, filePath);
+            if (!tempPath.startsWith(codeTempDir)) {
+                throw new Error('非法路径: 路径遍历攻击被阻止');
+            }
             if (fs.existsSync(tempPath)) {
                 const content = fs.readFileSync(tempPath, 'utf8');
                 logInfo('临时文件加载成功:', tempPath);
@@ -3990,11 +4004,21 @@ function setupIPC() {
 
     ipcMain.handle('delete-temp-file', async (event, filePath) => {
         try {
+            if (!filePath || typeof filePath !== 'string') {
+                throw new Error('无效的文件路径');
+            }
+            const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
             let tempPath;
             if (path.isAbsolute(filePath)) {
-                tempPath = filePath;
+                tempPath = path.resolve(filePath);
+                if (!tempPath.startsWith(codeTempDir)) {
+                    throw new Error('非法路径: 路径遍历攻击被阻止');
+                }
             } else {
-                tempPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp', filePath);
+                tempPath = path.resolve(codeTempDir, filePath);
+                if (!tempPath.startsWith(codeTempDir)) {
+                    throw new Error('非法路径: 路径遍历攻击被阻止');
+                }
             }
 
             if (fs.existsSync(tempPath)) {
@@ -4334,12 +4358,20 @@ function setupIPC() {
     ipcMain.on('delete-file', async (event, filePath) => {
         let previousWatchStates = [];
         try {
-            const stat = fs.statSync(filePath);
-            previousWatchStates = markLocalDeletion(filePath);
+            if (!filePath || typeof filePath !== 'string') {
+                throw new Error('无效的文件路径');
+            }
+            const normalizedPath = path.resolve(filePath);
+            const workspace = settings?.workspace || '';
+            if (workspace && !normalizedPath.startsWith(path.resolve(workspace))) {
+                throw new Error('非法路径: 只能删除工作区内的文件');
+            }
+            const stat = fs.statSync(normalizedPath);
+            previousWatchStates = markLocalDeletion(normalizedPath);
             if (stat.isDirectory()) {
-                fs.rmSync(filePath, { recursive: true, force: true });
+                fs.rmSync(normalizedPath, { recursive: true, force: true });
             } else {
-                fs.unlinkSync(filePath);
+                fs.unlinkSync(normalizedPath);
             }
             event.reply('file-deleted', filePath, null);
         } catch (error) {
@@ -10323,7 +10355,12 @@ async function killByExePathWindows(exePath) {
     if (!exePath) return;
     try {
         const { spawn } = require('child_process');
-        const escaped = String(exePath).replace(/'/g, "''");
+        const sanitized = String(exePath).replace(/[^a-zA-Z0-9\\.\\\-:\/\\\\ ]/g, '');
+        if (!sanitized || !/^[a-zA-Z]:/.test(sanitized)) {
+            logWarn('[主进程] killByExePathWindows: 无效的可执行文件路径');
+            return;
+        }
+        const escaped = sanitized.replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '${escaped}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
         await new Promise((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
@@ -10339,7 +10376,12 @@ async function killConsolePauserForTargetWindows(targetExePath) {
     if (!targetExePath) return;
     try {
         const { spawn } = require('child_process');
-        const escaped = String(targetExePath).replace(/`/g, '``').replace(/'/g, "''");
+        const sanitized = String(targetExePath).replace(/[^a-zA-Z0-9\\.\\\-:\/\\\\ ]/g, '');
+        if (!sanitized || !/^[a-zA-Z]:/.test(sanitized)) {
+            logWarn('[主进程] killConsolePauserForTargetWindows: 无效的可执行文件路径');
+            return;
+        }
+        const escaped = sanitized.replace(/`/g, '``').replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match 'consolepauser\\.exe$' -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
         await new Promise((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
@@ -10602,10 +10644,15 @@ async function startDebugSession(filePath, options = {}) {
 function _resolvePidsOnTTY(ttyPath) {
     const pids = new Set();
     if (!ttyPath) return pids;
+    const sanitizedTtyPath = String(ttyPath).replace(/[^a-zA-Z0-9\\/\\-_.]/g, '');
+    if (!sanitizedTtyPath || !sanitizedTtyPath.startsWith('/dev/')) {
+        logWarn('[主进程] _resolvePidsOnTTY: 无效的TTY路径');
+        return pids;
+    }
     try {
         // 优先用 fuser，速度快且不受进程数限制
         let output = '';
-        const fuserResult = spawnSync('fuser', [ttyPath], { encoding: 'utf8', timeout: 2000 });
+        const fuserResult = spawnSync('fuser', [sanitizedTtyPath], { encoding: 'utf8', timeout: 2000 });
         if (fuserResult.status === 0 && fuserResult.stdout) {
             // fuser 输出格式: "/dev/pts/2: 6844 6855"
             output = String(fuserResult.stdout || '');
@@ -10621,7 +10668,7 @@ function _resolvePidsOnTTY(ttyPath) {
         }
         // 回退方案：扫描 /proc/[pid]/fd/（用 find 避免 glob 展开超限）
         if (pids.size === 0) {
-            const cmd = `find /proc -maxdepth 2 -name fd -type d 2>/dev/null | while read d; do ls -l "$d" 2>/dev/null; done | grep -F '${ttyPath}' | awk -F/ '{print $3}' | sort -n | uniq`;
+            const cmd = `find /proc -maxdepth 2 -name fd -type d 2>/dev/null | while read d; do ls -l "$d" 2>/dev/null; done | grep -F '${sanitizedTtyPath}' | awk -F/ '{print $3}' | sort -n | uniq`;
             const result = spawnSync('sh', ['-c', cmd], { encoding: 'utf8', timeout: 5000 });
             output = String(result.stdout || '').trim();
             if (output) {
@@ -10645,13 +10692,19 @@ function _restoreTTYShell() {
     if (!shellPid || !ttyPath) return;
 
     try {
+        const sanitizedTtyPath = String(ttyPath).replace(/[^a-zA-Z0-9\\/\\-_.]/g, '');
+        const sanitizedShellPid = parseInt(shellPid, 10);
+        if (!sanitizedTtyPath || !sanitizedTtyPath.startsWith('/dev/') || isNaN(sanitizedShellPid) || sanitizedShellPid <= 0) {
+            logWarn('[主进程] _restoreTTYShell: 无效的TTY路径或进程ID');
+            return;
+        }
         // 1. 恢复 shell 前台进程组（必须在 SIGCONT 之前，避免 shell 醒来后收到 SIGTTIN）
-        const tcsetScript = `import os, termios; fd = os.open('${ttyPath}', os.O_RDONLY); termios.tcsetpgrp(fd, ${shellPid}); os.close(fd)`;
+        const tcsetScript = `import os, termios; fd = os.open('${sanitizedTtyPath}', os.O_RDONLY); termios.tcsetpgrp(fd, ${sanitizedShellPid}); os.close(fd)`;
         spawnSync('python3', ['-c', tcsetScript], { encoding: 'utf8', timeout: 3000 });
 
         // 2. SIGCONT 恢复 shell
-        process.kill(shellPid, 'SIGCONT');
-        logInfo('[主进程] TTY 已恢复: shell PID=', shellPid);
+        process.kill(sanitizedShellPid, 'SIGCONT');
+        logInfo('[主进程] TTY 已恢复: shell PID=', sanitizedShellPid);
     } catch (e) {
         logWarn('[主进程] TTY 恢复异常:', e?.message || String(e));
     }

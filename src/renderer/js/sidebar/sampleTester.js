@@ -937,7 +937,7 @@ class SampleTester {
         div.dataset.sampleId = sample.id;
 
         let statusBadge = '';
-        if (sample.result) {
+        if (sample.result && sample.result.status) {
             statusBadge = `<span class="status-badge status-${sample.result.status.toLowerCase()}">${sample.result.status}</span>`;
             if (sample.result.time) {
                 statusBadge += `<span style="color: #858585; font-size: 11px;">${sample.result.time}ms</span>`;

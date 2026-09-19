@@ -69,12 +69,18 @@ async function runJs(exePath, input, timeout, args, cwd) {
 }
 
 function runFast(exePath, input, timeout) {
+    if (!fast) {
+        return { code: -1, output: null, timeout: false, error: 'fastspawn module not loaded', ms: 0 };
+    }
     const t0 = Date.now();
     const r = fast.run(exePath, input, timeout);
     return { code: r.code, output: r.output, timeout: r.code === -3, error: r.code === -3 ? 'TLE' : null, ms: Date.now() - t0 };
 }
 
 function runFastPair(stdPath, testPath, input, timeout) {
+    if (!fast) {
+        return { code1: -1, code2: -1, out1: null, out2: null, ms: 0, error: 'fastspawn module not loaded' };
+    }
     const t0 = Date.now();
     const r = fast.runPair(stdPath, testPath, input, timeout);
     const ms = Date.now() - t0;

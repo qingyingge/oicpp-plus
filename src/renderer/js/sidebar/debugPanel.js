@@ -248,7 +248,7 @@ class DebugPanel {
     _setToolbarEnabled(enabled) {
         if (!this.root) return;
         ['#dbg-continue', '#dbg-step-over', '#dbg-step-into', '#dbg-step-out', '#dbg-stop', '#dbg-add-watch', '#dbg-start']
-            .forEach(sel => { const el = this.root.querySelector(sel); if (el) el.disabled = false; });
+            .forEach(sel => { const el = this.root.querySelector(sel); if (el) el.disabled = !enabled; });
     }
 
     _handleVariableExpanded(payload) {

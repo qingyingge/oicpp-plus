@@ -93,7 +93,7 @@ class MultiThreadDownloader {
         try {
             const response = await makeRequest(url, { method: 'HEAD' });
             const contentLength = response.headers.get('content-length');
-            return contentLength ? parseInt(contentLength) : null;
+            return contentLength ? parseInt(contentLength, 10) : null;
         } catch (error) {
             logWarn('[多线程下载] 获取文件大小失败:', error.message);
             return null;

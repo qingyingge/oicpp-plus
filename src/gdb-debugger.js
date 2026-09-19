@@ -77,7 +77,18 @@ class GDBDebugger extends EventEmitter {
         }
         const line = entry.cmd + '\n';
         try { global.logInfo?.('[GDB<<]', line.trim()); } catch (_) { }
-        this.gdbProcess.stdin.write(line);
+        try {
+            if (!this.gdbProcess || !this.gdbProcess.stdin || this.gdbProcess.killed || this.gdbProcess.exitCode !== null) {
+                throw new Error('GDB process is not running');
+            }
+            this.gdbProcess.stdin.write(line);
+        } catch (writeError) {
+            try { global.logError?.('[GDB] stdin write failed:', writeError?.message || writeError); } catch (_) { }
+            this._queueBusy = false;
+            this._cmdQueue = [];
+            this.emit('error', writeError);
+            return;
+        }
     }
     _send(cmd, opts = {}) { return this._queueCommand(cmd, opts); }
     _sendContinue(cmd, opts = {}) { return this._queueCommand(cmd, { ...opts, isContinue: true }); }
@@ -154,7 +165,10 @@ class GDBDebugger extends EventEmitter {
         this._programStopped = true;
         this._inferiorRunning = false;
         this._queueBusy = false;
-        this._cmdQueue = [];
+        const pendingCmds = this._cmdQueue.splice(0);
+        for (const entry of pendingCmds) {
+            if (entry.reject) entry.reject(new Error('GDB session stopped'));
+        }
         await this._cleanupLinuxTTY();
     }
     // gdb 收到 quit 会立即退出、不会打印自定义提示符，因此不能依赖 _send('quit')
