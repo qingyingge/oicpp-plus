@@ -86,6 +86,7 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.AppImage
+          if-no-files-found: error
 
       - name: Upload Linux packages to remote
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus'
@@ -96,10 +97,14 @@ jobs:
           VERSION=$VERSION
           VERSION=${VERSION#v}
           echo "Uploading packages for version $VERSION to $UPLOAD_API"
-          for f in dist/*.deb dist/*.rpm dist/*.AppImage; do
-            [ -f "$f" ] || continue
+          mapfile -t FILES < <(ls dist/*.deb dist/*.rpm dist/*.AppImage 2>/dev/null)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No Linux packages built, aborting upload" >&2
+            exit 1
+          fi
+          for f in "${FILES[@]}"; do
             echo "Uploading $f"
-            curl -sS -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$f" -F "version=$VERSION" -F "platform=linux" "$UPLOAD_API"
+            curl -fsS -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$f" -F "version=$VERSION" -F "platform=linux" "$UPLOAD_API"
           done
 
   build-macos:
@@ -149,6 +154,7 @@ jobs:
         with:
           name: macos-artifacts
           path: dist/*.dmg
+          if-no-files-found: error
 
       - name: Upload macOS package to remote
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus'
@@ -159,10 +165,14 @@ jobs:
           VERSION=$VERSION
           VERSION=${VERSION#v}
           echo "Uploading packages for version $VERSION to $UPLOAD_API"
-          for f in dist/*.dmg; do
-            [ -f "$f" ] || continue
+          mapfile -t FILES < <(ls dist/*.dmg 2>/dev/null)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No macOS packages built, aborting upload" >&2
+            exit 1
+          fi
+          for f in "${FILES[@]}"; do
             echo "Uploading $f"
-            curl -sS -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$f" -F "version=$VERSION" -F "platform=macos" "$UPLOAD_API"
+            curl -fsS -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$f" -F "version=$VERSION" -F "platform=macos" "$UPLOAD_API"
           done
 
   build-windows:
@@ -303,6 +313,7 @@ jobs:
         with:
           name: windows-artifacts
           path: OICPP-*-Setup.exe
+          if-no-files-found: error
 
       - name: Upload Windows installer to remote
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus'
@@ -313,10 +324,10 @@ jobs:
         run: |
           VERSION=$VERSION
           echo "Looking for installer for version: $VERSION"
-          FILE=$(ls OICPP-*-Setup.exe | head -n 1)
-          if [ -z "$FILE" ]; then echo "No installer found, skipping upload"; exit 0; fi
+          FILE=$(ls OICPP-*-Setup.exe 2>/dev/null | head -n 1)
+          if [ -z "$FILE" ]; then echo "No installer found, aborting upload" >&2; exit 1; fi
           echo "Uploading $FILE to $UPLOAD_API"
-          curl -s -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$FILE" -F "version=$VERSION" -F "platform=windows" "$UPLOAD_API"
+          curl -fsS -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$FILE" -F "version=$VERSION" -F "platform=windows" "$UPLOAD_API"
 
   release:
     needs: [build-linux, build-macos, build-windows]
