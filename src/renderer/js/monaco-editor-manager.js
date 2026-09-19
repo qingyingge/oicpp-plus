@@ -584,8 +584,13 @@ class MonacoEditorManager {
             this._registerLspHoverProvider();
             this._registerLspDefinitionProvider();
             this._registerLspDocumentSymbolProvider();
+            this._registerLspLocationProviders();
+            this._registerLspReferenceProvider();
+            this._registerLspCodeActionProvider();
+            this._registerLspDocumentHighlightProvider();
+            this._registerLspFoldingRangeProvider();
             this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、符号)');
+            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、符号、引用、代码操作、高亮、折叠)');
         } catch (err) {
             logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
         }

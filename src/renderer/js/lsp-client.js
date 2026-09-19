@@ -187,6 +187,16 @@ class LspClientBridge {
                     definition: {
                         linkSupport: true
                     },
+                    declaration: {
+                        linkSupport: true
+                    },
+                    typeDefinition: {
+                        linkSupport: true
+                    },
+                    implementation: {
+                        linkSupport: true
+                    },
+                    documentHighlight: {},
                     documentSymbol: {
                         hierarchicalDocumentSymbolSupport: true,
                         symbolKind: {
@@ -197,6 +207,18 @@ class LspClientBridge {
                     rename: {
                         prepareSupport: true
                     },
+                    formatting: {
+                        dynamicRegistration: false
+                    },
+                    codeAction: {
+                        codeActionLiteralSupport: {
+                            codeActionKind: {
+                                valueSet: ['quickfix', 'refactor', 'refactor.rewrite', 'source']
+                            }
+                        },
+                        isPreferredSupport: true
+                    },
+                    foldingRange: {},
                     semanticTokens: {
                         requests: { full: true },
                         tokenTypes: [],
