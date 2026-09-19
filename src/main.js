@@ -1212,6 +1212,10 @@ process.on('unhandledRejection', (reason, p) => {
 });
 process.on('exit', () => { try { logger.flushSync(); } catch (_) { } });
 
+app.on('render-process-gone', (_event, _webContents, details) => {
+    logwarn(`[main] Renderer process gone (reason: ${details.reason}, exitCode: ${details.exitCode})`);
+});
+
 global.logInfo = (...args) => { try { logger.logInfo(...args); } catch (_) { } };
 global.logwarn = (...args) => { try { logger.logwarn(...args); } catch (_) { } };
 global.logerror = (...args) => { try { logger.logerror(...args); } catch (_) { } };

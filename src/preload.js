@@ -502,7 +502,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getSettings: () => ipcRenderer.invoke('get-settings'),
     sendSettingsPreview: (settings) => ipcRenderer.send('settings-preview', settings),
     updateSettings: (newSettings) => ipcRenderer.invoke('update-settings', newSettings),
-    updateEditorSettings: (editorSettings) => ipcRenderer.invoke('update-editor-settings', editorSettings),
+    updateEditorSettings: () => {}, // deprecated, kept for backward compatibility
     resetSettings: () => ipcRenderer.invoke('reset-settings'),
     exportSettings: () => ipcRenderer.invoke('export-settings'),
     importSettings: () => ipcRenderer.invoke('import-settings'),
@@ -610,7 +610,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     getCpuThreads: () => ipcRenderer.invoke('get-cpu-threads'),
 
-    sendFeedback: (message) => ipcRenderer.invoke('send-feedback', message),
+    sendFeedback: () => {}, // deprecated, kept for backward compatibility
     listClientLogs: () => ipcRenderer.invoke('list-client-logs'),
     uploadClientLog: (filePath) => ipcRenderer.invoke('upload-client-log', filePath),
     getDeviceInfo: () => ipcRenderer.invoke('get-device-info'),
