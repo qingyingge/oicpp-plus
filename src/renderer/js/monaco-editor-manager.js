@@ -1230,6 +1230,56 @@ class MonacoEditorManager {
         }
     }
 
+    lspWorkspaceEditToMonaco(edit) {
+        try {
+            if (!edit || typeof monaco === 'undefined') return undefined;
+            const monacoEdits = [];
+            if (edit.changes && typeof edit.changes === 'object') {
+                for (const [uri, edits] of Object.entries(edit.changes)) {
+                    for (const e of edits || []) {
+                        if (!e || !e.range) continue;
+                        monacoEdits.push({
+                            resource: monaco.Uri.parse(uri),
+                            textEdit: {
+                                range: new monaco.Range(
+                                    (e.range.start?.line || 0) + 1,
+                                    (e.range.start?.character || 0) + 1,
+                                    (e.range.end?.line || 0) + 1,
+                                    (e.range.end?.character || 0) + 1
+                                ),
+                                text: e.newText || ''
+                            }
+                        });
+                    }
+                }
+            }
+            if (Array.isArray(edit.documentChanges)) {
+                for (const dc of edit.documentChanges) {
+                    const uri = dc?.textDocument?.uri;
+                    if (!uri || !Array.isArray(dc.edits)) continue;
+                    for (const e of dc.edits) {
+                        if (!e || !e.range) continue;
+                        monacoEdits.push({
+                            resource: monaco.Uri.parse(uri),
+                            textEdit: {
+                                range: new monaco.Range(
+                                    (e.range.start?.line || 0) + 1,
+                                    (e.range.start?.character || 0) + 1,
+                                    (e.range.end?.line || 0) + 1,
+                                    (e.range.end?.character || 0) + 1
+                                ),
+                                text: e.newText || ''
+                            }
+                        });
+                    }
+                }
+            }
+            return monacoEdits.length ? { edits: monacoEdits } : undefined;
+        } catch (_) {
+            return undefined;
+        }
+    }
+
     _registerLspDocumentSymbolProvider() {
         const languages = ['cpp', 'c'];
         for (const language of languages) {
@@ -5076,6 +5126,11 @@ class MonacoEditorManager {
             const model = this.currentEditor.getModel();
             const content = model.getValue();
 
+            // 优先使用 clangd LSP 格式化（对模板/宏/复杂表达式更准确）。
+            if (await this.formatCppViaLsp(model, content)) {
+                return true;
+            }
+
             const opts = this.currentEditor.getOptions();
             const editorTabSize = opts.get(monaco.editor.EditorOption.tabSize) || 4;
             const style = this.normalizeClangFormatStyle(this.clangFormatStyle);
@@ -5111,6 +5166,48 @@ class MonacoEditorManager {
             }
         } catch (error) {
             logError('C++代码格式化失败:', error);
+            return false;
+        }
+    }
+
+    async formatCppViaLsp(model, content) {
+        try {
+            if (!model || model.isDisposed?.() || !this.lspClient) return false;
+            const lspReady = await this._ensureLspDocumentReady(model);
+            if (!lspReady || !this.lspClient || model.isDisposed?.()) return false;
+            const uri = await this.getDocumentUriForModel(model);
+            if (!uri) return false;
+
+            const opts = this.currentEditor.getOptions();
+            const editorTabSize = opts.get(monaco.editor.EditorOption.tabSize) || 4;
+            const style = this.normalizeClangFormatStyle(this.clangFormatStyle);
+            const tabSize = style.IndentWidth || editorTabSize;
+            const insertSpaces = style.UseTab === 'Never';
+
+            const result = await this.lspClient.request('textDocument/formatting', {
+                textDocument: { uri },
+                options: { tabSize, insertSpaces }
+            });
+            if (!Array.isArray(result) || !result.length) return false;
+
+            const edits = result
+                .filter((e) => e && e.range)
+                .map((e) => ({
+                    range: new monaco.Range(
+                        (e.range.start?.line || 0) + 1,
+                        (e.range.start?.character || 0) + 1,
+                        (e.range.end?.line || 0) + 1,
+                        (e.range.end?.character || 0) + 1
+                    ),
+                    text: e.newText || ''
+                }))
+                .sort((a, b) => (b.range.startLineNumber - a.range.startLineNumber) || (b.range.startColumn - a.range.startColumn));
+            if (!edits.length) return false;
+            this.currentEditor.executeEdits('format-lsp', edits);
+            logInfo('[LSP] 已通过 clangd 完成代码格式化');
+            return true;
+        } catch (err) {
+            logWarn('[LSP] clangd 格式化失败，回退到本地格式化:', err?.message || err);
             return false;
         }
     }
@@ -6534,6 +6631,11 @@ class MonacoEditorManager {
                 return;
             }
 
+            const lspLocations = await this.requestLspLocations('textDocument/definition', model, position);
+            if (lspLocations.length && (await this.goToLspLocation(lspLocations[0]))) {
+                return;
+            }
+
             const local = this.findDefinitionInModel(model, symbol.word, { skipLine: position.lineNumber });
             if (local) {
                 this.goToMonacoPosition(editor, local.position);
@@ -6549,6 +6651,34 @@ class MonacoEditorManager {
             logWarn('未找到符号定义:', symbol.word);
         } catch (err) {
             logWarn('Ctrl+单击跳转失败:', err);
+        }
+    }
+
+    async goToLspLocation(location) {
+        try {
+            if (!location || !location.uri || typeof monaco === 'undefined') return false;
+            const targetUri = typeof location.uri === 'string' ? location.uri : String(location.uri);
+            let pathStr = targetUri;
+            if (pathStr.startsWith('file://')) {
+                pathStr = pathStr.slice('file://'.length);
+            } else if (pathStr.startsWith('file:')) {
+                pathStr = pathStr.slice('file:'.length);
+            }
+            pathStr = decodeURIComponent(pathStr);
+            if (/^\/[a-zA-Z]:[/\\]/.test(pathStr) || /^\/[a-zA-Z]:$/.test(pathStr)) {
+                pathStr = pathStr.slice(1);
+            }
+            if (typeof window !== 'undefined' && window.process && window.process.platform === 'win32') {
+                pathStr = pathStr.replace(/\//g, '\\');
+            }
+            if (!pathStr) return false;
+            const start = location.range?.start || {};
+            const position = new monaco.Position((start.line || 0) + 1, (start.character || 0) + 1);
+            await this.openFileAtPosition(pathStr, position);
+            return true;
+        } catch (err) {
+            logWarn('[LSP] 跳转到 LSP 位置失败:', err?.message || err);
+            return false;
         }
     }
 

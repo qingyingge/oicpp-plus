@@ -733,8 +733,22 @@ class ClangdLspManager {
             args.push(...options.clangdArgs.filter(Boolean));
         }
 
+        const workspaceRoot = typeof options.workspaceRoot === 'string' && options.workspaceRoot ? options.workspaceRoot : '';
+        let spawnCwd = null;
+        if (workspaceRoot && fs.existsSync(workspaceRoot)) {
+            try {
+                if (fs.statSync(workspaceRoot).isDirectory()) {
+                    args.push(`--compile-commands-dir=${workspaceRoot}`);
+                    logInfo('[LSP] 配置 compile-commands-dir:', workspaceRoot);
+                    spawnCwd = workspaceRoot;
+                }
+            } catch (err) {
+                logWarn('[LSP] 校验工作区目录失败:', err?.message || err);
+            }
+        }
+
         logInfo('[LSP] 正在启动 clangd:', clangdPath, args.join(' '));
-        const proc = spawn(clangdPath, args, { stdio: 'pipe' });
+        const proc = spawn(clangdPath, args, { stdio: 'pipe', ...(spawnCwd ? { cwd: spawnCwd } : {}) });
         const generation = ++this.procGeneration;
         this.proc = proc;
         proc.stdout.on('data', (data) => this._handleData(data));
