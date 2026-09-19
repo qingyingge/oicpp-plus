@@ -191,12 +191,16 @@ class LspClientBridge {
                         linkSupport: true
                     },
                     typeDefinition: {
-                        linkSupport: true
+                        linkSupport: true,
+                        dynamicRegistration: false
                     },
                     implementation: {
-                        linkSupport: true
+                        linkSupport: true,
+                        dynamicRegistration: false
                     },
-                    documentHighlight: {},
+                    documentHighlight: {
+                        dynamicRegistration: false
+                    },
                     documentSymbol: {
                         hierarchicalDocumentSymbolSupport: true,
                         symbolKind: {
@@ -219,6 +223,9 @@ class LspClientBridge {
                         isPreferredSupport: true
                     },
                     foldingRange: {},
+                    codeLens: {
+                        dynamicRegistration: false
+                    },
                     semanticTokens: {
                         requests: { full: true },
                         tokenTypes: [],
@@ -227,7 +234,10 @@ class LspClientBridge {
                     }
                 },
                 workspace: {
-                    workspaceFolders: true
+                    workspaceFolders: true,
+                    symbol: {
+                        dynamicRegistration: false
+                    }
                 }
             },
             initializationOptions: {

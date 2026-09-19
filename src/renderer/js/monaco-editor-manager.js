@@ -60,6 +60,7 @@ class MonacoEditorManager {
         this._lspProvidersReady = false;
         this._lspGuardedModels = new WeakSet();
         this._lspGuardDetails = new WeakMap();
+        this._lspSafetyCache = null;
         this.lspClient = window.lspClient || null;
         this.setupLspIntegration();
         this._onMonacoContextMenuPasteCapture = this.handleMonacoContextMenuPasteCapture.bind(this);
@@ -340,13 +341,12 @@ class MonacoEditorManager {
 
     _initLspProactively() {
         setTimeout(() => {
-            const hasUnsafeDocument = typeof monaco !== 'undefined' && monaco.editor?.getModels?.().some((model) => {
+            const hasAnyCppModel = typeof monaco !== 'undefined' && monaco.editor?.getModels?.().some((model) => {
                 const languageId = model.getLanguageId ? model.getLanguageId() : '';
-                if (languageId !== 'cpp' && languageId !== 'c') return false;
-                return !this.assessLspDocumentSafety(model.getValue ? model.getValue() : '').safe;
+                return languageId === 'cpp' || languageId === 'c';
             });
-            if (hasUnsafeDocument) {
-                logInfo('[LSP] 检测到超大静态数组源码，跳过主动启动；打开普通 C/C++ 文件时再启动。');
+            if (!hasAnyCppModel) {
+                logInfo('[LSP] 未检测到 C/C++ 文件，跳过主动启动；打开文件时再启动。');
                 return;
             }
             this.ensureLspReady().then(() => {
@@ -585,12 +585,18 @@ class MonacoEditorManager {
             this._registerLspDefinitionProvider();
             this._registerLspDocumentSymbolProvider();
             this._registerLspLocationProviders();
-            this._registerLspReferenceProvider();
+            this._registerLspReferencesProvider();
+            this._registerLspRenameProvider();
+            this._registerLspDocumentFormattingProvider();
             this._registerLspCodeActionProvider();
+            this._registerLspTypeDefinitionProvider();
+            this._registerLspImplementationProvider();
             this._registerLspDocumentHighlightProvider();
+            this._registerLspWorkspaceSymbolProvider();
+            this._registerLspCodeLensProvider();
             this._registerLspFoldingRangeProvider();
             this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、符号、引用、代码操作、高亮、折叠)');
+            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、符号、引用、重命名、格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠)');
         } catch (err) {
             logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
         }
@@ -598,7 +604,10 @@ class MonacoEditorManager {
 
     assessLspDocumentSafety(text = '') {
         const source = typeof text === 'string' ? text : String(text ?? '');
-        const maxArrayBytes = 1024 * 1024 * 1024;
+        const cacheKey = `${source.length}:${source.charCodeAt(0) || 0}:${source.charCodeAt(source.length - 1) || 0}`;
+        if (this._lspSafetyCache && this._lspSafetyCache.key === cacheKey) {
+            return this._lspSafetyCache.result;
+        }        const maxArrayBytes = 1024 * 1024 * 1024;
         const expressions = new Map();
         const values = new Map();
 
@@ -756,17 +765,21 @@ class MonacoEditorManager {
             const estimatedBytes = Math.min(maxArrayBytes + 1, product * elementSize);
             if (estimatedBytes > maxArrayBytes) {
                 const line = scanSource.slice(0, arrayMatch.index).split(/\r?\n/).length;
-                return {
+                const result = {
                     safe: false,
                     reason: `检测到潜在超大静态数组（约 ${dimensionCount} 维，按 ${elementSize} 字节/元素估算占用超过 1 GiB）`,
                     line,
                     elementSize,
                     estimatedBytes
                 };
+                this._lspSafetyCache = { key: cacheKey, result };
+                return result;
             }
         }
 
-        return { safe: true };
+        const result = { safe: true };
+        this._lspSafetyCache = { key: cacheKey, result };
+        return result;
     }
 
     _bindLspModelLifecycle(model) {
@@ -786,6 +799,7 @@ class MonacoEditorManager {
     async _ensureLspDocumentReady(model) {
 
         if (!model || !this.lspClient) return false;
+        if (this._lspDocuments.has(model)) return true;
         const safety = this.assessLspDocumentSafety(model.getValue ? model.getValue() : '');
         if (!safety.safe) {
             await this.openLspDocument(model);
@@ -1352,6 +1366,509 @@ class MonacoEditorManager {
                         }));
                     } catch (_) {
                         return [];
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspReferencesProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:references`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册引用提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerReferenceProvider(language, {
+                provideReferences: async (model, position, context) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return [];
+                        if (!this.lspClient) return [];
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return [];
+
+                        const result = await this.lspClient.request('textDocument/references', {
+                            textDocument: { uri },
+                            position: {
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            },
+                            context: { includeDeclaration: context.includeDeclaration }
+                        });
+                        if (!Array.isArray(result)) return [];
+
+                        return result.filter(Boolean).map((loc) => {
+                            try {
+                                return {
+                                    uri: monaco.Uri.parse(loc.uri || ''),
+                                    range: new monaco.Range(
+                                        (loc.range?.start?.line || 0) + 1,
+                                        (loc.range?.start?.character || 0) + 1,
+                                        (loc.range?.end?.line || 0) + 1,
+                                        (loc.range?.end?.character || 0) + 1
+                                    )
+                                };
+                            } catch (_) { return null; }
+                        }).filter(Boolean);
+                    } catch (_) {
+                        return [];
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspRenameProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:rename`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册重命名提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerRenameProvider(language, {
+                provideRenameEdits: async (model, position, newName) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return null;
+                        if (!this.lspClient) return null;
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return null;
+
+                        const result = await this.lspClient.request('textDocument/rename', {
+                            textDocument: { uri },
+                            position: {
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            },
+                            newName
+                        });
+                        if (!result || !result.changes) return null;
+
+                        const edits = [];
+                        for (const [docUri, docEdits] of Object.entries(result.changes)) {
+                            for (const edit of docEdits) {
+                                edits.push({
+                                    resource: monaco.Uri.parse(docUri),
+                                    versionId: undefined,
+                                    edits: [{
+                                        range: new monaco.Range(
+                                            (edit.range?.start?.line || 0) + 1,
+                                            (edit.range?.start?.character || 0) + 1,
+                                            (edit.range?.end?.line || 0) + 1,
+                                            (edit.range?.end?.character || 0) + 1
+                                        ),
+                                        text: edit.newText
+                                    }]
+                                });
+                            }
+                        }
+                        if (!edits.length) return null;
+                        return { edits };
+                    } catch (_) {
+                        return null;
+                    }
+                },
+                prepareRename: async (model, position) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return null;
+                        if (!this.lspClient) return null;
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return null;
+
+                        const result = await this.lspClient.request('textDocument/prepareRename', {
+                            textDocument: { uri },
+                            position: {
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            }
+                        });
+                        if (!result) return null;
+                        if (result.range) {
+                            return {
+                                range: new monaco.Range(
+                                    (result.range.start?.line || 0) + 1,
+                                    (result.range.start?.character || 0) + 1,
+                                    (result.range.end?.line || 0) + 1,
+                                    (result.range.end?.character || 0) + 1
+                                ),
+                                placeholder: result.placeholder || ''
+                            };
+                        }
+                        if (result.start && result.end) {
+                            return {
+                                range: new monaco.Range(
+                                    (result.start.line || 0) + 1,
+                                    (result.start.character || 0) + 1,
+                                    (result.end.line || 0) + 1,
+                                    (result.end.character || 0) + 1
+                                ),
+                                placeholder: ''
+                            };
+                        }
+                        return { range: model.getWordAtPosition(position)?.word || '', placeholder: '' };
+                    } catch (_) {
+                        return null;
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspDocumentFormattingProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:formatting`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册格式化提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerDocumentFormattingEditProvider(language, {
+                provideDocumentFormattingEdits: async (model, options) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return [];
+                        if (!this.lspClient) return [];
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return [];
+
+                        const result = await this.lspClient.request('textDocument/formatting', {
+                            textDocument: { uri },
+                            options: {
+                                tabSize: options.tabSize || 4,
+                                insertSpaces: options.insertSpaces !== false
+                            }
+                        });
+                        if (!Array.isArray(result)) return [];
+
+                        return result.filter(Boolean).map((edit) => ({
+                            range: new monaco.Range(
+                                (edit.range?.start?.line || 0) + 1,
+                                (edit.range?.start?.character || 0) + 1,
+                                (edit.range?.end?.line || 0) + 1,
+                                (edit.range?.end?.character || 0) + 1
+                            ),
+                            text: edit.newText || ''
+                        }));
+                    } catch (_) {
+                        return [];
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspCodeActionProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:codeAction`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册代码操作提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerCodeActionProvider(language, {
+                providedCodeActionKinds: [
+                    monaco.languages.CodeActionKind.QuickFix,
+                    monaco.languages.CodeActionKind.Refactor,
+                    monaco.languages.CodeActionKind.Source
+                ],
+                provideCodeActions: async (model, range, context) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return { actions: [], dispose: () => {} };
+                        if (!this.lspClient) return { actions: [], dispose: () => {} };
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return { actions: [], dispose: () => {} };
+
+                        const diagnostics = Array.isArray(context?.markers)
+                            ? context.markers.map((m) => ({
+                                range: {
+                                    start: { line: m.startLineNumber - 1, character: m.startColumn - 1 },
+                                    end: { line: m.endLineNumber - 1, character: m.endColumn - 1 }
+                                },
+                                severity: m.severity,
+                                message: m.message || '',
+                                source: m.source || ''
+                            }))
+                            : [];
+
+                        const result = await this.lspClient.request('textDocument/codeAction', {
+                            textDocument: { uri },
+                            range: {
+                                start: { line: range.startLineNumber - 1, character: range.startColumn - 1 },
+                                end: { line: range.endLineNumber - 1, character: range.endColumn - 1 }
+                            },
+                            context: { diagnostics }
+                        });
+                        if (!Array.isArray(result)) return { actions: [], dispose: () => {} };
+
+                        const actions = result.filter(Boolean).map((item) => {
+                            const action = {
+                                title: item.title || '',
+                                kind: item.kind || monaco.languages.CodeActionKind.QuickFix,
+                                diagnostics: Array.isArray(item.diagnostics) ? item.diagnostics.map((d) => ({
+                                    severity: d.severity || 0,
+                                    message: d.message || ''
+                                })) : undefined,
+                                edit: item.edit ? {
+                                    edits: Object.entries(item.edit.changes || {}).flatMap(([docUri, docEdits]) =>
+                                        docEdits.map((edit) => ({
+                                            resource: monaco.Uri.parse(docUri),
+                                            versionId: undefined,
+                                            textEdit: {
+                                                range: new monaco.Range(
+                                                    (edit.range?.start?.line || 0) + 1,
+                                                    (edit.range?.start?.character || 0) + 1,
+                                                    (edit.range?.end?.line || 0) + 1,
+                                                    (edit.range?.end?.character || 0) + 1
+                                                ),
+                                                text: edit.newText || ''
+                                            }
+                                        }))
+                                    )
+                                } : undefined,
+                                command: item.command ? {
+                                    id: item.command.command || '',
+                                    title: item.command.title || '',
+                                    arguments: item.command.arguments
+                                } : undefined
+                            };
+                            return action;
+                        });
+                        return { actions, dispose: () => {} };
+                    } catch (_) {
+                        return { actions: [], dispose: () => {} };
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspTypeDefinitionProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:typeDefinition`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册类型定义提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerTypeDefinitionProvider(language, {
+                provideTypeDefinition: async (model, position) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return [];
+                        if (!this.lspClient) return [];
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return [];
+
+                        const result = await this.lspClient.request('textDocument/typeDefinition', {
+                            textDocument: { uri },
+                            position: {
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            }
+                        });
+                        if (!result) return null;
+
+                        const locations = Array.isArray(result) ? result : [result];
+                        return locations.filter(Boolean).map((loc) => ({
+                            uri: monaco.Uri.parse(loc.uri || ''),
+                            range: new monaco.Range(
+                                (loc.range?.start?.line || 0) + 1,
+                                (loc.range?.start?.character || 0) + 1,
+                                (loc.range?.end?.line || 0) + 1,
+                                (loc.range?.end?.character || 0) + 1
+                            )
+                        }));
+                    } catch (_) {
+                        return [];
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspImplementationProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:implementation`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册实现提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerImplementationProvider(language, {
+                provideImplementation: async (model, position) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return [];
+                        if (!this.lspClient) return [];
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return [];
+
+                        const result = await this.lspClient.request('textDocument/implementation', {
+                            textDocument: { uri },
+                            position: {
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            }
+                        });
+                        if (!result) return null;
+
+                        const locations = Array.isArray(result) ? result : [result];
+                        return locations.filter(Boolean).map((loc) => ({
+                            uri: monaco.Uri.parse(loc.uri || ''),
+                            range: new monaco.Range(
+                                (loc.range?.start?.line || 0) + 1,
+                                (loc.range?.start?.character || 0) + 1,
+                                (loc.range?.end?.line || 0) + 1,
+                                (loc.range?.end?.character || 0) + 1
+                            )
+                        }));
+                    } catch (_) {
+                        return [];
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspDocumentHighlightProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:documentHighlight`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册文档高亮提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerDocumentHighlightProvider(language, {
+                provideDocumentHighlights: async (model, position) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return [];
+                        if (!this.lspClient) return [];
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return [];
+
+                        const result = await this.lspClient.request('textDocument/documentHighlight', {
+                            textDocument: { uri },
+                            position: {
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            }
+                        });
+                        if (!Array.isArray(result)) return [];
+
+                        return result.filter(Boolean).map((item) => ({
+                            range: new monaco.Range(
+                                (item.range?.start?.line || 0) + 1,
+                                (item.range?.start?.character || 0) + 1,
+                                (item.range?.end?.line || 0) + 1,
+                                (item.range?.end?.character || 0) + 1
+                            ),
+                            kind: item.kind || 0
+                        }));
+                    } catch (_) {
+                        return [];
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspWorkspaceSymbolProvider() {
+        if (this._lspProviders.has('workspace:symbol')) return;
+        logInfo('[LSP] 注册工作区符号提供器');
+        const disposable = monaco.languages.registerWorkspaceSymbolProvider({
+            provideWorkspaceSymbols: async (query) => {
+                try {
+                    if (!this.lspClient) return [];
+                    const result = await this.lspClient.request('workspace/symbol', { query });
+                    if (!Array.isArray(result)) return [];
+
+                    const kindMap = {
+                        1: monaco.languages.SymbolKind.File,
+                        2: monaco.languages.SymbolKind.Module,
+                        3: monaco.languages.SymbolKind.Namespace,
+                        4: monaco.languages.SymbolKind.Package,
+                        5: monaco.languages.SymbolKind.Class,
+                        6: monaco.languages.SymbolKind.Method,
+                        7: monaco.languages.SymbolKind.Property,
+                        8: monaco.languages.SymbolKind.Field,
+                        9: monaco.languages.SymbolKind.Constructor,
+                        10: monaco.languages.SymbolKind.Enum,
+                        11: monaco.languages.SymbolKind.Interface,
+                        12: monaco.languages.SymbolKind.Function,
+                        13: monaco.languages.SymbolKind.Variable,
+                        14: monaco.languages.SymbolKind.Constant,
+                        15: monaco.languages.SymbolKind.String,
+                        16: monaco.languages.SymbolKind.Number,
+                        17: monaco.languages.SymbolKind.Boolean,
+                        18: monaco.languages.SymbolKind.Array,
+                        19: monaco.languages.SymbolKind.Object,
+                        20: monaco.languages.SymbolKind.Key,
+                        21: monaco.languages.SymbolKind.Null,
+                        22: monaco.languages.SymbolKind.EnumMember,
+                        23: monaco.languages.SymbolKind.Struct,
+                        24: monaco.languages.SymbolKind.Event,
+                        25: monaco.languages.SymbolKind.Operator,
+                        26: monaco.languages.SymbolKind.TypeParameter
+                    };
+
+                    return result.filter(Boolean).map((sym) => ({
+                        name: sym.name || '',
+                        containerName: sym.containerName || '',
+                        kind: kindMap[sym.kind] || monaco.languages.SymbolKind.Variable,
+                        location: {
+                            uri: monaco.Uri.parse(sym.location?.uri || ''),
+                            range: new monaco.Range(
+                                (sym.location?.range?.start?.line || 0) + 1,
+                                (sym.location?.range?.start?.character || 0) + 1,
+                                (sym.location?.range?.end?.line || 0) + 1,
+                                (sym.location?.range?.end?.character || 0) + 1
+                            )
+                        }
+                    }));
+                } catch (_) {
+                    return [];
+                }
+            }
+        });
+        this._lspProviders.set('workspace:symbol', disposable);
+    }
+
+    _registerLspCodeLensProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:codeLens`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册代码透镜提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerCodeLensProvider(language, {
+                provideCodeLenses: async (model) => {
+                    try {
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return { lenses: [], dispose: () => {} };
+                        if (!this.lspClient) return { lenses: [], dispose: () => {} };
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return { lenses: [], dispose: () => {} };
+
+                        const result = await this.lspClient.request('textDocument/codeLens', {
+                            textDocument: { uri }
+                        });
+                        if (!Array.isArray(result)) return { lenses: [], dispose: () => {} };
+
+                        const lenses = result.filter(Boolean).map((item) => ({
+                            range: new monaco.Range(
+                                (item.range?.start?.line || 0) + 1,
+                                (item.range?.start?.character || 0) + 1,
+                                (item.range?.end?.line || 0) + 1,
+                                (item.range?.end?.character || 0) + 1
+                            ),
+                            command: item.command ? {
+                                id: item.command.command || '',
+                                title: item.command.title || '',
+                                arguments: item.command.arguments
+                            } : undefined
+                        }));
+                        return { lenses, dispose: () => {} };
+                    } catch (_) {
+                        return { lenses: [], dispose: () => {} };
                     }
                 }
             });
@@ -5124,6 +5641,38 @@ class MonacoEditorManager {
     async formatCppCode() {
         try {
             const model = this.currentEditor.getModel();
+
+            const lspReady = await this._ensureLspDocumentReady(model);
+            if (lspReady && this.lspClient) {
+                try {
+                    const uri = await this.getDocumentUriForModel(model);
+                    if (uri) {
+                        const opts = this.currentEditor.getOptions();
+                        const tabSize = opts.get(monaco.editor.EditorOption.tabSize) || 4;
+                        const result = await this.lspClient.request('textDocument/formatting', {
+                            textDocument: { uri },
+                            options: { tabSize, insertSpaces: true }
+                        });
+                        if (Array.isArray(result) && result.length > 0) {
+                            const edits = result.filter(Boolean).map((edit) => ({
+                                range: new monaco.Range(
+                                    (edit.range?.start?.line || 0) + 1,
+                                    (edit.range?.start?.character || 0) + 1,
+                                    (edit.range?.end?.line || 0) + 1,
+                                    (edit.range?.end?.character || 0) + 1
+                                ),
+                                text: edit.newText || ''
+                            }));
+                            this.currentEditor.executeEdits('format', edits);
+                            logInfo('[LSP] 代码格式化完成 (clang-format)');
+                            return true;
+                        }
+                    }
+                } catch (lspErr) {
+                    logWarn('[LSP] 格式化请求失败，回退到本地格式化:', lspErr?.message || lspErr);
+                }
+            }
+
             const content = model.getValue();
 
             // 优先使用 clangd LSP 格式化（对模板/宏/复杂表达式更准确）。
@@ -5148,8 +5697,6 @@ class MonacoEditorManager {
                 formattedContent = content;
             }
 
-            // Formatting must never introduce invisible trailing blanks. They
-            // are especially confusing when a line is selected or copied.
             formattedContent = formattedContent.replace(/[\t ]+(?=\r?\n|$)/g, '');
             
             if (formattedContent !== content) {
@@ -5423,6 +5970,73 @@ class MonacoEditorManager {
             const word = model.getWordAtPosition(pos);
             const name = word?.word || '';
             if (!name) return;
+
+            const lspReady = await this._ensureLspDocumentReady(model);
+            if (lspReady && this.lspClient) {
+                try {
+                    const uri = await this.getDocumentUriForModel(model);
+                    if (uri) {
+                        const prepareResult = await this.lspClient.request('textDocument/prepareRename', {
+                            textDocument: { uri },
+                            position: { line: pos.lineNumber - 1, character: pos.column - 1 }
+                        });
+                        if (prepareResult === null) {
+                            logWarn('[LSP] 服务器拒绝在此位置重命名');
+                            return;
+                        }
+
+                        let newName = null;
+                        try {
+                            if (window.dialogManager?.showInputDialog) {
+                                newName = await window.dialogManager.showInputDialog('重命名标识符', name, '输入新的名称');
+                            } else {
+                                newName = window.prompt('重命名为:', name);
+                            }
+                        } catch (_) {}
+                        if (!newName || newName === name) return;
+
+                        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newName)) {
+                            (window.logWarn||console.warn)('非法的标识符名称');
+                            return;
+                        }
+
+                        const renameResult = await this.lspClient.request('textDocument/rename', {
+                            textDocument: { uri },
+                            position: { line: pos.lineNumber - 1, character: pos.column - 1 },
+                            newName
+                        });
+                        if (renameResult && renameResult.changes) {
+                            const allEdits = [];
+                            for (const [docUri, docEdits] of Object.entries(renameResult.changes)) {
+                                for (const edit of docEdits) {
+                                    allEdits.push({
+                                        resource: monaco.Uri.parse(docUri),
+                                        versionId: undefined,
+                                        textEdit: {
+                                            range: new monaco.Range(
+                                                (edit.range?.start?.line || 0) + 1,
+                                                (edit.range?.start?.character || 0) + 1,
+                                                (edit.range?.end?.line || 0) + 1,
+                                                (edit.range?.end?.character || 0) + 1
+                                            ),
+                                            text: edit.newText || ''
+                                        }
+                                    });
+                                }
+                            }
+                            if (allEdits.length > 0) {
+                                await editor.executeEdits('lsp-rename', allEdits.map(e => ({
+                                    range: e.textEdit.range,
+                                    text: e.textEdit.text
+                                })));
+                                return;
+                            }
+                        }
+                    }
+                } catch (lspErr) {
+                    logWarn('[LSP] 重命名请求失败，回退到本地重命名:', lspErr?.message || lspErr);
+                }
+            }
 
             let newName = null;
             try {
