@@ -4741,29 +4741,30 @@ class TabManager {
     }
 
     getWelcomePageContent() {
+        const t = window.__ || ((k) => k);
         return `
             <div class="welcome-page">
                 <div class="welcome-header">
                     <img class="welcome-logo-image" alt="OICPP-Plus Logo">
                     <div class="welcome-logo">OICPP-Plus</div>
-                    <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
-                    <div class="welcome-version">版本 1.5.4 (v49)</div>
+                    <div class="welcome-subtitle">${t('welcome.subtitle')}</div>
+                    <div class="welcome-version">${t('app.version')} 1.5.4 (v49)</div>
                 </div>
                 
                 <div class="welcome-content">
                     <div class="welcome-section">
-                        <h3>开始</h3>
+                        <h3>${t('welcome.getStarted')}</h3>
                         <div class="welcome-actions">
                             <a href="#" class="welcome-action" data-action="open-folder">
                                 <span class="icon" data-ui-icon="folder" aria-hidden="true"></span>
-                                <span>打开文件夹</span>
+                                <span>${t('welcome.openFolder')}</span>
                                 <span class="shortcut">Ctrl+K</span>
                             </a>
                         </div>
                     </div>
                     
                     <div class="welcome-section">
-                        <h3>最近打开</h3>
+                        <h3>${t('welcome.recentFiles')}</h3>
                         <div class="welcome-recent" id="welcome-recent">
                             <!-- 最近文件列表将动态生成 -->
                         </div>
@@ -4771,8 +4772,8 @@ class TabManager {
                 </div>
                 
                 <div class="welcome-footer">
-                    <p>OICPP-Plus - 为竞赛编程而生</p>
-                    <p><a href="#">使用文档</a> | <a href="#">快捷键</a> | <a href="#">关于</a></p>
+                    <p>${t('welcome.footer')}</p>
+                    <p><a href="#">${t('welcome.docs')}</a> | <a href="#">${t('welcome.shortcuts')}</a> | <a href="#">${t('welcome.about')}</a></p>
                 </div>
             </div>
         `;
@@ -5162,41 +5163,42 @@ void hello() {
     }
 
     getWelcomePageContent() {
+        const t = window.__ || ((k) => k);
         return `
             <div class="welcome-page">
                 <div class="welcome-header">
                     <img class="welcome-logo-image" alt="OICPP-Plus Logo">
                     <div class="welcome-logo">OICPP-Plus</div>
-                    <div class="welcome-subtitle">为 OIer 优化的 C++ 编程环境</div>
-                    <div class="welcome-version">版本 1.5.4 (v49)</div>
+                    <div class="welcome-subtitle">${t('welcome.subtitle')}</div>
+                    <div class="welcome-version">${t('app.version')} 1.5.4 (v49)</div>
                 </div>
                 
                 <div class="welcome-content">
                     <div class="welcome-section">
-                        <h3>开始</h3>
+                        <h3>${t('welcome.getStarted')}</h3>
                         <div class="welcome-actions">
                             <a href="#" class="welcome-action" data-action="open-folder">
                                 <span class="icon" data-ui-icon="folder" aria-hidden="true"></span>
-                                <span>打开文件夹</span>
+                                <span>${t('welcome.openFolder')}</span>
                                 <span class="shortcut">Ctrl+K</span>
                             </a>
                         </div>
                     </div>
                     
                     <div class="welcome-section">
-                        <h3>最近打开</h3>
+                        <h3>${t('welcome.recentFiles')}</h3>
                         <div class="welcome-recent" id="welcome-recent">
                             <div class="welcome-recent-item">
                                 <span class="icon" data-ui-icon="file" aria-hidden="true"></span>
-                                <span>暂无最近文件</span>
+                                <span>${t('welcome.noRecentFiles')}</span>
                             </div>
                         </div>
                     </div>
                 </div>
                 
                 <div class="welcome-footer">
-                    <p>OICPP-Plus - 为 OIer 优化的 C++ 编程环境</p>
-                    <p>版本 1.5.4 (v49), Copyright (C) 2025 mywwzh. 修改: qingyingge.</p>
+                    <p>${t('welcome.footer')}</p>
+                    <p>${t('app.version')} 1.5.4 (v49), Copyright (C) 2025 mywwzh. Modified by qingyingge.</p>
                 </div>
             </div>
         `;

@@ -306,8 +306,8 @@ class IntegratedTerminalPanel {
         if (typeof unicode11AddonCtor !== 'function') {
             this.status = {
                 available: false,
-                reason: 'xterm Unicode11 插件未加载',
-                detail: '请确认已安装 @xterm/addon-unicode11'
+                reason: window.__ ? window.__('terminal.unicodeAddonMissing') : 'xterm Unicode11 插件未加载',
+                detail: window.__ ? window.__('terminal.unicodeAddonDetail') : '请确认已安装 @xterm/addon-unicode11'
             };
             this.renderStatus();
             this.renderEmptyState();
@@ -321,7 +321,9 @@ class IntegratedTerminalPanel {
         tab.type = 'button';
         tab.className = 'integrated-terminal-tab pending';
         tab.dataset.terminalId = tabId;
-        tab.innerHTML = `<span class="terminal-tab-label">终端 ${this.counter}</span><span class="terminal-tab-close" aria-label="关闭终端">×</span>`;
+        const tabLabel = window.__ ? window.__('terminal.tabLabel', { counter: this.counter }) : `终端 ${this.counter}`;
+        const closeLabel = window.__ ? window.__('terminal.closeTerminal') : '关闭终端';
+        tab.innerHTML = `<span class="terminal-tab-label">${tabLabel}</span><span class="terminal-tab-close" aria-label="${closeLabel}">×</span>`;
 
         const pane = document.createElement('div');
         pane.className = 'integrated-terminal-pane';

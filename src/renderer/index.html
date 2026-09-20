@@ -546,7 +546,7 @@
                 
                 <div class="panel-content" id="debug-panel">
                     <div class="panel-header">
-                        <span class="panel-title">调试</span>
+                        <span class="panel-title" data-i18n="sidebar.debug">调试</span>
                     </div>
                     <div class="debug-content">
                     </div>
@@ -554,29 +554,29 @@
 
                 <div class="panel-content" id="cloud-panel" style="display: none;">
                     <div class="panel-header">
-                        <span class="panel-title">云空间</span>
+                        <span class="panel-title" data-i18n="sidebar.cloudSpace">云空间</span>
                         <div class="panel-actions">
-                            <button class="icon-btn" data-action="cloud-new-file" title="新建文件" tabindex="-1">
+                            <button class="icon-btn" data-action="cloud-new-file" data-i18n-title="cloud.newFile" title="新建文件" tabindex="-1">
                                 <svg width="16" height="16" viewBox="0 0 16 16">
                                     <path d="M12 2H4a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2zM9 9H7v2H6V9H4V8h2V6h1v2h2v1z"/>
                                 </svg>
                             </button>
-                            <button class="icon-btn" data-action="cloud-new-folder" title="新建文件夹" tabindex="-1">
+                            <button class="icon-btn" data-action="cloud-new-folder" data-i18n-title="cloud.newFolder" title="新建文件夹" tabindex="-1">
                                 <svg width="16" height="16" viewBox="0 0 16 16">
                                     <path d="M14.5 3H7.71l-.85-.85A1.5 1.5 0 0 0 5.79 2H1.5A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 14.5 3zM8 8H6v2H5V8H3V7h2V5h1v2h2v1z"/>
                                 </svg>
                             </button>
-                            <button class="icon-btn" data-action="cloud-upload" title="上传文件" tabindex="-1">
+                            <button class="icon-btn" data-action="cloud-upload" data-i18n-title="cloud.uploadFile" title="上传文件" tabindex="-1">
                                 <svg width="16" height="16" viewBox="0 0 16 16">
                                     <path d="M8 2l3 3H9v4H7V5H5l3-3zm-4 9h8v2H4v-2z"/>
                                 </svg>
                             </button>
-                            <button class="icon-btn" data-action="cloud-upload-folder" title="上传文件夹" tabindex="-1">
+                            <button class="icon-btn" data-action="cloud-upload-folder" data-i18n-title="cloud.uploadFolder" title="上传文件夹" tabindex="-1">
                                 <svg width="16" height="16" viewBox="0 0 16 16">
                                     <path d="M14.5 3H7.71l-.85-.85A1.5 1.5 0 0 0 5.79 2H1.5A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h13a1.5 1.5 0 0 0 1.5-1.5v-8A1.5 1.5 0 0 0 14.5 3zM8 6l2.5 2.5H9v3H7v-3H5.5L8 6z"/>
                                 </svg>
                             </button>
-                            <button class="icon-btn" data-action="cloud-refresh" title="刷新" tabindex="-1">
+                            <button class="icon-btn" data-action="cloud-refresh" data-i18n-title="cloud.refresh" title="刷新" tabindex="-1">
                                 <svg width="16" height="16" viewBox="0 0 16 16">
                                     <path d="M13.65 2.35a8 8 0 0 0-11.3 0 8 8 0 0 0 0 11.3 8 8 0 0 0 11.3 0 8 8 0 0 0 0-11.3zm-1.41 9.9a6 6 0 0 1-8.48 0 6 6 0 0 1 0-8.48 6 6 0 0 1 8.48 0 6 6 0 0 1 0 8.48z"/>
                                 </svg>
@@ -585,12 +585,12 @@
                     </div>
                     <div class="cloud-summary" id="cloud-summary">
                         <div class="cloud-summary-text-row">
-                            <div class="cloud-summary-text" id="cloud-remaining">剩余文件数量: --</div>
-                            <button class="cloud-quota-help-btn" id="cloud-quota-help-btn" title="查看云空间限额说明" aria-label="查看云空间限额说明" tabindex="-1">?</button>
+                            <div class="cloud-summary-text" id="cloud-remaining" data-i18n="cloud.remainingFilesUnknown">剩余文件数量: --</div>
+                            <button class="cloud-quota-help-btn" id="cloud-quota-help-btn" data-i18n-title="cloudPanel.quotaHelp" title="查看云空间限额说明" aria-label="查看云空间限额说明" tabindex="-1">?</button>
                         </div>
-                        <div class="cloud-summary-hint">仅支持 .ans .in .out .cpp .py .txt .md .h .hpp，单文件 ≤ 50KB</div>
+                        <div class="cloud-summary-hint" data-i18n="cloudPanel.supportedFilesHint">仅支持 .ans .in .out .cpp .py .txt .md .h .hpp，单文件 ≤ 50KB</div>
                         <div class="cloud-upload-progress" id="cloud-upload-progress" style="display: none;">
-                            <div class="cloud-upload-progress-text" id="cloud-upload-progress-text">准备上传...</div>
+                            <div class="cloud-upload-progress-text" id="cloud-upload-progress-text" data-i18n="cloudPanel.prepareUpload">准备上传...</div>
                             <div class="cloud-upload-progress-bar">
                                 <div class="cloud-upload-progress-fill" id="cloud-upload-progress-fill"></div>
                             </div>
@@ -618,17 +618,17 @@
                 </div>
 
                 <aside class="integrated-terminal-panel collapsed" id="integrated-terminal-panel">
-                    <div class="integrated-terminal-resizer" id="integrated-terminal-resizer" title="拖动调整终端高度"></div>
+                    <div class="integrated-terminal-resizer" id="integrated-terminal-resizer" data-i18n-title="cloudPanel.dragToResize" title="拖动调整终端高度"></div>
                     <div class="integrated-terminal-header">
-                        <span class="integrated-terminal-title">终端</span>
+                        <span class="integrated-terminal-title" data-i18n="terminal.title">终端</span>
                         <div class="integrated-terminal-header-actions">
-                            <button class="icon-btn" id="integrated-terminal-new" title="新建终端" tabindex="-1">+</button>
-                            <button class="icon-btn" id="integrated-terminal-hide" title="隐藏终端" tabindex="-1">×</button>
+                            <button class="icon-btn" id="integrated-terminal-new" data-i18n-title="terminal.newTerminal" title="新建终端" tabindex="-1">+</button>
+                            <button class="icon-btn" id="integrated-terminal-hide" data-i18n-title="terminal.hideTerminal" title="隐藏终端" tabindex="-1">×</button>
                         </div>
                     </div>
                     <div class="integrated-terminal-tabs" id="integrated-terminal-tabs"></div>
                     <div class="integrated-terminal-body" id="integrated-terminal-body">
-                        <div class="integrated-terminal-empty" id="integrated-terminal-empty">点击“新建终端”开始使用内置终端</div>
+                        <div class="integrated-terminal-empty" id="integrated-terminal-empty" data-i18n="terminal.emptyHint">点击"新建终端"开始使用内置终端</div>
                     </div>
                 </aside>
             </div>
@@ -637,25 +637,25 @@
 
     <div class="status-bar">
         <div class="status-left">
-            <span class="status-item cursor-position">行 1, 列 1</span>
+            <span class="status-item cursor-position" data-i18n="statusbar.cursorPosition" data-i18n-args='{"line":1,"col":1}'>行 1, 列 1</span>
             <span class="status-item encoding">UTF-8</span>
             <span class="status-item language">C++</span>
-            <span class="status-item lsp-status" id="lsp-status-item" title="语言服务器状态">
+            <span class="status-item lsp-status" id="lsp-status-item" data-i18n-title="statusbar.lspStatus" title="语言服务器状态">
                 <span class="lsp-status-icon">◌</span><span class="lsp-status-label">clangd</span>
             </span>
-            <span class="status-item marker-summary" id="marker-summary-item" title="错误和警告" style="display: none;">
+            <span class="status-item marker-summary" id="marker-summary-item" data-i18n-title="statusbar.errorsAndWarnings" title="错误和警告" style="display: none;">
                 <span class="marker-errors" id="marker-errors-count"></span>
                 <span class="marker-warnings" id="marker-warnings-count"></span>
             </span>
         </div>
         <div class="status-right">
-            <span class="status-item"><span class="status-icon" data-ui-icon="check"></span>就绪</span>
+            <span class="status-item"><span class="status-icon" data-ui-icon="check"></span><span data-i18n="statusbar.ready">就绪</span></span>
         </div>
     </div>
 
     <div id="quick-open-overlay" class="quick-open-overlay" aria-hidden="true">
         <div class="quick-open-container" role="dialog" aria-modal="true">
-            <input id="quick-open-input" class="quick-open-input" type="text" placeholder="输入文件名以在工作区搜索... (Esc 关闭)" aria-label="快速打开：输入文件名">
+            <input id="quick-open-input" class="quick-open-input" type="text" data-i18n-placeholder="menu.searchFiles" placeholder="输入文件名以在工作区搜索... (Esc 关闭)" aria-label="快速打开：输入文件名">
             <div id="quick-open-results" class="quick-open-results" role="listbox" aria-label="搜索结果">
             </div>
         </div>

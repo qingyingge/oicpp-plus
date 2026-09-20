@@ -395,13 +395,21 @@
     "compiling": "Compiling...",
     "running": "Running...",
     "debugging": "Debugging",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "cursorPosition": "Ln {line}, Col {col}",
+    "lspStatus": "Language Server Status",
+    "errorsAndWarnings": "Errors and Warnings"
   },
   "terminal": {
     "title": "Terminal",
     "newTerminal": "New Terminal",
     "closeTerminal": "Close Terminal",
-    "killTerminal": "Kill Terminal"
+    "killTerminal": "Kill Terminal",
+    "tabLabel": "Terminal {counter}",
+    "emptyHint": "Click \"New Terminal\" to start using the built-in terminal",
+    "hideTerminal": "Hide Terminal",
+    "unicodeAddonMissing": "xterm Unicode11 addon not loaded",
+    "unicodeAddonDetail": "Please ensure @xterm/addon-unicode11 is installed"
   },
   "compiler": {
     "settings": "Compiler Settings",
@@ -1041,5 +1049,22 @@
     "insecure": "Insecure connection",
     "secure": "Secure connection",
     "defaultTitle": "Browser"
+  },
+  "welcome": {
+    "subtitle": "C++ development environment optimized for OI competitors",
+    "getStarted": "Get Started",
+    "openFolder": "Open Folder",
+    "recentFiles": "Recent Files",
+    "noRecentFiles": "No recent files",
+    "footer": "OICPP-Plus - Built for competitive programming",
+    "docs": "Documentation",
+    "shortcuts": "Shortcuts",
+    "about": "About"
+  },
+  "cloudPanel": {
+    "quotaHelp": "View cloud space quota",
+    "supportedFilesHint": "Supported: .ans .in .out .cpp .py .txt .md .h .hpp, max 50KB per file",
+    "prepareUpload": "Preparing upload...",
+    "dragToResize": "Drag to resize terminal"
   }
 }

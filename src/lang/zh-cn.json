@@ -378,13 +378,21 @@
     "compiling": "编译中...",
     "running": "运行中...",
     "debugging": "调试中",
-    "saving": "保存中..."
+    "saving": "保存中...",
+    "cursorPosition": "行 {line}, 列 {col}",
+    "lspStatus": "语言服务器状态",
+    "errorsAndWarnings": "错误和警告"
   },
   "terminal": {
     "title": "终端",
     "newTerminal": "新建终端",
     "closeTerminal": "关闭终端",
-    "killTerminal": "终止终端"
+    "killTerminal": "终止终端",
+    "tabLabel": "终端 {counter}",
+    "emptyHint": "点击"新建终端"开始使用内置终端",
+    "hideTerminal": "隐藏终端",
+    "unicodeAddonMissing": "xterm Unicode11 插件未加载",
+    "unicodeAddonDetail": "请确认已安装 @xterm/addon-unicode11"
   },
   "compiler": {
     "settings": "编译器设置",
@@ -1041,5 +1049,22 @@
     "insecure": "连接不安全",
     "secure": "连接安全",
     "defaultTitle": "内置浏览器"
+  },
+  "welcome": {
+    "subtitle": "为 OIer 优化的 C++ 编程环境",
+    "getStarted": "开始",
+    "openFolder": "打开文件夹",
+    "recentFiles": "最近打开",
+    "noRecentFiles": "暂无最近文件",
+    "footer": "OICPP-Plus - 为竞赛编程而生",
+    "docs": "使用文档",
+    "shortcuts": "快捷键",
+    "about": "关于"
+  },
+  "cloudPanel": {
+    "quotaHelp": "查看云空间限额说明",
+    "supportedFilesHint": "仅支持 .ans .in .out .cpp .py .txt .md .h .hpp，单文件 ≤ 50KB",
+    "prepareUpload": "准备上传...",
+    "dragToResize": "拖动调整终端高度"
   }
 }
