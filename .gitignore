@@ -14,6 +14,11 @@ build/clangd/_download/
 # CI 输出
 ci-output.txt
 
+# 生成的状态/差异文件
+status.txt
+head-full.txt
+head-full.diff
+
 # 二进制可执行文件（源码见 src/utils/consolepauser-source.js）
 ConsolePauser.exe
 
