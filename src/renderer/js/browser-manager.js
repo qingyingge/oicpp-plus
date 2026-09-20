@@ -204,7 +204,7 @@ class BrowserManager {
         const urlInput = document.createElement('input');
         urlInput.type = 'text';
         urlInput.className = 'browser-url-input';
-        urlInput.setAttribute('placeholder', window.i18n ? window.i18n.t('browser.urlPlaceholder') : '输入网址或搜索...');
+        urlInput.setAttribute('placeholder', ('browser.urlPlaceholder'));
         urlInput.value = initialUrl?.startsWith('data:text/html') ? '' : (initialUrl || '');
         urlInput.setAttribute('spellcheck', 'false');
         urlInput.setAttribute('autocomplete', 'off');
@@ -219,7 +219,7 @@ class BrowserManager {
             '<path d="M7 7V5h2v2h2v2H9v2H7V9H5V7h2z" fill="currentColor"/>',
             '</svg>'
         ].join('');
-        openNewTabBtn.title = window.i18n ? window.i18n.t('browser.openInNewTab') : '新建浏览器标签页';
+        openNewTabBtn.title = ('browser.openInNewTab');
         navBar.appendChild(openNewTabBtn);
 
         // 导航按钮事件
@@ -440,7 +440,7 @@ class BrowserManager {
                 '<rect x="6" y="6" width="12" height="12" rx="2"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = window.i18n ? window.i18n.t('browser.stop') : '停止';
+            reloadBtn.title = ('browser.stop');
             reloadBtn.dataset.action = 'stop';
         } else {
             reloadBtn.innerHTML = [
@@ -449,7 +449,7 @@ class BrowserManager {
                 '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = window.i18n ? window.i18n.t('browser.reload') : '刷新';
+            reloadBtn.title = ('browser.reload');
             reloadBtn.dataset.action = 'reload';
         }
     }

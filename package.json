@@ -36,12 +36,13 @@
     "webpack-cli": "^6.0.1"
   },
   "dependencies": {
+    "7zip-bin": "^5.2.0",
     "@iktakahiro/markdown-it-katex": "^4.0.1",
     "@xterm/addon-unicode11": "^0.9.0",
-    "7zip-bin": "^5.2.0",
     "axios": "latest",
     "extract-zip": "latest",
     "highlight.js": "^11.11.1",
+    "i18next": "^26.4.2",
     "iconv-lite": "^0.6.3",
     "katex": "^0.16.25",
     "markdown-it": "^14.1.0",

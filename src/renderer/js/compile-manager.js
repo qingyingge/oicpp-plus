@@ -1046,7 +1046,7 @@ class CompilerManager {
             seen.add(key);
             items.push({
                 severity: diag.severity,
-                location: diag.location || (window.i18n ? window.i18n.t('compileOutput.title') : 'Compile Output'),
+                location: diag.location || (('compileOutput.title')),
                 message: diag.message,
                 hint: translated || hint.title,
                 suggestion: hint.suggestion
@@ -1059,7 +1059,7 @@ class CompilerManager {
                 const hint = this.buildHintFromMessage(text);
                 items.push({
                     severity: 'error',
-                    location: window.i18n ? window.i18n.t('compileOutput.title') : 'Compile Output',
+                    location: ('compileOutput.title'),
                     message: this.translateMessage(text),
                     hint: hint.title,
                     suggestion: hint.suggestion

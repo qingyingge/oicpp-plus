@@ -26,7 +26,7 @@ class CloudSyncPanel {
         this.bindHeaderActions();
         this.setupTreeEvents();
         this.setupKeyboardShortcuts();
-        this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+        this.renderEmptyState(('cloud.loginRequired'));
     }
 
     bindQuotaHelpAction() {
@@ -221,7 +221,7 @@ class CloudSyncPanel {
             this.expandedFolders = new Set(['/']);
             this.selectedItems.clear();
             this.updateRemaining(null);
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+            this.renderEmptyState(('cloud.loginRequired'));
             return;
         }
         this.refresh();
@@ -236,7 +236,7 @@ class CloudSyncPanel {
         } catch (_) { }
 
         if (!this._lastLoggedIn) {
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+            this.renderEmptyState(('cloud.loginRequired'));
             return;
         }
         this.refresh();
@@ -245,7 +245,7 @@ class CloudSyncPanel {
     async refresh() {
         if (this.isLoading) return;
         if (!this._lastLoggedIn) {
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户');
+            this.renderEmptyState(('cloud.loginRequired'));
             return;
         }
         this.isLoading = true;
@@ -253,7 +253,7 @@ class CloudSyncPanel {
             await this.loadDirectory('/');
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.refreshFail') : '刷新失败'), 'error');
+            this.showMessage(error?.message || (('cloud.refreshFail')), 'error');
         } finally {
             this.isLoading = false;
         }
@@ -281,7 +281,7 @@ class CloudSyncPanel {
         if (!this.treeEl) return;
         const rootItems = this.itemsCache.get('/') || [];
         if (rootItems.length === 0) {
-            this.renderEmptyState(window.i18n ? window.i18n.t('cloud.noFiles') : '云空间还没有文件');
+            this.renderEmptyState(('cloud.noFiles'));
             return;
         }
         this.treeEl.innerHTML = '';
@@ -360,11 +360,11 @@ class CloudSyncPanel {
 
         if (sourcePath === targetPath) return;
         if (sourceType === 'folder' && this.isDescendantPath(targetPath, sourcePath)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.moveSelf') : '不能将文件夹移动到自身或子目录中', 'warning');
+            this.showMessage(('cloud.moveSelf'), 'warning');
             return;
         }
 
-        const ok = await window.dialogManager?.showConfirmDialog?.(window.i18n ? window.i18n.t('cloud.moveConfirm') : '移动确认', window.i18n ? window.i18n.t('cloud.moveConfirmMsg', {name, targetFolder}) : `确定移动 ${name} 到 ${targetFolder} 吗？`);
+        const ok = await window.dialogManager?.showConfirmDialog?.(('cloud.moveConfirm'), ('cloud.moveConfirmMsg', {name, targetFolder}));
         if (ok === false) return;
 
         try {
@@ -395,9 +395,9 @@ class CloudSyncPanel {
                 }
             }
             this.renderTree();
-            this.showMessage(window.i18n ? window.i18n.t('cloud.moveSuccess') : '移动完成', 'success');
+            this.showMessage(('cloud.moveSuccess'), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.moveFail') : '移动失败'), 'error');
+            this.showMessage(error?.message || (('cloud.moveFail')), 'error');
         }
     }
 
@@ -470,7 +470,7 @@ class CloudSyncPanel {
         this.expandedFolders.add(path);
         if (!this.itemsCache.has(path)) {
             this.loadDirectory(path).then(() => this.renderTree()).catch(err => {
-                this.showMessage(err?.message || (window.i18n ? window.i18n.t('cloud.loadFolderFail') : '加载文件夹失败'), 'error');
+                this.showMessage(err?.message || (('cloud.loadFolderFail')), 'error');
                 this.renderTree();
             });
         } else {
@@ -516,23 +516,23 @@ class CloudSyncPanel {
                 }
             }
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.openFileFail') : '打开文件失败'), 'error');
+            this.showMessage(error?.message || (('cloud.openFileFail')), 'error');
         }
     }
 
     async saveCloudFile(cloudPath, content) {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(('cloud.loginRequired'), 'warning');
             return false;
         }
         const bytes = new TextEncoder().encode(content || '').length;
         if (bytes > this.maxFileSize) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileSizeExceeded') : '文件大小超过 50KB，无法上传', 'error');
+            this.showMessage(('cloud.fileSizeExceeded'), 'error');
             return false;
         }
         const ext = this.getExtension(cloudPath);
         if (!this.allowedExtensions.has(ext)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileTypeNotSupported') : '仅支持 .ans .in .out .cpp .py .txt .md .h .hpp', 'error');
+            this.showMessage(('cloud.fileTypeNotSupported'), 'error');
             return false;
         }
         try {
@@ -544,14 +544,14 @@ class CloudSyncPanel {
             this.renderTree();
             return true;
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.saveFail') : '保存失败'), 'error');
+            this.showMessage(error?.message || (('cloud.saveFail')), 'error');
             return false;
         }
     }
 
     async createNewFile() {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(('cloud.loginRequired'), 'warning');
             return;
         }
         const name = await window.dialogManager?.showInputDialog('新建云端文件', 'untitled.cpp', '请输入文件名');
@@ -563,14 +563,14 @@ class CloudSyncPanel {
         }
         const ext = this.getExtension(name);
         if (!this.allowedExtensions.has(ext)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileTypeNotSupported') : '仅支持 .ans .in .out .cpp .py .txt .md .h .hpp', 'error');
+            this.showMessage(('cloud.fileTypeNotSupported'), 'error');
             return;
         }
         if (!this.checkRemainingCapacity()) return;
         const targetDir = this.getActionTargetFolder();
         await this.ensureDirectoryLoaded(targetDir);
         if (this.hasNameInDirectory(targetDir, name)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileExists') : '已存在同名文件或文件夹，请更换名称', 'warning');
+            this.showMessage(('cloud.fileExists'), 'warning');
             return;
         }
         const fullPath = this.joinPath(targetDir, name);
@@ -580,13 +580,13 @@ class CloudSyncPanel {
             this.renderTree();
             this.openCloudFile({ path: fullPath, name, type: 'file' });
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.newFileFail') : '新建文件失败'), 'error');
+            this.showMessage(error?.message || (('cloud.newFileFail')), 'error');
         }
     }
 
     async createNewFolder() {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(('cloud.loginRequired'), 'warning');
             return;
         }
         const name = await window.dialogManager?.showInputDialog('新建云端文件夹', 'new-folder', '请输入文件夹名');
@@ -600,7 +600,7 @@ class CloudSyncPanel {
         const targetDir = this.getActionTargetFolder();
         await this.ensureDirectoryLoaded(targetDir);
         if (this.hasNameInDirectory(targetDir, name)) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.fileExists') : '已存在同名文件或文件夹，请更换名称', 'warning');
+            this.showMessage(('cloud.fileExists'), 'warning');
             return;
         }
         const fullPath = this.joinPath(targetDir, name);
@@ -609,26 +609,26 @@ class CloudSyncPanel {
             await this.loadDirectory(targetDir);
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.newFolderFail') : '新建文件夹失败'), 'error');
+            this.showMessage(error?.message || (('cloud.newFolderFail')), 'error');
         }
     }
 
     async uploadLocalFile() {
         if (!this._lastLoggedIn) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.loginRequired') : '请先登录账户', 'warning');
+            this.showMessage(('cloud.loginRequired'), 'warning');
             return;
         }
         if (!window.electronAPI?.showOpenDialog) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.uploadUnavailable') : '上传功能不可用', 'error');
+            this.showMessage(('cloud.uploadUnavailable'), 'error');
             return;
         }
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n ? window.i18n.t('dialog.selectUploadFile') : '选择要上传的文件',
+                title: ('dialog.selectUploadFile'),
                 properties: ['openFile'],
                 filters: [
                     {
-                        name: window.i18n ? window.i18n.t('cloud.supportedFileTypes') : 'Supported Files',
+                        name: ('cloud.supportedFileTypes'),
                         extensions: Array.from(this.allowedExtensions, (extension) => extension.slice(1))
                     }
                 ]
@@ -644,7 +644,7 @@ class CloudSyncPanel {
             const buffer = await window.electronAPI.readFileBuffer(filePath);
             const byteLength = buffer?.byteLength ?? buffer?.length ?? 0;
             if (byteLength > this.maxFileSize) {
-                this.showMessage(window.i18n ? window.i18n.t('cloud.fileSizeExceeded') : '文件大小超过 50KB，无法上传', 'error');
+                this.showMessage(('cloud.fileSizeExceeded'), 'error');
                 return;
             }
             const content = await window.electronAPI.readFileContent(filePath);
@@ -659,9 +659,9 @@ class CloudSyncPanel {
             await this.request('POST', '/cloudSync/upload', { path: fullPath, content: content || '' });
             await this.loadDirectory(targetDir);
             this.renderTree();
-            this.showMessage((window.i18n ? window.i18n.t('cloud.uploadSuccessSimple') : '上传成功'), 'success');
+            this.showMessage((('cloud.uploadSuccessSimple')), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.uploadFailSimple') : '上传失败'), 'error');
+            this.showMessage(error?.message || (('cloud.uploadFailSimple')), 'error');
         }
     }
 
@@ -671,12 +671,12 @@ class CloudSyncPanel {
             return;
         }
         if (!window.electronAPI?.showOpenDialog || !window.electronAPI?.walkDirectory) {
-            this.showMessage(window.i18n ? window.i18n.t('cloud.uploadUnavailable') : '上传功能不可用', 'error');
+            this.showMessage(('cloud.uploadUnavailable'), 'error');
             return;
         }
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n ? window.i18n.t('dialog.selectUploadFolder') : '选择要上传的文件夹',
+                title: ('dialog.selectUploadFolder'),
                 properties: ['openDirectory']
             });
             const folderPath = result?.filePaths?.[0];
@@ -789,7 +789,7 @@ class CloudSyncPanel {
             this.showMessage(message, uploaded > 0 ? 'success' : 'warning');
         } catch (error) {
             this.hideUploadProgress();
-            this.showMessage(error?.message || (window.i18n ? window.i18n.t('cloud.uploadFailSimple') : '上传失败'), 'error');
+            this.showMessage(error?.message || (('cloud.uploadFailSimple')), 'error');
         }
     }
 

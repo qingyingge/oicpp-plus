@@ -178,14 +178,14 @@ class OICPPApp {
                     const blockedAction = menuItem.dataset.action;
                     if (blockedAction === 'check-update') {
                         if (this.updateDownloadState.pendingInstall) {
-                            this.showMessage(window.i18n ? window.i18n.t('message.updatePendingInstall') : '已有更新等待安装，请先退出 OICPP-Plus 完成安装', 'info');
+                            this.showMessage(('message.updatePendingInstall'), 'info');
                             return;
                         }
                         if (this.updateDownloadState.autoChecking) {
-                            this.showMessage(window.i18n ? window.i18n.t('message.updateAutoChecking') : '正在执行启动自动检查，请稍后再手动检查更新', 'info');
+                            this.showMessage(('message.updateAutoChecking'), 'info');
                         } else if (this.updateDownloadState.downloading) {
                             const versionSuffix = this.updateDownloadState.version ? ` (${this.updateDownloadState.version})` : '';
-                            this.showMessage((window.i18n ? window.i18n.t('message.updateDownloading', {version: versionSuffix, progress: this.updateDownloadState.progress}) : `更新正在后台下载${versionSuffix}，当前进度 ${this.updateDownloadState.progress}%`), 'info');
+                            this.showMessage((('message.updateDownloading', {version: versionSuffix, progress: this.updateDownloadState.progress})), 'info');
                         }
                     }
                     return;
@@ -272,7 +272,7 @@ class OICPPApp {
                 await this.openIntegratedTerminal();
                 break;
             case 'cloud-compile':
-                this.showMessage(window.i18n ? window.i18n.t('message.cloudCompileUnavailable') : '云端编译暂不可用', 'warning');
+                this.showMessage(('message.cloudCompileUnavailable'), 'warning');
                 break;
             case 'find-replace':
                 this.showFindReplace();
@@ -337,7 +337,7 @@ class OICPPApp {
 
         if (typeof window.electronAPI.onIdeLoginError === 'function') {
             window.electronAPI.onIdeLoginError((payload) => {
-                const msg = payload?.message || (window.i18n ? window.i18n.t('message.loginFailed') : '登录失败');
+                const msg = payload?.message || (('message.loginFailed'));
                 this.showMessage(msg, 'error');
             });
         }
@@ -3787,7 +3787,8 @@ ${data.message || '程序已加载，等待开始执行'}
             { name: '7zip-bin', license: 'MIT', url: 'https://github.com/develar/7zip-bin' },
             { name: 'winreg', license: 'BSD-2-Clause', url: 'https://github.com/fresc81/node-winreg' },
             { name: 'monaco-editor-webpack-plugin', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },
-            { name: 'icojs', license: 'MIT', url: 'https://github.com/nicely-bot/icojs' }
+            { name: 'icojs', license: 'MIT', url: 'https://github.com/nicely-bot/icojs' },
+            { name: 'i18next', license: 'MIT', url: 'https://github.com/i18next/i18next' }
         ];
 
         const libRows = openSourceLibs.map(lib => `

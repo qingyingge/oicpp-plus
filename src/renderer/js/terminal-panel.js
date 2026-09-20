@@ -141,11 +141,11 @@ class IntegratedTerminalPanel {
 
         try {
             const status = await window.electronAPI.getTerminalFeatureStatus();
-            this.status = status || { available: false, reason: window.i18n ? window.i18n.t('panel.unknownError') : '未知错误', detail: '' };
+            this.status = status || { available: false, reason: ('panel.unknownError'), detail: '' };
         } catch (error) {
             this.status = {
                 available: false,
-                reason: window.i18n ? window.i18n.t('panel.terminalStatusFailed') : '获取终端状态失败',
+                reason: ('panel.terminalStatusFailed'),
                 detail: error?.message || String(error)
             };
         }
@@ -392,7 +392,7 @@ class IntegratedTerminalPanel {
         }
 
         if (!created?.ok || !created?.terminalId) {
-            terminal.writeln(`\r\n[Error] ${created?.error || (window.i18n ? window.i18n.t('panel.terminalCreateFailed') : '终端创建失败')}`);
+            terminal.writeln(`\r\n[Error] ${created?.error || (('panel.terminalCreateFailed'))}`);
             tab.classList.remove('pending');
             this.renderEmptyState();
             return;
@@ -869,7 +869,7 @@ class IntegratedTerminalPanel {
 
     async runExecutableInNewTerminal(executablePath, options = {}) {
         if (!executablePath) {
-            throw new Error(window.i18n ? window.i18n.t('panel.terminalExePathEmpty') : '可执行文件路径为空');
+            throw new Error(('panel.terminalExePathEmpty'));
         }
 
         await this.init();
@@ -882,7 +882,7 @@ class IntegratedTerminalPanel {
         const cwd = options.workingDirectory || await this.getPreferredCwd();
         const terminalId = await this.createTerminal({ cwd });
         if (!terminalId) {
-            throw new Error(window.i18n ? window.i18n.t('panel.terminalCreateFailed2') : '创建内置终端失败');
+            throw new Error(('panel.terminalCreateFailed2'));
         }
 
         this.activateTerminal(terminalId);

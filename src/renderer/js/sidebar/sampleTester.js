@@ -47,7 +47,7 @@ class SampleTester {
                         if (!workspacePath) {
                             logWarn('[样例测试器] 未打开工作区，无法创建题目文件');
                             try { window.sidebarManager?.showPanel?.('files'); } catch (_) { }
-                            window.alert?.(window.i18n ? window.i18n.t('tester.openWorkspaceFirst') : '请先打开工作区，然后重新发送题目。');
+                            window.alert?.(window.i18n.t('tester.openWorkspaceFirst'));
                             return;
                         }
                         const nameRaw = (data.problemName || '').trim();
@@ -827,7 +827,7 @@ class SampleTester {
             }
         });
 
-        let overallLabel = window.i18n ? window.i18n.t('tester.notRun') : '未运行';
+        let overallLabel = window.i18n.t('tester.notRun');
         let overallClass = 'status-pending';
         if (counts.PENDING === 0) {
             if (counts.AC === total) {
@@ -842,7 +842,7 @@ class SampleTester {
                 }
             }
         } else if (counts.PENDING < total) {
-            overallLabel = window.i18n ? window.i18n.t('tester.running') : '运行中';
+            overallLabel = window.i18n.t('tester.running');
         }
 
         const badgeOrder = ['AC', 'WA', 'MLE', 'TLE', 'RE', 'CE', 'OLE', 'PENDING'];
@@ -1230,8 +1230,8 @@ class SampleTester {
         try {
             if (window.dialogManager?.showActionDialog) {
                 const action = await window.dialogManager.showActionDialog(
-                    (window.i18n ? window.i18n.t('dialog.importSettings') : '导入设置'),
-                    (window.i18n ? window.i18n.t('dialog.importSettingsDesc') : '是否为本次导入样例启用文件读写（freopen）？'),
+                    (window.i18n.t('dialog.importSettings')),
+                    (window.i18n.t('dialog.importSettingsDesc')),
                     [
                         { id: 'skip', label: '不启用', className: 'dialog-btn-cancel' },
                         { id: 'enable', label: '启用并设置', className: 'dialog-btn-confirm' }
@@ -1256,9 +1256,9 @@ class SampleTester {
 
         if (window.dialogManager?.showInputDialog) {
             const inputResult = await window.dialogManager.showInputDialog(
-                (window.i18n ? window.i18n.t('dialog.freopenInputFile') : 'freopen 输入文件名'),
+                (window.i18n.t('dialog.freopenInputFile')),
                 '',
-                (window.i18n ? window.i18n.t('dialog.freopenInputPlaceholder') : '留空表示不启用输入文件')
+                (window.i18n.t('dialog.freopenInputPlaceholder'))
             );
             if (inputResult === null) {
                 return { canceled: true };
@@ -1266,9 +1266,9 @@ class SampleTester {
             inputName = this.normalizeFreopenFileName(inputResult);
 
             const outputResult = await window.dialogManager.showInputDialog(
-                (window.i18n ? window.i18n.t('dialog.freopenOutputFile') : 'freopen 输出文件名'),
+                (window.i18n.t('dialog.freopenOutputFile')),
                 '',
-                (window.i18n ? window.i18n.t('dialog.freopenOutputPlaceholder') : '留空表示不启用输出文件')
+                (window.i18n.t('dialog.freopenOutputPlaceholder'))
             );
             if (outputResult === null) {
                 return { canceled: true };
@@ -1330,7 +1330,7 @@ class SampleTester {
     async prepareZipLargeSampleImportDir(zipPath) {
         const workspacePath = window.sidebarManager?.panels?.files?.workspacePath;
         if (!workspacePath) {
-            throw new Error((window.i18n ? window.i18n.t('tester.noWorkspaceForSample') : '未打开工作区，无法写入大样例文件'));
+            throw new Error((window.i18n.t('tester.noWorkspaceForSample')));
         }
 
         const rootDir = await window.electronAPI.pathJoin(workspacePath, '.oicpp-plus', 'sampleTester', 'zip-imports');
@@ -1358,7 +1358,7 @@ class SampleTester {
         const content = String(entry?.content || '');
         const created = await window.electronAPI.createFile(targetPath, content);
         if (!created || !created.success) {
-            throw new Error(created?.error || (window.i18n ? window.i18n.t('tester.writeSampleFail', {name: fileName}) : `写入样例文件失败: ${fileName}`));
+            throw new Error(created?.error || (window.i18n.t('tester.writeSampleFail', {name: fileName})));
         }
         return created.filePath || targetPath;
     }
@@ -1371,10 +1371,10 @@ class SampleTester {
 
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n ? window.i18n.t('dialog.selectZip') : '选择样例压缩包',
+                title: window.i18n.t('dialog.selectZip'),
                 filters: [
-                    { name: window.i18n ? window.i18n.t('dialog.zipFilter') : '压缩包', extensions: ['zip'] },
-                    { name: window.i18n ? window.i18n.t('dialog.allFilter') : '所有文件', extensions: ['*'] }
+                    { name: window.i18n.t('dialog.zipFilter'), extensions: ['zip'] },
+                    { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
                 ],
                 properties: ['openFile']
             });
@@ -1386,7 +1386,7 @@ class SampleTester {
             const zipPath = result.filePaths[0];
             const zipReadResult = await window.electronAPI.readZipTextFiles(zipPath);
             if (!zipReadResult || !zipReadResult.success) {
-                throw new Error(zipReadResult?.error || (window.i18n ? window.i18n.t('tester.readZipFail') : '读取压缩包失败'));
+                throw new Error(zipReadResult?.error || (window.i18n.t('tester.readZipFail')));
             }
 
             const importPlan = this.pairSamplesFromZipFiles(zipReadResult.files || []);
@@ -1405,7 +1405,7 @@ class SampleTester {
             const previewMessage = `识别到 ${pairs.length} 组可导入样例。<br>识别文件数：${importPlan.recognizedCount}，未配对文件：${importPlan.unmatchedCount}。<br>大样例组（>${Math.floor(thresholdBytes / 1024)}KB）：${largePairCount}。<br><br>是否继续导入？`;
             let shouldImport = true;
             if (window.dialogManager?.showActionDialog) {
-                const action = await window.dialogManager.showActionDialog((window.i18n ? window.i18n.t('dialog.importPreview') : '导入样例预览'), previewMessage, [
+                const action = await window.dialogManager.showActionDialog((window.i18n.t('dialog.importPreview')), previewMessage, [
                     { id: 'cancel', label: '取消', className: 'dialog-btn-cancel' },
                     { id: 'import', label: '继续导入', className: 'dialog-btn-confirm' }
                 ]);
@@ -1867,9 +1867,9 @@ class SampleTester {
 
     async selectInputFile(id) {
         const result = await window.electronAPI.showOpenDialog({
-            title: window.i18n ? window.i18n.t('tester.selectInputFile') : '选择输入文件',
+            title: window.i18n.t('tester.selectInputFile'),
             filters: [
-                { name: window.i18n ? window.i18n.t('tester.textFileFilter') : '文本文件', extensions: ['txt', 'in'] },
+                { name: window.i18n.t('tester.textFileFilter'), extensions: ['txt', 'in'] },
                 { name: '所有文件', extensions: ['*'] }
             ],
             properties: ['openFile']
@@ -1889,9 +1889,9 @@ class SampleTester {
 
     async selectOutputFile(id) {
         const result = await window.electronAPI.showOpenDialog({
-            title: window.i18n ? window.i18n.t('tester.selectOutputFile') : '选择输出文件',
+            title: window.i18n.t('tester.selectOutputFile'),
             filters: [
-                { name: window.i18n ? window.i18n.t('tester.textFileFilter') : '文本文件', extensions: ['txt', 'out', 'ans'] },
+                { name: window.i18n.t('tester.textFileFilter'), extensions: ['txt', 'out', 'ans'] },
                 { name: '所有文件', extensions: ['*'] }
             ],
             properties: ['openFile']
@@ -1949,18 +1949,18 @@ class SampleTester {
         button.classList.add('running');
 
         try {
-            button.textContent = window.i18n ? window.i18n.t('tester.compileStatus') : '编译中';
+            button.textContent = window.i18n.t('tester.compileStatus');
             const result = await this.executeSample(sample, (status) => {
                 if (status === 'compiling') {
-                    button.textContent = window.i18n ? window.i18n.t('tester.compileStatus') : '编译中';
+                    button.textContent = window.i18n.t('tester.compileStatus');
                 } else if (status === 'cached-main') {
-                    button.textContent = window.i18n ? window.i18n.t('tester.reuseCompile') : '复用编译';
+                    button.textContent = window.i18n.t('tester.reuseCompile');
                 } else if (status === 'cached-spj') {
-                    button.textContent = window.i18n ? window.i18n.t('tester.reuseSpj') : '复用SPJ';
+                    button.textContent = window.i18n.t('tester.reuseSpj');
                 } else if (status === 'cached-grader') {
                     button.textContent = '复用 grader';
                 } else if (status === 'running') {
-                    button.textContent = window.i18n ? window.i18n.t('tester.running') : '运行中';
+                    button.textContent = window.i18n.t('tester.running');
                 }
             });
             sample.result = result;
@@ -1983,7 +1983,7 @@ class SampleTester {
             }
         } finally {
             button.disabled = false;
-            button.textContent = window.i18n ? window.i18n.t('tester.run') : '运行';
+            button.textContent = window.i18n.t('tester.run');
             button.classList.remove('running');
         }
     }
@@ -2034,7 +2034,7 @@ class SampleTester {
                 for (const sample of runSamples) {
                     sample.result = {
                         status: 'CE',
-                        output: compileResult.stderr || compileResult.stdout || (window.i18n ? window.i18n.t('tester.compileFail') : '编译失败'),
+                        output: compileResult.stderr || compileResult.stdout || (window.i18n.t('tester.compileFail')),
                         time: 0
                     };
                     if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
@@ -2063,7 +2063,7 @@ class SampleTester {
                     for (const sample of runSamples) {
                         sample.result = {
                             status: 'CE',
-                            output: window.i18n ? window.i18n.t('tester.graderPathEmpty') : 'grader.cpp 文件路径为空',
+                            output: window.i18n.t('tester.graderPathEmpty'),
                             time: 0
                         };
                         if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
@@ -2080,7 +2080,7 @@ class SampleTester {
                     for (const sample of runSamples) {
                         sample.result = {
                             status: 'CE',
-                            output: 'grader 编译失败: ' + (graderCompileResult.stderr || graderCompileResult.stdout || (window.i18n ? window.i18n.t('tester.compileFail') : '编译失败')),
+                            output: 'grader 编译失败: ' + (graderCompileResult.stderr || graderCompileResult.stdout || (window.i18n.t('tester.compileFail'))),
                             time: 0
                         };
                         if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
@@ -2108,7 +2108,7 @@ class SampleTester {
                     for (const sample of runSamples) {
                         sample.result = {
                             status: 'CE',
-                            output: `SPJ编译失败: ${spjCompileResult.stderr || spjCompileResult.stdout || (window.i18n ? window.i18n.t('tester.compileFail') : '编译失败')}`,
+                            output: `SPJ编译失败: ${spjCompileResult.stderr || spjCompileResult.stdout || (window.i18n.t('tester.compileFail'))}`,
                             time: 0
                         };
                         if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
@@ -2193,7 +2193,7 @@ class SampleTester {
                 const button = document.getElementById(`run-btn-${sample.id}`);
                 if (button) {
                     button.disabled = false;
-                    button.textContent = window.i18n ? window.i18n.t('tester.run') : '运行';
+                    button.textContent = window.i18n.t('tester.run');
                     button.classList.remove('running');
                 }
             });
@@ -2204,7 +2204,7 @@ class SampleTester {
         if (!graderExecutablePath) {
             return {
                 status: 'CE',
-                output: window.i18n ? window.i18n.t('tester.graderPathEmpty') : 'grader.cpp 文件路径为空',
+                output: window.i18n.t('tester.graderPathEmpty'),
                 rawOutput: '',
                 expectedOutput: '',
                 stderr: '',
@@ -2220,7 +2220,7 @@ class SampleTester {
             try {
                 inputData = await window.electronAPI.readFileContent(sample.input);
             } catch (error) {
-                throw new Error((window.i18n ? window.i18n.t('tester.cannotReadInputFile', {msg: error.message}) : '无法读取输入文件: ' + error.message));
+                throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: error.message})));
             }
         } else {
             inputData = sample.input || '';
@@ -2306,7 +2306,7 @@ class SampleTester {
                 try {
                     inputData = await window.electronAPI.readFileContent(sample.input);
                 } catch (error) {
-                    throw new Error((window.i18n ? window.i18n.t('tester.cannotReadInputFile', {msg: error.message}) : `无法读取输入文件: ${error.message}`));
+                    throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: error.message})));
                 }
             } else {
                 inputData = sample.input || '';
@@ -2318,7 +2318,7 @@ class SampleTester {
                 try {
                     expectedOutput = await window.electronAPI.readFileContent(sample.output);
                 } catch (error) {
-                    throw new Error((window.i18n ? window.i18n.t('tester.cannotReadOutputFile', {msg: error.message}) : `无法读取输出文件: ${error.message}`));
+                    throw new Error((window.i18n.t('tester.cannotReadOutputFile', {msg: error.message})));
                 }
             } else {
                 expectedOutput = sample.output || '';
@@ -2444,7 +2444,7 @@ class SampleTester {
                 if (!graderPath) {
                     return {
                         status: 'CE',
-                        output: window.i18n ? window.i18n.t('tester.graderPathEmpty') : 'grader.cpp 文件路径为空',
+                        output: window.i18n.t('tester.graderPathEmpty'),
                         time: 0
                     };
                 }
@@ -2453,7 +2453,7 @@ class SampleTester {
                 if (!graderCompileResult.success) {
                     return {
                         status: 'CE',
-                        output: 'grader 编译失败: ' + (graderCompileResult.stderr || graderCompileResult.stdout || (window.i18n ? window.i18n.t('tester.compileFail') : '编译失败')),
+                        output: 'grader 编译失败: ' + (graderCompileResult.stderr || graderCompileResult.stdout || (window.i18n.t('tester.compileFail'))),
                         time: 0
                     };
                 }
@@ -2665,7 +2665,7 @@ class SampleTester {
     }
 
     notifyCompileCacheHit(targetName) {
-        const brief = (window.i18n ? window.i18n.t('tester.compileCacheHit', {target: targetName}) : `${targetName}已复用上次的编译结果`);
+        const brief = (window.i18n.t('tester.compileCacheHit', {target: targetName}));
         const msg = `[样例测试器] ${brief}`;
         try { logInfo(msg); } catch (_) { }
 
@@ -2683,13 +2683,13 @@ class SampleTester {
 
     async compileCurrentFile(useTestlib = false) {
         if (!this.currentFile) {
-            throw new Error(window.i18n ? window.i18n.t('tester.noActiveCppFile') : '没有活动的C++文件');
+            throw new Error(window.i18n.t('tester.noActiveCppFile'));
         }
 
         const content = window.editorManager?.getCurrentContent() || '';
         logInfo('[样例测试器] 获取到的文件内容长度:', content.length);
         if (!content.trim()) {
-            throw new Error(window.i18n ? window.i18n.t('tester.fileEmpty') : '文件内容为空');
+            throw new Error(window.i18n.t('tester.fileEmpty'));
         }
 
         // Keep this path consistent with F11.  The tester compiles currentFile
@@ -2711,7 +2711,7 @@ class SampleTester {
         let testlibIncludePath = '';
 
         if (!compilerPath) {
-            throw new Error(window.i18n ? window.i18n.t('tester.setCompilerFirst') : '请先设置编译器路径');
+            throw new Error(window.i18n.t('tester.setCompilerFirst'));
         }
 
         if (useTestlib) {
@@ -3025,7 +3025,7 @@ class SampleTester {
 
         if (expandBtn) {
             expandBtn.style.display = truncated ? 'inline-flex' : 'none';
-            expandBtn.textContent = isExpanded ? (window.i18n ? window.i18n.t('tester.collapse') : '收起') : (window.i18n ? window.i18n.t('tester.expand') : '展开');
+            expandBtn.textContent = isExpanded ? (window.i18n.t('tester.collapse')) : (window.i18n.t('tester.expand'));
             expandBtn.title = isExpanded ? (window.i18n ? window.i18n.t('tester.collapse') + ' ' + window.i18n.t('tester.actualOutput') : '收起输出') : (window.i18n ? window.i18n.t('tester.expand') + ' ' + window.i18n.t('tester.actualOutput') : '展开完整输出');
         }
 
@@ -3050,7 +3050,7 @@ class SampleTester {
 
                     const diffPosition = this.getDifferenceInfo(actualOutput, expectedOutput);
                     if (diffPosition && diffInfo) {
-                        diffInfo.textContent = window.i18n ? window.i18n.t('compare.diffPosition', {line: diffPosition.line, char: diffPosition.char}) : `(第 ${diffPosition.line} 行第 ${diffPosition.char} 字符有差异)`;
+                        diffInfo.textContent = window.i18n.t('compare.diffPosition', {line: diffPosition.line, char: diffPosition.char});
                         diffInfo.style.display = 'inline';
                     }
 
@@ -3110,7 +3110,7 @@ class SampleTester {
             }
 
             const result = await window.electronAPI.showSaveDialog({
-                title: window.i18n ? window.i18n.t('tester.exportOutput') : '导出样例输出',
+                title: window.i18n.t('tester.exportOutput'),
                 defaultPath: `sample_${sampleId}_output.txt`,
                 filters: [
                     { name: '文本文件', extensions: ['txt'] },
@@ -3124,7 +3124,7 @@ class SampleTester {
                 const statusContainer = document.querySelector(`[data-sample-id="${sampleId}"] .sample-status`);
                 if (statusContainer) {
                     const originalContent = statusContainer.innerHTML;
-                    statusContainer.innerHTML = '<span style="color: #4CAF50; font-size: 11px;">' + (window.i18n ? window.i18n.t('tester.exported') : '已导出') + '</span>';
+                    statusContainer.innerHTML = '<span style="color: #4CAF50; font-size: 11px;">' + (window.i18n.t('tester.exported')) + '</span>';
                     setTimeout(() => {
                         statusContainer.innerHTML = originalContent;
                     }, 2000);
@@ -3154,12 +3154,12 @@ class SampleTester {
         }
 
         const sizeMbText = this.getOutputSizeMbText(result);
-        const message = `${window.i18n ? window.i18n.t('tester.expandConfirmMsg', {size: sizeMbText}) : `当前输出大小约 ${sizeMbText} MB。<br><br>过大的输出可能导致界面或进程无响应，是否仍要展开完整输出？`}`;
+        const message = `${window.i18n.t('tester.expandConfirmMsg', {size: sizeMbText})}`;
 
         let shouldExpand = false;
         try {
             if (window.dialogManager?.showActionDialog) {
-                const action = await window.dialogManager.showActionDialog((window.i18n ? window.i18n.t('tester.expandConfirmTitle') : '展开完整输出确认'), message, [
+                const action = await window.dialogManager.showActionDialog((window.i18n.t('tester.expandConfirmTitle')), message, [
                     { id: 'cancel', label: '取消', className: 'dialog-btn-cancel' },
                     { id: 'expand', label: '仍要展开', className: 'dialog-btn-confirm' }
                 ]);
@@ -3237,7 +3237,7 @@ class SampleTester {
 
     async compileSpjFile(spjPath) {
         if (!spjPath) {
-            throw new Error(window.i18n ? window.i18n.t('tester.spjPathEmpty') : 'SPJ文件路径为空');
+            throw new Error(window.i18n.t('tester.spjPathEmpty'));
         }
 
         let spjContent;
@@ -3248,7 +3248,7 @@ class SampleTester {
         }
 
         if (!spjContent.trim()) {
-            throw new Error(window.i18n ? window.i18n.t('tester.spjContentEmpty') : 'SPJ文件内容为空');
+            throw new Error(window.i18n.t('tester.spjContentEmpty'));
         }
 
         const settings = await window.electronAPI.getAllSettings();
@@ -3340,7 +3340,7 @@ class SampleTester {
 
     async compileGraderFile(graderPath) {
         if (!graderPath) {
-            throw new Error(window.i18n ? window.i18n.t('tester.graderPathEmpty') : 'grader.cpp 文件路径为空');
+            throw new Error(window.i18n.t('tester.graderPathEmpty'));
         }
 
         let graderContent;
@@ -3351,7 +3351,7 @@ class SampleTester {
         }
 
         if (!graderContent.trim()) {
-            throw new Error(window.i18n ? window.i18n.t('tester.graderContentEmpty') : 'grader.cpp 文件内容为空');
+            throw new Error(window.i18n.t('tester.graderContentEmpty'));
         }
 
         const settings = await window.electronAPI.getAllSettings();
@@ -3360,7 +3360,7 @@ class SampleTester {
         let testlibIncludePath = '';
 
         if (!compilerPath) {
-            throw new Error(window.i18n ? window.i18n.t('tester.setCompilerFirst') : '请先设置编译器路径');
+            throw new Error(window.i18n.t('tester.setCompilerFirst'));
         }
 
         if (this.globalSettings.useTestlib) {

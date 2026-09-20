@@ -156,16 +156,16 @@ class BackupSettings {
 
             if (result && result.success) {
                 this.settings.autoBackupSettings = newSettings.autoBackupSettings;
-                this.showMessage((window.i18n ? window.i18n.t('backup.saveSuccess') : 'Backup settings saved'), 'success');
+                this.showMessage((('backup.saveSuccess')), 'success');
                 if (newSettings.autoBackupSettings) {
                     await this.backupNow(true);
                 }
             } else {
                 const errorMsg = result?.error || '未知错误';
-                this.showMessage((window.i18n ? window.i18n.t('backup.saveFail', {error: errorMsg}) : 'Failed to save settings: ' + errorMsg), 'error');
+                this.showMessage((('backup.saveFail', {error: errorMsg})), 'error');
             }
         } catch (error) {
-            this.showMessage((window.i18n ? window.i18n.t('backup.saveFailSimple', {error: error.message}) : 'Failed to save settings: ' + error.message), 'error');
+            this.showMessage((('backup.saveFailSimple', {error: error.message})), 'error');
         } finally {
             this._saving = false;
         }
@@ -173,7 +173,7 @@ class BackupSettings {
 
     async backupNow(silent = false) {
         if (!window.electronAPI?.backupSettingsToCloud) {
-            if (!silent) this.showMessage((window.i18n ? window.i18n.t('backup.backupUnavailable') : 'Backup feature is unavailable'), 'error');
+            if (!silent) this.showMessage((('backup.backupUnavailable')), 'error');
             return false;
         }
 
@@ -181,17 +181,17 @@ class BackupSettings {
         if (!result || !result.success) {
             const error = result?.error || 'Backup failed';
             if (error === 'NOT_LOGGED_IN') {
-                this.showMessage((window.i18n ? window.i18n.t('backup.loginFirst') : '请先登录'), 'warning');
+                this.showMessage((('backup.loginFirst')), 'warning');
             } else if (error === 'NO_SETTINGS') {
-                if (!silent) this.showMessage((window.i18n ? window.i18n.t('backup.nothingToBackup') : 'Nothing to backup'), 'warning');
+                if (!silent) this.showMessage((('backup.nothingToBackup')), 'warning');
             } else {
-                if (!silent) this.showMessage((window.i18n ? window.i18n.t('backup.backupFailSimple', {error: error}) : `Backup failed: ${error}`), 'error');
+                if (!silent) this.showMessage((('backup.backupFailSimple', {error: error})), 'error');
             }
             return false;
         }
 
         if (!silent) {
-            this.showMessage((window.i18n ? window.i18n.t('backup.backupSuccess') : 'Settings backed up to cloud'), 'success');
+            this.showMessage((('backup.backupSuccess')), 'success');
         }
         this.refreshLatestBackupInfo();
         return true;
@@ -199,7 +199,7 @@ class BackupSettings {
 
     async syncFromCloud() {
         if (!window.electronAPI?.getSettingsBackupInfo || !window.electronAPI?.syncSettingsFromCloud) {
-            this.showMessage((window.i18n ? window.i18n.t('backup.syncUnavailable') : 'Sync feature is unavailable'), 'error');
+            this.showMessage((('backup.syncUnavailable')), 'error');
             return false;
         }
 
@@ -208,11 +208,11 @@ class BackupSettings {
             logInfo('获取云端备份信息失败:', infoResult);
             const error = infoResult?.error || 'Sync failed';
             if (error === 'NOT_LOGGED_IN') {
-                this.showMessage((window.i18n ? window.i18n.t('backup.loginFirst') : '请先登录'), 'warning');
+                this.showMessage((('backup.loginFirst')), 'warning');
             } else if (error === 'NO_BACKUP') {
-                this.showMessage((window.i18n ? window.i18n.t('backup.noBackupFound') : 'No backup found in cloud'), 'warning');
+                this.showMessage((('backup.noBackupFound')), 'warning');
             } else {
-                this.showMessage((window.i18n ? window.i18n.t('backup.fetchBackupFail') : 'Failed to fetch cloud backup'), 'error');
+                this.showMessage((('backup.fetchBackupFail')), 'error');
             }
             return false;
         }
@@ -220,8 +220,8 @@ class BackupSettings {
         const info = infoResult.info || {};
         const timeLabel = info.displayTime || info.timestampRaw || '未知时间';
         const deviceName = info.deviceName || '未知设备';
-        const confirmText = (window.i18n ? window.i18n.t('backup.syncConfirm', {time: timeLabel, device: deviceName}) : `Overwrite current settings with the backup from ${timeLabel} on ${deviceName}?`);
-        const confirmed = await this.confirmDialog((window.i18n ? window.i18n.t('backup.syncConfirmTitle') : 'Sync Settings'), confirmText);
+        const confirmText = (('backup.syncConfirm', {time: timeLabel, device: deviceName}));
+        const confirmed = await this.confirmDialog((('backup.syncConfirmTitle')), confirmText);
         if (!confirmed) {
             return false;
         }
@@ -230,13 +230,13 @@ class BackupSettings {
         if (!syncResult || !syncResult.success) {
             const error = syncResult?.error || 'Sync failed';
             if (error === 'NOT_LOGGED_IN') {
-                this.showMessage(window.i18n ? window.i18n.t('backup.loginFirst') : 'Please log in first', 'warning');
+                this.showMessage(('backup.loginFirst'), 'warning');
             } else if (error === 'NO_BACKUP') {
-                this.showMessage((window.i18n ? window.i18n.t('backup.noBackupFound') : 'No backup found in cloud'), 'warning');
+                this.showMessage((('backup.noBackupFound')), 'warning');
             } else if (error === 'EMPTY_BACKUP') {
-                this.showMessage((window.i18n ? window.i18n.t('backup.restoreFailEmpty') : 'Restore failed: EMPTY_BACKUP'), 'error');
+                this.showMessage((('backup.restoreFailEmpty')), 'error');
             } else if (error === 'INVALID_BACKUP') {
-                this.showMessage((window.i18n ? window.i18n.t('backup.restoreFailInvalid') : 'Cloud backup file format is invalid'), 'error');
+                this.showMessage((('backup.restoreFailInvalid')), 'error');
             } else {
                 this.showMessage(`同步设置失败：${error}`, 'error');
             }
@@ -245,7 +245,7 @@ class BackupSettings {
 
         await this.loadSettings();
         this.updateUI();
-        this.showMessage((window.i18n ? window.i18n.t('backup.syncSuccess') : 'Settings synced from cloud'), 'success');
+        this.showMessage((('backup.syncSuccess')), 'success');
         this.refreshLatestBackupInfo();
         return true;
     }

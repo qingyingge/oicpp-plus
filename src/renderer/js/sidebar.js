@@ -419,7 +419,7 @@ class SidebarManager {
         this.updateCloudPanelLocks();
         if (this.isCloudFileActive() && ['debug', 'samples', 'compare'].includes(panelName)) {
             if (window.oicppApp?.showMessage) {
-                const msg = window.i18n ? window.i18n.t('sidebar.cloudFileLocalOnly', { feature: panelName }) : '云文件仅支持基础编辑与手动保存，请下载到本地再使用该面板。';
+                const msg = ('sidebar.cloudFileLocalOnly', { feature: panelName });
                 window.oicppApp.showMessage(msg, 'warning');
             }
             return;
@@ -510,12 +510,12 @@ class SidebarManager {
             if (!icon) return;
             if (locked) {
                 icon.classList.add('disabled');
-                icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.cloudFileLocalOnly', { feature: panel }) : '云文件仅支持基础编辑与手动保存');
+                icon.setAttribute('title', ('sidebar.cloudFileLocalOnly', { feature: panel }));
             } else {
                 icon.classList.remove('disabled');
-                if (panel === 'debug') icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.debug') : 'Debug');
-                if (panel === 'samples') icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.sampleTester') : 'Sample Tester');
-                if (panel === 'compare') icon.setAttribute('title', window.i18n ? window.i18n.t('sidebar.codeComparer') : 'Code Comparer');
+                if (panel === 'debug') icon.setAttribute('title', ('sidebar.debug'));
+                if (panel === 'samples') icon.setAttribute('title', ('sidebar.sampleTester'));
+                if (panel === 'compare') icon.setAttribute('title', ('sidebar.codeComparer'));
             }
         });
     }

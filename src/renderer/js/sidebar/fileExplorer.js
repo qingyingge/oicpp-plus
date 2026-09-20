@@ -26,12 +26,12 @@ class FileExplorer {
      */
     validateFileName(name) {
         if (!name || typeof name !== 'string') {
-            return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.nameRequired') : '名称不能为空' };
+            return { valid: false, error: window.i18n.t('fileExplorer.nameRequired')};
         }
 
         const trimmedName = name.trim();
         if (trimmedName.length === 0) {
-            return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.nameRequired') : '名称不能为空' };
+            return { valid: false, error: window.i18n.t('fileExplorer.nameRequired')};
         }
 
         // Check for illegal characters
@@ -57,7 +57,7 @@ class FileExplorer {
         if (isWindows) {
             const reservedNames = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
             if (reservedNames.test(trimmedName)) {
-                return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.reservedName') : '该名称为系统保留名称，不能使用' };
+                return { valid: false, error: window.i18n.t('fileExplorer.reservedName')};
             }
         }
 
@@ -65,7 +65,7 @@ class FileExplorer {
         // Note: We check the original 'name' not 'trimmedName' because Windows does not allow
         // trailing spaces or periods, even though String.trim() would remove them
         if (isWindows && /[\s.]$/.test(name)) {
-            return { valid: false, error: window.i18n ? window.i18n.t('fileExplorer.nameEndDot') : '文件名不能以空格或句点结尾' };
+            return { valid: false, error: window.i18n.t('fileExplorer.nameEndDot')};
         }
 
         return { valid: true, error: null };
@@ -2014,7 +2014,7 @@ class FileExplorer {
             const actions = [
                 { id: 'selected', label: `删除选中的 ${selected.length} 个项目` },
                 { id: 'path', label: '删除指定路径下的所有文件' },
-                { id: 'cancel', label: window.i18n ? window.i18n.t('dialog.cancel') : '取消', className: 'dialog-btn-cancel' }
+                { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
             ];
             const choice = await dm.showActionDialog('批量删除', '请选择批量删除方式：', actions);
             if (choice === 'selected') {

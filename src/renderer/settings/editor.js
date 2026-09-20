@@ -348,11 +348,11 @@ class EditorSettings {
     async importClangFormatFromFile() {
         try {
             if (!window.electronAPI?.showOpenDialog || !window.electronAPI?.readFileContent) {
-                this.showMessage((window.i18n ? window.i18n.t('settings.importNotSupported') : '当前环境不支持文件导入'), 'error');
+                this.showMessage((('settings.importNotSupported')), 'error');
                 return;
             }
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n ? window.i18n.t('settings.importClangFormat') : '导入 .clang-format',
+                title: ('settings.importClangFormat'),
                 properties: ['openFile'],
                 filters: [
                     { name: '.clang-format', extensions: ['clang-format', 'yml', 'yaml', 'txt'] },
@@ -365,10 +365,10 @@ class EditorSettings {
             const filePath = result.filePaths[0];
             const content = await window.electronAPI.readFileContent(filePath);
             this.loadClangFormatFromText(String(content || ''));
-            this.showMessage((window.i18n ? window.i18n.t('message.importSuccess') : '已导入 .clang-format'), 'success');
+            this.showMessage((('message.importSuccess')), 'success');
         } catch (error) {
             logError('导入 .clang-format 失败:', error);
-            this.showMessage((window.i18n ? window.i18n.t('message.importFailed', {msg: error.message}) : '导入 .clang-format 失败：' + error.message), 'error');
+            this.showMessage((('message.importFailed', {msg: error.message})), 'error');
         }
     }
 
@@ -386,7 +386,7 @@ class EditorSettings {
     async saveClangFormatToFile() {
         try {
             if (!window.electronAPI?.showSaveDialog || !window.electronAPI?.writeFile) {
-                this.showMessage((window.i18n ? window.i18n.t('settings.saveNotSupported') : '当前环境不支持文件保存'), 'error');
+                this.showMessage((('settings.saveNotSupported')), 'error');
                 return;
             }
             const rawTextArea = document.getElementById('clang-format-raw-text');
@@ -395,7 +395,7 @@ class EditorSettings {
                 ? String(rawTextArea.value)
                 : this.generateClangFormatText(style);
             const result = await window.electronAPI.showSaveDialog({
-                title: window.i18n ? window.i18n.t('settings.saveClangFormat') : '写入 .clang-format',
+                title: ('settings.saveClangFormat'),
                 defaultPath: '.clang-format',
                 filters: [
                     { name: '.clang-format', extensions: ['clang-format', 'yml', 'yaml', 'txt'] },
@@ -406,10 +406,10 @@ class EditorSettings {
                 return;
             }
             await window.electronAPI.writeFile(result.filePath, content);
-            this.showMessage((window.i18n ? window.i18n.t('message.exportSuccess') : '已写入 .clang-format'), 'success');
+            this.showMessage((('message.exportSuccess')), 'success');
         } catch (error) {
             logError('写入 .clang-format 失败:', error);
-            this.showMessage((window.i18n ? window.i18n.t('message.exportFailed', {msg: error.message}) : '写入 .clang-format 失败：' + error.message), 'error');
+            this.showMessage((('message.exportFailed', {msg: error.message})), 'error');
         }
     }
 
@@ -1315,7 +1315,7 @@ class EditorSettings {
 
             const reset = document.createElement('button');
             reset.className = 'btn btn-secondary keybinding-reset';
-            reset.textContent = window.i18n ? window.i18n.t('settings.resetKeybinding') : '恢复默认';
+            reset.textContent = ('settings.resetKeybinding');
             reset.addEventListener('click', () => {
                 input.value = defaults[item.key];
             });

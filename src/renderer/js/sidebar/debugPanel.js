@@ -324,7 +324,7 @@ class DebugPanel {
         if (!container) return;
         const names = Object.keys(variables || {});
         if (names.length === 0) {
-            const emptyText = scope === 'watch' ? (window.i18n ? window.i18n.t('debug.noItems') : '暂无') : (window.i18n ? window.i18n.t('debug.none') : '无');
+            const emptyText = scope === 'watch' ? (('debug.noItems')) : (('debug.none'));
             container.innerHTML = `<div class="no-debug-message">${emptyText}</div>`;
             return;
         }
@@ -439,7 +439,7 @@ class DebugPanel {
         if (isRoot && scope === 'watch') {
             const rm = document.createElement('button');
             rm.className = 'remove-watch-btn';
-            rm.title = window.i18n ? window.i18n.t('debug.remove') : '移除';
+            rm.title = ('debug.remove');
             rm.textContent = '×';
             const watchExpression = (data && typeof data.expression === 'string' && data.expression)
                 ? String(data.expression)
@@ -533,7 +533,7 @@ class DebugPanel {
             return;
         }
 
-        childrenWrap.innerHTML = '<div class="no-debug-message">' + (window.i18n ? window.i18n.t('debug.loading') : '加载中…') + '</div>';
+        childrenWrap.innerHTML = '<div class="no-debug-message">' + (('debug.loading')) + '</div>';
         const payload = {
             scope,
             path,
@@ -601,12 +601,12 @@ class DebugPanel {
         if (forceVisible) {
             button.textContent = arrow;
         } else if (withLabel) {
-            const text = expanded ? (window.i18n ? window.i18n.t('debug.collapse') : '收起') : (window.i18n ? window.i18n.t('debug.expand') : '展开');
+            const text = expanded ? (('debug.collapse')) : (('debug.expand'));
             button.innerHTML = `<span class="arrow">${arrow}</span><span class="label">${text}</span>`;
         } else {
             button.textContent = arrow;
         }
-        button.setAttribute('aria-label', expanded ? (window.i18n ? window.i18n.t('debug.collapseVar') : '折叠变量') : (window.i18n ? window.i18n.t('debug.expandVar') : '展开变量'));
+        button.setAttribute('aria-label', expanded ? (('debug.collapseVar')) : (('debug.expandVar')));
     }
 
     _shouldForceToggle(scope, data, elementCount) {
@@ -656,7 +656,7 @@ class DebugPanel {
         if (list.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'no-debug-message';
-            empty.textContent = window.i18n ? window.i18n.t('debug.noChildren') : '无子项';
+            empty.textContent = ('debug.noChildren');
             container.appendChild(empty);
             return;
         }
@@ -670,10 +670,10 @@ class DebugPanel {
                 more.className = 'variable-item more-items';
                 const label = document.createElement('span');
                 label.className = 'variable-name';
-                label.textContent = child.name || (window.i18n ? window.i18n.t('debug.more') : '更多…');
+                label.textContent = child.name || (('debug.more'));
                 const val = document.createElement('span');
                 val.className = 'variable-value';
-                val.textContent = child.value || (window.i18n ? window.i18n.t('debug.clickToLoad') : '点击加载更多');
+                val.textContent = child.value || (('debug.clickToLoad'));
                 more.appendChild(label);
                 more.appendChild(val);
 
@@ -683,7 +683,7 @@ class DebugPanel {
                     const parentKey = this._makeNodeKey(scope, rootName, parentPath);
                     if (this.loadingMore.has(parentKey)) return;
                     this.loadingMore.add(parentKey);
-                    val.textContent = window.i18n ? window.i18n.t('debug.loading') : '加载中…';
+                    val.textContent = ('debug.loading');
                     const latestParent = this._getVariableNode(scope, rootName, parentPath) || parentData || {};
                     const nextIndex = Number.isFinite(child.nextIndex) ? child.nextIndex : loadedCount;
                     const count = Number.isFinite(child.chunkSize) && child.chunkSize > 0 ? child.chunkSize : 100;
@@ -738,14 +738,14 @@ class DebugPanel {
         const c = this.root.querySelector('#call-stack');
         if (!c) return;
         c.innerHTML = '';
-        if (!Array.isArray(stack) || stack.length === 0) { c.innerHTML = '<div class="no-debug-message">' + (window.i18n ? window.i18n.t('debug.none') : '无') + '</div>'; return; }
+        if (!Array.isArray(stack) || stack.length === 0) { c.innerHTML = '<div class="no-debug-message">' + (('debug.none')) + '</div>'; return; }
         for (let i = 0; i < stack.length; i++) {
             const f = stack[i];
             const el = document.createElement('div');
             el.className = 'callstack-item';
             el.innerHTML = `
-        <div class="frame-info"><span class="frame-index">#${i}</span><span class="frame-function">${f.function || (window.i18n ? window.i18n.t('debug.unknownFunction') : '未知函数')}</span></div>
-        <div class="frame-location"><span class="frame-file">${f.file || (window.i18n ? window.i18n.t('debug.unknownFile') : '未知文件')}</span>${f.line ? `<span class="frame-line">:${f.line}</span>` : ''}</div>`;
+        <div class="frame-info"><span class="frame-index">#${i}</span><span class="frame-function">${f.function || (('debug.unknownFunction'))}</span></div>
+        <div class="frame-location"><span class="frame-file">${f.file || (('debug.unknownFile'))}</span>${f.line ? `<span class="frame-line">:${f.line}</span>` : ''}</div>`;
             c.appendChild(el);
         }
     }
@@ -763,7 +763,7 @@ class DebugPanel {
         }
         if (data.isArray || data.isContainer) {
             const cnt = data.elementCount != null ? data.elementCount : '?';
-            const typeLabel = data.isArray ? (window.i18n ? window.i18n.t('debug.array') : '数组') : (window.i18n ? window.i18n.t('debug.container') : '容器');
+            const typeLabel = data.isArray ? (('debug.array')) : (('debug.container'));
             display = `${typeLabel}[${cnt}] ${display}`;
         }
         if (display.length > 60) display = display.slice(0, 57) + '...';
