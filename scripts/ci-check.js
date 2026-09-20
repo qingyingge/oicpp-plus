@@ -36,9 +36,17 @@ function readFile(p) {
 function readJson(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
 }
-function exec(cmd) {
-  try { return execSync(cmd, { encoding: 'utf8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] }).trim(); } catch { return null; }
+function exec(cmd, timeoutMs = 30000) {
+  try { return execSync(cmd, { encoding: 'utf8', timeout: timeoutMs, stdio: ['pipe', 'pipe', 'pipe'] }).trim(); } catch { return null; }
 }
+
+// Global timeout: force exit after 120 seconds
+const GLOBAL_TIMEOUT = 120000;
+const globalTimer = setTimeout(() => {
+  console.log(`\n${RD}${B}CI TIMEOUT: exceeded ${GLOBAL_TIMEOUT/1000}s limit${R}`);
+  process.exit(1);
+}, GLOBAL_TIMEOUT);
+globalTimer.unref();
 function getAllFiles(dir, ext) {
   const results = [];
   try {
@@ -198,7 +206,7 @@ const jsFiles = getAllFiles(srcDir, '.js');
 let syntaxErrors = 0;
 for (const f of jsFiles) {
   const rel = path.relative(root, f);
-  const result = exec(`node -c "${f}"`);
+  const result = exec(`node -c "${f}"`, 10000);
   if (result === null) {
     fail(`syntax: ${rel}`);
     syntaxErrors++;
@@ -564,7 +572,7 @@ if (pkg) {
 
 // F2: Dependency tree
 console.log(`\n${Y}[F2] Dependency tree${R}`);
-const lsResult = exec('pnpm ls --depth=0 2>&1');
+const lsResult = exec('pnpm ls --depth=0 2>&1', 15000);
 if (lsResult !== null) {
   if (lsResult.includes('ERR!') || lsResult.includes('WARN') || lsResult.includes('missing')) {
     warn('dependency tree has warnings (may be acceptable with pnpm)');
@@ -572,7 +580,7 @@ if (lsResult !== null) {
     ok('dependency tree clean');
   }
 } else {
-  warn('pnpm ls could not run');
+  warn('pnpm ls could not run (timed out or failed)');
 }
 
 // ============================================================
@@ -704,8 +712,10 @@ console.log(`${GR}Platform: ${os.platform()}/${os.arch()}${R}`);
 
 if (failed > 0) {
   console.log(`\n${RD}${B}CI FAILED${R}`);
+  clearTimeout(globalTimer);
   process.exit(1);
 } else {
   console.log(`\n${G}${B}CI PASSED${R}`);
+  clearTimeout(globalTimer);
   process.exit(0);
 }

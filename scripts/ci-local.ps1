@@ -493,14 +493,23 @@ if ($leakRisk -eq 0) { Ok "no obvious listener leak risk" }
 # 29. pnpm audit
 Write-Host "`n[F1] pnpm audit" -ForegroundColor Yellow
 try {
-    $auditResult = & pnpm audit --audit-level=high 2>&1 | Out-String
-    if ($auditResult -match "found 0 vulnerabilities" -or $auditResult -match "No known vulnerabilities found") {
+    $auditJob = Start-Job -ScriptBlock {
+        param($root)
+        Set-Location $root
+        & pnpm audit --audit-level=high 2>&1 | Out-String
+    } -ArgumentList $root
+    $auditResult = Wait-Job $auditJob -Timeout 30 | Receive-Job
+    if ($auditJob.State -eq 'Running') {
+        Stop-Job $auditJob
+        Warn "pnpm audit timed out (30s)"
+    } elseif ($auditResult -match "found 0 vulnerabilities" -or $auditResult -match "No known vulnerabilities found") {
         Ok "pnpm audit clean"
     } elseif ($LASTEXITCODE -ne 0) {
         Warn "pnpm audit found vulnerabilities (may be false positives)"
     } else {
         Ok "pnpm audit clean"
     }
+    Remove-Job $auditJob -Force -ErrorAction SilentlyContinue
 } catch {
     Warn "pnpm audit skipped: $_"
 }
