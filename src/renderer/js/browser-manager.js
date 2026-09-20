@@ -4,17 +4,20 @@
  */
 
 // 新建标签页默认显示的欢迎页（data URI，避免约:blank 一片空白）
-const NEW_TAB_PAGE_HTML = (() => {
+const getNewTabPageHtml = () => {
     const isDark = document.body.classList.contains('theme-light') ? false : true;
     const bg = isDark ? '#1e1e1e' : '#ffffff';
     const fg = isDark ? '#cccccc' : '#333333';
     const muted = isDark ? '#6a6a6a' : '#999999';
     const accent = '#007acc';
-    // 构建极简欢迎页
+    const _t = window.__ || ((k) => k);
+    const title = _t('browser.title');
+    const welcomeHint = _t('browser.welcomeHint');
+    const splitHint = _t('browser.splitHint');
     return `data:text/html;charset=utf-8,${encodeURIComponent(`
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><title>新标签页</title>
+<head><meta charset="utf-8"><title>${title}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -29,18 +32,18 @@ p{font-size:13px;color:${muted};margin-bottom:24px;text-align:center;line-height
 </style></head>
 <body>
 <div class="logo"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><ellipse cx="12" cy="12" rx="4" ry="10"/><path d="M2 12h20"/></svg></div>
-<h1>内置浏览器</h1>
-<p>在上方地址栏输入网址开始浏览<br>支持 Ctrl+Shift+I 快速打开</p>
-<div class="hint">支持标签页分屏 · 拖动标签到空白处即可</div>
+<h1>${title}</h1>
+<p>${welcomeHint}</p>
+<div class="hint">${splitHint}</div>
 </body></html>`)}`;
-})();
+};
 
 class BrowserManager {
     constructor() {
         this.browserTabs = new Map(); // uniqueKey -> { webview, container, navBar, urlInput, title }
         this._currentFocusKey = null;
         this._pendingNav = new Map(); // uniqueKey -> url
-        this._newTabPage = NEW_TAB_PAGE_HTML;
+        this._newTabPage = null;
 
         if (window.electronAPI?.onBrowserOpenNewTab) {
             this._removeOpenNewTabListener = window.electronAPI.onBrowserOpenNewTab((request) => {
@@ -59,7 +62,7 @@ class BrowserManager {
      */
     createBrowserContainer({ groupId, uniqueKey, url }) {
         // 未指定 URL 时使用内置新标签页
-        const initialUrl = (url && url.trim()) ? url.trim() : this._newTabPage;
+        const initialUrl = (url && url.trim()) ? url.trim() : getNewTabPageHtml();
         // 主容器
         const container = document.createElement('div');
         container.className = 'browser-container';
@@ -177,7 +180,7 @@ class BrowserManager {
             '<svg width="16" height="16" viewBox="0 0 16 16">',
             '<path d="M10 3L5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '</svg>'
-        ].join(''), '后退');
+        ].join(''), window.i18n.t('browser.back'));
         navButtons.appendChild(backBtn);
 
         // 前进
@@ -185,7 +188,7 @@ class BrowserManager {
             '<svg width="16" height="16" viewBox="0 0 16 16">',
             '<path d="M6 3l5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
             '</svg>'
-        ].join(''), '前进');
+        ].join(''), window.i18n.t('browser.forward'));
         navButtons.appendChild(forwardBtn);
 
         // 刷新/停止
@@ -194,7 +197,7 @@ class BrowserManager {
             '<polyline points="23 4 23 10 17 10"/>',
             '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
             '</svg>'
-        ].join(''), '刷新');
+        ].join(''), window.i18n.t('browser.reload'));
         refreshBtn.dataset.action = 'reload';
         navButtons.appendChild(refreshBtn);
 
@@ -571,7 +574,7 @@ class BrowserManager {
             }
 
             if (shouldReload) {
-                const url = state.currentUrl || this._newTabPage || 'about:blank';
+                const url = state.currentUrl || getNewTabPageHtml() || 'about:blank';
                 // 用 requestAnimationFrame 确保 DOM 已挂载后再设置 src
                 requestAnimationFrame(() => {
                     try {

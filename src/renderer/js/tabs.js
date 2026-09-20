@@ -2835,20 +2835,20 @@ class TabManager {
 
         const loader = document.createElement('div');
         loader.className = 'pdf-viewer-loading';
-        loader.innerHTML = '<div class="spinner"></div><div>PDF 加载中…</div>';
+        loader.innerHTML = '<div class="spinner"></div><div>' + (window.__ ? window.__('pdfViewer.loading') : 'pdfViewer.loading') + '</div>';
 
         const iframe = document.createElement('iframe');
         iframe.className = 'pdf-viewer-frame';
         iframe.dataset.tabId = tabId;
         iframe.setAttribute('loading', 'lazy');
         iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-popups allow-downloads');
-        iframe.title = fileName ? `${fileName} (PDF 查看器)` : 'PDF 查看器';
+        iframe.title = fileName ? `${fileName} (${_t('pdfViewer.loading')})` : _t('pdfViewer.loading');
 
         const viewerSrc = this.buildPdfViewerSrc({ filePath, tabId, inline });
         if (viewerSrc) {
             iframe.src = viewerSrc;
         } else {
-            loader.innerHTML = '<div class="spinner"></div><div>无法定位 PDF 文件</div>';
+            loader.innerHTML = '<div class="spinner"></div><div>' + (window.__ ? window.__('pdfViewer.notFound') : 'pdfViewer.notFound') + '</div>';
         }
 
         iframe.addEventListener('load', () => {

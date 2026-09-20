@@ -554,7 +554,7 @@ class CloudSyncPanel {
             this.showMessage(('cloud.loginRequired'), 'warning');
             return;
         }
-        const name = await window.dialogManager?.showInputDialog('新建云端文件', 'untitled.cpp', '请输入文件名');
+        const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFileName'), window.i18n.t('cloud.untitled'), window.i18n.t('cloud.namePlaceholder'));
         if (!name) return;
         const check = this.validateFileName(name);
         if (!check.valid) {
@@ -589,7 +589,7 @@ class CloudSyncPanel {
             this.showMessage(('cloud.loginRequired'), 'warning');
             return;
         }
-        const name = await window.dialogManager?.showInputDialog('新建云端文件夹', 'new-folder', '请输入文件夹名');
+        const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFolderName'), window.i18n.t('cloud.defaultFolder'), window.i18n.t('cloud.folderPlaceholder'));
         if (!name) return;
         const check = this.validateFileName(name);
         if (!check.valid) {
@@ -638,7 +638,7 @@ class CloudSyncPanel {
             const info = await window.electronAPI.getPathInfo(filePath);
             const ext = (info?.extname || '').toLowerCase();
             if (!this.allowedExtensions.has(ext)) {
-                this.showMessage('仅支持 .ans .in .out .cpp .py .txt .md .h .hpp', 'error');
+                this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
                 return;
             }
             const buffer = await window.electronAPI.readFileBuffer(filePath);
@@ -667,7 +667,7 @@ class CloudSyncPanel {
 
     async uploadLocalFolder() {
         if (!this._lastLoggedIn) {
-            this.showMessage('请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
         if (!window.electronAPI?.showOpenDialog || !window.electronAPI?.walkDirectory) {
@@ -695,11 +695,11 @@ class CloudSyncPanel {
                 includeExts: Array.from(this.allowedExtensions)
             });
             if (!walkResult?.success) {
-                throw new Error(walkResult?.error || '读取文件夹失败');
+                throw new Error(walkResult?.error || window.i18n.t('cloud.loadFolderFail'));
             }
             const rawFiles = Array.isArray(walkResult.files) ? walkResult.files : [];
             if (rawFiles.length === 0) {
-                this.showMessage('文件夹内没有可上传的文件', 'warning');
+                this.showMessage(window.i18n.t('message.uploadFolderEmpty'), 'warning');
                 return;
             }
 
@@ -716,12 +716,12 @@ class CloudSyncPanel {
             }
 
             if (entries.length === 0) {
-                this.showMessage('文件夹内没有可上传的文件', 'warning');
+                this.showMessage(window.i18n.t('message.uploadFolderEmpty'), 'warning');
                 return;
             }
 
             if (typeof this.remainingFiles === 'number' && entries.length > this.remainingFiles) {
-                this.showMessage(`待上传文件 ${entries.length} 个，超过云端剩余数量 ${this.remainingFiles}`, 'warning');
+                this.showMessage(window.i18n.t('cloud.uploadExceedsRemaining', { count: entries.length, remaining: this.remainingFiles }), 'warning');
                 return;
             }
 
@@ -744,7 +744,7 @@ class CloudSyncPanel {
             let uploaded = 0;
             let skippedSize = 0;
             let processed = 0;
-            this.showUploadProgress(0, entries.length, `上传中: 0/${entries.length}`);
+            this.showUploadProgress(0, entries.length, window.i18n.t('cloud.uploadProgress', { current: 0, total: entries.length }));
             for (const entry of entries) {
                 const content = await window.electronAPI.readFileContent(entry.path);
                 const bytes = new TextEncoder().encode(content || '').length;
@@ -780,9 +780,9 @@ class CloudSyncPanel {
             this.expandedFolders.add(cloudRoot);
             this.renderTree();
 
-            let message = `上传完成：${uploaded} 个文件`;
+            let message = window.i18n.t('message.uploadComplete', { uploaded });
             if (skippedSize > 0) {
-                message += `，跳过 ${skippedSize} 个超出 50KB 的文件`;
+                message += window.i18n.t('message.uploadSkipped', { count: skippedSize });
             }
             this.showUploadProgress(entries.length, entries.length, message);
             this.hideUploadProgress(2000);

@@ -250,24 +250,24 @@
   </div>
   <div id="loadingOverlay">
     <div class="spinner"></div>
-    <div>PDF 加载中…</div>
+    <div data-i18n="pdfViewer.loading">PDF 加载中…</div>
   </div>
   <div id="errorOverlay">
-    <strong>无法打开 PDF 文件</strong>
+    <strong data-i18n="pdfViewer.cannotOpen">无法打开 PDF 文件</strong>
     <span id="errorMessage"></span>
   </div>
   <div id="dropOverlay">
-    <div class="message">拖拽文件到此处打开</div>
+    <div class="message" data-i18n="pdfViewer.dragToOpen">拖拽文件到此处打开</div>
   </div>
   <div id="passwordOverlay" aria-hidden="true">
     <div id="passwordDialog" role="dialog" aria-modal="true" aria-labelledby="passwordDialogTitle">
-      <h2 id="passwordDialogTitle">PDF 密码保护</h2>
-      <p id="passwordMessage">该 PDF 文件受密码保护，请输入密码：</p>
-      <input id="passwordInput" type="password" autocomplete="current-password" placeholder="请输入密码" />
+      <h2 id="passwordDialogTitle" data-i18n="pdfViewer.passwordProtected">PDF 密码保护</h2>
+      <p id="passwordMessage" data-i18n="pdfViewer.passwordPrompt">该 PDF 文件受密码保护，请输入密码：</p>
+      <input id="passwordInput" type="password" autocomplete="current-password" data-i18n-placeholder="pdfViewer.passwordPlaceholder" placeholder="请输入密码" />
       <div id="passwordError"></div>
       <div id="passwordActions">
-        <button id="passwordCancel" type="button">取消</button>
-        <button id="passwordSubmit" type="button">确定</button>
+        <button id="passwordCancel" type="button" data-i18n="pdfViewer.cancel">取消</button>
+        <button id="passwordSubmit" type="button" data-i18n="pdfViewer.ok">确定</button>
       </div>
     </div>
   </div>
@@ -411,7 +411,7 @@
 
     function requestFileData(url) {
       if (!window.parent) {
-        return Promise.reject(new Error("无法访问应用上下文"));
+        return Promise.reject(new Error(window.i18n?.t('pdfViewer.noContext')));
       }
       const requestId = `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
       const filePath = guessFilePathFromUrl(url);
@@ -425,7 +425,7 @@
       return new Promise((resolve, reject) => {
         const timeoutId = setTimeout(() => {
           pendingFileRequests.delete(requestId);
-          reject(new Error("读取 PDF 文件超时"));
+          reject(new Error(window.i18n?.t('pdfViewer.loadTimeout')));
         }, 15000);
         pendingFileRequests.set(requestId, { resolve, reject, timeoutId });
         notifyParent("request-file", payload);
@@ -481,7 +481,7 @@
     function showError(message) {
       hideLoading();
       cleanupPasswordOverlay();
-      errorMessage.textContent = message || "未知错误";
+      errorMessage.textContent = message || window.i18n?.t('pdfViewer.unknownError');
       errorOverlay.classList.add("visible");
       notifyParent("error", { message });
     }
@@ -561,7 +561,7 @@
       }
       const { allowEmpty = false } = options;
       passwordAllowEmpty = allowEmpty;
-      passwordMessageEl.textContent = message || "请输入 PDF 密码：";
+      passwordMessageEl.textContent = message || window.i18n?.t('pdfViewer.passwordPrompt');
       passwordError.textContent = "";
       passwordInput.value = "";
       passwordOverlay.classList.add("visible");
@@ -583,7 +583,7 @@
         }
         const value = passwordInput.value;
         if (!passwordAllowEmpty && !value) {
-          passwordError.textContent = "密码不能为空";
+          passwordError.textContent = window.i18n?.t('pdfViewer.passwordEmpty');
           passwordInput.focus();
           return;
         }
@@ -613,7 +613,7 @@
           event.preventDefault();
           const value = passwordInput.value;
           if (!passwordAllowEmpty && !value) {
-            passwordError.textContent = "密码不能为空";
+            passwordError.textContent = window.i18n?.t('pdfViewer.passwordEmpty');
             passwordInput.focus();
             return;
           }
@@ -667,7 +667,7 @@
 
     async function loadDocument() {
       if (!fileUrl) {
-        showError("缺少文件参数");
+        showError(window.i18n?.t('pdfViewer.missingParam'));
         return;
       }
 
@@ -712,7 +712,7 @@
           if (isInlineSource || isLocalFile) {
             const clonedData = await getFileDataClone();
             if (!clonedData) {
-              throw new Error("未收到有效的 PDF 数据");
+          throw new Error(window.i18n?.t('pdfViewer.noData'));
             }
             params.data = clonedData;
           } else {
@@ -734,7 +734,7 @@
           if (loadingTask && typeof loadingTask.destroy === "function") {
             try { await loadingTask.destroy(); } catch (_) {}
           }
-          console.error("PDF 加载失败", error);
+          console.error(window.i18n?.t('pdfViewer.loadFail'), error);
 
           const responses = pdfjsLib.PasswordResponses || {};
           const needPassword = error?.name === "PasswordException" && error.code === responses.NEED_PASSWORD;
@@ -745,18 +745,18 @@
             hideLoading();
             attemptCount = wrongPassword ? attemptCount + 1 : 0;
 
-            let promptMessage = "该 PDF 文件受密码保护，请输入密码：";
+            let promptMessage = window.i18n?.t('pdfViewer.passwordPrompt');
             if (wrongPassword) {
               promptMessage = attemptCount === 1
-                ? "密码错误，请重新输入正确的密码："
-                : `密码错误（第 ${attemptCount} 次尝试），请重新输入：`;
+                ? window.i18n?.t('pdfViewer.passwordError')
+                : window.i18n?.t('pdfViewer.passwordErrorAttempt', { count: attemptCount });
             }
 
             try {
               const password = await showPasswordOverlay(promptMessage, { allowEmpty: false });
               if (password === null) {
                 lastPasswordCancelled = true;
-                showError("已取消打开受密码保护的 PDF 文件。");
+                showError(window.i18n?.t('pdfViewer.passwordCancelled') || "Cancelled opening password-protected PDF.");
                 return;
               }
               lastPasswordCancelled = false;
@@ -764,9 +764,9 @@
               showLoading();
               continue;
             } catch (passwordError) {
-              console.error("处理 PDF 密码输入失败", passwordError);
+              console.error(window.i18n?.t('pdfViewer.loadFail'), passwordError);
               lastPasswordCancelled = true;
-              showError("已取消打开受密码保护的 PDF 文件。");
+              showError(window.i18n?.t('pdfViewer.passwordCancelled') || "Cancelled opening password-protected PDF.");
               return;
             }
           }
@@ -868,7 +868,7 @@
             const buffer = await file.arrayBuffer();
             descriptor.base64 = arrayBufferToBase64(buffer);
           } catch (error) {
-            console.warn("读取拖拽文件数据失败", error);
+            console.warn("Failed to read drag-and-drop file data", error);
           }
         }
         result.push(descriptor);
@@ -881,7 +881,7 @@
         notifyParent("external-drop", { files });
         return true;
       } catch (error) {
-        console.warn("向宿主发送拖拽文件失败，尝试降级", error);
+        console.warn("Failed to post drag files to host, trying fallback", error);
         const sanitized = files.map((descriptor) => {
           const { file, ...rest } = descriptor;
           return rest;
@@ -889,7 +889,7 @@
         try {
           notifyParent("external-drop", { files: sanitized });
         } catch (fallbackError) {
-          console.error("无法将拖拽信息传递给宿主", fallbackError);
+          console.error("Cannot pass drag info to host", fallbackError);
         }
         return false;
       }

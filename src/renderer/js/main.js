@@ -3124,7 +3124,7 @@ ${data.message || '程序已加载，等待开始执行'}
         containers.forEach(id => {
             const container = document.getElementById(id);
             if (container) {
-                container.innerHTML = '<div class="waiting-debug-message">等待开始调试...</div>';
+                container.innerHTML = `<div class="waiting-debug-message">${this.t('debug.waitingDebug')}</div>`;
             }
         });
     }
@@ -3159,7 +3159,7 @@ ${data.message || '程序已加载，等待开始执行'}
             }
             
             infoElement.innerHTML = `
-                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">调试状态</h4>
+                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">${this.t('debug.debugStatus')}</h4>
                 <p style="margin: 0; white-space: pre-line;">${message}</p>
             `;
         }
@@ -3192,7 +3192,7 @@ ${data.message || '程序已加载，等待开始执行'}
         container.innerHTML = '';
         
         if (Object.keys(variables).length === 0) {
-            container.innerHTML = '<div class="no-debug-message">没有变量</div>';
+            container.innerHTML = `<div class="no-debug-message">${this.t('debug.noVariables')}</div>`;
             return;
         }
 
@@ -3213,7 +3213,7 @@ ${data.message || '程序已加载，等待开始执行'}
                 ${hasChildren ? '<span class="expand-toggle">▶</span>' : '<span class="expand-spacer"></span>'}
                 <span class="variable-name" title="${data.type || 'unknown'}">${name}</span>
                 <span class="variable-value" title="${data.value || ''}">${this.formatVariableValue(data)}</span>
-                ${scope === 'watch' ? '<button class="remove-watch-btn" title="移除监视">×</button>' : ''}
+                ${scope === 'watch' ? `<button class="remove-watch-btn" title="${this.t('debug.removeWatch')}">×</button>` : ''}
             </div>
         `;
         
@@ -3227,7 +3227,7 @@ ${data.message || '程序已加载，等待开始执行'}
         
         if (data.isContainer || data.isArray) {
             const count = data.elementCount !== null ? data.elementCount : '?';
-            const type = data.isArray ? '数组' : '容器';
+            const type = data.isArray ? this.t('debug.typeArray') : this.t('debug.typeContainer');
             displayValue = `${type}[${count}] ${displayValue}`;
         }
         
@@ -3246,7 +3246,7 @@ ${data.message || '程序已加载，等待开始执行'}
         if (!container) return;
 
         if (!callStack || callStack.length === 0) {
-            container.innerHTML = '<div class="no-debug-message">没有调用堆栈信息</div>';
+            container.innerHTML = `<div class="no-debug-message">${this.t('debug.noCallStack')}</div>`;
             return;
         }
 
@@ -4342,12 +4342,12 @@ ${data.message || '程序已加载，等待开始执行'}
         // 标题栏
         const titleBar = document.createElement('div');
         titleBar.className = 'file-history-titlebar';
-        titleBar.innerHTML = '<span class="file-history-title">文件历史</span>';
+        titleBar.innerHTML = `<span class="file-history-title">${this.t('fileHistory.title')}</span>`;
 
         const closeBtn = document.createElement('button');
         closeBtn.className = 'file-history-close-btn';
         closeBtn.innerHTML = '&times;';
-        closeBtn.setAttribute('aria-label', '关闭');
+        closeBtn.setAttribute('aria-label', this.t('dialog.cancel'));
         closeBtn.addEventListener('click', () => overlay.remove());
         titleBar.appendChild(closeBtn);
         dialog.appendChild(titleBar);
@@ -4356,7 +4356,7 @@ ${data.message || '程序已加载，等待开始执行'}
         if (history.length > 0) {
             const stats = document.createElement('div');
             stats.className = 'file-history-stats';
-            stats.textContent = `共 ${history.length} 个文件`;
+            stats.textContent = this.t('fileHistory.totalFiles', { count: history.length });
             dialog.appendChild(stats);
         }
 
@@ -4367,7 +4367,7 @@ ${data.message || '程序已加载，等待开始执行'}
         if (history.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'file-history-empty';
-            empty.textContent = '暂无文件历史记录';
+            empty.textContent = this.t('fileHistory.noHistory');
             listContainer.appendChild(empty);
         } else {
             for (const item of history) {
@@ -4384,7 +4384,7 @@ ${data.message || '程序已加载，等待开始执行'}
 
                 const name = document.createElement('div');
                 name.className = 'file-history-name';
-                name.textContent = item.name || '未知文件';
+                name.textContent = item.name || this.t('fileHistory.unknownFile');
                 name.title = item.name || '';
 
                 const pathEl = document.createElement('div');
@@ -4426,12 +4426,12 @@ ${data.message || '程序已加载，等待开始执行'}
 
             const clearBtn = document.createElement('button');
             clearBtn.className = 'file-history-clear-btn';
-            clearBtn.textContent = '清除历史记录';
+            clearBtn.textContent = this.t('fileHistory.clearHistory');
             clearBtn.addEventListener('click', async () => {
                 if (!window.dialogManager || typeof window.dialogManager.showConfirm !== 'function') {
-                    if (!confirm('确定要清除所有文件历史记录吗？')) return;
+                    if (!confirm(this.t('fileHistory.clearConfirm'))) return;
                 } else {
-                    const confirmed = await window.dialogManager.showConfirm('确定要清除所有文件历史记录吗？');
+                    const confirmed = await window.dialogManager.showConfirm(this.t('fileHistory.clearConfirm'));
                     if (!confirmed) return;
                 }
                 await window.electronAPI.clearFileHistory();

@@ -325,6 +325,7 @@
     "gotoLinePlaceholder": "请输入行号",
     "newFileDialogTitle": "新建文件",
     "newFileDialogPlaceholder": "请输入文件名（如：main.cpp, test.py, data.txt）",
+    "newFileDialogErrorTitle": "新建文件 - 错误",
     "newFileDialogError": "错误: {msg}\n请输入文件名（如：main.cpp, test.py, data.txt）",
     "newFolderDialogTitle": "新建文件夹",
     "newFolderDialogPlaceholder": "请输入文件夹名",
@@ -701,7 +702,11 @@
     "array": "数组",
     "container": "容器",
     "unknownFunction": "未知函数",
-    "unknownFile": "未知文件"
+    "unknownFile": "未知文件",
+    "debugStatus": "调试状态",
+    "removeWatch": "移除监视",
+    "typeArray": "数组",
+    "typeContainer": "容器"
   },
   "cloud": {
     "title": "云空间",
@@ -747,7 +752,22 @@
     "untitled": "untitled.cpp",
     "defaultFolder": "new-folder",
     "uploadSuccessSimple": "上传成功",
-    "uploadFailSimple": "上传失败"
+    "uploadFailSimple": "上传失败",
+    "saveCloudFile": "保存云端文件",
+    "writeFail": "写入失败",
+    "saveSuccess": "保存成功",
+    "downloadFail": "下载失败",
+    "renameFail": "重命名失败",
+    "deleteFail": "删除失败",
+    "uploadExceedsRemaining": "待上传文件 {count} 个，超过云端剩余数量 {remaining}",
+    "syncUnavailable": "云同步接口不可用",
+    "requestFail": "请求失败",
+    "serverError": "服务器返回错误",
+    "typeFile": "文件",
+    "typeFolder": "文件夹",
+    "conflictFolderExists": "云端已存在同名文件夹: {name}，无法用{targetType}覆盖。",
+    "conflictOverwriteConfirm": "云端已存在同名{type}: {name}，是否覆盖该{type}？",
+    "fileTypeNotSupportedShort": "仅支持 .ans .in .out .cpp .py .txt"
   },
   "compileOutput": {
     "title": "编译输出",
@@ -1017,6 +1037,7 @@
     "noData": "未收到有效的 PDF 数据",
     "loadTimeout": "读取 PDF 文件超时",
     "loadFail": "PDF 加载失败",
+    "notFound": "无法定位 PDF 文件",
     "unknownError": "未知错误",
     "noContext": "无法访问应用上下文",
     "dragReadFail": "读取拖拽文件数据失败",
@@ -1048,7 +1069,9 @@
     "pageLoadError": "页面加载失败",
     "insecure": "连接不安全",
     "secure": "连接安全",
-    "defaultTitle": "内置浏览器"
+    "defaultTitle": "内置浏览器",
+    "welcomeHint": "在上方地址栏输入网址开始浏览<br>支持 Ctrl+Shift+I 快速打开",
+    "splitHint": "支持标签页分屏 · 拖动标签到空白处即可"
   },
   "welcome": {
     "subtitle": "为 OIer 优化的 C++ 编程环境",
@@ -1066,5 +1089,13 @@
     "supportedFilesHint": "仅支持 .ans .in .out .cpp .py .txt .md .h .hpp，单文件 ≤ 50KB",
     "prepareUpload": "准备上传...",
     "dragToResize": "拖动调整终端高度"
+  },
+  "fileHistory": {
+    "title": "文件历史",
+    "totalFiles": "共 {count} 个文件",
+    "noHistory": "暂无文件历史记录",
+    "clearHistory": "清除历史记录",
+    "clearConfirm": "确定要清除所有文件历史记录吗？",
+    "unknownFile": "未知文件"
   }
 }

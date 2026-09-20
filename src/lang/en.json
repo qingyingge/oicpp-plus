@@ -342,6 +342,7 @@
     "gotoLinePlaceholder": "Enter line number",
     "newFileDialogTitle": "New File",
     "newFileDialogPlaceholder": "Enter file name",
+    "newFileDialogErrorTitle": "New File - Error",
     "newFileDialogError": "Error: {msg}\nPlease enter a file name (e.g. main.cpp, test.py, data.txt)",
     "newFolderDialogTitle": "New Folder",
     "newFolderDialogPlaceholder": "Enter folder name",
@@ -718,7 +719,11 @@
     "array": "Array",
     "container": "Container",
     "unknownFunction": "Unknown function",
-    "unknownFile": "Unknown file"
+    "unknownFile": "Unknown file",
+    "debugStatus": "Debug Status",
+    "removeWatch": "Remove watch",
+    "typeArray": "Array",
+    "typeContainer": "Container"
   },
   "cloud": {
     "title": "Cloud Space",
@@ -764,7 +769,22 @@
     "untitled": "untitled.cpp",
     "defaultFolder": "new-folder",
     "uploadSuccessSimple": "Upload successful",
-    "uploadFailSimple": "Upload failed"
+    "uploadFailSimple": "Upload failed",
+    "saveCloudFile": "Save Cloud File",
+    "writeFail": "Write failed",
+    "saveSuccess": "Save successful",
+    "downloadFail": "Download failed",
+    "renameFail": "Rename failed",
+    "deleteFail": "Delete failed",
+    "uploadExceedsRemaining": "{count} files to upload, exceeding remaining quota ({remaining})",
+    "syncUnavailable": "Cloud sync API unavailable",
+    "requestFail": "Request failed",
+    "serverError": "Server returned an error",
+    "typeFile": "file",
+    "typeFolder": "folder",
+    "conflictFolderExists": "A folder named \"{name}\" already exists in cloud. Cannot overwrite a folder with a {targetType}.",
+    "conflictOverwriteConfirm": "A {type} named \"{name}\" already exists in cloud. Overwrite this {type}?",
+    "fileTypeNotSupportedShort": "Only .ans .in .out .cpp .py .txt supported"
   },
   "compileOutput": {
     "title": "Compile Output",
@@ -1017,6 +1037,7 @@
     "noData": "No valid PDF data received",
     "loadTimeout": "Timeout reading PDF file",
     "loadFail": "PDF load failed",
+    "notFound": "PDF file not found",
     "unknownError": "Unknown error",
     "noContext": "Cannot access application context",
     "dragReadFail": "Failed to read drag-and-drop file data",
@@ -1048,7 +1069,9 @@
     "pageLoadError": "Failed to load page",
     "insecure": "Insecure connection",
     "secure": "Secure connection",
-    "defaultTitle": "Browser"
+    "defaultTitle": "Browser",
+    "welcomeHint": "Enter a URL in the address bar to start browsing<br>Press Ctrl+Shift+I to open DevTools",
+    "splitHint": "Supports tab splitting · Drag a tab to an empty area"
   },
   "welcome": {
     "subtitle": "C++ development environment optimized for OI competitors",
@@ -1066,5 +1089,13 @@
     "supportedFilesHint": "Supported: .ans .in .out .cpp .py .txt .md .h .hpp, max 50KB per file",
     "prepareUpload": "Preparing upload...",
     "dragToResize": "Drag to resize terminal"
+  },
+  "fileHistory": {
+    "title": "File History",
+    "totalFiles": "{count} file(s)",
+    "noHistory": "No file history yet",
+    "clearHistory": "Clear History",
+    "clearConfirm": "Are you sure you want to clear all file history?",
+    "unknownFile": "Unknown file"
   }
 }

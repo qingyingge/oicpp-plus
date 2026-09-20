@@ -340,18 +340,18 @@ class DialogManager {
     }
 
     showGotoLineDialog() {
-        return this.showInputDialog('跳转到行号', '1', '请输入行号');
+        return this.showInputDialog(window.i18n.t('dialog.gotoLine'), '1', window.i18n.t('dialog.gotoLinePlaceholder'));
     }
 
     showNewFileDialog(errorMessage = '', defaultName = 'untitled.cpp') {
-        const title = errorMessage ? '新建文件 - 错误' : '新建文件';
-        const placeholder = errorMessage ? `错误: ${errorMessage}\n请输入文件名（如：main.cpp, test.py, data.txt）` : '请输入文件名（如：main.cpp, test.py, data.txt）';
+        const title = errorMessage ? window.i18n.t('dialog.newFileDialogErrorTitle') : window.i18n.t('dialog.newFileDialogTitle');
+        const placeholder = errorMessage ? window.i18n.t('dialog.newFileDialogError', { msg: errorMessage }) : window.i18n.t('dialog.newFileDialogPlaceholder');
         const initial = defaultName && typeof defaultName === 'string' ? defaultName : 'untitled.cpp';
         return this.showInputDialog(title, initial, placeholder);
     }
 
     showNewFolderDialog() {
-        return this.showInputDialog('新建文件夹', 'new-folder', '请输入文件夹名');
+        return this.showInputDialog(window.i18n.t('dialog.newFolderDialogTitle'), 'new-folder', window.i18n.t('dialog.newFolderDialogPlaceholder'));
     }
 
     showError(message) {
