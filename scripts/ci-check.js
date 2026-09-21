@@ -600,27 +600,28 @@ for (const f of jsFiles) {
 }
 if (largeFiles === 0) ok('no oversized files');
 
-// G2: Duplicate function names (same file only)
+// G2: Duplicate function names (top-level function declarations only)
 console.log(`\n${Y}[G2] Duplicate function names${R}`);
 let duplicateCount = 0;
+const funcDeclRe = /^(?:async\s+)?function\s+(\w+)\s*\(/gm;
 for (const f of jsFiles) {
   const rel = path.relative(root, f);
   const content = readFile(f);
   if (!content) continue;
-  const fileFuncNames = {};
-  for (const m of content.matchAll(/(?:function|const|let|var)\s+(\w+)\s*[=(]/g)) {
-    const name = m[1];
-    if (name.length > 5 && !/^(log|err|warn|info|debug|init|setup|load|create|render|update|remove|delete|get|set|add|start|stop|open|close|read|write|send|receive|process|handle|execute|run|test|check|validate|parse|format|convert|encode|decode|encrypt|decrypt|hash|compress|decompress|upload|download|connect|disconnect|subscribe|unsubscribe|on|off|emit|trigger|dispatch|listen|bind|unbind|mount|unmount|install|uninstall|enable|disable|show|hide|toggle|focus|blur|select|deselect|copy|cut|paste|undo|redo|save|export|import|sync|async|await|promise|callback|handler|listener|observer|provider|factory|builder|adapter|wrapper|helper|util|utils|tool|tools|config|settings|options|params|args|props|state|context|store|cache|pool|queue|stack|list|array|map|set|dict|hash|tree|graph|node|edge|link|path|route|endpoint|url|uri|link|href|src|dest|source|target|input|output|stream|pipe|channel|port|socket|connection|session|token|key|value|data|payload|body|header|meta|info|details|description|name|label|title|text|content|message|error|warning|exception|fault|status|code|type|kind|category|group|class|namespace|module|package|library|framework|plugin|extension|addon|component|widget|element|node|tag|attribute|property|method|function|api|interface|contract|schema|model|view|controller|service|repository|dao|dto|vo|po|entity|model|domain|business|logic|presentation|ui|ux|gui|cli|tui|web|mobile|desktop|server|client|agent|bot|daemon|service|worker|scheduler|job|task|queue|pool|thread|process|instance|container|pod|node|cluster|region|zone|dc|env|environment|stage|prod|dev|test|qa|uat|staging|sandbox|local|remote|cloud|aws|gcp|azure|docker|k8s|kubernetes|helm|terraform|ansible|jenkins|gitlab|github|bitbucket|jira|confluence|slack|teams|discord|telegram|email|sms|push|notification|alert|alarm|event|trigger|webhook|hook|callback|listener|observer|subscriber|publisher|emitter|bus|queue|topic|channel|exchange|routing|binding|consumer|producer|sender|receiver|client|server|proxy|gateway|loadbalancer|router|switch|firewall|vpn|ssl|tls|https|http|tcp|udp|ip|dns|dhcp|ntp|ssh|ftp|smtp|imap|pop3|ldap|kerberos|oauth|jwt|saml|oidc|mfa|2fa|sso|rbac|abac|acl|rbac|dac|mac|cryptography|cipher|encrypt|decrypt|sign|verify|hash|hmac|sha|md5|aes|rsa|ecdsa|ed25519|x509|certificate|ca|pkcs|pem|der|jks|keystore|truststore|secret|credential|password|pin|otp|totp|hotp|recovery|backup|restore|archive|compress|zip|tar|gzip|bzip2|lzma|zstd|lz4|snappy|deflate|inflate|encrypt|decrypt|encode|decode|base64|hex|ascii|utf8|unicode|latin|cp1252|iso8859|charset|encoding|decoding|serialization|deserialization|marshal|unmarshal|parse|unparse|format|unformat|stringify|json|xml|yaml|toml|ini|csv|tsv|parquet|avro|orc|feather|arrow|protobuf|thrift|grpc|rest|soap|graphql|websocket|socket|sse|longpoll|短命名)$/.test(name)) {
-      if (fileFuncNames[name]) {
-        warn(`${rel} has duplicate: ${name}`);
-        duplicateCount++;
-      } else {
-        fileFuncNames[name] = true;
-      }
+  const seen = new Map();
+  for (const m of content.matchAll(funcDeclRe)) {
+    const line = content.slice(0, m.index).split('\n').length;
+    if (seen.has(m[1])) seen.get(m[1]).push(line);
+    else seen.set(m[1], [line]);
+  }
+  for (const [name, declLines] of seen) {
+    if (declLines.length > 1) {
+      warn(rel + ' redeclares ' + name + ' at lines ' + declLines.join(', '));
+      duplicateCount++;
     }
   }
 }
-if (duplicateCount === 0) ok('no duplicate function names in same file');
+if (duplicateCount === 0) ok('no duplicate top-level function declarations');
 
 // G3: Dead code patterns
 console.log(`\n${Y}[G3] Dead code patterns${R}`);
