@@ -58,7 +58,7 @@ class CompilerManager {
         this.compileOutput.innerHTML = `
             <div class="compile-output-header">
                 <div class="compile-output-title">
-                    <span class="compile-status" id="compile-status-text">编译输出</span>
+                    <span class="compile-status" id="compile-status-text"data-i18n="compileOutput.title">Compile Output</span>
                 </div>
                 <div class="compile-output-controls">
                     <button class="compile-output-clear" id="clear-compile-output" data-i18n-title="panel.clearOutput" title="清空输出">
@@ -84,7 +84,7 @@ class CompilerManager {
                         </div>
                     </div>
                     <div class="compile-pane compile-pane-analysis" data-pane="analysis">
-                        <div class="analysis-empty" id="compile-analysis-empty">暂无可解析的内容，先查看原始输出或等待下一次编译。</div>
+                        <div class="analysis-empty" id="compile-analysis-empty">${this.t('panel.noParseContent')}</div>
                         <div class="analysis-list" id="compile-analysis-list"></div>
                     </div>
                 </div>
@@ -334,7 +334,7 @@ class CompilerManager {
             const isMacPlatform = !!(typeof window !== 'undefined' && window.process && window.process.platform === 'darwin');
             if (isMacPlatform && /\s-static\b/.test(` ${compilerArgs}`)) {
                 compilerArgs = compilerArgs.replace(/\s-static\b/g, ' ').replace(/\s+/g, ' ').trim();
-                this.appendOutput('检测到 macOS 平台，已自动移除不兼容参数 -static\n', 'warning');
+                this.appendOutput(this.t('cloudCompile.detectMacOS') + '\n', 'warning');
             }
             if (options.forDebug) {
                 if (!compilerArgs.includes('-g')) {
@@ -377,10 +377,10 @@ class CompilerManager {
                     });
                     this.handleCompileResult(result);
                 } catch (error) {
-                    this.handleCompileError('IPC 调用失败: ' + error.message);
+                    this.handleCompileError(this.t('cloudCompile.ipcFailed') + ': ' + error.message);
                 }
             } else {
-                this.handleCompileError('Electron 环境不可用');
+                this.handleCompileError(this.t('cloudCompile.electronUnavailable'));
             }
 
         } catch (error) {
@@ -424,9 +424,9 @@ class CompilerManager {
             if (byteLength > 20 * 1024) {
                 this.showOutput();
                 this.clearOutput();
-                this.setStatus('云编译失败');
+                this.setStatus(this.t('cloudCompile.failed'));
                 const sizeText = this.formatByteSize(byteLength);
-                this.appendOutput(`代码长度为 ${sizeText}，超出云编译 20KB 限制。`, 'error');
+                this.appendOutput(this.t('cloudCompile.codeTooLong', { size: sizeText }), 'error');
                 return;
             }
 
@@ -447,8 +447,8 @@ class CompilerManager {
 
             this.showOutput();
             this.clearOutput();
-            this.setStatus('正在云编译...');
-            this.appendOutput('正在将代码发送至 Linux 云编译服务...', 'info');
+            this.setStatus(this.t('cloudCompile.compiling'));
+            this.appendOutput(this.t('cloudCompile.sendingToService'), 'info');
 
             let token = '';
             let loginToken = '';
@@ -488,49 +488,49 @@ class CompilerManager {
             }
 
             if (!data) {
-                throw new Error(`云编译服务响应异常 (HTTP ${response.status})`);
+                throw new Error(this.t('cloudCompile.serviceError', { status: response.status }));
             }
 
             if (data.code === 200 && data.task_id) {
                 this.cloudCompileTaskId = data.task_id;
-                this.appendOutput(`云编译任务创建成功，任务编号: ${data.task_id}`, 'info');
-                this.setCloudProgressMessage('云编译任务已提交，正在等待排队结果...', 'info');
+                this.appendOutput(this.t('cloudCompile.taskCreated', { taskId: data.task_id }), 'info');
+                this.setCloudProgressMessage(this.t('cloudCompile.taskSubmitted'), 'info');
                 this.pollCloudCompilationResult(data.task_id, 0);
                 return;
             }
 
             if (data.code === 400) {
-                this.setStatus('云编译失败');
+                this.setStatus(this.t('cloudCompile.failed'));
                 if (data.msg) {
                     this.appendMultilineOutput(data.msg, 'error');
                 }
-                this.showMessage(data.msg || '云编译失败：代码长度超出限制', 'error');
+                this.showMessage(data.msg || this.t('cloudCompile.codeTooLongLimit'), 'error');
                 this.resetCloudCompileState();
                 return;
             }
 
             if (data.code === 429) {
-                this.setStatus('云编译受限');
-                this.appendOutput('云编译请求过于频繁，请稍后再试。', 'warning');
+                this.setStatus(this.t('cloudCompile.restricted'));
+                this.appendOutput(this.t('cloudCompile.rateLimited'), 'warning');
                 if (data.msg) {
                     this.appendMultilineOutput(data.msg, 'warning');
                 }
-                this.showMessage(data.msg || '云编译请求过于频繁，请稍后再试', 'warning');
+                this.showMessage(data.msg || this.t('cloudCompile.rateLimitedSimple'), 'warning');
                 this.resetCloudCompileState();
                 return;
             }
 
-            const message = data.msg || `云编译服务返回未知状态: ${data.code}`;
-            this.setStatus('云编译失败');
+            const message = data.msg || this.t('cloudCompile.unknownStatus', { code: data.code });
+            this.setStatus(this.t('cloudCompile.failed'));
             this.appendOutput(message, 'error');
             this.showMessage(message, 'error');
             this.resetCloudCompileState();
         } catch (error) {
             if (error?.name === 'AbortError') {
-                this.appendOutput('云编译请求已取消。', 'warning');
+                this.appendOutput(this.t('cloudCompile.requestCancelled'), 'warning');
             } else {
-                const message = error?.message || '云编译请求失败';
-                this.setStatus('云编译失败');
+                const message = error?.message || this.t('cloudCompile.requestFailed');
+                this.setStatus(this.t('cloudCompile.failed'));
                 this.appendOutput(message, 'error');
                 this.showMessage(message, 'error');
             }
@@ -651,19 +651,19 @@ class CompilerManager {
                     this.handleRunError(error.message || error);
                 });
             } catch (error) {
-                this.handleRunError('IPC 调用失败: ' + error.message);
+                this.handleRunError(this.t('cloudCompile.ipcFailed') + ': ' + error.message);
             }
         } else {
-            this.handleRunError('Electron API 不可用');
+            this.handleRunError(this.t('cloudCompile.electronUnavailable'));
         }
     }
 
     async pollCloudCompilationResult(taskId, attempt = 0) {
         if (!taskId || !this.isCloudCompiling) return;
         if (attempt >= 300) {
-            this.setStatus('云编译超时');
-            this.setCloudProgressMessage('云编译等待超时，请稍后再试。', 'error');
-            this.appendOutput('云编译等待超时，请稍后重试。', 'error');
+            this.setStatus(this.t('cloudCompile.timedOut'));
+            this.setCloudProgressMessage(this.t('cloudCompile.timedOutMsg'), 'error');
+            this.appendOutput(this.t('cloudCompile.timedOutRetry'), 'error');
             this.showMessage(this.t('message.cloudCompileTimeout', null, 'Cloud compilation timed out. Please try again later.'), 'error');
             this.resetCloudCompileState();
             return;
@@ -685,7 +685,7 @@ class CompilerManager {
             }
 
             if (!data) {
-                throw new Error(`云编译服务响应异常 (HTTP ${response.status})`);
+                throw new Error(this.t('cloudCompile.serviceError', { status: response.status }));
             }
 
             switch (data.code) {
@@ -700,20 +700,20 @@ class CompilerManager {
                     this.handleCloudCompilationFailure(data);
                     break;
                 default:
-                    throw new Error(data.msg || `云编译服务返回未知状态: ${data.code}`);
+                    throw new Error(data.msg || this.t('cloudCompile.unknownStatus', { code: data.code }));
             }
         } catch (error) {
             if (attempt + 1 >= 300) {
-                const message = `云编译状态查询失败：${error?.message || error}`;
-                this.setStatus('云编译失败');
-                this.setCloudProgressMessage('云编译状态查询失败，请稍后再试。', 'error');
+                const message = this.t('cloudCompile.statusQueryFailed', { error: error?.message || error });
+                this.setStatus(this.t('cloudCompile.failed'));
+                this.setCloudProgressMessage(this.t('cloudCompile.statusQueryFailedRetry'), 'error');
                 this.appendOutput(message, 'error');
                 this.showMessage(this.t('message.cloudCompileStatusFailed', null, 'Failed to retrieve cloud compilation status. Please try again later.'), 'error');
                 this.resetCloudCompileState();
                 return;
             }
 
-            this.appendOutput(`查询云编译状态失败 (${attempt + 1})：${error?.message || error}`, 'warning');
+            this.appendOutput(this.t('cloudCompile.statusQueryFailedAttempt', { attempt: attempt + 1, error: error?.message || error }), 'warning');
             this.scheduleCloudCompilationPoll(taskId, attempt + 1);
         }
     }
@@ -728,14 +728,14 @@ class CompilerManager {
     updateCloudQueueStatus(queueFrontCnt) {
         if (!this.isCloudCompiling) return;
         if (typeof queueFrontCnt === 'number' && queueFrontCnt >= 0) {
-            this.setStatus(`云编译排队中 (前方 ${queueFrontCnt} 人)`);
+            this.setStatus(this.t('cloudCompile.queuing', { count: queueFrontCnt }));
             if (this.cloudQueueLastCount !== queueFrontCnt) {
-                this.setCloudProgressMessage(`云编译排队中，前方还有 ${queueFrontCnt} 人。`, 'info');
+                this.setCloudProgressMessage(this.t('cloudCompile.queuingAhead', { count: queueFrontCnt }), 'info');
                 this.cloudQueueLastCount = queueFrontCnt;
             }
         } else {
-            this.setStatus('云编译排队中...');
-            this.setCloudProgressMessage('云编译排队中，请稍候...', 'info');
+            this.setStatus(this.t('cloudCompile.queuingWait'));
+            this.setCloudProgressMessage(this.t('cloudCompile.queuingPlease'), 'info');
             this.cloudQueueLastCount = null;
         }
     }
@@ -754,12 +754,12 @@ class CompilerManager {
 
     handleCloudCompilationSuccess(data) {
         const duration = this.cloudCompileStartTime ? ((Date.now() - this.cloudCompileStartTime) / 1000).toFixed(2) : null;
-        const status = duration ? `云编译成功 (${duration}s)` : '云编译成功';
+        const status = duration ? this.t('cloudCompile.successWithTime', { time: duration }) : this.t('cloudCompile.success');
         this.setStatus(status);
-        this.setCloudProgressMessage('云编译完成，结果：通过。', 'success');
-        this.appendOutput('云编译通过!', 'success');
+        this.setCloudProgressMessage(this.t('cloudCompile.passResult'), 'success');
+        this.appendOutput(this.t('cloudCompile.passed'), 'success');
         if (data.msg) {
-            this.appendOutput('编译器输出:', 'info');
+            this.appendOutput(this.t('cloudCompile.compilerOutput'), 'info');
             this.appendMultilineOutput(data.msg, 'info');
         }
         this.resetCloudCompileState();
@@ -767,12 +767,12 @@ class CompilerManager {
 
     handleCloudCompilationFailure(data) {
         const duration = this.cloudCompileStartTime ? ((Date.now() - this.cloudCompileStartTime) / 1000).toFixed(2) : null;
-        const status = duration ? `云编译失败 (${duration}s)` : '云编译失败';
+        const status = duration ? this.t('cloudCompile.failWithTime', { time: duration }) : this.t('cloudCompile.failed');
         this.setStatus(status);
-        this.setCloudProgressMessage('云编译失败，请查看下方错误信息。', 'error');
-        this.appendOutput('云编译失败!', 'error');
+        this.setCloudProgressMessage(this.t('cloudCompile.failCheckError'), 'error');
+        this.appendOutput(this.t('cloudCompile.failedSimple'), 'error');
         if (data.msg) {
-            this.appendOutput('编译错误信息:', 'error');
+            this.appendOutput(this.t('cloudCompile.compilerErrors'), 'error');
             this.appendMultilineOutput(data.msg, 'error');
         }
         this.resetCloudCompileState();
@@ -806,7 +806,7 @@ class CompilerManager {
     }
 
     formatByteSize(bytes) {
-        if (bytes < 1024) return `${bytes} 字节`;
+        if (bytes < 1024) return this.t('cloudCompile.formatBytes', { bytes });
         const kb = bytes / 1024;
         if (kb < 1024) {
             return kb >= 100 ? `${Math.round(kb)} KB` : `${kb.toFixed(2)} KB`;
@@ -930,11 +930,11 @@ class CompilerManager {
 
             const badge = document.createElement('span');
             badge.className = `analysis-badge severity-${item.severity || 'info'}`;
-            badge.textContent = item.severity === 'warning' ? '警告' : (item.severity === 'error' ? '错误' : '提示');
+            badge.textContent = item.severity === 'warning' ? this.t('cloudCompile.warning') : (item.severity === 'error' ? this.t('cloudCompile.error') : this.t('cloudCompile.hint'));
 
             const location = document.createElement('span');
             location.className = 'analysis-location';
-            location.textContent = item.location || '位置未知';
+            location.textContent = item.location || this.t('cloudCompile.locationUnknown');
 
             header.appendChild(badge);
             header.appendChild(location);
@@ -945,7 +945,7 @@ class CompilerManager {
 
             const hint = document.createElement('div');
             hint.className = 'analysis-hint';
-            hint.textContent = item.hint || '暂无更详细的提示，可查看原始输出。';
+            hint.textContent = item.hint || this.t('cloudCompile.noHint');
 
             card.appendChild(header);
             card.appendChild(message);
@@ -1018,19 +1018,19 @@ class CompilerManager {
                 locationParts.push(this.extractFileName(diag.file));
             }
             if (diag.line) {
-                locationParts.push(`行 ${diag.line}`);
+                locationParts.push(this.t('cloudCompile.line', { line: diag.line }));
             }
             if (diag.column) {
-                locationParts.push(`列 ${diag.column}`);
+                locationParts.push(this.t('cloudCompile.column', { col: diag.column }));
             }
-            const location = locationParts.join(' · ') || '位置未知';
+            const location = locationParts.join(' · ') || this.t('cloudCompile.locationUnknown');
             const key = `${location}|${diag.message || diag.raw}|${diag.severity}`;
             if (seen.has(key)) return;
             seen.add(key);
             items.push({
                 severity: diag.severity === 'warning' ? 'warning' : (diag.severity === 'error' ? 'error' : 'info'),
                 location,
-                message: rawMsg || '未知信息',
+                message: rawMsg || this.t('cloudCompile.unknownInfo'),
                 hint: translated || hint.title,
                 suggestion: hint.suggestion
             });
@@ -1075,87 +1075,87 @@ class CompilerManager {
 
         if (/expected\s+'?;/.test(message)) {
             return {
-                title: '疑似缺少分号',
-                suggestion: '在提示行或上一行末尾补一个分号 ; ，或检查语句是否提前换行。'
+                title: this.t('cloudCompile.missingSemicolon'),
+                suggestion: this.t('cloudCompile.missingSemicolonHint')
             };
         }
 
         if (/expected\s+['"`]?\)/i.test(message) || /expected\s+['"`]?\}/i.test(message) || /expected\s+['"`]?\]/i.test(message)) {
             return {
-                title: '疑似缺少括号/花括号',
-                suggestion: '检查成对的 (), {}, [] 是否匹配，尤其是 if/for/while 或函数声明的位置。'
+                title: this.t('cloudCompile.missingBrace'),
+                suggestion: this.t('cloudCompile.missingBraceHint')
             };
         }
 
         if (/no such file or directory/.test(lower)) {
             const compilerPath = typeof this.settings?.compilerPath === 'string' ? this.settings.compilerPath.trim() : '';
             return {
-                title: compilerPath ? '包含的文件没找到' : '包含的文件没找到，请先设置编译器路径',
+                title: compilerPath ? this.t('cloudCompile.fileNotFound') : this.t('cloudCompile.fileNotFoundSetCompiler'),
                 suggestion: compilerPath
-                    ? '确认 #include 的头文件路径是否正确，或源文件/编译器路径中是否包含空格导致识别失败。'
-                    : '请先设置编译器路径，然后再确认 #include 的头文件路径是否正确。'
+                    ? this.t('cloudCompile.fileNotFoundHint')
+                    : this.t('cloudCompile.fileNotFoundSetHint')
             };
         }
 
         if (/was not declared in this scope/.test(lower)) {
             return {
-                title: '标识符未声明',
-                suggestion: '检查变量/函数是否拼写错误、是否在使用前声明，或需要添加对应的头文件。'
+                title: this.t('cloudCompile.undeclared'),
+                suggestion: this.t('cloudCompile.undeclaredHint')
             };
         }
 
         if (/redefinition of/.test(lower) || /has a previous declaration/.test(lower)) {
             return {
-                title: '重复定义',
-                suggestion: '同名的函数或变量被重复定义。检查是否在多个文件或多次包含头文件时缺少 include guard。'
+                title: this.t('cloudCompile.redefined'),
+                suggestion: this.t('cloudCompile.redefinedHint')
             };
         }
 
         if (/cannot open output file/.test(lower) && (/permission denied/.test(lower) || /access is denied/.test(lower))) {
             return {
-                title: '链接器无法写入输出文件',
-                suggestion: '目标可执行文件可能正被运行或被占用。先关闭已打开的程序/终端窗口，再重新编译。'
+                title: this.t('cloudCompile.linkerError'),
+                suggestion: this.t('cloudCompile.linkerErrorHint')
             };
         }
 
         if (/undefined reference to [`'"]?main/.test(lower)) {
             return {
-                title: '缺少 main 函数',
-                suggestion: '确认是否正确定义了 int main() 函数，或文件是否保存为 C++ 源文件后再编译。'
+                title: this.t('cloudCompile.missingMain'),
+                suggestion: this.t('cloudCompile.missingMainHint')
             };
         }
 
         if (/undefined reference/.test(lower)) {
             return {
-                title: '链接到未定义的符号',
-                suggestion: '对应的函数/变量未实现或缺少链接的库。检查函数是否写错、源文件是否编译、或需补充链接参数。'
+                title: this.t('cloudCompile.undefinedRef'),
+                suggestion: this.t('cloudCompile.undefinedRefHint')
             };
         }
 
         if (/expected (class|struct|union)/i.test(lower)) {
             return {
-                title: '类型/声明不完整',
-                suggestion: '可能缺少头文件或写错模板语法，检查该行前后的类型声明和模板尖括号。'
+                title: this.t('cloudCompile.incompleteType'),
+                suggestion: this.t('cloudCompile.incompleteTypeHint')
             };
         }
 
         if (/control reaches end of non-void function/i.test(lower)) {
             return {
-                title: '非 void 函数缺少返回值',
-                suggestion: '确保每个分支都返回值，或将函数声明改为 void。'
+                title: this.t('cloudCompile.nonVoidReturn'),
+                suggestion: this.t('cloudCompile.nonVoidReturnHint')
             };
         }
 
         if (/maybe uninitialized/i.test(lower)) {
             return {
-                title: '变量可能未初始化',
-                suggestion: '在使用前给变量赋初值，或在所有分支中确保赋值。'
+                title: this.t('cloudCompile.uninitialized'),
+                suggestion: this.t('cloudCompile.uninitializedHint')
             };
         }
 
         return {
-            title: '查看原始输出获取更多细节',
-            suggestion: '跳转到对应行查看上下文，必要时打开原始输出获取完整信息。'
+            title: this.t('cloudCompile.checkRawOutput'),
+            suggestion: this.t('cloudCompile.checkRawOutputHint')
         };
     }
 
@@ -1164,25 +1164,25 @@ class CompilerManager {
         if (/no such file or directory/.test(text)) {
             const compilerPath = typeof this.settings?.compilerPath === 'string' ? this.settings.compilerPath.trim() : '';
             return compilerPath
-                ? '包含的文件没找到，请检查头文件路径是否正确。'
-                : '包含的文件没找到，请先设置编译器路径，再检查 #include 的头文件路径是否正确。';
+                ? this.t('cloudCompile.translatedFileNotFound')
+                : this.t('cloudCompile.translatedFileNotFoundSet');
         }
         if (/expected\s+['"`]?;/.test(text) || /expected\s+['"`]?;\s+or/.test(text)) {
-            return '可能缺少分号或冒号，检查报错位置前一行是否遗漏 ; 或语句被截断。';
+            return this.t('cloudCompile.translatedMissingSemicolon');
         }
         const expectedBefore = text.match(/expected\s+(.+?)\s+before\s+(.+)/i);
         if (expectedBefore) {
-            return `可能缺少 ${expectedBefore[1]}，编译器提示它应在 ${expectedBefore[2]} 之前出现。看看这一行前的语法是否写完整。`;
+            return this.t('cloudCompile.translatedExpectedBefore', { token: expectedBefore[1], before: expectedBefore[2] });
         }
         const notDeclared = text.match(/(.+?)\s+was not declared in this scope/i);
         if (notDeclared) {
             const name = notDeclared[1].replace(/[`'"\s]/g, '').trim();
             const suggest = (text.match(/did you mean\s+['"`]?(\w+)/i) || [])[1];
             if (name) {
-                const suffix = suggest ? `，可能想写 ${suggest}` : '';
-                return `未声明的标识符 ${name}${suffix}。检查拼写、是否包含对应头文件，或命名空间是否正确。`;
+                const suffix = suggest ? `, did you mean ${suggest}` : '';
+                return this.t('cloudCompile.translatedUndeclared', { name, suffix });
             }
-            return '存在未声明的标识符。检查拼写、包含的头文件或作用域。';
+            return this.t('cloudCompile.translatedUndeclaredSimple');
         }
         return text;
     }
@@ -1199,8 +1199,8 @@ class CompilerManager {
             const severity = /warning/i.test(sevRaw) ? 'warning' : (/error/i.test(sevRaw) || /fatal/i.test(sevRaw) ? 'error' : 'info');
             const locationParts = [];
             if (file) locationParts.push(this.extractFileName(file));
-            if (lineNum) locationParts.push(`行 ${parseInt(lineNum, 10)}`);
-            if (colNum) locationParts.push(`列 ${parseInt(colNum, 10)}`);
+            if (lineNum) locationParts.push(this.t('cloudCompile.line', { line: parseInt(lineNum, 10) }));
+            if (colNum) locationParts.push(this.t('cloudCompile.column', { col: parseInt(colNum, 10) }));
             return {
                 severity,
                 location: locationParts.join(' · '),
@@ -1299,12 +1299,12 @@ class CompilerManager {
     }
 
     showExternalCompileResult(result = {}, options = {}) {
-        const title = options.title || '样例编译';
+        const title = options.title || this.t('cloudCompile.sampleCompile');
         this.showOutput();
         this.clearOutput();
 
         const success = !!result.success;
-        this.setStatus(success ? `${title}成功` : `${title}失败`);
+        this.setStatus(success ? `${title} ${this.t('compileOutput.successSimple')}` : `${title} ${this.t('compileOutput.failSimple')}`);
 
         if (result.stdout) {
             this.appendOutput(this.t('compileOutput.standardOutput', null, 'Standard output:') + '\n', 'info');
@@ -1363,12 +1363,12 @@ class CompilerManager {
         try {
             const executablePath = String(result?.executablePath || '').trim();
             if (!executablePath) {
-                throw new Error('缺少可执行文件路径');
+                throw new Error(this.t('panel.terminalExePathEmpty'));
             }
 
             const app = window.oicppApp;
             if (!app || typeof app.openIntegratedTerminalAndRunExecutable !== 'function') {
-                throw new Error('内置终端组件未就绪');
+                throw new Error(this.t('message.terminalUninitialized'));
             }
 
             await app.openIntegratedTerminalAndRunExecutable(executablePath, {
@@ -1387,7 +1387,7 @@ class CompilerManager {
 
     handleRunError(error) {
         this.isRunning = false;
-        this.appendOutput(`运行错误: ${error}\n`, 'error');
+        this.appendOutput(`${this.t('message.runError', { error })}\n`, 'error');
         this.showMessage(this.t('message.runError', { error }, `Run error: ${error}`), 'error');
     }
 
@@ -1496,7 +1496,7 @@ class CompilerManager {
 
     _stringifyError(err) {
         try {
-            if (!err) return '未知错误';
+            if (!err) return this.t('panel.unknownError');
             if (typeof err === 'string') return err;
             if (err instanceof Error) return err.message || err.toString();
             if (err.detail) return this._stringifyError(err.detail);
@@ -1512,7 +1512,7 @@ class CompilerManager {
             if (typeof err.message === 'string') return err.message;
             return JSON.stringify(err);
         } catch (_) {
-            try { return String(err); } catch { return '未知错误'; }
+            try { return String(err); } catch { return this.t('panel.unknownError'); }
         }
     }
 
