@@ -95,7 +95,7 @@ if (fileExists(pnpmLockPath)) {
   ok('pnpm-lock.yaml found');
   const lockContent = readFile(pnpmLockPath);
   if (lockContent) {
-    if (lockContent.includes('oicpp-plus')) ok('lock references oicpp-plus'); else fail('lock missing oicpp-plus reference');
+    if (lockContent.includes('lockfileVersion') && lockContent.includes('importers')) ok('lock file valid'); else fail('lock file appears invalid');
   }
 } else if (fileExists(npmLockPath)) {
   ok('package-lock.json found');
@@ -425,7 +425,7 @@ if (fileExists(preloadPath)) {
     for (const m of preloadContent.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)) invokeChannels.push(m[1]);
     const preloadChannels = [...new Set([...sendChannels, ...invokeChannels])];
     const mainRegistered = [];
-    for (const m of mainJsContent.matchAll(/ipcMain\.(handle|on)\('([^']+)'/g)) mainRegistered.push(m[2]);
+    for (const m of mainJsContent.matchAll(/ipcMain\.(handle|on|once)\('([^']+)'/g)) mainRegistered.push(m[2]);
     const unregistered = preloadChannels.filter(ch => !mainRegistered.includes(ch));
     if (unregistered.length > 0) {
       fail(`IPC channels in preload but not in main: ${unregistered.join(', ')}`);
@@ -446,7 +446,9 @@ if (indexHtmlContent) {
   if (cspMatch) {
     const cspValue = cspMatch[1];
     if (/script-src.*'unsafe-eval'/.test(cspValue)) warn('CSP allows unsafe-eval (needed for Monaco)');
-    if (/default-src.*\*/.test(cspValue)) { fail('CSP default-src uses wildcard *'); cspOk = false; }
+    const defaultSrcMatch = cspValue.match(/default-src\s+([^;]+)/);
+    const defaultSrcValue = defaultSrcMatch ? defaultSrcMatch[1] : '';
+    if (/\*/.test(defaultSrcValue)) { fail('CSP default-src uses wildcard *'); cspOk = false; }
     if (/script-src\s+\*/.test(cspValue)) { fail('CSP script-src uses wildcard *'); cspOk = false; }
     if (cspOk) ok('CSP present, no wildcard violations');
   } else {
@@ -545,7 +547,7 @@ for (const f of jsFiles) {
   const rel = path.relative(root, f);
   const content = readFile(f);
   if (!content) continue;
-  if (/writeFileSync\([^,]+,\s*[^,]+,\s*['"]?utf-?8/.test(content) && /\/etc\//.test(content)) {
+  if (/writeFileSync\([^)]*\/etc\//.test(content)) {
     fail(`${rel} writes to /etc/`);
     dangerousWrites++;
   }
