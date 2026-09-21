@@ -390,7 +390,7 @@
     "closeTerminal": "关闭终端",
     "killTerminal": "终止终端",
     "tabLabel": "终端 {counter}",
-    "emptyHint": "点击"新建终端"开始使用内置终端",
+    "emptyHint": "点击\"新建终端\"开始使用内置终端",
     "hideTerminal": "隐藏终端",
     "unicodeAddonMissing": "xterm Unicode11 插件未加载",
     "unicodeAddonDetail": "请确认已安装 @xterm/addon-unicode11"
