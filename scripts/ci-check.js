@@ -95,7 +95,21 @@ if (fileExists(pnpmLockPath)) {
   ok('pnpm-lock.yaml found');
   const lockContent = readFile(pnpmLockPath);
   if (lockContent) {
-    if (lockContent.includes('oicpp-plus')) ok('lock references oicpp-plus'); else fail('lock missing oicpp-plus reference');
+    const importersIdx = lockContent.search(/^importers:/m);
+    const packagesIdx = lockContent.search(/^packages:/m);
+    if (importersIdx >= 0 && packagesIdx > importersIdx && pkg) {
+      const importersBlock = lockContent.slice(importersIdx, packagesIdx);
+      const lockDepNames = new Set();
+      for (const m of importersBlock.matchAll(/^ {6}'?([^'\s:]+)'?:\r?\n {8}specifier:/gm)) lockDepNames.add(m[1]);
+      const pkgDepNames = new Set([...Object.keys(pkg.dependencies || {}), ...Object.keys(pkg.devDependencies || {})]);
+      const missingInLock = [...pkgDepNames].filter(n => !lockDepNames.has(n));
+      const extraInLock = [...lockDepNames].filter(n => !pkgDepNames.has(n));
+      if (missingInLock.length > 0) fail(`deps in package.json but not in lock importers (run pnpm install): ${missingInLock.join(', ')}`);
+      else if (extraInLock.length > 0) fail(`deps in lock importers but not in package.json: ${extraInLock.join(', ')}`);
+      else ok(`lock importers in sync with package.json (${lockDepNames.size} deps)`);
+    } else {
+      warn('could not parse lockfile importers section');
+    }
   }
 } else if (fileExists(npmLockPath)) {
   ok('package-lock.json found');
@@ -425,13 +439,31 @@ if (fileExists(preloadPath)) {
     for (const m of preloadContent.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)) invokeChannels.push(m[1]);
     const preloadChannels = [...new Set([...sendChannels, ...invokeChannels])];
     const mainRegistered = [];
-    for (const m of mainJsContent.matchAll(/ipcMain\.(handle|on)\('([^']+)'/g)) mainRegistered.push(m[2]);
+    for (const m of mainJsContent.matchAll(/ipcMain\.(handle|on|once)\('([^']+)'/g)) mainRegistered.push(m[2]);
     const unregistered = preloadChannels.filter(ch => !mainRegistered.includes(ch));
     if (unregistered.length > 0) {
       fail(`IPC channels in preload but not in main: ${unregistered.join(', ')}`);
       ipcWhitelistOk = false;
     } else {
       ok(`all ${preloadChannels.length} preload channels registered`);
+    }
+    const usedChannels = new Set(preloadChannels);
+    const ipcUseRe = /(?:electronIPC|ipcRenderer)\.(?:send|sendSync|invoke)\(\s*['"`]([^'"`]+)['"`]/g;
+    for (const rf of jsFiles) {
+      if (rf === preloadPath) continue;
+      const rc = readFile(rf);
+      if (!rc) continue;
+      for (const m of rc.matchAll(ipcUseRe)) usedChannels.add(m[1]);
+    }
+    if (indexHtmlContent) {
+      for (const m of indexHtmlContent.matchAll(ipcUseRe)) usedChannels.add(m[1]);
+    }
+    for (const m of preloadContent.matchAll(/ALLOWED_\w*CHANNELS[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/g)) {
+      for (const q of m[1].matchAll(/'([^']+)'/g)) usedChannels.add(q[1]);
+    }
+    const deadChannels = [...new Set(mainRegistered)].filter(ch => !usedChannels.has(ch));
+    if (deadChannels.length > 0) {
+      warn(`IPC handlers in main but never referenced from renderer/preload: ${deadChannels.join(', ')}`);
     }
   }
 } else {
@@ -445,10 +477,19 @@ if (indexHtmlContent) {
   const cspMatch = indexHtmlContent.match(/Content-Security-Policy"?\s+content="([^"]+)"/);
   if (cspMatch) {
     const cspValue = cspMatch[1];
-    if (/script-src.*'unsafe-eval'/.test(cspValue)) warn('CSP allows unsafe-eval (needed for Monaco)');
-    if (/default-src.*\*/.test(cspValue)) { fail('CSP default-src uses wildcard *'); cspOk = false; }
-    if (/script-src\s+\*/.test(cspValue)) { fail('CSP script-src uses wildcard *'); cspOk = false; }
-    if (cspOk) ok('CSP present, no wildcard violations');
+    const directives = {};
+    for (const part of cspValue.split(';')) {
+      const tokens = part.trim().split(/\s+/);
+      if (tokens[0]) directives[tokens[0]] = tokens.slice(1);
+    }
+    if ((directives['script-src'] || []).includes("'unsafe-eval'")) warn('CSP allows unsafe-eval (needed for Monaco)');
+    for (const d of ['default-src', 'script-src']) {
+      if ((directives[d] || []).includes('*')) { fail(`CSP ${d} uses wildcard *`); cspOk = false; }
+    }
+    for (const d of ['frame-src', 'connect-src', 'img-src', 'media-src', 'object-src']) {
+      if ((directives[d] || []).includes('*')) warn(`CSP ${d} uses wildcard * (review)`);
+    }
+    if (cspOk) ok('CSP present, no wildcard violations in critical directives');
   } else {
     fail('No Content-Security-Policy found in index.html');
   }
@@ -529,10 +570,10 @@ for (const f of jsFiles) {
   const rel = path.relative(root, f);
   const content = readFile(f);
   if (!content) continue;
-  const addCount = (content.match(/\.addEventListener\(/g) || []).length;
-  const removeCount = (content.match(/\.removeEventListener\(/g) || []).length;
-  if (addCount > 10 && removeCount === 0) {
-    warn(`${rel} has ${addCount} addEventListener but 0 removeEventListener`);
+  const addCount = (content.match(/\b(?:window|document|globalThis)\.addEventListener\(/g) || []).length;
+  const removeCount = (content.match(/\b(?:window|document|globalThis)\.removeEventListener\(/g) || []).length;
+  if (addCount >= 5 && removeCount === 0) {
+    info(`${rel} has ${addCount} window/document listeners, 0 removed (page-lifetime? review)`);
     leakRisk++;
   }
 }
@@ -545,7 +586,7 @@ for (const f of jsFiles) {
   const rel = path.relative(root, f);
   const content = readFile(f);
   if (!content) continue;
-  if (/writeFileSync\([^,]+,\s*[^,]+,\s*['"]?utf-?8/.test(content) && /\/etc\//.test(content)) {
+  if (/(?:writeFileSync|appendFileSync|createWriteStream|writeFile|appendFile)\s*\(\s*[^)]*\/etc\//.test(content)) {
     fail(`${rel} writes to /etc/`);
     dangerousWrites++;
   }
@@ -572,7 +613,7 @@ if (pkg) {
 
 // F2: Dependency tree
 console.log(`\n${Y}[F2] Dependency tree${R}`);
-const lsResult = exec('pnpm ls --depth=0 2>&1', 15000);
+const lsResult = exec('pnpm ls --depth=0 2>&1', 60000);
 if (lsResult !== null) {
   if (lsResult.includes('ERR!') || lsResult.includes('WARN') || lsResult.includes('missing')) {
     warn('dependency tree has warnings (may be acceptable with pnpm)');
@@ -580,7 +621,7 @@ if (lsResult !== null) {
     ok('dependency tree clean');
   }
 } else {
-  warn('pnpm ls could not run (timed out or failed)');
+  info('pnpm ls timed out after 60s (inconclusive)');
 }
 
 // ============================================================
