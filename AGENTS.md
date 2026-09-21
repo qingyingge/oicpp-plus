@@ -15,10 +15,10 @@ pnpm@11.7.0
 | `start` | `electron .` |
 | `dev` | `electron . --dev` |
 | `build` | prebuild steps + electron-builder |
-| `ci` | `powershell -ExecutionPolicy Bypass -File scripts/ci-local.ps1` |
+| `ci` | `node scripts/ci-check.js` |
 
 ## CI / Verification
-No lint/typecheck/test scripts. Only CI is `pnpm run ci` — runs `scripts/ci-local.ps1` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.) and an Electron smoke test.
+No lint/typecheck/test scripts. Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.). No Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes).
 
 ## Structure
 ```
@@ -33,7 +33,7 @@ src/
   lang/                — language definitions
   utils/               — utilities
 scripts/
-  ci-local.ps1         — CI checks
+  ci-check.js          — CI checks
 ```
 
 ## Key dependencies
