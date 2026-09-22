@@ -344,17 +344,23 @@ const mainJsContent = readFile(path.join(root, 'src', 'main.js'));
 const rendererJsContent = readFile(path.join(root, 'src', 'renderer', 'js', 'main.js'));
 let ipcOk = true;
 if (mainJsContent && rendererJsContent) {
+  const norm = (s) => s.replace(/[-_]/g, '').toLowerCase();
   const mainHandles = [];
   for (const m of mainJsContent.matchAll(/ipcMain\.handle\(['"]([^'"]+)['"]/g)) mainHandles.push(m[1]);
+  const mainOns = [];
+  for (const m of mainJsContent.matchAll(/ipcMain\.on\(['"]([^'"]+)['"]/g)) mainOns.push(m[1]);
   const rendererInvokes = [];
   for (const m of rendererJsContent.matchAll(/electronAPI\.(\w+)\(/g)) rendererInvokes.push(m[1]);
+  const unmatched = [];
   for (const invoke of rendererInvokes) {
-    const found = mainHandles.some(h => h.includes(invoke) || invoke.includes(h));
-    if (!found && !/^on[A-Z]/.test(invoke) && invoke !== 'path') {
-      if (verbose) info(`renderer calls electronAPI.${invoke} (may be event-based)`);
-    }
+    if (/^on[A-Z]/.test(invoke) || invoke === 'path') continue;
+    const found = [...mainHandles, ...mainOns].some(h => norm(h) === norm(invoke));
+    if (!found) unmatched.push(invoke);
   }
-  ok(`IPC channels checked (${mainHandles.length} handlers)`);
+  if (unmatched.length > 0) {
+    warn(`electronAPI methods without exact main channel match (verify manually): ${unmatched.join(', ')}`);
+  }
+  ok(`IPC channels checked (${mainHandles.length} handlers, ${mainOns.length} listeners)`);
 } else {
   warn('Could not read main.js files for IPC check');
 }
@@ -446,6 +452,40 @@ if (fileExists(preloadPath)) {
       ipcWhitelistOk = false;
     } else {
       ok(`all ${preloadChannels.length} preload channels registered`);
+    }
+
+    // Renderer send/invoke usage must be covered by the preload whitelist AND registered in main.
+    const parseWhitelist = (name) => {
+      const set = new Set();
+      const wm = preloadContent.match(new RegExp(`${name}[^=]*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`));
+      if (wm) for (const q of wm[1].matchAll(/'([^']+)'/g)) set.add(q[1]);
+      return set;
+    };
+    const allowedSend = parseWhitelist('ALLOWED_SEND_CHANNELS');
+    const allowedInvoke = parseWhitelist('ALLOWED_INVOKE_CHANNELS');
+    const sendUseRe = /(?:electronIPC|ipcRenderer)\.send\(\s*['"`]([^'"`]+)['"`]/g;
+    const invokeUseRe = /(?:electronIPC|ipcRenderer)\.invoke\(\s*['"`]([^'"`]+)['"`]/g;
+    const blockedSends = new Set();
+    const blockedInvokes = new Set();
+    const scanTargets = [...jsFiles.filter(f => f !== preloadPath), path.join(root, 'src', 'renderer', 'index.html')];
+    for (const rf of scanTargets) {
+      const rc = readFile(rf);
+      if (!rc) continue;
+      for (const m of rc.matchAll(sendUseRe)) {
+        if (!allowedSend.has(m[1])) blockedSends.add(m[1]);
+      }
+      for (const m of rc.matchAll(invokeUseRe)) {
+        if (!allowedInvoke.has(m[1])) blockedInvokes.add(m[1]);
+      }
+    }
+    const blockedAll = [...new Set([...blockedSends, ...blockedInvokes])];
+    if (blockedAll.length > 0) {
+      const notInMain = blockedAll.filter(ch => !mainRegistered.includes(ch));
+      const detail = notInMain.length > 0 ? ` (also unregistered in main: ${notInMain.join(', ')})` : '';
+      fail(`renderer IPC channels blocked by preload whitelist: ${blockedAll.join(', ')}${detail}`);
+      ipcWhitelistOk = false;
+    } else {
+      ok(`all renderer send/invoke channels covered by whitelist`);
     }
     const usedChannels = new Set(preloadChannels);
     const ipcUseRe = /(?:electronIPC|ipcRenderer)\.(?:send|sendSync|invoke)\(\s*['"`]([^'"`]+)['"`]/g;
