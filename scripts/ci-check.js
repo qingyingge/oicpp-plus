@@ -782,6 +782,23 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
   fail('electron version not found in devDependencies');
 }
 
+// T1: Regression tests (tests/*.test.js, auto-discovered by tests/run-tests.js)
+console.log(`\n${Y}[T1] Regression tests${R}`);
+const testRunnerPath = path.join(root, 'tests', 'run-tests.js');
+if (fileExists(testRunnerPath)) {
+  try {
+    const testOut = execSync(`node "${testRunnerPath}"`, { encoding: 'utf8', timeout: 90000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+    testOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${GR}  ${line}${R}`));
+    ok('all regression tests passed');
+  } catch (err) {
+    const testErrOut = `${err.stdout || ''}${err.stderr || ''}`;
+    testErrOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${RD}  ${line}${R}`));
+    fail('regression tests failed');
+  }
+} else {
+  fail('tests/run-tests.js not found');
+}
+
 // ============================================================
 // I. Summary
 // ============================================================

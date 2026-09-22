@@ -23,7 +23,8 @@
     "prebuild:clangd": "node scripts/download-clangd.js",
     "prebuild:native": "node-gyp rebuild",
     "build": "pnpm run prebuild:buildinfo && pnpm run prebuild:icons && pnpm run prebuild:clangd && electron-builder",
-    "ci": "node scripts/ci-check.js"
+    "ci": "node scripts/ci-check.js",
+    "test": "node tests/run-tests.js"
   },
   "devDependencies": {
     "electron": "^37.10.3",
