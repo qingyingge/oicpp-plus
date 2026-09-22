@@ -125,12 +125,23 @@ if (fileExists(pnpmLockPath)) {
   ok('pnpm-lock.yaml found');
   const lockContent = readFile(pnpmLockPath);
   if (lockContent) {
-    const importersIdx = lockContent.search(/^importers:/m);
-    const packagesIdx = lockContent.search(/^packages:/m);
-    if (importersIdx >= 0 && packagesIdx > importersIdx && pkg) {
-      const importersBlock = lockContent.slice(importersIdx, packagesIdx);
-      const lockDepNames = new Set();
-      for (const m of importersBlock.matchAll(/^ {6}'?([^'\s:]+)'?:\r?\n {8}specifier:/gm)) lockDepNames.add(m[1]);
+    // pnpm 12 writes a multi-document YAML stream (bootstrap doc + real deps doc):
+    // scan every importers section, count only entries under dependencies:/devDependencies:
+    const lockDepNames = new Set();
+    for (const sec of lockContent.matchAll(/^importers:$/gm)) {
+      const rest = lockContent.slice(sec.index);
+      const endIdx = rest.search(/^packages:/m);
+      const block = endIdx >= 0 ? rest.slice(0, endIdx) : rest;
+      let group = '';
+      const lines = block.split(/\r?\n/);
+      for (let i = 0; i < lines.length - 1; i++) {
+        const g = /^ {4}([^\s:]+):/.exec(lines[i]);
+        if (g) { group = g[1]; continue; }
+        const d = /^ {6}'?([^'\s:]+)'?:$/.exec(lines[i]);
+        if (d && (group === 'dependencies' || group === 'devDependencies') && /^ {8}specifier:/.test(lines[i + 1])) lockDepNames.add(d[1]);
+      }
+    }
+    if (lockDepNames.size > 0 && pkg) {
       const pkgDepNames = new Set([...Object.keys(pkg.dependencies || {}), ...Object.keys(pkg.devDependencies || {})]);
       const missingInLock = [...pkgDepNames].filter(n => !lockDepNames.has(n));
       const extraInLock = [...lockDepNames].filter(n => !pkgDepNames.has(n));
