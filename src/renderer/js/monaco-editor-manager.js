@@ -596,7 +596,7 @@ class MonacoEditorManager {
             this._registerLspCodeLensProvider();
             this._registerLspFoldingRangeProvider();
             this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、符号、引用、重命名、格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠)');
+            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠)');
         } catch (err) {
             logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
         }
@@ -1373,6 +1373,68 @@ class MonacoEditorManager {
         }
     }
 
+    _registerLspLocationProviders() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:declaration`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册声明跳转提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerDeclarationProvider(language, {
+                provideDeclaration: async (model, position) => {
+                    try {
+                        if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
+                            return null;
+                        }
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return null;
+                        if (!this.lspClient) return null;
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return null;
+
+                        if (typeof model.isDisposed === 'function' && model.isDisposed()) {
+                            return null;
+                        }
+
+                        const result = await this.lspClient.request('textDocument/declaration', {
+                            textDocument: { uri },
+                            position: {
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            }
+                        });
+                        if (!result) return null;
+
+                        const locations = Array.isArray(result) ? result : [result];
+                        return locations
+                            .filter(Boolean)
+                            .map((loc) => {
+                                try {
+                                    const targetUri = loc.uri || loc.targetUri || '';
+                                    const targetRange = loc.range || loc.targetRange || {};
+                                    return {
+                                        uri: monaco.Uri.parse(targetUri),
+                                        range: new monaco.Range(
+                                            (targetRange.start?.line || 0) + 1,
+                                            (targetRange.start?.character || 0) + 1,
+                                            (targetRange.end?.line || 0) + 1,
+                                            (targetRange.end?.character || 0) + 1
+                                        )
+                                    };
+                                } catch (err) {
+                                    logWarn('[LSP] 声明位置处理失败:', err?.message || String(err));
+                                    return null;
+                                }
+                            })
+                            .filter(Boolean);
+                    } catch (_) {
+                        return null;
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
     _registerLspReferencesProvider() {
         const languages = ['cpp', 'c'];
         for (const language of languages) {
@@ -1507,7 +1569,17 @@ class MonacoEditorManager {
                                 placeholder: ''
                             };
                         }
-                        return { range: model.getWordAtPosition(position)?.word || '', placeholder: '' };
+                        const wordUntil = model.getWordUntilPosition(position);
+                        if (!wordUntil || !wordUntil.word) return null;
+                        return {
+                            range: new monaco.Range(
+                                position.lineNumber,
+                                wordUntil.startColumn,
+                                position.lineNumber,
+                                wordUntil.endColumn
+                            ),
+                            placeholder: wordUntil.word
+                        };
                     } catch (_) {
                         return null;
                     }
@@ -1566,11 +1638,7 @@ class MonacoEditorManager {
             if (this._lspProviders.has(key)) continue;
             logInfo('[LSP] 注册代码操作提供器 (语言:', language, ')');
             const disposable = monaco.languages.registerCodeActionProvider(language, {
-                providedCodeActionKinds: [
-                    monaco.languages.CodeActionKind.QuickFix,
-                    monaco.languages.CodeActionKind.Refactor,
-                    monaco.languages.CodeActionKind.Source
-                ],
+                providedCodeActionKinds: ['quickfix', 'refactor', 'source'],
                 provideCodeActions: async (model, range, context) => {
                     try {
                         const lspReady = await this._ensureLspDocumentReady(model);
@@ -1604,7 +1672,7 @@ class MonacoEditorManager {
                         const actions = result.filter(Boolean).map((item) => {
                             const action = {
                                 title: item.title || '',
-                                kind: item.kind || monaco.languages.CodeActionKind.QuickFix,
+                                kind: item.kind || 'quickfix',
                                 diagnostics: Array.isArray(item.diagnostics) ? item.diagnostics.map((d) => ({
                                     severity: d.severity || 0,
                                     message: d.message || ''
@@ -1774,6 +1842,7 @@ class MonacoEditorManager {
 
     _registerLspWorkspaceSymbolProvider() {
         if (this._lspProviders.has('workspace:symbol')) return;
+        if (typeof monaco === 'undefined' || !monaco.languages || typeof monaco.languages.registerWorkspaceSymbolProvider !== 'function') return;
         logInfo('[LSP] 注册工作区符号提供器');
         const disposable = monaco.languages.registerWorkspaceSymbolProvider({
             provideWorkspaceSymbols: async (query) => {
@@ -1869,6 +1938,57 @@ class MonacoEditorManager {
                         return { lenses, dispose: () => {} };
                     } catch (_) {
                         return { lenses: [], dispose: () => {} };
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspFoldingRangeProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:foldingRange`;
+            if (this._lspProviders.has(key)) continue;
+            logInfo('[LSP] 注册代码折叠提供器 (语言:', language, ')');
+            const disposable = monaco.languages.registerFoldingRangeProvider(language, {
+                provideFoldingRanges: async (model) => {
+                    try {
+                        if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
+                            return [];
+                        }
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady) return [];
+                        if (!this.lspClient) return [];
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri) return [];
+
+                        const result = await this.lspClient.request('textDocument/foldingRange', {
+                            textDocument: { uri }
+                        });
+                        if (!Array.isArray(result)) return [];
+                        if (typeof model.isDisposed === 'function' && model.isDisposed()) {
+                            return [];
+                        }
+
+                        const foldingRangeKind = monaco.languages.FoldingRangeKind || {};
+                        const kindMap = {
+                            1: foldingRangeKind.Comment,
+                            2: foldingRangeKind.Imports,
+                            3: foldingRangeKind.Region
+                        };
+                        return result
+                            .filter((item) => item && typeof item.startLine === 'number' && typeof item.endLine === 'number')
+                            .map((item) => {
+                                const range = {
+                                    start: item.startLine + 1,
+                                    end: item.endLine + 1
+                                };
+                                if (kindMap[item.kind]) range.kind = kindMap[item.kind];
+                                return range;
+                            });
+                    } catch (_) {
+                        return [];
                     }
                 }
             });

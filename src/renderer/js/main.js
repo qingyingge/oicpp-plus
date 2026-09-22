@@ -2316,9 +2316,11 @@ class OICPPApp {
             logInfo('使用 electronAPI.openEditorSettings');
             window.electronAPI.openEditorSettings();
         } else if (typeof require !== 'undefined') {
-            logInfo('使用 ipcRenderer.send');
+            logInfo('使用 ipcRenderer.invoke');
             const { ipcRenderer } = require('electron');
-            ipcRenderer.send('open-editor-settings');
+            ipcRenderer.invoke('open-editor-settings').catch(error => {
+                logError('打开编辑器设置失败:', error);
+            });
         } else {
             logWarn('无法打开编辑器设置：Electron API 不可用');
         }
@@ -2702,7 +2704,7 @@ class OICPPApp {
                 }
                 if (!this.settings.compilerPath) {
                     this.showMessage(this.t('message.setCompilerFirst', null, 'Please configure the compiler first'), 'warning');
-                    try { require('electron').ipcRenderer.send('menu-open-settings'); } catch(_) {}
+                    try { require('electron').ipcRenderer.invoke('open-compiler-settings'); } catch(_) {}
                     reject(new Error('请先设置编译器路径'));
                     return;
                 }

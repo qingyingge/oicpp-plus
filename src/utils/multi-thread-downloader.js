@@ -80,6 +80,9 @@ class MultiThreadDownloader {
                 }
             });
             const isSupported = rangeResponse.status === 206;
+            try {
+                rangeResponse.body.resume();
+            } catch (_) { }
 
             return isSupported;
         } catch (error) {
@@ -298,11 +301,13 @@ class MultiThreadDownloader {
 
                 resetInactivityTimer();
 
-                const finishSuccessfully = () => {
-                    if (finished) return;
-                    finished = true;
-                    if (inactivityTimer) clearTimeout(inactivityTimer);
-                    try { writer.end(() => { }); } catch (_) { }
+                const validateOutputSize = () => {
+                    if (typeof totalSize === 'number' && totalSize > 0) {
+                        const stat = fs.statSync(outputFile);
+                        if (stat.size < totalSize) {
+                            throw new Error(`文件大小不完整(${stat.size}/${totalSize})`);
+                        }
+                    }
                 };
 
                 await new Promise((resolve, reject) => {
@@ -346,7 +351,9 @@ class MultiThreadDownloader {
                     });
 
                     response.body.on('end', () => {
-                        finishSuccessfully();
+                        if (finished) return;
+                        finished = true;
+                        if (inactivityTimer) clearTimeout(inactivityTimer);
                         const elapsed = Math.max(0.001, (Date.now() - startTime) / 1000);
                         if (this.progressCallback) {
                             this.progressCallback({
@@ -357,7 +364,19 @@ class MultiThreadDownloader {
                                 speed: downloadedBytes / elapsed
                             });
                         }
-                        resolve();
+                        // 等待文件流真正关闭后再校验大小，避免异步 flush 未完成导致误判
+                        writer.end((error) => {
+                            if (error) {
+                                reject(error);
+                                return;
+                            }
+                            try {
+                                validateOutputSize();
+                                resolve();
+                            } catch (validateError) {
+                                reject(validateError);
+                            }
+                        });
                     });
 
                     response.body.on('close', () => {
@@ -385,16 +404,6 @@ class MultiThreadDownloader {
                     });
                 });
 
-                try {
-                    if (typeof totalSize === 'number' && totalSize > 0) {
-                        const stat = fs.statSync(outputFile);
-                        if (stat.size < totalSize) {
-                            throw new Error(`文件大小不完整(${stat.size}/${totalSize})`);
-                        }
-                    }
-                } catch (e) {
-                    throw e;
-                }
                 return;
             } catch (error) {
                 lastError = error;
@@ -511,29 +520,30 @@ class MultiThreadDownloader {
                 const results = new Array(totalParts);
                 let cursor = 0;
 
-                const runWorker = async () => {
-                    while (true) {
-                        if (this.isCancelled) throw this.cancelError || new Error('下载已取消');
-                        const idx = cursor++;
-                        if (idx >= parts.length) break;
-                        const myTask = parts[idx];
-                        activeCount++;
-                        try {
-                            const r = await this.downloadChunk(url, myTask.start, myTask.end, myTask.index, tempDir);
-                            results[myTask.index] = r;
-                        } catch (e) {
-                            throw e;
-                        } finally {
-                            activeCount--;
+                try {
+                    const runWorker = async () => {
+                        while (true) {
+                            if (this.isCancelled) throw this.cancelError || new Error('下载已取消');
+                            const idx = cursor++;
+                            if (idx >= parts.length) break;
+                            const myTask = parts[idx];
+                            activeCount++;
+                            try {
+                                const r = await this.downloadChunk(url, myTask.start, myTask.end, myTask.index, tempDir);
+                                results[myTask.index] = r;
+                            } finally {
+                                activeCount--;
+                            }
                         }
-                    }
-                };
+                    };
 
-                const workerCount = Math.min(this.maxConcurrency, parts.length);
-                const workers = new Array(workerCount).fill(0).map(() => runWorker());
-                await Promise.all(workers);
+                    const workerCount = Math.min(this.maxConcurrency, parts.length);
+                    const workers = new Array(workerCount).fill(0).map(() => runWorker());
+                    await Promise.all(workers);
+                } finally {
+                    this.progressCallback = originalCallback;
+                }
 
-                this.progressCallback = originalCallback;
                 reportMultiThreadProgress();
                 if (originalCallback) {
                     originalCallback({

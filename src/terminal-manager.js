@@ -731,6 +731,7 @@ class IntegratedTerminalManager {
         session.rows = nextRows;
 
         if (session.backend === 'process') {
+            // 管道后端无法动态调整子进程窗口大小，仅记录尺寸供后续会话使用
             return true;
         }
 

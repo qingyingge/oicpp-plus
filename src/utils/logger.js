@@ -26,7 +26,8 @@ class Logger {
         const lines = this._buffer;
         try {
             if (!this.initialized) this.init();
-            if (this.logFile) fs.appendFileSync(this.logFile, lines.join(''), 'utf8');
+            if (!this.logFile) return; // 初始化失败时保留缓冲，待下次重试
+            fs.appendFileSync(this.logFile, lines.join(''), 'utf8');
             this._buffer = [];
         } catch (e) {
             console.error('[Logger] 写入日志失败:', e.message || e);

@@ -298,37 +298,41 @@ try {
     console.error('Failed to initialize markdown-it:', e);
 }
 
+if (md) {
+    const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
+        return self.renderToken(tokens, idx, options);
+    };
+
+    md.renderer.rules.image = function (tokens, idx, options, env, self) {
+        const token = tokens[idx];
+        const srcIndex = token.attrIndex('src');
+        if (srcIndex >= 0) {
+            let src = token.attrs[srcIndex][1];
+            const filePath = env && env.filePath;
+            if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
+                if (filePath) {
+                    const dir = path.dirname(filePath);
+                    if (!path.isAbsolute(src)) {
+                        src = path.join(dir, src);
+                    }
+                    src = src.replace(/\\/g, '/');
+                    if (!src.startsWith('/')) {
+                        src = '/' + src;
+                    }
+                    token.attrs[srcIndex][1] = `file://${src}`;
+                }
+            }
+        }
+        return defaultImageRender(tokens, idx, options, env, self);
+    };
+}
+
 contextBridge.exposeInMainWorld('markdownAPI', {
     render: (text, filePath) => {
         if (!md) return text;
         try {
             const normalizedText = normalizeMarkdownMath(text || '');
-            const defaultImageRender = md.renderer.rules.image || function(tokens, idx, options, env, self) {
-                return self.renderToken(tokens, idx, options);
-            };
-
-            md.renderer.rules.image = function (tokens, idx, options, env, self) {
-                const token = tokens[idx];
-                const srcIndex = token.attrIndex('src');
-                if (srcIndex >= 0) {
-                    let src = token.attrs[srcIndex][1];
-                    if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
-                        if (filePath) {
-                            const dir = path.dirname(filePath);
-                            if (!path.isAbsolute(src)) {
-                                src = path.join(dir, src);
-                            }
-                            src = src.replace(/\\/g, '/');
-                            if (!src.startsWith('/')) {
-                                src = '/' + src;
-                            }
-                            token.attrs[srcIndex][1] = `file://${src}`;
-                        }
-                    }
-                }
-                return defaultImageRender(tokens, idx, options, env, self);
-            };
-            return md.render(normalizedText);
+            return md.render(normalizedText, { filePath });
         } catch (err) {
             console.error('Markdown render error:', err);
             return text;
@@ -417,11 +421,22 @@ try {
 
 const ALLOWED_SEND_CHANNELS = new Set([
     'open-file-dialog', 'open-folder-dialog', 'save-file-as',
-    'toggle-devtools', 'minimize-window', 'maximize-window', 'close-window',
-    'window-focus', 'window-blur', 'toggle-always-on-top',
+    'toggle-devtools', 'toggle-always-on-top',
+    'window-focus', 'window-blur',
+    'window-minimize', 'window-maximize', 'window-unmaximize',
+    'window-close', 'window-close-discard',
+    'app-close-confirmed', 'app-close-discard', 'app-close-cancelled',
     'open-external-terminal', 'run-code', 'compile-and-run',
     'request-kill-process', 'save-binary-temp-file',
-    'theme-changed', 'settings-changed', 'file-renamed', 'file-deleted', 'file-created'
+    'theme-changed', 'settings-changed',
+    'file-renamed', 'file-deleted', 'file-created',
+    'save-file', 'read-directory',
+    'rename-file', 'delete-file', 'create-file', 'create-folder',
+    'paste-file', 'move-file',
+    'debug-send-input', 'start-debug', 'stop-debug',
+    'debug-continue', 'debug-step-over', 'debug-step-into', 'debug-step-out',
+    'debug-add-watch', 'debug-request-variables',
+    'open-template-settings', 'check-updates-manual'
 ]);
 
 const ALLOWED_INVOKE_CHANNELS = new Set([
@@ -437,7 +452,11 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'test-compiler', 'get-language-file', 'get-workspace-info',
     'get-font-list', 'check-font-exists', 'get-installed-fonts',
     'get-global-settings', 'save-global-settings', 'get-user-data-path',
-    'get-app-version', 'get-app-path', 'check-for-updates'
+    'get-app-version', 'get-app-path', 'check-for-updates',
+    'get-all-settings', 'update-settings', 'update-top-level-settings',
+    'open-backup-settings', 'check-gdb-availability',
+    'open-editor-settings', 'open-compiler-settings',
+    'compile-file', 'run-executable', 'check-file-exists'
 ]);
 
 const safeIpcRenderer = {
@@ -535,9 +554,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     startCompare: (config) => ipcRenderer.invoke('compare-start', config),
     stopCompare: () => ipcRenderer.invoke('compare-stop'),
-    onCompareProgress: (cb) => { ipcRenderer.on('compare-progress', (_, data) => cb(data)); return () => ipcRenderer.removeAllListeners('compare-progress'); },
-    onCompareError: (cb) => { ipcRenderer.on('compare-error', (_, data) => cb(data)); return () => ipcRenderer.removeAllListeners('compare-error'); },
-    onCompareComplete: (cb) => { ipcRenderer.on('compare-complete', (_, data) => cb(data)); return () => ipcRenderer.removeAllListeners('compare-complete'); },
+    onCompareProgress: (cb) => { const l = (_, data) => cb(data); ipcRenderer.on('compare-progress', l); return () => ipcRenderer.removeListener('compare-progress', l); },
+    onCompareError: (cb) => { const l = (_, data) => cb(data); ipcRenderer.on('compare-error', l); return () => ipcRenderer.removeListener('compare-error', l); },
+    onCompareComplete: (cb) => { const l = (_, data) => cb(data); ipcRenderer.on('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
 
     readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
     renameFile: (oldPath, newPath) => ipcRenderer.invoke('rename-file', oldPath, newPath),
@@ -589,9 +608,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     onShowDebugDevelopingMessage: (callback) => ipcRenderer.on('show-debug-developing-message', callback),
     onSettingsChanged: (callback) => ipcRenderer.on('settings-changed', callback),
-    onSettingsReset: (callback) => ipcRenderer.on('settings-reset', callback),
-    onSettingsImported: (callback) => ipcRenderer.on('settings-imported', callback),
-    onThemeChanged: (callback) => ipcRenderer.on('theme-changed', callback),
+    onSettingsReset: (callback) => ipcRenderer.on('settings-reset', (_e, payload) => callback(payload)),
+    onSettingsImported: (callback) => ipcRenderer.on('settings-imported', (_e, payload) => callback(payload)),
+    onThemeChanged: (callback) => ipcRenderer.on('theme-changed', (_e, payload) => callback(payload)),
     onFileOpened: (callback) => ipcRenderer.on('file-opened', callback),
     onFileSaved: (callback) => ipcRenderer.on('file-saved', (event, filePath, error) => callback(filePath, error)),
     onFolderOpened: (callback) => ipcRenderer.on('folder-opened', (event, folderPath) => callback(folderPath)),

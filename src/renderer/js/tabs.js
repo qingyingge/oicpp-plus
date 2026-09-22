@@ -2192,38 +2192,35 @@ class TabManager {
             }
         }
 
-        if (tab.filePath && window.electronIPC) {
+        if (tab.filePath && window.electronAPI) {
             logInfo('从文件系统重新读取文件:', tab.filePath);
             tab.isLoading = true; // 设置加载标志
-            window.electronIPC.send('read-file-content', tab.filePath);
+            const requestedPath = tab.filePath;
+            window.electronAPI.readFileContent(requestedPath)
+                .then((content) => {
+                    if (tab.filePath !== requestedPath) return;
+                    logInfo('文件内容读取成功，直接设置到当前编辑器');
+                    this.setEditorContent(content, true); // 标记为已保存
+                    tab.content = content;
+                    tab.modified = false; // 从文件系统加载的内容标记为未修改
 
-            const handleFileRead = (event, filePath, content, error) => {
-                if (filePath === tab.filePath) {
-                    tab.isLoading = false; // 清除加载标志
-                    if (error) {
-                        logError('读取文件失败:', error);
-                        logWarn('[TabReadFileErrorSuppressed]', '无法读取文件: ' + error);
-                        if (tab.content !== undefined) {
-                            this.setEditorContent(tab.content);
-                        }
-                    } else {
-                        logInfo('文件内容读取成功，直接设置到当前编辑器');
-                        this.setEditorContent(content, true); // 标记为已保存
-                        tab.content = content;
-                        tab.modified = false; // 从文件系统加载的内容标记为未修改
-
-                        if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-                            const editor = this.monacoEditorManager.currentEditor;
-                            if (editor.updateFileName) {
-                                editor.updateFileName(fileName, false);
-                            }
+                    if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
+                        const editor = this.monacoEditorManager.currentEditor;
+                        if (editor.updateFileName) {
+                            editor.updateFileName(fileName, false);
                         }
                     }
-                    window.electronIPC.ipcRenderer.removeListener('file-content-read', handleFileRead);
-                }
-            };
-
-            window.electronIPC.on('file-content-read', handleFileRead);
+                })
+                .catch((error) => {
+                    logError('读取文件失败:', error);
+                    logWarn('[TabReadFileErrorSuppressed]', '无法读取文件: ' + error);
+                    if (tab.content !== undefined) {
+                        this.setEditorContent(tab.content);
+                    }
+                })
+                .finally(() => {
+                    tab.isLoading = false; // 清除加载标志
+                });
         } else {
             const content = tab.content || this.getDefaultContentForFile(fileName);
             this.setEditorContent(content, !tab.modified); // 根据修改状态决定是否标记为已保存
