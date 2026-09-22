@@ -16,9 +16,13 @@ pnpm@11.7.0
 | `dev` | `electron . --dev` |
 | `build` | prebuild steps + electron-builder |
 | `ci` | `node scripts/ci-check.js` |
+| `ci:tests` | `node scripts/ci-check.js --only tests`（只跑回归测试） |
+| `ci:fast` | `node scripts/ci-check.js --skip tests`（只跑静态检查） |
+| `ci:strict` | `node scripts/ci-check.js --strict`（WARN 也判 FAIL，当前 18 WARN 会红） |
+| `ci:verbose` | `node scripts/ci-check.js --verbose`（详细输出） |
 
 ## CI / Verification
-No lint/typecheck/test scripts. Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.). No Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes).
+No lint/typecheck scripts. Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.) plus a `[T1]` regression-test step: auto-discovers `tests/*.test.js` via `tests/run-tests.js` (add a new `*.test.js` file to extend the suite; failing test → CI FAIL). CI modes via runtime args: `pnpm run ci:tests` (T1 only), `ci:fast` (skip T1), `ci:strict` (WARN counts as FAIL), `ci:verbose`. No Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes).
 
 ## Structure
 ```
@@ -34,6 +38,10 @@ src/
   utils/               — utilities
 scripts/
   ci-check.js          — CI checks
+tests/
+  run-tests.js         — regression test runner (auto-discovers *.test.js)
+  preload.test.js      — IPC whitelist / event unwrap / markdown render
+  downloader.test.js   — multi-thread downloader md5/cancel/failure restore
 ```
 
 ## Key dependencies
@@ -44,7 +52,7 @@ scripts/
 - electron-builder (dev)
 
 ## Conventions
-- No test framework in use.
+- Regression tests = plain Node scripts in `tests/` (`pnpm run ci:tests`), no external test framework.
 - CI check = `pnpm run ci` only.
 - CSP allows `unsafe-eval` (Monaco needs it).
 - No GitHub Actions / GitLab CI / Docker.

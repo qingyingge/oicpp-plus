@@ -24,7 +24,10 @@
     "prebuild:native": "node-gyp rebuild",
     "build": "pnpm run prebuild:buildinfo && pnpm run prebuild:icons && pnpm run prebuild:clangd && electron-builder",
     "ci": "node scripts/ci-check.js",
-    "test": "node tests/run-tests.js"
+    "ci:tests": "node scripts/ci-check.js --only tests",
+    "ci:fast": "node scripts/ci-check.js --skip tests",
+    "ci:strict": "node scripts/ci-check.js --strict",
+    "ci:verbose": "node scripts/ci-check.js --verbose"
   },
   "devDependencies": {
     "electron": "^37.10.3",

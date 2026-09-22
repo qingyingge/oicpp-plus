@@ -11,8 +11,11 @@ let failed = 0;
 let passed = 0;
 let warned = 0;
 
-const verbose = process.argv.includes('--verbose');
-const strict = process.argv.includes('--strict');
+const argv = process.argv.slice(2);
+const verbose = argv.includes('--verbose');
+const strict = argv.includes('--strict');
+const onlyTests = argv.includes('--only') && argv[argv.indexOf('--only') + 1] === 'tests';
+const skipTests = argv.includes('--skip') && argv[argv.indexOf('--skip') + 1] === 'tests';
 
 const R = '\x1b[0m';
 const G = '\x1b[32m';
@@ -38,6 +41,27 @@ function readJson(p) {
 }
 function exec(cmd, timeoutMs = 30000) {
   try { return execSync(cmd, { encoding: 'utf8', timeout: timeoutMs, stdio: ['pipe', 'pipe', 'pipe'] }).trim(); } catch { return null; }
+}
+
+function finish() {
+  console.log(`\n${C}=========================================${R}`);
+  console.log(`  ${G}Passed:  ${passed}${R}`);
+  console.log(`  ${Y}Warnings: ${warned}${R}`);
+  console.log(`  ${failed > 0 ? RD : G}Failed:  ${failed}${R}`);
+  console.log(`${C}=========================================${R}`);
+  console.log(`${GR}Platform: ${os.platform()}/${os.arch()}${R}`);
+
+  clearTimeout(globalTimer);
+  if (failed > 0) {
+    console.log(`\n${RD}${B}CI FAILED${R}`);
+    process.exit(1);
+  }
+  if (strict && warned > 0) {
+    console.log(`\n${RD}${B}STRICT: ${warned} warning(s) treated as failures${R}`);
+    process.exit(1);
+  }
+  console.log(`\n${G}${B}CI PASSED${R}`);
+  process.exit(0);
 }
 
 // Global timeout: force exit after 120 seconds
@@ -69,6 +93,12 @@ console.log(`${GR}Platform: ${os.platform()} ${os.arch()} | Node ${process.versi
 console.log(`${GR}Root: ${root}${R}`);
 if (verbose) info('Verbose mode enabled');
 if (strict) info('Strict mode enabled');
+if (onlyTests) info('Mode: regression tests only');
+if (skipTests) info('Mode: static checks only (regression tests skipped)');
+if (onlyTests) {
+  runRegressionTests();
+  finish();
+}
 
 // ============================================================
 // A. Infrastructure
@@ -783,38 +813,31 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
 }
 
 // T1: Regression tests (tests/*.test.js, auto-discovered by tests/run-tests.js)
-console.log(`\n${Y}[T1] Regression tests${R}`);
-const testRunnerPath = path.join(root, 'tests', 'run-tests.js');
-if (fileExists(testRunnerPath)) {
-  try {
-    const testOut = execSync(`node "${testRunnerPath}"`, { encoding: 'utf8', timeout: 90000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
-    testOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${GR}  ${line}${R}`));
-    ok('all regression tests passed');
-  } catch (err) {
-    const testErrOut = `${err.stdout || ''}${err.stderr || ''}`;
-    testErrOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${RD}  ${line}${R}`));
-    fail('regression tests failed');
+function runRegressionTests() {
+  console.log(`\n${Y}[T1] Regression tests${R}`);
+  const testRunnerPath = path.join(root, 'tests', 'run-tests.js');
+  if (fileExists(testRunnerPath)) {
+    try {
+      const testOut = execSync(`node "${testRunnerPath}"`, { encoding: 'utf8', timeout: 90000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+      testOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${GR}  ${line}${R}`));
+      ok('all regression tests passed');
+    } catch (err) {
+      const testErrOut = `${err.stdout || ''}${err.stderr || ''}`;
+      testErrOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${RD}  ${line}${R}`));
+      fail('regression tests failed');
+    }
+  } else {
+    fail('tests/run-tests.js not found');
   }
+}
+
+if (skipTests) {
+  info('regression tests skipped (--skip tests)');
 } else {
-  fail('tests/run-tests.js not found');
+  runRegressionTests();
 }
 
 // ============================================================
 // I. Summary
 // ============================================================
-console.log(`\n${C}=========================================${R}`);
-console.log(`  ${G}Passed:  ${passed}${R}`);
-console.log(`  ${Y}Warnings: ${warned}${R}`);
-console.log(`  ${failed > 0 ? RD : G}Failed:  ${failed}${R}`);
-console.log(`${C}=========================================${R}`);
-console.log(`${GR}Platform: ${os.platform()}/${os.arch()}${R}`);
-
-if (failed > 0) {
-  console.log(`\n${RD}${B}CI FAILED${R}`);
-  clearTimeout(globalTimer);
-  process.exit(1);
-} else {
-  console.log(`\n${G}${B}CI PASSED${R}`);
-  clearTimeout(globalTimer);
-  process.exit(0);
-}
+finish();
