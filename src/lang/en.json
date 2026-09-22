@@ -400,7 +400,12 @@
     "title": "Terminal",
     "newTerminal": "New Terminal",
     "closeTerminal": "Close Terminal",
-    "killTerminal": "Kill Terminal"
+    "killTerminal": "Kill Terminal",
+    "tabLabel": "Terminal {counter}",
+    "emptyHint": "Click \"New Terminal\" to start using the built-in terminal",
+    "hideTerminal": "Hide Terminal",
+    "unicodeAddonMissing": "xterm Unicode11 addon not loaded",
+    "unicodeAddonDetail": "Please ensure @xterm/addon-unicode11 is installed"
   },
   "compiler": {
     "settings": "Compiler Settings",

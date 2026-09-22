@@ -58,7 +58,7 @@ class CompilerManager {
         this.compileOutput.innerHTML = `
             <div class="compile-output-header">
                 <div class="compile-output-title">
-                    <span class="compile-status" id="compile-status-text"data-i18n="compileOutput.title">Compile Output</span>
+                    <span class="compile-status" id="compile-status-text" data-i18n="compileOutput.title">Compile Output</span>
                 </div>
                 <div class="compile-output-controls">
                     <button class="compile-output-clear" id="clear-compile-output" data-i18n-title="panel.clearOutput" title="清空输出">
