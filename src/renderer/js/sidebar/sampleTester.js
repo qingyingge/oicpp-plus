@@ -939,8 +939,11 @@ class SampleTester {
         let statusBadge = '';
         if (sample.result && sample.result.status) {
             statusBadge = `<span class="status-badge status-${sample.result.status.toLowerCase()}">${sample.result.status}</span>`;
-            if (sample.result.time) {
+            if (sample.result.time !== undefined) {
                 statusBadge += `<span style="color: #858585; font-size: 11px;">${sample.result.time}ms</span>`;
+            }
+            if (Number.isFinite(sample.result.memoryBytes)) {
+                statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${(sample.result.memoryBytes / (1024 * 1024)).toFixed(1)}MB</span>`;
             }
         }
 

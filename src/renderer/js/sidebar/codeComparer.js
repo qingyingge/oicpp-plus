@@ -132,7 +132,7 @@ class CodeComparer {
     syncInstanceConfigToTask(task) {
         if (!task?.config) return;
         task.config.standardCodePath = this.standardCodePath || '';
-        task.config.testCodePath = this.testCodePath || task.key;
+        task.config.testCodePath = this.testCodePath || task.config.testCodePath || '';
         task.config.generatorPath = this.generatorPath || '';
         task.config.useTestlib = !!this.useTestlib;
         task.config.spjPath = this.spjPath || '';
@@ -173,7 +173,7 @@ class CodeComparer {
         if (!Number.isFinite(t.timeLimit) && Number.isFinite(s.timeLimit)) t.timeLimit = s.timeLimit;
         if (!Number.isFinite(t.threadCount) && Number.isFinite(s.threadCount)) t.threadCount = s.threadCount;
 
-        t.testCodePath = targetTask.key;
+        if (!t.testCodePath && s.testCodePath) t.testCodePath = s.testCodePath;
     }
 
     activate() {
@@ -602,7 +602,7 @@ class CodeComparer {
         task.state.statusText = (window.i18n.t('compare.ready'));
         task.state.mode = 'running';
 
-        this.setActiveTaskKey(task.key, { syncTestCodePath: true });
+        this.setActiveTaskKey(task.config.testCodePath, { syncTestCodePath: true });
         this.updateUIForTask(task);
         this.showStatus();
         this.updateStatusText(task.state.statusText);
