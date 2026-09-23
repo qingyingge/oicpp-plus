@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>S2 Library Compatibility Suite</title>
+<style>
+  body { background:#1e1e2e; color:#cdd6f4; font-family:monospace; font-size:15px; margin:16px; }
+  h1 { color:#89b4fa; font-size:18px; }
+  h2 { font-size:15px; margin:14px 0 6px 0; }
+  .ok { color:#a6e3a1; }
+  .fail { color:#f38ba8; }
+  .partial { color:#f9e2af; }
+  #monaco-container { width:600px; height:300px; border:1px solid #45475a; }
+  #term-container { border:1px solid #45475a; padding:4px; display:inline-block; }
+  #pdf-canvas { border:1px solid #45475a; background:#fff; }
+  footer { margin-top:20px; color:#a6adc8; font-size:12px; word-break:break-all; }
+</style>
+</head>
+<body>
+<h1>S2 — Tauri/WebKitGTK library compatibility suite</h1>
+
+<h2 id="monaco-status">Monaco: loading…</h2>
+<div id="monaco-container"></div>
+
+<h2 id="xterm-status">xterm: loading…</h2>
+<div id="term-container"></div>
+
+<h2 id="pdfjs-status">pdfjs-dist: loading…</h2>
+<canvas id="pdf-canvas" width="10" height="10"></canvas>
+
+<h2 id="err-status">errors: (none captured yet)</h2>
+<footer id="ua"></footer>
+
+<script>
+window.__errors = [];
+function pushErr(prefix, e) {
+  var msg = String((e && e.message) || e);
+  if (e && e.filename) msg += ' @' + e.filename + ':' + e.lineno;
+  if (e && e.error && e.error.stack) msg += ' :: ' + String(e.error.stack).split('\n').slice(0, 3).join(' / ');
+  window.__errors.push(prefix + msg);
+}
+window.addEventListener('error', function (e) { pushErr('[onerror] ', e); });
+window.addEventListener('unhandledrejection', function (e) { pushErr('[rejection] ', e.reason); });
+setInterval(function () {
+  var el = document.getElementById('err-status');
+  if (!el) return;
+  el.textContent = window.__errors.length
+    ? 'errors(' + window.__errors.length + '): ' + window.__errors.join(' || ')
+    : 'errors: (none captured yet)';
+  el.className = window.__errors.length ? 'fail' : 'ok';
+}, 500);
+function setStatus(id, cls, text) {
+  var el = document.getElementById(id);
+  el.textContent = text;
+  el.className = cls;
+}
+document.getElementById('ua').textContent = 'UA: ' + navigator.userAgent;
+
+// ---- 1. Monaco (AMD) ----
+var monacoScript = document.createElement('script');
+monacoScript.src = '../node_modules/monaco-editor/min/vs/loader.js';
+monacoScript.onload = function () {
+  try {
+    window.require.config({ paths: { vs: '../node_modules/monaco-editor/min/vs' } });
+    window.require(['vs/editor/editor.main'], function () {
+      try {
+        var editor = monaco.editor.create(document.getElementById('monaco-container'), {
+          value: "function fib(n) {\n  if (n < 2) return n;\n  return fib(n - 1) + fib(n - 2);\n}\nconsole.log(fib(10));\n",
+          language: 'javascript',
+          theme: 'vs-dark'
+        });
+        var model = monaco.editor.createModel('let x = 1;\n', 'javascript');
+        window.__monacoModel = model;
+        setStatus('monaco-status', 'ok', 'Monaco: OK — version ' + monaco.version +
+          ' (editor created 600x300, createModel lang=javascript ok)');
+        window.__monacoOK = true;
+      } catch (err) {
+        setStatus('monaco-status', 'fail', 'Monaco: FAIL — ' + err);
+      }
+    }, function (err) {
+      setStatus('monaco-status', 'fail', 'Monaco: FAIL — require callback error: ' + err);
+    });
+  } catch (err) {
+    setStatus('monaco-status', 'fail', 'Monaco: FAIL — ' + err);
+  }
+};
+monacoScript.onerror = function () {
+  setStatus('monaco-status', 'fail', 'Monaco: FAIL — loader.js failed to load');
+};
+document.head.appendChild(monacoScript);
+
+// ---- 2. xterm ----
+(function () {
+  var XT = '../node_modules/xterm/lib/xterm.js';
+  var FIT = '../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js';
+
+  var diag = function () {
+    return 'typeof Terminal=' + (typeof window.Terminal) +
+      ' | typeof define=' + (typeof window.define) +
+      (window.define && window.define.amd ? '(amd)' : '') +
+      ' | typeof module=' + (typeof window.module) +
+      ' | typeof exports=' + (typeof window.exports) +
+      ' | errs=' + (window.__errors.join(' || ') || 'none');
+  };
+
+  // If a global AMD `define` is present (Monaco loader), xterm's UMD takes the
+  // AMD branch and never publishes window.Terminal. Recover by evaluating the
+  // source synchronously with define/module/exports temporarily shadowed.
+  function shadowEval(src) {
+    var sd = window.define, sm = window.module, se = window.exports;
+    window.define = undefined; window.module = undefined; window.exports = undefined;
+    try { (0, eval)(src); return 'shadow-eval(define/module/exports undefined)'; }
+    finally { window.define = sd; window.module = sm; window.exports = se; }
+  }
+
+  function ensure(path, globalName, cb) {
+    if (typeof window[globalName] !== 'undefined') { cb(null, 'script-global'); return; }
+    fetch(path).then(function (r) {
+      if (!r.ok) throw new Error(path + ' -> ' + r.status);
+      return r.text();
+    }).then(function (txt) { cb(null, shadowEval(txt)); })
+      .catch(function (e) { cb(e); });
+  }
+
+  function boot(via) {
+    try {
+      var term = new Terminal({ cols: 60, rows: 8, convertEol: true });
+      term.writeln('Welcome to OICPP-Plus Tauri spike (S2)');
+      term.writeln('xterm.js OK — line 2');
+      term.open(document.getElementById('term-container'));
+      window.__term = term;
+      var fitMsg = ' (fit skipped)';
+      setStatus('xterm-status', 'ok', 'xterm: OK — Terminal via ' + via +
+        ', 2 lines written, term.open() done' + fitMsg + ' | ' + diag());
+      ensure(FIT, 'FitAddon', function (err, fitVia) {
+        if (err) { fitMsg = ' (fit addon unavailable: ' + err + ')'; }
+        else {
+          try {
+            var fit = new FitAddon.FitAddon();
+            term.loadAddon(fit);
+            fit.fit();
+            fitMsg = ' (FitAddon.fit() ok via ' + fitVia + ')';
+          } catch (e) { fitMsg = ' (FitAddon error: ' + e + ')'; }
+        }
+        setStatus('xterm-status', 'ok', 'xterm: OK — Terminal via ' + via +
+          ', 2 lines written, term.open() done' + fitMsg + ' | ' + diag());
+        window.__xtermOK = true;
+      });
+    } catch (err) {
+      setStatus('xterm-status', 'fail', 'xterm: FAIL — ' + err + ' | ' + diag());
+    }
+  }
+
+  function start() {
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '../node_modules/xterm/css/xterm.css';
+    document.head.appendChild(link);
+
+    var xs = document.createElement('script');
+    xs.src = XT;
+    xs.onload = function () {
+      ensure(XT, 'Terminal', function (err, via) {
+        if (err) { setStatus('xterm-status', 'fail', 'xterm: FAIL — ' + err + ' | ' + diag()); return; }
+        boot(via);
+      });
+    };
+    xs.onerror = function () {
+      setStatus('xterm-status', 'fail', 'xterm: FAIL — xterm.js failed to load | ' + diag());
+    };
+    document.head.appendChild(xs);
+  }
+
+  try { start(); } catch (err) { setStatus('xterm-status', 'fail', 'xterm: FAIL — ' + err); }
+})();
+
+// ---- 3. pdfjs-dist ----
+(async function () {
+  try {
+    var pdfjsLib = await import('../node_modules/pdfjs-dist/build/pdf.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '../node_modules/pdfjs-dist/build/pdf.worker.mjs';
+    window.__pdfjs = pdfjsLib;
+    var pdfPath = '../docs/sampleTesterApiDoc.pdf';
+    var res = await fetch(pdfPath);
+    if (!res.ok) throw new Error('fetch ' + pdfPath + ' -> ' + res.status);
+    var buf = await res.arrayBuffer();
+    var doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    var page = await doc.getPage(1);
+    var canvas = document.getElementById('pdf-canvas');
+    var vp = page.getViewport({ scale: 1.0 });
+    canvas.width = Math.min(vp.width, 700);
+    canvas.height = Math.min(vp.height, 500);
+    var ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport: page.getViewport({ scale: Math.min(1.0, 700 / vp.width) }) }).promise;
+    // check non-white pixels
+    var img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    var nonWhite = 0;
+    for (var i = 0; i < img.data.length; i += 4) {
+      if (img.data[i] < 250 || img.data[i + 1] < 250 || img.data[i + 2] < 250) nonWhite++;
+    }
+    if (nonWhite > 50) {
+      setStatus('pdfjs-status', 'ok', 'pdfjs: OK — version ' + pdfjsLib.version +
+        ' — real render of docs/sampleTesterApiDoc.pdf p.1 (' + nonWhite + ' non-white px)');
+    } else {
+      setStatus('pdfjs-status', 'partial', 'pdfjs: PARTIAL — version ' + pdfjsLib.version +
+        ' render produced no non-white pixels');
+    }
+    window.__pdfOK = true;
+  } catch (err) {
+    setStatus('pdfjs-status', 'fail', 'pdfjs: FAIL — ' + err);
+  }
+})();
+</script>
+</body>
+</html>
