@@ -41,13 +41,13 @@ class CompileOutputManager {
             });
         }
 
-        document.addEventListener('keydown', (e) => {
+        this._onGlobalKeydown = (e) => {
             if (e.key === 'Escape' && this.isVisible) {
                 e.preventDefault();
                 e.stopPropagation();
                 this.hide();
             }
-        });
+        };
     }
 
     show() {
@@ -55,6 +55,9 @@ class CompileOutputManager {
         
         this.panel.classList.add('show');
         this.isVisible = true;
+        if (this._onGlobalKeydown) {
+            document.addEventListener('keydown', this._onGlobalKeydown);
+        }
         
         const editorArea = document.getElementById('editor-area');
         if (editorArea) {
@@ -69,6 +72,9 @@ class CompileOutputManager {
         
         this.panel.classList.remove('show');
         this.isVisible = false;
+        if (this._onGlobalKeydown) {
+            document.removeEventListener('keydown', this._onGlobalKeydown);
+        }
         
         const editorArea = document.getElementById('editor-area');
         if (editorArea) {

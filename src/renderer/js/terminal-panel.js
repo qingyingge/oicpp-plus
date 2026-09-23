@@ -475,7 +475,7 @@ class IntegratedTerminalPanel {
             }
         };
 
-        mountNode.addEventListener('keydown', (event) => {
+        const onKeyShield = (event) => {
             const key = String(event?.key || '').toLowerCase();
             const ctrl = !!event.ctrlKey;
             const meta = !!event.metaKey;
@@ -533,9 +533,10 @@ class IntegratedTerminalPanel {
                 return;
             }
             // Let xterm handle all other keys (e.g. Backspace/Delete/Ctrl combinations).
-        }, true);
+        };
+        mountNode.addEventListener('keydown', onKeyShield, true);
 
-        mountNode.addEventListener('wheel', (event) => {
+        const onWheelShield = (event) => {
             event.preventDefault();
             event.stopPropagation();
 
@@ -551,9 +552,22 @@ class IntegratedTerminalPanel {
 
             const lines = Math.max(1, Math.min(6, Math.round(Math.abs(deltaY) / 36)));
             session.terminal.scrollLines(deltaY > 0 ? lines : -lines);
-        }, true);
+        };
+        mountNode.addEventListener('wheel', onWheelShield, true);
 
         mountNode._terminalKeyShielded = true;
+        mountNode._terminalShieldHandlers = { keydown: onKeyShield, wheel: onWheelShield };
+    }
+
+    unshieldTerminalKeyEvents(mountNode) {
+        if (!mountNode || !mountNode._terminalShieldHandlers) {
+            return;
+        }
+        const handlers = mountNode._terminalShieldHandlers;
+        mountNode.removeEventListener('keydown', handlers.keydown, true);
+        mountNode.removeEventListener('wheel', handlers.wheel, true);
+        mountNode._terminalShieldHandlers = null;
+        mountNode._terminalKeyShielded = false;
     }
 
     async initializeSessionEncodingIfNeeded(session) {
@@ -1066,6 +1080,8 @@ class IntegratedTerminalPanel {
         try {
             session.terminal.dispose();
         } catch (_) {}
+
+        this.unshieldTerminalKeyEvents(session.mount);
 
         session.tab.remove();
         session.pane.remove();

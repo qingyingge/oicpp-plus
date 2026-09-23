@@ -111,9 +111,13 @@ class DialogManager {
                 });
             }
 
-            overlay.addEventListener('keydown', (e) => {
+            if (this._overlayKeydown) {
+                overlay.removeEventListener('keydown', this._overlayKeydown);
+            }
+            this._overlayKeydown = (e) => {
                 e.stopPropagation();
-            });
+            };
+            overlay.addEventListener('keydown', this._overlayKeydown);
 
             this.currentDialog = {
                 resolve: resolve,

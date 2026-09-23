@@ -150,11 +150,15 @@ class CompilerManager {
             resizer.addEventListener('touchstart', onDown);
         }
 
-        window.addEventListener('resize', () => {
+        if (this._onWindowResize) {
+            window.removeEventListener('resize', this._onWindowResize);
+        }
+        this._onWindowResize = () => {
             if (!this.compileOutput) return;
             const currentHeight = Number.parseFloat(this.compileOutput.style.height) || 300;
             this.setCompileOutputHeight(currentHeight, true);
-        });
+        };
+        window.addEventListener('resize', this._onWindowResize);
 
         this.switchOutputPane(this.activePane || 'raw');
         this.updateAnalysisVisibility();

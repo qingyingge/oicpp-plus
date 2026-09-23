@@ -122,9 +122,11 @@ class SidebarManager {
             document.body.style.userSelect = 'none';
 
             document.addEventListener('selectstart', preventSelection);
+            document.addEventListener('mousemove', onResizeMove);
+            document.addEventListener('mouseup', onResizeUp);
         });
 
-        document.addEventListener('mousemove', (e) => {
+        function onResizeMove(e) {
             if (!isResizing) return;
 
             e.preventDefault();
@@ -146,9 +148,11 @@ class SidebarManager {
             }
 
             this.scheduleEditorResize();
-        });
+        }
 
-        document.addEventListener('mouseup', () => {
+        function onResizeUp() {
+            document.removeEventListener('mousemove', onResizeMove);
+            document.removeEventListener('mouseup', onResizeUp);
             if (!isResizing) return;
 
             isResizing = false;
@@ -165,7 +169,7 @@ class SidebarManager {
             setTimeout(() => {
                 this.scheduleEditorResize(true);
             }, 100);
-        });
+        }
 
         function preventSelection(e) {
             e.preventDefault();

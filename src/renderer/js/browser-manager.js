@@ -50,6 +50,14 @@ class BrowserManager {
                 this._handleOpenNewTabRequest(request);
             });
         }
+        window.addEventListener('pagehide', () => this.destroy(), { once: true });
+    }
+
+    destroy() {
+        if (typeof this._removeOpenNewTabListener === 'function') {
+            this._removeOpenNewTabListener();
+            this._removeOpenNewTabListener = null;
+        }
     }
 
     /**

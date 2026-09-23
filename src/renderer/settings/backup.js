@@ -258,6 +258,10 @@ class BackupSettings {
     }
 
     showMessage(message, type = 'info') {
+        const existingToast = document.querySelector('.message-toast');
+        if (existingToast) {
+            existingToast.remove();
+        }
         const messageDiv = document.createElement('div');
         messageDiv.className = `message-toast ${type}`;
         messageDiv.textContent = message;
