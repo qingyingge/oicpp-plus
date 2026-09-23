@@ -2803,6 +2803,23 @@ function createMenuBar() {
     refreshNativeUpdateMenuState();
 }
 
+// 本地 HTTP 接口（SampleTester/CompetitiveCompanion）只接受本机页面与浏览器扩展的跨域请求，
+// 任意网站 Origin（含沙箱 iframe 的 "null"）一律 403，防止恶意页面向 127.0.0.1 注入题目数据（H5）
+function isTrustedLocalOrigin(req) {
+    const origin = req.headers && req.headers.origin;
+    if (origin === undefined) return true; // 非浏览器客户端不带 Origin
+    if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(origin)) return true;
+    if (/^(chrome|moz)-extension:\/\//.test(origin)) return true;
+    return false;
+}
+
+function rejectUntrustedOrigin(req, res) {
+    if (isTrustedLocalOrigin(req)) return false;
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ code: 403, message: 'Forbidden origin' }));
+    return true;
+}
+
 function writeJson(res, statusCode, payload) {
     res.writeHead(statusCode, {
         'Content-Type': 'application/json',
@@ -2902,6 +2919,7 @@ function createCompetitiveCompanionServer(port, tagLabel) {
     const label = tagLabel || 'CompetitiveCompanion';
     const server = http.createServer(async (req, res) => {
         const requestPath = getRequestPath(req);
+        if (rejectUntrustedOrigin(req, res)) return;
         const acceptPaths = new Set(['/', '/competitive-companion', '/add', '/receive', '/companion']);
         if (req.method === 'OPTIONS') {
             return writeJson(res, 204, { code: 204, message: 'No Content' });
@@ -2962,6 +2980,7 @@ function startSampleTesterServer() {
         const PORT = 20030;
         sampleTesterServer = http.createServer(async (req, res) => {
             const requestPath = getRequestPath(req);
+            if (rejectUntrustedOrigin(req, res)) return;
             if (req.method === 'OPTIONS') {
                 return writeJson(res, 204, { code: 204, message: 'No Content' });
             }
@@ -3430,7 +3449,9 @@ function setupIPC() {
     });
 
     ipcMain.handle('get-top-level-settings', () => {
-        return settings;
+        // 登录凭据不下发渲染进程（H4）
+        const { account, ...safeSettings } = settings;
+        return safeSettings;
     });
 
     ipcMain.handle('update-top-level-settings', (event, newSettings) => {
@@ -4560,9 +4581,15 @@ function setupIPC() {
             if (!result.canceled && result.filePaths.length > 0) {
                 const filePath = result.filePaths[0];
                 const importedSettings = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                if (importedSettings && typeof importedSettings === 'object' && !Array.isArray(importedSettings)) {
+                    // 登录凭据只属于当前设备，导入文件不可覆盖 account（与云备份路径保持一致）
+                    delete importedSettings.account;
+                }
 
+                const previousAccount = settings.account;
                 const defaultSettings = getDefaultSettings();
                 settings = mergeSettings(defaultSettings, importedSettings);
+                settings.account = previousAccount;
 
                 saveSettings();
 
@@ -4686,10 +4713,11 @@ function setupIPC() {
 
             if (executablePath.startsWith('cmd /c ')) {
                 const actualCommand = executablePath.substring(7); // 去掉"cmd /c "
+                // 由 cmd.exe 单次解析 /c 之后的命令串，不再叠加 shell:true 的二次解析（C2）
                 childProcess = spawn('cmd', ['/c', actualCommand], {
                     stdio: ['pipe', 'pipe', 'pipe'],
                     env: runtimeEnv,
-                    shell: true,
+                    shell: false,
                     cwd: workingDirectory
                 });
             } else if (Array.isArray(args) && args.length > 0) {
@@ -10147,8 +10175,21 @@ ipcMain.handle('clipboard-read-text', async (event) => {
     }
 });
 
+// 渲染进程可写设置键白名单（与 updateSettings 的 validKeys 保持一致），防止任意键写入（如 account/compilerPath 注入）
+const SETTINGS_WRITABLE_KEYS = new Set([
+    'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme',
+    'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'fontLigaturesEnabled', 'cppTemplate', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'autoSave', 'autoSaveInterval',
+    'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'markdownMode', 'keybindings',
+    'fileHistory', 'lastOpenTabs', 'autoOpenLastWorkspace', 'language', 'autoBackupSettings', 'receiveBetaUpdates',
+    'runAllSamples'
+]);
+
 ipcMain.handle('save-setting', async (event, key, value) => {
     try {
+        if (typeof key !== 'string' || !SETTINGS_WRITABLE_KEYS.has(key)) {
+            logInfo(`拒绝保存无效设置键: ${String(key)}`);
+            return { success: false, error: 'invalid setting key' };
+        }
         settings[key] = value;
         await saveSettings();
         return { success: true };
