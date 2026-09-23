@@ -79,7 +79,6 @@ body[data-theme="solarized-light"] {
     --hover-color: #eee8d5 !important;
     --active-color: #0060c0 !important;
 }
-*/
 
 .monaco-editor {
     font-family: 'Consolas' !important;

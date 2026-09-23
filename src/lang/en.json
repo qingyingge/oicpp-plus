@@ -426,6 +426,7 @@
     "installOnline": "Install Online",
     "pythonInterpreter": "Python Interpreter Path",
     "pythonInterpreterPlaceholder": "Select Python interpreter path",
+    "pythonPathSaved": "Python interpreter path saved",
     "testlibPathPlaceholder": "Select folder containing testlib.h",
     "testlibPathDesc": "testlib.h is a common testing library for competitive programming",
     "downloadCompiler": "Download Compiler",

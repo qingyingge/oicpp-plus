@@ -7513,28 +7513,6 @@ function getSettingsPath() {
     return path.join(settingsDir, 'settings.json');
 }
 
-function mergeSettings(defaultSettings, userSettings) {
-    const result = JSON.parse(JSON.stringify(defaultSettings));
-
-    function merge(target, source) {
-        for (const key in source) {
-            if (source.hasOwnProperty(key)) {
-                if (typeof source[key] === 'object' && source[key] !== null && !Array.isArray(source[key])) {
-                    if (!target[key] || typeof target[key] !== 'object') {
-                        target[key] = {};
-                    }
-                    merge(target[key], source[key]);
-                } else {
-                    target[key] = source[key];
-                }
-            }
-        }
-    }
-
-    merge(result, userSettings);
-    return result;
-}
-
 function loadSettings() {
     try {
         const settingsPath = getSettingsPath();
@@ -7648,9 +7626,25 @@ function mergeSettings(defaultSettings, userSettings) {
     const result = JSON.parse(JSON.stringify(defaultSettings));
     const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'account', 'runAllSamples'];
 
+    const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+    const deepMerge = (target, source) => {
+        for (const key of Object.keys(source)) {
+            if (isPlainObject(source[key]) && isPlainObject(target[key])) {
+                deepMerge(target[key], source[key]);
+            } else {
+                target[key] = source[key];
+            }
+        }
+    };
+
     for (const key of validKeys) {
+        if (key === 'account') continue;
         if (userSettings[key] !== undefined) {
-            result[key] = userSettings[key];
+            if (isPlainObject(userSettings[key]) && isPlainObject(result[key])) {
+                deepMerge(result[key], userSettings[key]);
+            } else {
+                result[key] = userSettings[key];
+            }
         } else {
             result[key] = defaultSettings[key];
         }

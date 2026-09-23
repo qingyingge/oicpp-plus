@@ -409,6 +409,7 @@
     "installOnline": "在线安装",
     "pythonInterpreter": "Python 解释器路径",
     "pythonInterpreterPlaceholder": "请选择 python 解释器路径",
+    "pythonPathSaved": "Python 解释器路径已保存",
     "testlibPathPlaceholder": "请选择 testlib.h 所在文件夹",
     "testlibPathDesc": "testlib.h 是竞赛编程中常用的测试辅助库",
     "downloadCompiler": "下载编译器",

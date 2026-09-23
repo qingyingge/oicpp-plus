@@ -237,7 +237,7 @@ try {
     const hljs = require('highlight.js');
 
     md = new MarkdownIt({
-        html: true,
+        html: false,
         linkify: true,
         typographer: true,
         highlight: function (str, lang) {
@@ -459,6 +459,26 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'compile-file', 'run-executable', 'check-file-exists'
 ]);
 
+// 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
+const ALLOWED_EVENT_CHANNELS = new Set([
+    // 编译/运行结果
+    'compile-result', 'compile-error', 'run-result', 'run-error',
+    // 调试会话
+    'debug-started', 'debug-stopped', 'debug-running', 'debug-program-exited',
+    'debug-ready-waiting', 'debug-breakpoint-hit', 'debug-error',
+    'debug-variables-updated', 'debug-callstack-updated', 'debug-terminal-output',
+    'debug-variable-expanded', 'goto-source-location',
+    // 设置与主题
+    'settings-changed', 'settings-loaded', 'settings-reset', 'settings-imported',
+    'theme-changed', 'language-changed',
+    // 文件系统
+    'file-saved', 'file-renamed', 'file-created', 'folder-created',
+    'file-deleted', 'file-pasted', 'file-moved', 'file-move-error',
+    'directory-read', 'directory-read-error',
+    // 窗口/应用
+    'window-maximized', 'window-unmaximized', 'app-close-requested'
+]);
+
 const safeIpcRenderer = {
     send: (channel, ...args) => {
         if (ALLOWED_SEND_CHANNELS.has(channel)) {
@@ -472,8 +492,14 @@ const safeIpcRenderer = {
         }
         return Promise.reject(new Error(`IPC invoke blocked: ${channel}`));
     },
-    on: (channel, listener) => ipcRenderer.on(channel, listener),
-    once: (channel, listener) => ipcRenderer.once(channel, listener),
+    on: (channel, listener) => {
+        if (ALLOWED_EVENT_CHANNELS.has(channel)) return ipcRenderer.on(channel, listener);
+        console.warn('IPC event blocked: ' + channel);
+    },
+    once: (channel, listener) => {
+        if (ALLOWED_EVENT_CHANNELS.has(channel)) return ipcRenderer.once(channel, listener);
+        console.warn('IPC event blocked: ' + channel);
+    },
     removeListener: (channel, listener) => ipcRenderer.removeListener(channel, listener),
     removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
 };
@@ -697,12 +723,20 @@ contextBridge.exposeInMainWorld('electronIPC', {
     ...safeIpcRenderer,
     ipcRenderer: safeIpcRenderer,
     on: (channel, listener) => {
+        if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+            console.warn('IPC event blocked: ' + channel);
+            return;
+        }
         if (channel === 'file-saved') {
             return ipcRenderer.on('file-saved', (event, filePath, error) => listener(event, filePath, error));
         }
         return ipcRenderer.on(channel, listener);
     },
     once: (channel, listener) => {
+        if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+            console.warn('IPC event blocked: ' + channel);
+            return;
+        }
         if (channel === 'file-saved') {
             return ipcRenderer.once('file-saved', (event, filePath, error) => listener(event, filePath, error));
         }

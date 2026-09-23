@@ -1,4 +1,13 @@
 // 编译器/Testlib 列表下载依赖上游服务 oicpp.mywwzh.top，fork 需自建列表源
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 class CompilerSettings {
     constructor() {
         this.settings = {
@@ -344,7 +353,10 @@ class CompilerSettings {
                 if (input) {
                     input.value = selectedPath;
                 }
-                this.showMessage(window.i18n.t('compiler.testlibPathSaved'), 'success');
+                if (window.electronAPI && window.electronAPI.saveSetting) {
+                    await window.electronAPI.saveSetting('pythonInterpreterPath', selectedPath);
+                }
+                this.showMessage(window.i18n.t('compiler.pythonPathSaved'), 'success');
             }
         } catch (error) {
             logError('浏览 Python 解释器失败:', error);
@@ -483,16 +495,16 @@ class CompilerSettings {
                 
                 compilerDiv.innerHTML = `
                     <div class="compiler-info">
-                        <h4>${compiler.name}</h4>
-                        <p><span data-i18n="compiler.versionSelectedPrefix">Version:</span> ${compiler.version}</p>
-                        <span class="platform"><span data-i18n="compiler.platformPrefix">Platform:</span> ${compiler.platform}</span>
+                        <h4>${escapeHtml(compiler.name)}</h4>
+                        <p><span data-i18n="compiler.versionSelectedPrefix">Version:</span> ${escapeHtml(compiler.version)}</p>
+                        <span class="platform"><span data-i18n="compiler.platformPrefix">Platform:</span> ${escapeHtml(compiler.platform)}</span>
                     </div>
                     <div class="compiler-actions">
                         ${isSelected ? 
                             '<span class="status selected-status">' + (window.i18n.t('compiler.selected')) + '</span>' :
                             isDownloaded ? 
-                                '<button class="select-btn" data-version="' + compiler.version + '">' + (window.i18n.t('compiler.select')) + '</button>' :
-                                '<button class="download-btn" data-url="' + compiler.download_url + '" data-version="' + compiler.version + '" data-name="' + compiler.name + '">' + (window.i18n.t('compiler.download')) + '</button>'
+                                '<button class="select-btn" data-version="' + escapeHtml(compiler.version) + '">' + (window.i18n.t('compiler.select')) + '</button>' :
+                                '<button class="download-btn" data-url="' + escapeHtml(compiler.download_url) + '" data-version="' + escapeHtml(compiler.version) + '" data-name="' + escapeHtml(compiler.name) + '">' + (window.i18n.t('compiler.download')) + '</button>'
                         }
                         ${isDownloaded ? '<span class="status downloaded-status">' + (window.i18n.t('compiler.downloaded')) + '</span>' : ''}
                     </div>
@@ -509,7 +521,7 @@ class CompilerSettings {
             compilerList.innerHTML = `
                 <div class="error-message">
                     <p>${window.i18n.t('compiler.networkError')}</p>
-                    <p class="error-detail">${error.message}</p>
+                    <p class="error-detail">${escapeHtml(error.message)}</p>
                     <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
                 </div>
             `;

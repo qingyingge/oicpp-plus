@@ -141,6 +141,38 @@ check('无 IPC send blocked 警告', !warns.some(w => w.includes('IPC send block
     const out3 = exposed.markdownAPI.render('![img](img.png)');
     check('无 filePath 时保持原相对路径', out3.includes('img.png') && !out3.includes('file://'));
 
+    // H8: 事件通道白名单——renderer 字面量通道全部可注册，非法通道被拦截
+    const eventChannels = new Set();
+    for (const f of scanFiles) {
+        const c = fs.readFileSync(f, 'utf8');
+        for (const m of c.matchAll(/(?:electronIPC|ipcRenderer)\.on\(\s*['"`]([^'"`]+)['"`]/g)) eventChannels.add(m[1]);
+    }
+    for (const ch of ['compile-result', 'compile-error', 'run-result', 'run-error']) eventChannels.add(ch);
+    warns.length = 0;
+    const blockedEvents = [];
+    for (const ch of eventChannels) {
+        const before = (listeners.get(ch) || []).length;
+        exposed.electronIPC.on(ch, () => { });
+        if ((listeners.get(ch) || []).length <= before) blockedEvents.push(ch);
+    }
+    check('renderer 所有事件通道通过白名单', blockedEvents.length === 0, blockedEvents.join(','));
+    check('事件通道注册无 IPC event blocked 警告', !warns.some(w => w.includes('IPC event blocked')), warns.join(' | '));
+
+    warns.length = 0;
+    exposed.electronIPC.on('not-a-real-channel', () => { });
+    check('electronIPC 拦截非白名单事件通道',
+        (listeners.get('not-a-real-channel') || []).length === 0 &&
+        warns.some(w => w.includes('IPC event blocked')), warns.join(' | '));
+
+    warns.length = 0;
+    exposed.electron.ipcRenderer.on('not-a-real-channel', () => { });
+    check('safeIpcRenderer 拦截非白名单事件通道',
+        (listeners.get('not-a-real-channel') || []).length === 0 &&
+        warns.some(w => w.includes('IPC event blocked')), warns.join(' | '));
+
+    // H9: Markdown 转义内联 HTML
+    check('markdown 转义内联 HTML', !exposed.markdownAPI.render('a <b>b</b>').includes('<b>'));
+
     console.log(failures === 0 ? '\nPRELOAD TESTS: ALL PASSED' : `\nPRELOAD TESTS: ${failures} FAILED`);
     process.exit(failures === 0 ? 0 : 1);
 })();
