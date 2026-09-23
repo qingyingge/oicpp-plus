@@ -454,7 +454,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'get-global-settings', 'save-global-settings', 'get-user-data-path',
     'get-app-version', 'get-app-path', 'check-for-updates',
     'get-all-settings', 'update-settings', 'update-top-level-settings',
-    'open-backup-settings', 'check-gdb-availability',
+    'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
     'compile-file', 'run-executable', 'check-file-exists'
 ]);

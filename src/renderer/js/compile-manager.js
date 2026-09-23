@@ -475,18 +475,15 @@ class CompilerManager {
                 payload.login_token = loginToken;
             }
 
-            const response = await fetch(`https://oicpp.mywwzh.top/api/cloudCompilation`, {
+            const response = await window.electronIPC.invoke('fetch-remote-json', {
+                path: '/api/cloudCompilation',
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload),
-                signal: this.cloudCompileAbortController.signal
+                body: payload
             });
 
             let data = null;
             try {
-                data = await response.json();
+                data = response.data;
             } catch (error) {
                 logWarn('解析云编译响应失败:', error);
             }
@@ -674,16 +671,14 @@ class CompilerManager {
         }
 
         try {
-            const response = await fetch(`https://oicpp.mywwzh.top/api/getCloudCompilationResult?task_id=${encodeURIComponent(taskId)}`, {
-                method: 'GET',
-                headers: {
-                    'Accept': 'application/json'
-                }
+            const response = await window.electronIPC.invoke('fetch-remote-json', {
+                path: '/api/getCloudCompilationResult?task_id=' + encodeURIComponent(taskId),
+                method: 'GET'
             });
 
             let data = null;
             try {
-                data = await response.json();
+                data = response.data;
             } catch (error) {
                 logWarn('解析云编译结果失败:', error);
             }

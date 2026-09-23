@@ -6,6 +6,7 @@ const { URL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const axios = require('axios');
 const { spawn, spawnSync } = require('child_process');
 const StreamZip = require('node-stream-zip');
 const extractZip = require('extract-zip');
@@ -1644,6 +1645,15 @@ function collectRejectedCompilerArgs(args) {
     return rejected;
 }
 
+// ---- 远程 API 统一由主进程代理（C3: 上游无 CORS 头, webSecurity:true 前提）----
+const REMOTE_API_ORIGIN = 'https://oicpp.mywwzh.top';
+const ALLOWED_REMOTE_API_PATHS = new Set([
+    '/api/getAvailableCompilerList',
+    '/api/getAvailableTestlibList',
+    '/api/cloudCompilation',
+    '/api/getCloudCompilationResult'
+]);
+
 function getDefaultSettings() {
     let compilerArgs = '-std=c++14 -O2 -static';
     let cppTemplate = '';
@@ -2472,7 +2482,7 @@ function createWindow() {
             nodeIntegration: false, // 出于安全原因，建议禁用
             contextIsolation: true,
             sandbox: false,
-            webSecurity: false,
+            webSecurity: true,
             webviewTag: true,
             devTools: process.argv.includes('--dev')
         },
@@ -4101,6 +4111,46 @@ function setupIPC() {
             return targetPath;
         } catch (error) {
             logError('保存二进制临时文件失败:', error);
+            throw error;
+        }
+    });
+
+    // 远程 API 代理：路径白名单 + 15s 超时，渲染进程不再直接 fetch（C3）
+    ipcMain.handle('fetch-remote-json', async (_event, spec) => {
+        try {
+            if (!spec || typeof spec !== 'object' || typeof spec.path !== 'string' || !spec.path) {
+                throw new Error('无效的请求参数');
+            }
+            const qIndex = spec.path.indexOf('?');
+            const purePath = qIndex === -1 ? spec.path : spec.path.slice(0, qIndex);
+            if (!ALLOWED_REMOTE_API_PATHS.has(purePath)) {
+                throw new Error('不允许请求的远程接口: ' + purePath);
+            }
+            const url = REMOTE_API_ORIGIN + spec.path;
+            let resp;
+            if (spec.method === 'POST') {
+                resp = await axios.post(url, spec.body === undefined ? null : spec.body, {
+                    timeout: 15000,
+                    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                    validateStatus: () => true
+                });
+            } else {
+                resp = await axios.get(url, {
+                    timeout: 15000,
+                    headers: { 'Accept': 'application/json' },
+                    validateStatus: () => true
+                });
+            }
+            let data = null;
+            try { data = typeof resp.data === 'string' ? JSON.parse(resp.data) : resp.data; } catch (_) { data = null; }
+            return {
+                ok: resp.status >= 200 && resp.status < 300,
+                status: resp.status,
+                statusText: resp.statusText || String(resp.status),
+                data
+            };
+        } catch (error) {
+            logError('fetch-remote-json 失败:', error);
             throw error;
         }
     });
@@ -6927,7 +6977,7 @@ function openCompilerSettings() {
             nodeIntegration: false,
             contextIsolation: true,
             sandbox: false,
-            webSecurity: false
+            webSecurity: true
         },
         title: '编译器设置',
         icon: getUserIconPath()
@@ -6961,7 +7011,7 @@ function openEditorSettings() {
             nodeIntegration: false,
             contextIsolation: true,
             sandbox: false,
-            webSecurity: false
+            webSecurity: true
         },
         title: '编辑器设置',
         icon: getUserIconPath()
@@ -7001,7 +7051,7 @@ function openCodeTemplates() {
             nodeIntegration: false,
             contextIsolation: true,
             sandbox: false,
-            webSecurity: false
+            webSecurity: true
         },
         title: '代码模板设置',
         icon: getUserIconPath()
@@ -7032,7 +7082,7 @@ function openBackupSettings() {
             nodeIntegration: false,
             contextIsolation: true,
             sandbox: false,
-            webSecurity: false
+            webSecurity: true
         },
         title: '设置备份设置',
         icon: getUserIconPath()

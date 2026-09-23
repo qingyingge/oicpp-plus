@@ -461,13 +461,13 @@ class CompilerSettings {
         compilerList.innerHTML = '<div class="loading">' + (window.i18n.t('compiler.fetchingList')) + '</div>';
         
         try {
-            const response = await fetch('https://oicpp.mywwzh.top/api/getAvailableCompilerList', { signal: controller.signal });
+            const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableCompilerList', method: 'GET' });
             
             if (!response.ok) {
                 throw new Error(`Network error: ${response.status} ${response.statusText}`);
             }
             
-            const compilers = await response.json();
+            const compilers = response.data;
             
             logInfo('[编译器设置] 服务器返回的编译器数据:', compilers);
             if (compilers && compilers.length > 0) {
@@ -528,7 +528,7 @@ class CompilerSettings {
             if (controller !== this._compilerListAbort) {
                 return;
             }
-            if (error && error.name === 'AbortError') {
+            if (error && (error.name === 'AbortError' || /timeout|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
                 logError('获取编译器列表超时:', error);
                 compilerList.innerHTML = `
                     <div class="error-message">
@@ -1223,13 +1223,13 @@ class CompilerSettings {
         testlibList.innerHTML = '<div class="loading">正在获取Testlib列表...</div>';
         
         try {
-            const response = await fetch('https://oicpp.mywwzh.top/api/getAvailableTestlibList', { signal: controller.signal });
+            const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableTestlibList', method: 'GET' });
             
             if (!response.ok) {
                 throw new Error(`Network error: ${response.status} ${response.statusText}`);
             }
             
-            const testlibs = await response.json();
+            const testlibs = response.data;
             
             testlibList.innerHTML = '';
             
@@ -1280,7 +1280,7 @@ class CompilerSettings {
             if (controller !== this._testlibListAbort) {
                 return;
             }
-            if (error && error.name === 'AbortError') {
+            if (error && (error.name === 'AbortError' || /timeout|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
                 logError('获取Testlib列表超时:', error);
                 testlibList.innerHTML = `
                     <div class="error-message">
