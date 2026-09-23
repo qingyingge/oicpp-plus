@@ -18,6 +18,8 @@ class CompilerSettings {
         }
         this.isMacPlatform = false;
         this.isIntegratedOnlyPlatform = false;
+        this._compilerListAbort = null;
+        this._testlibListAbort = null;
         
         this.init();
     }
@@ -449,11 +451,17 @@ class CompilerSettings {
     async loadAvailableCompilers() {
         const compilerList = document.getElementById('compiler-list');
         if (!compilerList) return;
+        if (this._compilerListAbort) {
+            this._compilerListAbort.abort();
+        }
+        const controller = new AbortController();
+        this._compilerListAbort = controller;
+        const timeoutTimer = setTimeout(() => controller.abort(), 15000);
         
         compilerList.innerHTML = '<div class="loading">' + (window.i18n.t('compiler.fetchingList')) + '</div>';
         
         try {
-            const response = await fetch('https://oicpp.mywwzh.top/api/getAvailableCompilerList');
+            const response = await fetch('https://oicpp.mywwzh.top/api/getAvailableCompilerList', { signal: controller.signal });
             
             if (!response.ok) {
                 throw new Error(`Network error: ${response.status} ${response.statusText}`);
@@ -517,6 +525,26 @@ class CompilerSettings {
             }
             
         } catch (error) {
+            if (controller !== this._compilerListAbort) {
+                return;
+            }
+            if (error && error.name === 'AbortError') {
+                logError('获取编译器列表超时:', error);
+                compilerList.innerHTML = `
+                    <div class="error-message">
+                        <p>请求超时，请稍后重试</p>
+                        <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
+                    </div>
+                `;
+                const timeoutRetryBtn = compilerList.querySelector('.retry-btn');
+                if (timeoutRetryBtn) {
+                    timeoutRetryBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        this.loadAvailableCompilers();
+                    });
+                }
+                return;
+            }
             logError('获取编译器列表失败:', error);
             compilerList.innerHTML = `
                 <div class="error-message">
@@ -531,6 +559,11 @@ class CompilerSettings {
                     e.preventDefault();
                     this.loadAvailableCompilers();
                 });
+            }
+        } finally {
+            clearTimeout(timeoutTimer);
+            if (controller === this._compilerListAbort) {
+                this._compilerListAbort = null;
             }
         }
     }
@@ -1176,11 +1209,17 @@ class CompilerSettings {
     async loadAvailableTestlibs() {
         const testlibList = document.getElementById('testlib-list');
         if (!testlibList) return;
+        if (this._testlibListAbort) {
+            this._testlibListAbort.abort();
+        }
+        const controller = new AbortController();
+        this._testlibListAbort = controller;
+        const timeoutTimer = setTimeout(() => controller.abort(), 15000);
         
         testlibList.innerHTML = '<div class="loading">正在获取Testlib列表...</div>';
         
         try {
-            const response = await fetch('https://oicpp.mywwzh.top/api/getAvailableTestlibList');
+            const response = await fetch('https://oicpp.mywwzh.top/api/getAvailableTestlibList', { signal: controller.signal });
             
             if (!response.ok) {
                 throw new Error(`Network error: ${response.status} ${response.statusText}`);
@@ -1234,11 +1273,31 @@ class CompilerSettings {
             }
             
         } catch (error) {
+            if (controller !== this._testlibListAbort) {
+                return;
+            }
+            if (error && error.name === 'AbortError') {
+                logError('获取Testlib列表超时:', error);
+                testlibList.innerHTML = `
+                    <div class="error-message">
+                        <p>请求超时，请稍后重试</p>
+                        <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
+                    </div>
+                `;
+                const timeoutRetryBtn = testlibList.querySelector('.retry-btn');
+                if (timeoutRetryBtn) {
+                    timeoutRetryBtn.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        this.loadAvailableTestlibs();
+                    });
+                }
+                return;
+            }
             logError('获取Testlib列表失败:', error);
             testlibList.innerHTML = `
                 <div class="error-message">
                     <p>${window.i18n.t('compiler.networkError')}</p>
-                    <p class="error-detail">${error.message}</p>
+                    <p class="error-detail">${escapeHtml(error.message)}</p>
                     <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
                 </div>
             `;
@@ -1248,6 +1307,11 @@ class CompilerSettings {
                     e.preventDefault();
                     this.loadAvailableTestlibs();
                 });
+            }
+        } finally {
+            clearTimeout(timeoutTimer);
+            if (controller === this._testlibListAbort) {
+                this._testlibListAbort = null;
             }
         }
     }
