@@ -1231,6 +1231,9 @@ function validateFileName(name) {
     if (trimmedName.length === 0) {
         return { valid: false, error: '名称不能为空' };
     }
+    if (trimmedName === '.' || trimmedName === '..') {
+        return { valid: false, error: '名称不能为 . 或 ..' };
+    }
     const illegalCharsWin = /[<>:"/\\|?*]/;
     const illegalCharsUnix = /\//;
     
@@ -1543,6 +1546,103 @@ let pendingStartupWorkspaceToOpen = null;
 // Used to avoid forcibly changing the workspace when an external file is opened
 // while a workspace is already open (e.g. double-clicking a .cpp file in Explorer).
 let currentExternalWorkspacePath = null;
+
+// ---- IPC 文件 IO 路径校验（H1）：拦截系统/凭据/应用敏感目录 ----
+let _cachedSensitivePrefixes = null;
+function getSensitivePathPrefixes() {
+    if (_cachedSensitivePrefixes) return _cachedSensitivePrefixes;
+    const dirPrefixes = [];
+    const exactPaths = [];
+    const addDir = (p) => { try { if (p) dirPrefixes.push(path.resolve(p)); } catch (_) { } };
+    const addFile = (p) => { try { if (p) exactPaths.push(path.resolve(p)); } catch (_) { } };
+    if (process.platform === 'win32') {
+        addDir(process.env.SystemRoot || 'C:\\Windows');
+        addDir('C:\\Program Files');
+        addDir('C:\\Program Files (x86)');
+        addDir(process.env.ProgramData || 'C:\\ProgramData');
+        addDir(process.env.APPDATA);
+        addDir(process.env.LOCALAPPDATA);
+    } else {
+        ['/etc', '/usr', '/bin', '/sbin', '/boot', '/proc', '/sys', '/dev', '/lib', '/lib64', '/root', '/opt'].forEach(addDir);
+        if (process.platform === 'darwin') {
+            ['/System', '/Library', '/private', '/Applications'].forEach(addDir);
+        }
+    }
+    try {
+        const home = os.homedir();
+        ['.ssh', '.gnupg', '.docker', '.aws'].forEach((d) => addDir(path.join(home, d)));
+        ['.bashrc', '.bash_profile', '.profile', '.zshrc', '.zprofile', '.gitconfig', '.npmrc'].forEach((f) => addFile(path.join(home, f)));
+        if (process.platform === 'darwin') addDir(path.join(home, 'Library'));
+        if (process.platform === 'win32') addDir(path.join(home, 'AppData'));
+    } catch (_) { }
+    try { addDir(app.getPath('userData')); } catch (_) { }
+    _cachedSensitivePrefixes = { dirPrefixes, exactPaths };
+    return _cachedSensitivePrefixes;
+}
+
+function isSensitiveIoPath(targetPath) {
+    try {
+        if (!targetPath || typeof targetPath !== 'string') return true;
+        let resolved = path.resolve(targetPath);
+        try { if (fs.existsSync(resolved)) resolved = fs.realpathSync(resolved); } catch (_) { }
+        let cmp = resolved;
+        if (process.platform === 'win32') cmp = resolved.toLowerCase();
+        const { dirPrefixes, exactPaths } = getSensitivePathPrefixes();
+        for (let i = 0; i < exactPaths.length; i++) {
+            let e = exactPaths[i];
+            if (process.platform === 'win32') e = e.toLowerCase();
+            if (cmp === e) return true;
+        }
+        for (let i = 0; i < dirPrefixes.length; i++) {
+            let d = dirPrefixes[i];
+            if (process.platform === 'win32') d = d.toLowerCase();
+            if (cmp === d || cmp.startsWith(d + path.sep)) return true;
+        }
+        return false;
+    } catch (_) { return true; }
+}
+
+function assertSafeIoPath(targetPath) {
+    if (isSensitiveIoPath(targetPath)) {
+        throw new Error('非法路径: 不允许访问系统或应用敏感目录');
+    }
+    return targetPath;
+}
+
+function sanitizeDialogPathOptions(options) {
+    try {
+        if (options && typeof options === 'object' && options.defaultPath && isSensitiveIoPath(options.defaultPath)) {
+            const cleaned = Object.assign({}, options);
+            delete cleaned.defaultPath;
+            return cleaned;
+        }
+    } catch (_) { }
+    return options;
+}
+
+// ---- 编译参数危险项拦截（H2）：@响应文件、-include 及同类文件包含 ----
+function collectRejectedCompilerArgs(args) {
+    const rejected = [];
+    if (!Array.isArray(args)) return rejected;
+    for (let i = 0; i < args.length; i++) {
+        const a = String(args[i]);
+        const next = i + 1 < args.length ? String(args[i + 1]) : '';
+        if (a.charAt(0) === '@') { rejected.push(a); continue; }
+        if (a === '-include' || a === '--include') {
+            rejected.push(a);
+            if (next) { rejected.push(next); i++; }
+            continue;
+        }
+        if (a.indexOf('-include=') === 0 || a.indexOf('--include=') === 0 ||
+            a.indexOf('-specs=') === 0 || a.indexOf('--specs=') === 0 ||
+            a.indexOf('-fplugin=') === 0 || a.indexOf('-plugin=') === 0 ||
+            a === '-plugin' || a.indexOf('-B') === 0) {
+            rejected.push(a);
+            continue;
+        }
+    }
+    return rejected;
+}
 
 function getDefaultSettings() {
     let compilerArgs = '-std=c++14 -O2 -static';
@@ -3523,7 +3623,7 @@ function setupIPC() {
     ipcMain.handle('show-open-dialog', async (event, options) => {
         try {
             const bw = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-            return await dialog.showOpenDialog(bw, options);
+            return await dialog.showOpenDialog(bw, sanitizeDialogPathOptions(options));
         } catch (e) {
             logError('show-open-dialog 失败:', e);
             return { canceled: true, filePaths: [], error: e.message };
@@ -3533,7 +3633,7 @@ function setupIPC() {
     ipcMain.handle('show-save-dialog', async (event, options) => {
         try {
             const bw = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-            return await dialog.showSaveDialog(bw, options);
+            return await dialog.showSaveDialog(bw, sanitizeDialogPathOptions(options));
         } catch (e) {
             logError('show-save-dialog 失败:', e);
             return { canceled: true, filePath: undefined, error: e.message };
@@ -3556,6 +3656,7 @@ function setupIPC() {
                 throw new Error('无效的路径');
             }
             const normalized = path.normalize(targetPath);
+            assertSafeIoPath(normalized);
             let stat = null;
             try {
                 stat = fs.existsSync(normalized) ? fs.statSync(normalized) : null;
@@ -3930,6 +4031,7 @@ function setupIPC() {
             if (/^cloud:/i.test(filePath)) {
                 throw new Error('云端文件不支持本地保存');
             }
+            assertSafeIoPath(filePath);
             const writeResult = writeUtf8FileIfChanged(filePath, content);
             if (writeResult.changed) {
                 markLocalSave(filePath, { exists: true, fingerprint: writeResult.fingerprint, mtimeMs: writeResult.mtimeMs });
@@ -4066,6 +4168,7 @@ function setupIPC() {
             if (/^cloud:/i.test(filePath)) {
                 throw new Error('云端文件不支持本地保存');
             }
+            assertSafeIoPath(filePath);
             const writeResult = writeUtf8FileIfChanged(filePath, content);
             if (writeResult.changed) {
                 markLocalSave(filePath, { exists: true, fingerprint: writeResult.fingerprint, mtimeMs: writeResult.mtimeMs });
@@ -4302,6 +4405,7 @@ function setupIPC() {
             if (!normalizedPath) {
                 throw new Error('缺少文件路径');
             }
+            assertSafeIoPath(normalizedPath);
             if (!fs.existsSync(normalizedPath)) {
                 throw new Error('文件不存在');
             }
@@ -4322,6 +4426,7 @@ function setupIPC() {
 
         const results = [];
         try {
+            assertSafeIoPath(dirPath);
             const shouldExclude = (name) => {
                 const lower = name.toLowerCase();
                 if (lower.endsWith('.dsym')) return true; // 强制忽略 *.dSYM 目录
@@ -4357,6 +4462,7 @@ function setupIPC() {
 
     ipcMain.on('rename-file', async (event, oldPath, newName) => {
         try {
+            assertSafeIoPath(oldPath);
             // Validate the new file name
             const validation = validateFileName(newName);
             if (!validation.valid) {
@@ -4371,6 +4477,7 @@ function setupIPC() {
                 newPath = getUniquePath(dir, newName);
             }
 
+            assertSafeIoPath(newPath);
             fs.renameSync(oldPath, newPath);
             event.reply('file-renamed', oldPath, newPath, null);
             logInfo('文件重命名成功:', oldPath, '->', newPath);
@@ -4387,10 +4494,7 @@ function setupIPC() {
                 throw new Error('无效的文件路径');
             }
             const normalizedPath = path.resolve(filePath);
-            const workspace = settings?.workspace || '';
-            if (workspace && !normalizedPath.startsWith(path.resolve(workspace))) {
-                throw new Error('非法路径: 只能删除工作区内的文件');
-            }
+            assertSafeIoPath(normalizedPath);
             const stat = fs.statSync(normalizedPath);
             previousWatchStates = markLocalDeletion(normalizedPath);
             if (stat.isDirectory()) {
@@ -4495,6 +4599,8 @@ function setupIPC() {
 
     ipcMain.on('paste-file', async (event, sourcePath, targetDir, operation) => {
         try {
+            assertSafeIoPath(sourcePath);
+            assertSafeIoPath(targetDir);
             const fileName = path.basename(sourcePath);
             let targetPath = path.join(targetDir, fileName);
 
@@ -4524,6 +4630,8 @@ function setupIPC() {
 
     ipcMain.on('move-file', async (event, sourcePath, targetPath) => {
         try {
+            assertSafeIoPath(sourcePath);
+            assertSafeIoPath(targetPath);
             if (!fs.existsSync(sourcePath)) {
                 throw new Error('源文件不存在');
             }
@@ -5336,6 +5444,7 @@ function setupIPC() {
 
     ipcMain.handle('ensure-dir', async (event, dirPath) => {
         try {
+            assertSafeIoPath(dirPath);
             if (!fs.existsSync(dirPath)) {
                 fs.mkdirSync(dirPath, { recursive: true });
             }
@@ -5347,6 +5456,7 @@ function setupIPC() {
 
     ipcMain.handle('write-file', async (event, filePath, content) => {
         try {
+            assertSafeIoPath(filePath);
             const writeResult = writeUtf8FileIfChanged(filePath, content);
             if (writeResult.changed) {
                 markLocalSave(filePath, { exists: true, fingerprint: writeResult.fingerprint, mtimeMs: writeResult.mtimeMs });
@@ -5361,6 +5471,7 @@ function setupIPC() {
     ipcMain.handle('delete-file', async (event, filePath) => {
         let previousWatchStates = [];
         try {
+            assertSafeIoPath(filePath);
             previousWatchStates = markLocalDeletion(filePath);
             await fs.promises.unlink(filePath);
             return { success: true };
@@ -5420,6 +5531,7 @@ function setupIPC() {
 
     ipcMain.handle('ensure-directory', async (event, dirPath) => {
         try {
+            assertSafeIoPath(dirPath);
             if (!fs.existsSync(dirPath)) {
                 fs.mkdirSync(dirPath, { recursive: true });
             }
@@ -8006,7 +8118,12 @@ async function compileFile(options) {
                 logInfo('[编译参数] 已在非 Windows 平台移除 -static');
             }
         } catch (_) { }
-        const parsedUserArgs = parseArgsPreservingQuotes(userArgsStr).filter(a => a && a.trim());
+        let parsedUserArgs = parseArgsPreservingQuotes(userArgsStr).filter(a => a && a.trim());
+        const rejectedUserArgs = collectRejectedCompilerArgs(parsedUserArgs);
+        if (rejectedUserArgs.length > 0) {
+            reject(new Error('危险编译参数已被拦截: ' + rejectedUserArgs.join(' ')));
+            return;
+        }
     const compileCacheVersion = 1;
     const cacheMetadataPath = outputFile ? `${path.resolve(outputFile)}.oicpp-cache` : '';
     let compileCacheRecord = null;
