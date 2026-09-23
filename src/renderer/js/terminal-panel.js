@@ -295,7 +295,7 @@ class IntegratedTerminalPanel {
             this.status = {
                 available: false,
                 reason: 'xterm Fit 插件未加载',
-                detail: '请确认已安装 xterm-addon-fit'
+                detail: '请确认已安装 @xterm/addon-fit'
             };
             this.renderStatus();
             this.renderEmptyState();

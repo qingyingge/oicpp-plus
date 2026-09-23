@@ -958,7 +958,7 @@
     "terminalXtermNotLoaded": "xterm not loaded",
     "terminalXtermDepMissing": "Please ensure xterm dependency is installed",
     "terminalFitNotLoaded": "xterm Fit addon not loaded",
-    "terminalFitDepMissing": "Please ensure xterm-addon-fit is installed",
+    "terminalFitDepMissing": "Please ensure @xterm/addon-fit is installed",
     "terminalUnicodeNotLoaded": "xterm Unicode11 addon not loaded",
     "terminalUnicodeDepMissing": "Please ensure @xterm/addon-unicode11 is installed",
     "terminalCreateFailed": "Failed to create terminal",

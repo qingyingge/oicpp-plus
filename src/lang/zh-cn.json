@@ -958,7 +958,7 @@
     "terminalXtermNotLoaded": "xterm 未加载",
     "terminalXtermDepMissing": "请确认已安装 xterm 依赖",
     "terminalFitNotLoaded": "xterm Fit 插件未加载",
-    "terminalFitDepMissing": "请确认已安装 xterm-addon-fit",
+    "terminalFitDepMissing": "请确认已安装 @xterm/addon-fit",
     "terminalUnicodeNotLoaded": "xterm Unicode11 插件未加载",
     "terminalUnicodeDepMissing": "请确认已安装 @xterm/addon-unicode11",
     "terminalCreateFailed": "创建终端失败",
