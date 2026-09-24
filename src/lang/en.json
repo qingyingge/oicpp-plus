@@ -792,7 +792,7 @@
     "standardError": "Standard error:",
     "clearOutput": "Clear Output",
     "closeOutput": "Close",
-    "analysisEmpty": "暂无可解析的内容，先查看原始输出或等待下一次编译。"
+    "analysisEmpty": "No content to parse yet. Check the raw output or wait for the next compilation."
   },
   "feedback": {
     "title": "Feedback",
