@@ -3,3 +3,5 @@ allowBuilds:
   node-pty: true
   sharp: true
   electron-winstaller: true
+minimumReleaseAgeExclude:
+  - electron@44.4.5

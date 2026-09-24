@@ -30,7 +30,7 @@
     "ci:verbose": "node scripts/ci-check.js --verbose"
   },
   "devDependencies": {
-    "electron": "^44.4.3",
+    "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "html-webpack-plugin": "^5.6.8",
     "icojs": "^1.0.1",
