@@ -238,6 +238,14 @@ class I18nManager {
                 }
             });
 
+            // Translate aria labels
+            document.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+                const key = el.getAttribute('data-i18n-aria-label');
+                if (key) {
+                    el.setAttribute('aria-label', this.t(key));
+                }
+            });
+
             // Update html lang attribute
             document.documentElement.lang = this._currentLang;
         } catch (_) {}
@@ -261,7 +269,8 @@ class I18nManager {
                                     node.hasAttribute('data-i18n') ||
                                     node.hasAttribute('data-i18n-placeholder') ||
                                     node.hasAttribute('data-i18n-title') ||
-                                    node.querySelector('[data-i18n],[data-i18n-placeholder],[data-i18n-title]')
+                                    node.hasAttribute('data-i18n-aria-label') ||
+                                    node.querySelector('[data-i18n],[data-i18n-placeholder],[data-i18n-title],[data-i18n-aria-label]')
                                 )) {
                                     needsTranslate = true;
                                     break;
