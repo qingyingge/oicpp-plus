@@ -48,8 +48,8 @@ class FileExplorer {
         
         if (illegalChars.test(trimmedName)) {
             const platformMsg = isWindows 
-                ? '文件名不能包含以下字符: < > : " / \\ | ? *'
-                : '文件名不能包含字符: /';
+                ? window.i18n.t('fileExplorer.invalidChars')
+                : window.i18n.t('fileExplorer.invalidCharsUnix');
             return { valid: false, error: platformMsg };
         }
 
@@ -345,9 +345,9 @@ class FileExplorer {
         fileTree.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon" data-ui-icon="folder"></div>
-                <div class="empty-state-title">没有打开的文件夹</div>
-                <div class="empty-state-subtitle">您还没有打开文件夹</div>
-                <button class="empty-state-button" onclick="window.oicppApp.openFolder()">
+                <div class="empty-state-title" data-i18n="fileExplorer.noFolder">没有打开的文件夹</div>
+                <div class="empty-state-subtitle" data-i18n="fileExplorer.noFolderDesc">您还没有打开文件夹</div>
+                <button class="empty-state-button" onclick="window.oicppApp.openFolder()" data-i18n="fileExplorer.openFolder">
                     打开文件夹
                 </button>
             </div>
@@ -896,28 +896,28 @@ class FileExplorer {
         const items = [];
 
         if (file.type === 'file') {
-            items.push({ label: '打开', action: () => this.openFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.open'), action: () => this.openFile(file) });
             const compareTargets = this.getActionSelection(file).filter(f => f?.type === 'file');
             if (compareTargets.length === 2) {
-                items.push({ label: '对比文件差异', action: () => this.compareFiles(compareTargets) });
+                items.push({ label: window.i18n.t('fileExplorer.compareDiff'), action: () => this.compareFiles(compareTargets) });
             }
-            items.push({ label: '重命名', action: () => this.renameFile(file) });
-            items.push({ label: '复制', action: () => this.copyFile(this.getActionSelection(file)) });
-            items.push({ label: '剪切', action: () => this.cutFile(this.getActionSelection(file)) });
-            items.push({ label: '删除', action: () => this.deleteFiles(this.getActionSelection(file)) });
-            items.push({ label: '在资源管理器中显示', action: () => this.openInSystemExplorer(file) });
+            items.push({ label: window.i18n.t('fileExplorer.rename'), action: () => this.renameFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.copy'), action: () => this.copyFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.cut'), action: () => this.cutFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.delete'), action: () => this.deleteFiles(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.showInExplorer'), action: () => this.openInSystemExplorer(file) });
         } else {
-            items.push({ label: '新建文件', action: () => this.createNewFileInFolder(file) });
-            items.push({ label: '新建文件夹', action: () => this.createNewFolderInFolder(file) });
-            items.push({ label: '重命名', action: () => this.renameFile(file) });
-            items.push({ label: '复制', action: () => this.copyFile(this.getActionSelection(file)) });
-            items.push({ label: '剪切', action: () => this.cutFile(this.getActionSelection(file)) });
-            items.push({ label: '删除', action: () => this.deleteFiles(this.getActionSelection(file)) });
-            items.push({ label: '在资源管理器中打开', action: () => this.openInSystemExplorer(file) });
+            items.push({ label: window.i18n.t('fileExplorer.newFile'), action: () => this.createNewFileInFolder(file) });
+            items.push({ label: window.i18n.t('fileExplorer.newFolder'), action: () => this.createNewFolderInFolder(file) });
+            items.push({ label: window.i18n.t('fileExplorer.rename'), action: () => this.renameFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.copy'), action: () => this.copyFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.cut'), action: () => this.cutFile(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.delete'), action: () => this.deleteFiles(this.getActionSelection(file)) });
+            items.push({ label: window.i18n.t('fileExplorer.openInExplorer'), action: () => this.openInSystemExplorer(file) });
         }
 
         if (this.clipboard) {
-            items.push({ label: '粘贴', action: () => this.pasteFile(file) });
+            items.push({ label: window.i18n.t('fileExplorer.paste'), action: () => this.pasteFile(file) });
         }
 
         return items;
@@ -999,20 +999,20 @@ class FileExplorer {
     getEmptyAreaContextMenuItems() {
         const items = [];
 
-        items.push({ label: '新建文件', action: () => this.createNewFile() });
+        items.push({ label: window.i18n.t('fileExplorer.newFile'), action: () => this.createNewFile() });
 
-        items.push({ label: '新建文件夹', action: () => this.createNewFolder() });
+        items.push({ label: window.i18n.t('fileExplorer.newFolder'), action: () => this.createNewFolder() });
 
         items.push({ label: '---', action: () => { } });
 
-        items.push({ label: '刷新', action: () => this.refresh() });
+        items.push({ label: window.i18n.t('fileExplorer.refresh'), action: () => this.refresh() });
 
         if (this.workspacePath || this.currentPath) {
-            items.push({ label: '在资源管理器中打开工作区', action: () => this.openWorkspaceInExplorer() });
+            items.push({ label: window.i18n.t('fileExplorer.openWorkspaceInExplorer'), action: () => this.openWorkspaceInExplorer() });
         }
 
         if (this.clipboard) {
-            items.push({ label: '粘贴', action: () => this.pasteFile() });
+            items.push({ label: window.i18n.t('fileExplorer.paste'), action: () => this.pasteFile() });
         }
 
         return items;
@@ -1142,7 +1142,8 @@ class FileExplorer {
                     if (sourcePath === file.path) {
                         if (error) {
                             logError(`${operation === 'copy' ? '复制' : '移动'}文件失败:`, file.name, error);
-                            this.showError(`${operation === 'copy' ? '复制' : '移动'}失败: ${error}`);
+                            const opLabel = operation === 'copy' ? window.i18n.t('fileExplorer.copy') : window.i18n.t('fileExplorer.move');
+                            this.showError(window.i18n.t('fileExplorer.pasteFail', { op: opLabel, error }));
                         } else {
                             logInfo(`文件${operation === 'copy' ? '复制' : '移动'}成功:`, file.name, '->', destPath);
 
@@ -1170,7 +1171,7 @@ class FileExplorer {
 
             setTimeout(() => this.refresh(), 1000);
         } else {
-            this.showError('文件粘贴功能需要在完整应用环境中运行');
+            this.showError(window.i18n.t('fileExplorer.pasteNeedApp'));
         }
 
         if (this.clipboard.operation === 'cut') {
@@ -1191,10 +1192,10 @@ class FileExplorer {
             }
             const dm = window.dialogManager || (typeof dialogManager !== 'undefined' ? dialogManager : null);
             if (!dm || typeof dm.showInputDialog !== 'function') {
-                this.showError('对话框不可用，无法重命名');
+                this.showError(window.i18n.t('fileExplorer.dialogUnavailable'));
                 return;
             }
-            const newName = await dm.showInputDialog('重命名', name, '请输入新名称', {
+            const newName = await dm.showInputDialog(window.i18n.t('fileExplorer.rename'), name, window.i18n.t('fileExplorer.renameDialogPlaceholder'), {
                 selectStart,
                 selectEnd
             });
@@ -1217,7 +1218,7 @@ class FileExplorer {
                         if (oldPath === file.path) {
                             if (error) {
                                 logError('重命名文件失败:', error);
-                                this.showError(`重命名失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.renameFail', { error }));
                             } else {
                                 logInfo('文件重命名成功:', oldPath, '->', newPath);
                                 this.refresh();
@@ -1244,7 +1245,7 @@ class FileExplorer {
 
                     window.electronIPC.on('file-renamed', handleRenameResult);
                 } else {
-                    this.showError('文件重命名功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.renameNeedApp'));
                 }
             }
         } catch (error) {
@@ -1412,7 +1413,10 @@ class FileExplorer {
                 const exists = await window.electronIPC.invoke('check-file-exists', newPath);
 
                 if (exists) {
-                    const shouldOverwrite = await this.confirmOperation('覆盖文件确认', `文件 "${file.name}" 已存在于目标位置。是否要覆盖？`);
+                    const shouldOverwrite = await this.confirmOperation(
+                        window.i18n.t('fileExplorer.overwriteConfirmTitle'),
+                        window.i18n.t('fileExplorer.overwriteConfirmMsg', { name: file.name })
+                    );
                     if (!shouldOverwrite) {
                         logInfo('用户取消了文件移动操作');
                         return;
@@ -1470,7 +1474,7 @@ class FileExplorer {
 
         } catch (error) {
             logError('移动文件时出错:', error);
-            this.showError(`移动文件时出错: ${error?.message || error}`);
+            this.showError(window.i18n.t('fileExplorer.moveError', { error: error?.message || error }));
         }
     }
 
@@ -1540,11 +1544,11 @@ class FileExplorer {
                     }
                 } else {
                     logError('electronAPI不可用');
-                    this.showError('无法读取文件: electronAPI不可用');
+                    this.showError(window.i18n.t('fileExplorer.readFileNoApi'));
                 }
             } catch (error) {
                 logError('读取文件失败:', error);
-                this.showError(`无法读取文件: ${error?.message || error}`);
+                this.showError(window.i18n.t('fileExplorer.readFileFail', { error: error?.message || error }));
             }
         }
     }
@@ -1557,7 +1561,7 @@ class FileExplorer {
         }
 
         if (!window.tabManager || typeof window.tabManager.openDiff !== 'function') {
-            this.showError('当前环境不支持文件对比');
+            this.showError(window.i18n.t('fileExplorer.compareNotSupported'));
             return;
         }
 
@@ -1565,7 +1569,7 @@ class FileExplorer {
             await window.tabManager.openDiff(files);
         } catch (error) {
             logError('打开文件对比失败:', error);
-            this.showError(`无法对比文件: ${error?.message || error}`);
+            this.showError(window.i18n.t('fileExplorer.compareFail', { error: error?.message || error }));
         }
     }
 
@@ -1627,7 +1631,7 @@ class FileExplorer {
                     break;
                 }
 
-                errorMessage = `文件 "${fileName}" 已存在，请选择其他名称`;
+                errorMessage = window.i18n.t('fileExplorer.fileExistsName', { name: fileName });
                 logWarn(errorMessage);
                 attempts++;
                 const m = fileName.match(/^(.*?)(\d+)(\.[^.]+)$/);
@@ -1680,7 +1684,7 @@ class FileExplorer {
                             handleFileCreated._handled = true;
                             if (error) {
                                 logError('创建文件失败:', error);
-                                this.showError(`创建文件失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
                             } else {
                                 logInfo('文件创建成功:', createdPath);
                                 this.refresh();
@@ -1696,7 +1700,7 @@ class FileExplorer {
 
                     window.electronIPC.on('file-created', handleFileCreated);
                 } else {
-                    this.showError('文件创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFileNeedApp'));
                 }
             }
         } catch (error) {
@@ -1731,7 +1735,7 @@ class FileExplorer {
                         if (createdPath && createdPath.startsWith(this.currentPath)) {
                             if (error) {
                                 logError('创建文件夹失败:', error);
-                                this.showError(`创建文件夹失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.createFolderFail', { error }));
                             } else {
                                 logInfo('文件夹创建成功:', createdPath);
                                 this.refresh();
@@ -1742,7 +1746,7 @@ class FileExplorer {
 
                     window.electronIPC.on('folder-created', handleFolderCreated);
                 } else {
-                    this.showError('文件夹创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFolderNeedApp'));
                 }
             }
         } catch (error) {
@@ -1807,7 +1811,7 @@ class FileExplorer {
                         if (createdPath === filePath) {
                             if (error) {
                                 logError('创建文件失败:', error);
-                                this.showError(`创建文件失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
                             } else {
                                 logInfo('在文件夹', folder.name, '中创建文件:', fileName);
                                 this.refresh();
@@ -1821,7 +1825,7 @@ class FileExplorer {
 
                     window.electronIPC.on('file-created', handleFileCreated);
                 } else {
-                    this.showError('文件创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFileNeedApp'));
                 }
             }
         } catch (error) {
@@ -1851,7 +1855,7 @@ class FileExplorer {
                         if (createdPath === folderPath) {
                             if (error) {
                                 logError('创建文件夹失败:', error);
-                                this.showError(`创建文件夹失败: ${error}`);
+                                this.showError(window.i18n.t('fileExplorer.createFolderFail', { error }));
                             } else {
                                 logInfo('在文件夹', parentFolder.name, '中创建文件夹:', folderName);
                                 this.refresh();
@@ -1862,7 +1866,7 @@ class FileExplorer {
 
                     window.electronIPC.on('folder-created', handleFolderCreated);
                 } else {
-                    this.showError('文件夹创建功能需要在完整应用环境中运行');
+                    this.showError(window.i18n.t('fileExplorer.createFolderNeedApp'));
                 }
             }
         } catch (error) {
@@ -1907,10 +1911,10 @@ class FileExplorer {
             return this.deleteFile(uniqueFiles[0]);
         }
 
-        const preview = uniqueFiles.slice(0, 3).map(f => `"${f.name}"`).join('、');
-        const moreHint = uniqueFiles.length > 3 ? ' 等' : '';
-        const message = `确定要删除这 ${uniqueFiles.length} 个项目吗？${preview}${moreHint}`;
-        const confirmed = await this.confirmOperation('删除文件', message);
+        const preview = uniqueFiles.slice(0, 3).map(f => `"${f.name}"`).join(window.i18n.t('fileExplorer.deleteListJoiner'));
+        const moreHint = uniqueFiles.length > 3 ? window.i18n.t('fileExplorer.deleteMoreSuffix') : '';
+        const message = window.i18n.t('fileExplorer.deleteMultiConfirm', { count: uniqueFiles.length, preview: preview + moreHint });
+        const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteConfirmTitle'), message);
         if (!confirmed) {
             this.refocusSelectedFile();
             return;
@@ -1939,7 +1943,7 @@ class FileExplorer {
         logInfo('删除文件:', file.name);
 
         if (!skipConfirm) {
-            const confirmed = await this.confirmOperation('删除文件', `确定要删除 "${file.name}" 吗？`);
+            const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteConfirmTitle'), window.i18n.t('fileExplorer.deleteSingleConfirm', { name: file.name }));
             if (!confirmed) {
                 if (!suppressFocus) this.refocusSelectedFile();
                 return;
@@ -1956,7 +1960,7 @@ class FileExplorer {
                     if (deletedPath === file.path) {
                         if (error) {
                             logError('删除文件失败:', error);
-                            this.showError(`删除失败: ${error}`);
+                            this.showError(window.i18n.t('fileExplorer.deleteFail', { error }));
                             if (!suppressFocus) setTimeout(() => this.refocusSelectedFile(), 0);
                         } else {
                             this.selectedFiles.delete(file.path);
@@ -1994,13 +1998,13 @@ class FileExplorer {
             });
         }
 
-        this.showError('文件删除功能需要在完整应用环境中运行');
+        this.showError(window.i18n.t('fileExplorer.deleteNeedApp'));
         if (!suppressFocus) this.refocusSelectedFile();
     }
 
     async batchDelete() {
         if (!this.hasWorkspace) {
-            this.showError('没有打开的工作区');
+            this.showError(window.i18n.t('fileExplorer.noWorkspace'));
             return;
         }
         const selected = this.getSelectedFilesArray();
@@ -2012,11 +2016,11 @@ class FileExplorer {
         const dm = window.dialogManager;
         if (dm && typeof dm.showActionDialog === 'function') {
             const actions = [
-                { id: 'selected', label: `删除选中的 ${selected.length} 个项目` },
-                { id: 'path', label: '删除指定路径下的所有文件' },
+                { id: 'selected', label: window.i18n.t('fileExplorer.deleteSelectedAction', { count: selected.length }) },
+                { id: 'path', label: window.i18n.t('fileExplorer.deletePathAction') },
                 { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
             ];
-            const choice = await dm.showActionDialog('批量删除', '请选择批量删除方式：', actions);
+            const choice = await dm.showActionDialog(window.i18n.t('fileExplorer.batchDeleteTitle'), window.i18n.t('fileExplorer.batchDeletePrompt'), actions);
             if (choice === 'selected') {
                 await this.deleteFiles(selected);
             } else if (choice === 'path') {
@@ -2033,7 +2037,7 @@ class FileExplorer {
         let targetPath = '';
         if (window.electronAPI && typeof window.electronAPI.showOpenDialog === 'function') {
             const result = await window.electronAPI.showOpenDialog({
-                title: '选择要清空的目录',
+                title: window.i18n.t('fileExplorer.selectDirToClear'),
                 properties: ['openDirectory']
             });
             if (!result || result.canceled || !result.filePaths || result.filePaths.length === 0) {
@@ -2041,15 +2045,15 @@ class FileExplorer {
             }
             targetPath = result.filePaths[0];
         } else if (typeof window.prompt === 'function') {
-            targetPath = window.prompt('请输入要清空的目录路径:');
+            targetPath = window.prompt(window.i18n.t('fileExplorer.enterDirPath'));
         }
 
         if (!targetPath || !String(targetPath).trim()) return;
         targetPath = String(targetPath).trim();
 
         const confirmed = await this.confirmOperation(
-            '批量删除',
-            `确定要清空 ${targetPath} 下的所有文件和子目录吗？\n该操作不可恢复。`
+            window.i18n.t('fileExplorer.batchDeleteTitle'),
+            window.i18n.t('fileExplorer.clearDirConfirm', { path: targetPath })
         );
         if (!confirmed) return;
 
@@ -2057,22 +2061,22 @@ class FileExplorer {
             if (window.electronAPI && typeof window.electronAPI.clearDirectoryContents === 'function') {
                 const result = await window.electronAPI.clearDirectoryContents(targetPath);
                 if (!result || !result.success) {
-                    this.showError(`清空目录失败: ${result?.error || '未知错误'}`);
+                    this.showError(window.i18n.t('fileExplorer.clearDirFail', { error: result?.error || window.i18n.t('fileExplorer.unknownError') }));
                     return;
                 }
                 this._closeTabsUnderPath(targetPath);
                 this.refresh();
-                const successMsg = `已删除 ${targetPath} 下的 ${result.removed ?? 0} 个顶层项目`;
+                const successMsg = window.i18n.t('fileExplorer.clearDirSuccess', { path: targetPath, count: result.removed ?? 0 });
                 if (window.oicppApp && typeof window.oicppApp.showMessage === 'function') {
                     window.oicppApp.showMessage(successMsg, 'success');
                 } else {
                     logInfo(successMsg);
                 }
             } else {
-                this.showError('批量删除功能需要在完整应用环境中运行');
+                this.showError(window.i18n.t('fileExplorer.batchDeleteNeedApp'));
             }
         } catch (error) {
-            this.showError(`批量删除失败: ${error?.message || error}`);
+            this.showError(window.i18n.t('fileExplorer.batchDeleteFail', { error: error?.message || error }));
         }
     }
 
