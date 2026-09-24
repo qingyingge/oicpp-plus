@@ -118,9 +118,9 @@ class CompileOutputManager {
     getStatusIndicator(status) {
         let className = 'ready';
         
-        const compilingHint = ('compileOutput.compiling');
-        const successHint = ('compileOutput.successSimple');
-        const failHint = ('compileOutput.failSimple');
+        const compilingHint = window.i18n.t('compileOutput.compiling');
+        const successHint = window.i18n.t('compileOutput.successSimple');
+        const failHint = window.i18n.t('compileOutput.failSimple');
         if (status.includes(compilingHint)) {
             className = 'compiling';
         } else if (status.includes(successHint) || status.includes('成功')) {
@@ -164,76 +164,76 @@ class CompileOutputManager {
     startCompile(command) {
         this.show();
         this.clearMessages();
-        this.setStatus(('compileOutput.compiling'), command);
+        this.setStatus(window.i18n.t('compileOutput.compiling'), command);
         this.startTime = Date.now();
         
-        this.addMessage((('compileOutput.startCompile', { command })), 'info');
+        this.addMessage(window.i18n.t('compileOutput.startCompile', { command }), 'info');
     }
 
     onCompileSuccess(output = '', warnings = []) {
         const endTime = Date.now();
         const duration = this.startTime ? ((endTime - this.startTime) / 1000).toFixed(2) : '0.00';
         
-        this.setStatus(('compileOutput.success', { time: duration }));
+        this.setStatus(window.i18n.t('compileOutput.success', { time: duration }));
         
         if (output && output.trim()) {
-            this.addMessage(('compileOutput.successOutput'), 'info');
+            this.addMessage(window.i18n.t('compileOutput.successOutput'), 'info');
             this.addMessage(output, 'info');
         }
         
         if (warnings && warnings.length > 0) {
-            this.addMessage(('compileOutput.warningCount', { count: warnings.length }), 'warning');
+            this.addMessage(window.i18n.t('compileOutput.warningCount', { count: warnings.length }), 'warning');
             warnings.forEach(warning => {
                 this.addMessage(warning, 'warning');
             });
         }
         
-        this.addMessage(('compileOutput.successDone', { time: duration }), 'success');
+        this.addMessage(window.i18n.t('compileOutput.successDone', { time: duration }), 'success');
     }
 
     onCompileError(error, output = '') {
         const endTime = Date.now();
         const duration = this.startTime ? ((endTime - this.startTime) / 1000).toFixed(2) : '0.00';
         
-        this.setStatus(('compileOutput.fail', { time: duration }));
+        this.setStatus(window.i18n.t('compileOutput.fail', { time: duration }));
         
-        this.addMessage(window.i18n ? window.i18n.t('compileOutput.failSimple') + ':' : 'Compilation failed:', 'error');
+        this.addMessage(window.i18n.t('compileOutput.failSimple') + ':', 'error');
         
         if (output && output.trim()) {
-            this.addMessage(('compileOutput.failOutput'), 'info');
+            this.addMessage(window.i18n.t('compileOutput.failOutput'), 'info');
             this.addMessage(output, 'info');
         }
         
         if (error && error.trim()) {
-            this.addMessage(('compileOutput.errorInfo'), 'error');
+            this.addMessage(window.i18n.t('compileOutput.errorInfo'), 'error');
             this.addMessage(error, 'error');
         }
         
-        this.addMessage(('compileOutput.failDone', { time: duration }), 'error');
+        this.addMessage(window.i18n.t('compileOutput.failDone', { time: duration }), 'error');
     }
 
     onProgramStart() {
-        this.addMessage(('compileOutput.runningProgram'), 'info');
+        this.addMessage(window.i18n.t('compileOutput.runningProgram'), 'info');
     }
 
     onProgramOutput(output, exitCode = 0) {
         if (exitCode === 0) {
-            this.addMessage(('compileOutput.programComplete'), 'success');
+            this.addMessage(window.i18n.t('compileOutput.programComplete'), 'success');
             if (output && output.trim()) {
-                this.addMessage(('compileOutput.programOutput'), 'info');
+                this.addMessage(window.i18n.t('compileOutput.programOutput'), 'info');
                 this.addMessage(output, 'info');
             }
         } else {
-                this.addMessage(('compileOutput.programExited', { code: exitCode }), 'error');
+                this.addMessage(window.i18n.t('compileOutput.programExited', { code: exitCode }), 'error');
             if (output && output.trim()) {
-                this.addMessage(('compileOutput.programOutput'), 'info');
+                this.addMessage(window.i18n.t('compileOutput.programOutput'), 'info');
                 this.addMessage(output, 'error');
             }
         }
     }
 
     onProgramError(error) {
-        this.addMessage((('compileOutput.programOutput')), 'error');
+        this.addMessage(window.i18n.t('compileOutput.programOutput'), 'error');
         this.addMessage(error, 'error');
     }
 
