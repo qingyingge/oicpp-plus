@@ -81,3 +81,29 @@
 ## 四、结论
 
 可行，但属于**月级工程**。推荐路线：sidecar 先行（P1 保功能）→ 通道逐域 Rust 化（P2）→ renderer 薄适配（P3），全程保持双栈可运行、每域可回归。
+
+## 五、附：第三方库选型调研（2026-09-24）
+
+### 各阶段可用轮子
+
+| 阶段 | 需求 | 推荐轮子 | 版本状态 | 结论 |
+|------|------|----------|----------|------|
+| P1/P2 | 子进程 spawn（编译器/gdb/7za） | `tauri-plugin-shell` | v2.3.6（2026-08）✅ 活跃 | 官方插件，内置 `encoding_rs`/`shared_child`/tokio 异步流，JS 侧有 `@tauri-apps/plugin-shell` 绑定 |
+| P2 | 终端 PTY | `portable-pty`（wezterm 出品） | ⚠️ 0.9.0（2025-02）；spike 现用 0.8.1 | 该领域事实标准、无替代品；0.9 相对 0.8 有 breaking change（nix 0.28），建议 spike 验证后升级 |
+| P2 | Windows 注册表 | `winreg` crate | v0.56.0（2026-03）✅ 活跃 | 支持 REG_* 类型映射/事务/serde 序列化，文件关联、右键菜单场景直接覆盖 |
+| P2 | 7z 解压 | `sevenz-rust` | v0.6.1（2024-07）偏冷 | 纯 Rust，LZMA/LZMA2/AES256/多线程解压可用；**建议保留 spawn 7za 为默认路线**，此库作备选 |
+| P2 | iconv-lite 替代 | `encoding_rs`（WHATWG 标准 Rust 实现） | 成熟（Firefox 同源） | 完整支持 GBK/GB18030/Big5，OJ 输出乱码的正解；tauri-plugin-shell 已内置 |
+| P2 | 更新器 | 官方 `updater` 插件 | v2 主线 ✅ | 比原估成熟，设置/更新域工作量可下调 |
+| P1/P2 | 单实例/对话框/剪贴板/全局快捷键/自启/通知 | `tauri-apps/plugins-workspace` v2 官方插件全家桶 | ✅ | 全部免自研 |
+
+### 调研发现的坑
+
+1. **Tauri 3 已在路上**：`tauri-plugin-shell` 已发 3.0.0-alpha（2026-09-21）。锁 v2 没问题，但 P1/P3 的 IPC 门面必须把插件 API 封装在一层之后，禁止 `@tauri-apps/plugin-*` 直接散进渲染层。
+2. **官方插件不含 PTY**：shell 插件只能 spawn+pipe，无伪终端语义（行编辑/信号），终端域 `portable-pty` 是必选，事件批量化仍要自研。
+3. **winreg 版本线分裂**：存在 0.56.x 与 0.16.x 两条并行发布线（同一作者，0.16 为旧 windows-sys 兼容线）；配新版 `windows-sys` 选 `0.56`。
+
+### 对工作量估算的修正
+
+- P2「编译运行/编码」域：iconv 迁移可视为 `encoding_rs` 的 drop-in 接入，非从零实现，**该域取估时下限**。
+- P2「设置/更新器」域：官方 updater/single-instance 等成熟，**该域取估时下限**。
+- P2「终端」域维持原估：portable-pty 无捷径，chunk 批量化、resize、进程树清理均为自有工作。
