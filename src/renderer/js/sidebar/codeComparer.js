@@ -422,7 +422,7 @@ class CodeComparer {
                 title: window.i18n.t('compare.selectGenerator'),
                 filters: [
                     { name: window.i18n.t('compare.genFilter'), extensions: ['cpp', 'cc', 'cxx', 'c', 'py'] },
-                    { name: '所有文件', extensions: ['*'] }
+                    { name: window.i18n.t('compare.allFilter'), extensions: ['*'] }
                 ],
                 properties: ['openFile']
             });
@@ -474,7 +474,7 @@ class CodeComparer {
         if (element) {
             const value = (filePath && String(filePath).trim()) ? String(filePath) : (window.i18n.t('compare.noFileSelected'));
             element.textContent = value;
-            if (value === 'No file selected' || value === '未选择文件') {
+            if (value === 'No file selected' || value === window.i18n.t('compare.noFileSelected')) {
                 element.classList.remove('selected');
             } else {
                 element.classList.add('selected');
@@ -760,7 +760,7 @@ class CodeComparer {
             });
 
             if (!stdResult.success) {
-                this.showTaskCompileError(task, 'standard', stdResult.stderr || stdResult.stdout || '编译失败');
+                this.showTaskCompileError(task, 'standard', stdResult.stderr || stdResult.stdout || window.i18n.t('compare.compileFail'));
                 await cleanupPartialCompiles();
                 return null;
             }
@@ -775,7 +775,7 @@ class CodeComparer {
             });
 
             if (!testResult.success) {
-                this.showTaskCompileError(task, 'test', testResult.stderr || testResult.stdout || '编译失败');
+                this.showTaskCompileError(task, 'test', testResult.stderr || testResult.stdout || window.i18n.t('compare.compileFail'));
                 await cleanupPartialCompiles();
                 return null;
             }
@@ -817,7 +817,7 @@ class CodeComparer {
                 });
 
                 if (!generatorResult.success) {
-                    this.showTaskCompileError(task, 'generator', generatorResult.stderr || generatorResult.stdout || '编译失败');
+                    this.showTaskCompileError(task, 'generator', generatorResult.stderr || generatorResult.stdout || window.i18n.t('compare.compileFail'));
                     await cleanupPartialCompiles();
                     return null;
                 }
@@ -855,7 +855,7 @@ class CodeComparer {
                 });
 
                 if (!spjResult.success) {
-                    this.showTaskCompileError(task, 'spj', spjResult.stderr || spjResult.stdout || '编译失败');
+                    this.showTaskCompileError(task, 'spj', spjResult.stderr || spjResult.stdout || window.i18n.t('compare.compileFail'));
                     await cleanupPartialCompiles();
                     return null;
                 }
@@ -948,10 +948,10 @@ class CodeComparer {
                     }
                     if (stdOutput.outputLimitExceeded || stdOutput.timeout || stdOutput.error || stdOutput.exitCode !== 0) {
                         const limitMbStd = Math.max(1, Math.floor((stdOutput.outputLimitBytes || 0) / (1024 * 1024)));
-                        const errorMsg = stdOutput.outputLimitExceeded ? `标准程序输出超过限制 (${limitMbStd} MB)` :
-                            stdOutput.timeout ? '标准程序超时 (TLE)' :
-                                stdOutput.error ? `标准程序运行错误 (RE): ${stdOutput.error}` :
-                                    `标准程序异常退出，退出码: ${stdOutput.exitCode}`;
+                        const errorMsg = stdOutput.outputLimitExceeded ? window.i18n.t('compare.stdOle', { limit: limitMbStd }) :
+                            stdOutput.timeout ? window.i18n.t('compare.stdTle') :
+                                stdOutput.error ? window.i18n.t('compare.stdRe', { error: stdOutput.error }) :
+                                    window.i18n.t('compare.stdExit', { code: stdOutput.exitCode });
                         try {
                             if (stdOutput.outputLimitExceeded) {
                                 logWarn('[对拍器][OLE][STD]', {
@@ -993,10 +993,10 @@ class CodeComparer {
                     }
                     if (testOutput.outputLimitExceeded || testOutput.timeout || testOutput.error || testOutput.exitCode !== 0) {
                         const limitMbTest = Math.max(1, Math.floor((testOutput.outputLimitBytes || 0) / (1024 * 1024)));
-                        const errorMsg = testOutput.outputLimitExceeded ? `测试程序输出超过限制 (${limitMbTest} MB)` :
-                            testOutput.timeout ? '测试程序超时 (TLE)' :
-                                testOutput.error ? `测试程序运行错误 (RE):  ${testOutput.error}` :
-                                    `测试程序异常退出，退出码: ${testOutput.exitCode}`;
+                        const errorMsg = testOutput.outputLimitExceeded ? window.i18n.t('compare.testOle', { limit: limitMbTest }) :
+                            testOutput.timeout ? window.i18n.t('compare.testTle') :
+                                testOutput.error ? window.i18n.t('compare.testRe', { error: testOutput.error }) :
+                                    window.i18n.t('compare.testExit', { code: testOutput.exitCode });
                         try {
                             if (testOutput.outputLimitExceeded) {
                                 logWarn('[对拍器][OLE][TEST]', {
@@ -1034,7 +1034,7 @@ class CodeComparer {
                                 stdOutput: stdOutput.output,
                                 testOutput: testOutput.output,
                                 errorType: 'spj_error',
-                                errorMessage: `SPJ 结果: ${spjResult}`
+                                errorMessage: window.i18n.t('compare.spjResult', { result: spjResult })
                             };
                             task.state.mode = 'error';
                             errorOccurred = true;
@@ -1098,7 +1098,7 @@ class CodeComparer {
         } else {
             logInfo(`对拍完成，但有 ${failedGenerations} 组数据生成失败。共成功执行 ${successfulTests} 组测试，未在成功组中发现差异`);
             task.state.mode = 'complete';
-            task.state.warningMessage = `有 ${failedGenerations} 组数据生成失败，请检查数据生成器`;
+            task.state.warningMessage = window.i18n.t('compare.genFailedWarning', { count: failedGenerations });
             this.renderIfActive(task);
         }
     }
@@ -1128,7 +1128,7 @@ class CodeComparer {
                 return {
                     success: false,
                     type: 'ole',
-                    message: `数据生成器输出超限 (${limitMb} MB)`,
+                    message: window.i18n.t('compare.genOle', { limit: limitMb }),
                     result
                 };
             }
@@ -1138,7 +1138,7 @@ class CodeComparer {
                 return {
                     success: false,
                     type: 'tle',
-                    message: '数据生成器运行超时',
+                    message: window.i18n.t('compare.genTle'),
                     result
                 };
             }
@@ -1150,7 +1150,7 @@ class CodeComparer {
                 return {
                     success: false,
                     type: 're',
-                    message: result.error || `数据生成器异常退出，退出码: ${result.exitCode}`,
+                    message: result.error || window.i18n.t('compare.genExit', { code: result.exitCode }),
                     result
                 };
             }
@@ -1165,7 +1165,7 @@ class CodeComparer {
             return {
                 success: false,
                 type: 'exception',
-                message: error?.message || '生成测试数据失败',
+                message: error?.message || window.i18n.t('compare.genDataError'),
                 result: null
             };
         }
@@ -1182,9 +1182,9 @@ class CodeComparer {
         if (outputLimitExceeded) {
             const limitBytes = result.outputLimitBytes || (256 * 1024 * 1024);
             const limitMb = Math.max(1, Math.floor(limitBytes / (1024 * 1024)));
-            errorMessage = `输出超过限制 (${limitMb} MB)`;
+            errorMessage = window.i18n.t('compare.oleLimit', { limit: limitMb });
         } else if (result.exitCode !== 0) {
-            errorMessage = trimmedOutput || result.stderr || `退出码: ${result.exitCode}`;
+            errorMessage = trimmedOutput || result.stderr || window.i18n.t('compare.exitCode', { code: result.exitCode });
         }
         return {
             output: trimmedOutput,
@@ -1895,20 +1895,20 @@ class CodeComparer {
             ? (errorResult.input || '')
             : (outputType === 'std' ? (errorResult.stdOutput || '') : (errorResult.testOutput || ''));
         const sizeMbText = this.getOutputSizeMbText(output);
-        const message = `当前输出大小约 ${sizeMbText} MB。<br><br>过大的输出可能导致界面或进程无响应，是否仍要展开完整输出？`;
+        const message = window.i18n.t('compare.expandConfirmMsg', { size: sizeMbText });
 
         let shouldExpand = false;
         try {
             if (window.dialogManager?.showActionDialog) {
-                const action = await window.dialogManager.showActionDialog('展开完整输出确认', message, [
-                    { id: 'cancel', label: '取消', className: 'dialog-btn-cancel' },
-                    { id: 'expand', label: '仍要展开', className: 'dialog-btn-confirm' }
+                const action = await window.dialogManager.showActionDialog(window.i18n.t('compare.expandConfirmTitle'), message, [
+                    { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' },
+                    { id: 'expand', label: window.i18n.t('compare.expandAnyway'), className: 'dialog-btn-confirm' }
                 ]);
                 shouldExpand = action === 'expand';
             } else if (window.dialogManager?.showConfirmDialog) {
-                shouldExpand = await window.dialogManager.showConfirmDialog('展开完整输出确认', `当前输出大小约 ${sizeMbText} MB。\n\n过大的输出可能导致界面或进程无响应，是否仍要展开完整输出？`);
+                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('compare.expandConfirmTitle'), window.i18n.t('compare.expandConfirmMsgText', { size: sizeMbText }));
             } else {
-                shouldExpand = window.confirm(`当前输出大小约 ${sizeMbText} MB。\n\n过大的输出可能导致界面或进程无响应，是否仍要展开完整输出？`);
+                shouldExpand = window.confirm(window.i18n.t('compare.expandConfirmMsgText', { size: sizeMbText }));
             }
         } catch (error) {
             logWarn('展开输出确认失败，已取消展开:', error);
@@ -1927,7 +1927,7 @@ class CodeComparer {
         const safeOutput = output == null ? '' : String(output);
         const lines = safeOutput.split('\n');
         if (lines.length > maxLines) {
-            return lines.slice(0, maxLines).join('\n') + '\n[输出过大，已省略]';
+            return lines.slice(0, maxLines).join('\n') + '\n' + window.i18n.t('compare.outputTruncated');
         }
         return safeOutput;
     }
@@ -1977,7 +1977,7 @@ class CodeComparer {
         }
 
         if (actualEndLine < currentLines.length) {
-            result += '<div class="diff-truncated">[输出过大，已省略]</div>';
+            result += `<div class="diff-truncated">${window.i18n.t('compare.outputTruncated')}</div>`;
         }
 
         return result;
@@ -1990,7 +1990,7 @@ class CodeComparer {
         for (let i = 0; i < lines.length; i++) {
             const lineNum = i + 1;
             const line = lines[i];
-            if (line === '[输出过大，已省略]') {
+            if (line === window.i18n.t('compare.outputTruncated')) {
                 result += `<div class="diff-truncated">${line}</div>`;
             } else {
                 result += `<div class="diff-line"><span class="line-number">${lineNum.toString().padStart(4)} </span>${this.escapeHtml(line)}</div>`;
@@ -2081,13 +2081,13 @@ class CodeComparer {
         const task = this.getActiveTask();
         const errorResult = task?.state?.errorResult;
         if (!errorResult) {
-            this.showTaskCompileError(task, 'general', '没有可导出的错误结果');
+            this.showTaskCompileError(task, 'general', window.i18n.t('compare.noExportResults'));
             return;
         }
 
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: '选择导出目录',
+                title: window.i18n.t('compare.selectExportDir'),
                 defaultPath: 'test_data',
                 properties: ['openDirectory', 'createDirectory']
             });
@@ -2105,11 +2105,11 @@ class CodeComparer {
                 await window.electronAPI.createFile(stdOutputFile, errorResult.stdOutput);
                 await window.electronAPI.createFile(testOutputFile, errorResult.testOutput);
 
-                this.showSuccessMessage(`测试数据已导出到: ${exportDir}`);
+                this.showSuccessMessage(window.i18n.t('compare.exportedTo', { dir: exportDir }));
             }
         } catch (error) {
             logError('导出失败:', error);
-            this.showCompileError('general', '导出失败: ' + error.message);
+            this.showCompileError('general', window.i18n.t('compare.exportFailed', { error: error.message }));
         }
     }
 
