@@ -387,7 +387,12 @@
     "minimize": "Minimize",
     "maximize": "Maximize",
     "close": "Close",
-    "restore": "Restore"
+    "restore": "Restore",
+    "discardTempTitle": "Confirm discard temporary file",
+    "discardTempMsg": "Temporary file \"{name}\" is not saved.<br><br>Choose how to handle the temporary file.",
+    "save": "Save",
+    "discard": "Discard",
+    "tempFileDefault": "temporary file"
   },
   "statusbar": {
     "ready": "Ready",

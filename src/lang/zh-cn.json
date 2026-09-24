@@ -370,7 +370,12 @@
     "minimize": "最小化",
     "maximize": "最大化",
     "restore": "还原",
-    "close": "关闭"
+    "close": "关闭",
+    "discardTempTitle": "确认丢弃临时文件",
+    "discardTempMsg": "临时文件“{name}”未保存。<br><br>请选择如何处理临时文件。",
+    "save": "保存",
+    "discard": "丢弃",
+    "tempFileDefault": "临时文件"
   },
   "statusbar": {
     "ready": "就绪",
