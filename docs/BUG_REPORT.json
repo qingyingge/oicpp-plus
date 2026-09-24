@@ -1,0 +1,1033 @@
+[
+  {
+    "id": "C1",
+    "severity": "CRITICAL",
+    "title": "IPC 白名单完全被绕过",
+    "status": "待确认",
+    "file": "src/preload.js:483-675",
+    "problem": "electronAPI 直接调用 ipcRenderer.invoke()/send()，完全绕过 safeIpcRenderer；ALLOWED_SEND_CHANNELS 和 ALLOWED_INVOKE_CHANNELS 白名单是死代码。",
+    "impact": "渲染进程可调用任意 IPC channel，包括未在白名单中的 channel。"
+  },
+  {
+    "id": "C2",
+    "severity": "CRITICAL",
+    "title": "cmd /c 命令注入",
+    "status": "已修复",
+    "file": "src/main.js:4687-4694",
+    "problem": "executablePath 参数直接来自渲染进程 IPC，以 cmd /c 开头时 actualCommand 未经过滤直接传入 spawn。",
+    "impact": "Windows 上的 OS 级命令注入。",
+    "fix": {
+      "commit": "671732a",
+      "note": "cmd /c 分支禁用 shell 透传并对命令过滤"
+    }
+  },
+  {
+    "id": "C3",
+    "severity": "CRITICAL",
+    "title": "webSecurity: false 禁用同源策略",
+    "status": "已修复",
+    "file": "src/main.js:2375,6790,6824,6864,6895",
+    "problem": "所有 BrowserWindow 均设置 webSecurity: false，禁用同源策略。",
+    "impact": "任何渲染进程 XSS 都可读取本地文件或与本地 HTTP 服务器交互。",
+    "fix": {
+      "commit": "8e1d3fc",
+      "note": "5 处 BrowserWindow webSecurity 全改 true；4 处 renderer fetch 改经 fetch-remote-json IPC 由主进程 axios 代理，4 路径白名单 + 15s 超时"
+    }
+  },
+  {
+    "id": "H1",
+    "severity": "HIGH",
+    "title": "10+ 个 IPC handler 无路径校验",
+    "status": "已修复",
+    "file": "src/main.js",
+    "problem": "多个 IPC handler 缺少路径校验，涉及 save-file、rename-file、move-file、paste-file、delete-file、write-file、ensure-dir、read-file-buffer、walk-directory、open-path、show-open/save-dialog 等。",
+    "impact": "可覆盖、读取、移动、删除、遍历任意文件或目录。",
+    "fix": {
+      "commit": "542e852",
+      "note": "16 处 handler 加 assertSafeIoPath 敏感路径校验，dialog defaultPath 消毒，validateFileName 拒绝 . 与 .."
+    }
+  },
+  {
+    "id": "H2",
+    "severity": "HIGH",
+    "title": "compilerArgs 未过滤直接传入 spawn",
+    "status": "已修复",
+    "file": "src/main.js:7876,7987,8068-8071",
+    "problem": "compilerArgs 字符串经 parseArgsPreservingQuotes 解析后直接传入 spawn，无 allowlist 过滤。",
+    "impact": "可注入 -include、@ 等任意标志。",
+    "fix": {
+      "commit": "542e852",
+      "note": "compileFile 经 collectRejectedCompilerArgs 拦截 @响应文件、-include、-specs=、-fplugin=、-plugin、-B 等高危参数"
+    }
+  },
+  {
+    "id": "H3",
+    "severity": "HIGH",
+    "title": "import-settings 可注入 account 凭据",
+    "status": "已修复",
+    "file": "src/main.js:4549-4573,7621",
+    "problem": "导入的 JSON 经 mergeSettings 处理，account 在 validKeys 中，可覆盖登录 token。",
+    "impact": "社会工程攻击可注入伪造登录 token。",
+    "fix": {
+      "commit": "671732a",
+      "note": "import-settings 删除 account，合并后恢复 previousAccount"
+    }
+  },
+  {
+    "id": "H4",
+    "severity": "HIGH",
+    "title": "get-top-level-settings 暴露 loginToken",
+    "status": "已修复",
+    "file": "src/main.js:3432-3434",
+    "problem": "返回整个 settings 对象，包括 settings.account 中的 loginToken 和用户凭据。",
+    "impact": "凭据泄漏。",
+    "fix": {
+      "commit": "671732a",
+      "note": "get-top-level-settings 返回前剔除 account"
+    }
+  },
+  {
+    "id": "H5",
+    "severity": "HIGH",
+    "title": "本地 HTTP 服务器 CORS 通配符",
+    "status": "已修复",
+    "file": "src/main.js:2806-2814",
+    "problem": "SampleTesterAPI 和 CompetitiveCompanion 绑定 127.0.0.1 但响应头含 Access-Control-Allow-Origin: *。",
+    "impact": "恶意 webview 可向 SampleTester 注入题目数据。",
+    "fix": {
+      "commit": "671732a",
+      "note": "本机 HTTP 端点新增 isTrustedLocalOrigin/rejectUntrustedOrigin 来源校验"
+    }
+  },
+  {
+    "id": "H6",
+    "severity": "HIGH",
+    "title": "executeJavaScript 中 JSON.stringify 不防注入",
+    "status": "无效",
+    "file": "src/main.js:5657-5660",
+    "problem": "下载错误消息通过 JSON.stringify 传入 executeJavaScript。",
+    "impact": "报告称恶意服务器可构造 HTTP 响应实现代码执行。",
+    "invalid_reason": "JSON.stringify 产物是合法 JS 字面量，无法逃逸出字符串上下文；模板字符串不会被二次求值。"
+  },
+  {
+    "id": "H7",
+    "severity": "HIGH",
+    "title": "save-setting IPC 接受任意 key",
+    "status": "已修复",
+    "file": "src/main.js:10150-10159",
+    "problem": "settings[key] = value 无 key 验证。",
+    "impact": "渲染进程可设置任意 settings key，包括 compilerPath、account 等。",
+    "fix": {
+      "commit": "671732a",
+      "note": "save-setting 新增 SETTINGS_WRITABLE_KEYS 白名单"
+    }
+  },
+  {
+    "id": "H8",
+    "severity": "HIGH",
+    "title": "electronIPC.on/once 无 channel 过滤",
+    "status": "已修复",
+    "file": "src/preload.js:680-691",
+    "problem": "electronIPC 传递任意 channel 给 ipcRenderer.on，无过滤。",
+    "impact": "渲染进程可窃听内部 IPC channel。",
+    "fix": {
+      "commit": "2374082",
+      "note": "preload 新增 ALLOWED_EVENT_CHANNELS 35 通道，on/once 拦截非白名单并告警；tests/preload.test.js 断言覆盖"
+    }
+  },
+  {
+    "id": "H9",
+    "severity": "HIGH",
+    "title": "markdown-it html: true XSS",
+    "status": "已修复",
+    "file": "src/preload.js:239",
+    "problem": "html: true 使 markdown 中的原始 HTML 标签原样渲染。",
+    "impact": "不信任来源的 markdown 内容可触发 XSS。",
+    "fix": {
+      "commit": "2374082",
+      "note": "MarkdownIt html 改为 false，默认转义内联 HTML"
+    }
+  },
+  {
+    "id": "H10",
+    "severity": "HIGH",
+    "title": "postMessage('*') 数据泄漏",
+    "status": "待确认",
+    "file": "src/renderer/pdf-viewer.html:369",
+    "problem": "PDF viewer 用 postMessage(..., '*') 向父窗口发送数据，可被任意 origin 接收。",
+    "impact": "数据泄漏。"
+  },
+  {
+    "id": "H11",
+    "severity": "HIGH",
+    "title": "CSP frame-src *",
+    "status": "待确认",
+    "file": "src/renderer/index.html:7",
+    "problem": "Content-Security-Policy 含 frame-src *，允许任意网站嵌入此 Electron 应用。",
+    "impact": "结合 postMessage('*') 构成数据泄漏向量。"
+  },
+  {
+    "id": "H12",
+    "severity": "HIGH",
+    "title": "folder-picker.js process.platform 空引用",
+    "status": "无效",
+    "file": "src/renderer/js/folder-picker.js:41,52",
+    "problem": "在 contextIsolation: true 下 process 全局不可用，会抛 ReferenceError。",
+    "impact": "报告称崩溃。",
+    "invalid_reason": "process 已由 contextBridge 暴露；仅 env 缺 USERPROFILE/HOME 导致 home 快捷项缺失，属功能降级而非空引用崩溃。"
+  },
+  {
+    "id": "H13",
+    "severity": "HIGH",
+    "title": "editor.js #cancel-settings 空引用",
+    "status": "无效",
+    "file": "src/renderer/settings/editor.js:1045",
+    "problem": "document.getElementById('cancel-settings').addEventListener(...) 无空值检查。",
+    "impact": "报告称元素缺失时抛 TypeError，崩溃 EditorSettings 初始化。",
+    "invalid_reason": "#cancel-settings 元素存在于 editor.html:489，getElementById 必非 null。"
+  },
+  {
+    "id": "H14",
+    "severity": "HIGH",
+    "title": "editor.js parseInt 无 radix",
+    "status": "待确认",
+    "file": "src/renderer/settings/editor.js:1227,1640-1641",
+    "problem": "parseInt(e.target.value) 无第二个参数，空输入产生 NaN，传播到 Monaco 编辑器破坏渲染。",
+    "impact": "可能破坏编辑器渲染。"
+  },
+  {
+    "id": "M1",
+    "severity": "MEDIUM",
+    "title": "LSP request() 无超时",
+    "status": "待修复",
+    "file": "src/main.js:821-831",
+    "problem": "clangd 挂起时 pending promise 永不 resolve/reject。",
+    "impact": "hang 情况下永久泄漏。"
+  },
+  {
+    "id": "M2",
+    "severity": "MEDIUM",
+    "title": "LSP JSON 解析失败静默丢弃",
+    "status": "待修复",
+    "file": "src/main.js:869",
+    "problem": "JSON.parse 失败时 continue 跳过，pending map 中对应条目永不清理。",
+    "impact": "长时间运行会累积泄漏。"
+  },
+  {
+    "id": "M3",
+    "severity": "MEDIUM",
+    "title": "recentExternalOpens Map 遍历时删除",
+    "status": "无效",
+    "file": "src/main.js:60-65",
+    "problem": "for...of 循环中 Map.delete() 违反 ECMAScript 规范。",
+    "impact": "报告称 V8 当前容忍但不保证。",
+    "invalid_reason": "在 Map 迭代回调中执行 delete 是 ECMAScript 规范明确允许的行为。"
+  },
+  {
+    "id": "M4",
+    "severity": "MEDIUM",
+    "title": "requestSaveAllAndClose 多次调用累积监听器",
+    "status": "待确认",
+    "file": "src/main.js:2296-2322",
+    "problem": "每次调用注册新的 ipcMain.once 监听器和新 timeout，只第一个会触发。",
+    "impact": "其余监听器成为孤儿。"
+  },
+  {
+    "id": "M5",
+    "severity": "MEDIUM",
+    "title": "memoryTimer 在 error 事件未清除",
+    "status": "无效",
+    "file": "src/main.js:4976-4997",
+    "problem": "childProcess.on('error') 未清除 memoryTimer，泄漏 setInterval 轮询已死进程。",
+    "impact": "定时器泄漏。",
+    "invalid_reason": "spawn error 后 Node 仍会派发 close 事件，close 处理器会 clearInterval(memoryTimer)。"
+  },
+  {
+    "id": "M6",
+    "severity": "MEDIUM",
+    "title": "mergeSettings 重复定义",
+    "status": "已修复",
+    "file": "src/main.js:7488-7508,7619-7632",
+    "problem": "第一个定义做递归深合并，第二个做浅合并，第二个覆盖第一个。",
+    "impact": "importSettings 和 syncSettingsFromCloud 使用浅合并版本，丢失嵌套属性。",
+    "fix": {
+      "commit": "2374082",
+      "note": "删除首份重复定义，合并跳过 account 并对 plain object 深合并"
+    }
+  },
+  {
+    "id": "M7",
+    "severity": "MEDIUM",
+    "title": "checkDailyUpdate 死代码",
+    "status": "待确认",
+    "file": "src/main.js:7431-7478",
+    "problem": "return; 使后续代码不可达，isAutoUpdateCheckInProgress 设为 true 后永不清除。",
+    "impact": "菜单显示“自动检查更新中...”且禁用手动检查按钮。"
+  },
+  {
+    "id": "M8",
+    "severity": "MEDIUM",
+    "title": "Base64 token 泄露设备指纹",
+    "status": "待修复",
+    "file": "src/main.js:9215-9222",
+    "problem": "generateEncodedToken 是 base64 编码的明文，含用户名、主机名、CPU 型号、OS。",
+    "impact": "作为 X-OICPP-Token 头发送，可被网络观察者解码。"
+  },
+  {
+    "id": "M9",
+    "severity": "MEDIUM",
+    "title": "readJsonBody 超限后 res 未关闭",
+    "status": "待确认",
+    "file": "src/main.js:2829-2844",
+    "problem": "req.destroy() 后 end 事件不触发，res 永不关闭。",
+    "impact": "客户端连接挂起。"
+  },
+  {
+    "id": "M10",
+    "severity": "MEDIUM",
+    "title": "外部文件队列丢弃并发请求",
+    "status": "待确认",
+    "file": "src/main.js:9030-9051",
+    "problem": "if (processingExternalOpenQueue) return 丢弃所有并发调用。",
+    "impact": "新项目入队但无人触发处理。"
+  },
+  {
+    "id": "M11",
+    "severity": "MEDIUM",
+    "title": "~30 个 on* 方法无 cleanup 函数",
+    "status": "待修复",
+    "file": "src/preload.js:568-663",
+    "problem": "大多数 on* 方法返回 ipcRenderer.on() 的返回值，调用者无法移除监听器。",
+    "impact": "监听器泄漏。"
+  },
+  {
+    "id": "M12",
+    "severity": "MEDIUM",
+    "title": "removeAllListeners 杀死所有消费者",
+    "status": "已修复",
+    "file": "src/preload.js:538-540",
+    "problem": "compare 监听器的 cleanup 用 removeAllListeners 而非 removeListener。",
+    "impact": "一个消费者 cleanup 会破坏所有消费者。",
+    "fix": {
+      "commit": "febd925",
+      "note": "onCompareProgress 已返回 removeListener cleanup；tests/preload.test.js:129-134 有断言覆盖（测试由 bfb5d04 引入）。"
+    }
+  },
+  {
+    "id": "M13",
+    "severity": "MEDIUM",
+    "title": "图片路径穿越",
+    "status": "待修复",
+    "file": "src/preload.js:315-325",
+    "problem": "![x](../../etc/passwd) 经 path.join 解析为 file:///etc/passwd，无穿越检查。",
+    "impact": "路径穿越。"
+  },
+  {
+    "id": "M14",
+    "severity": "MEDIUM",
+    "title": "turndown fallback innerHTML",
+    "status": "待确认",
+    "file": "src/preload.js:343-345,351-353",
+    "problem": "fallback 路径用 innerHTML 解析 HTML，可执行内联脚本和触发 onload/onerror。",
+    "impact": "XSS 风险。"
+  },
+  {
+    "id": "M15",
+    "severity": "MEDIUM",
+    "title": "shouldRunAfterCompile 竞态",
+    "status": "待修复",
+    "file": "src/renderer/js/compile-manager.js:579-586",
+    "problem": "compileCurrentFile() 成功但 handleCompileResult 未调用时标志残留为 true。",
+    "impact": "竞态。"
+  },
+  {
+    "id": "M16",
+    "severity": "MEDIUM",
+    "title": "window.resize 监听器泄漏",
+    "status": "已修复",
+    "file": "src/renderer/js/compile-manager.js:153-157",
+    "problem": "每次重建输出窗口添加新的匿名 resize 监听器，旧的从不移除。",
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "resize 监听改具名 _onWindowResize 并在重建前移除"
+    }
+  },
+  {
+    "id": "M17",
+    "severity": "MEDIUM",
+    "title": "setCloudPanelVisible 忽略参数",
+    "status": "待修复",
+    "file": "src/renderer/js/sidebar.js:523-524",
+    "problem": "visible 参数被 const show = false 完全丢弃。",
+    "impact": "功能异常。"
+  },
+  {
+    "id": "M18",
+    "severity": "MEDIUM",
+    "title": "quick-open.js 异步竞态",
+    "status": "无效",
+    "file": "src/renderer/js/quick-open.js:172-178",
+    "problem": "ensureIndex() 异步，用户关闭后 resolve 触发 open() 意外重开。",
+    "impact": "报告称竞态。",
+    "invalid_reason": "代码是“按键→await ensureIndex→open”的正常预期流程，所述竞态与代码结构不符。"
+  },
+  {
+    "id": "M19",
+    "severity": "MEDIUM",
+    "title": "compile-output.js keydown 全局监听器泄漏",
+    "status": "已修复",
+    "file": "src/renderer/js/compile-output.js:44-50",
+    "problem": "document.addEventListener('keydown', ...) 无对应移除。",
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "keydown 监听存 _onGlobalKeydown，show/hide 配对增删"
+    }
+  },
+  {
+    "id": "M20",
+    "severity": "MEDIUM",
+    "title": "dialog.js overlay 监听器累积",
+    "status": "已修复",
+    "file": "src/renderer/js/dialog.js:114-116",
+    "problem": "每次 showInputDialog() 添加新的 keydown 监听器到同一 overlay 节点。",
+    "impact": "监听器累积。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "overlay keydown 先 remove 再 add"
+    }
+  },
+  {
+    "id": "M21",
+    "severity": "MEDIUM",
+    "title": "browser-manager.js IPC 监听器泄漏",
+    "status": "已修复",
+    "file": "src/renderer/js/browser-manager.js:48-52",
+    "problem": "_removeOpenNewTabListener 存储了但从未用于清理。",
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "destroy() 接上已存储的 _removeOpenNewTabListener"
+    }
+  },
+  {
+    "id": "M22",
+    "severity": "MEDIUM",
+    "title": "sampleTester.js setInterval 泄漏",
+    "status": "待确认",
+    "file": "src/renderer/js/sidebar/sampleTester.js:244",
+    "problem": "setupEditorChangeListener 在构造函数调用，deactivate() 不清除 interval。",
+    "impact": "定时器泄漏。"
+  },
+  {
+    "id": "M23",
+    "severity": "MEDIUM",
+    "title": "init.js 未 await initializeApp()",
+    "status": "待修复",
+    "file": "src/renderer/js/init.js:12",
+    "problem": "initializeApp() 是 async 但未 await，setTimeout 在 350ms 后运行。",
+    "impact": "不管初始化是否完成。"
+  },
+  {
+    "id": "M24",
+    "severity": "MEDIUM",
+    "title": "dialog.js 双重 resolve",
+    "status": "无效",
+    "file": "src/renderer/js/dialog.js:321-332",
+    "problem": "hideDialog 总是 resolve pending.resolve(null)，即使已被 confirmDialog resolve 过。",
+    "impact": "报告称双重 resolve。",
+    "invalid_reason": "Promise 二次 resolve 是无害 no-op，消费者只收到第一次的值。"
+  },
+  {
+    "id": "M25",
+    "severity": "MEDIUM",
+    "title": "tabs.js PDF 监听器泄漏",
+    "status": "待修复",
+    "file": "src/renderer/js/tabs.js:31-32",
+    "problem": "构造函数添加 window.addEventListener('message', ...) 从不移除。",
+    "impact": "监听器泄漏。"
+  },
+  {
+    "id": "M26",
+    "severity": "MEDIUM",
+    "title": "terminal-panel.js keydown/wheel 监听器泄漏",
+    "status": "已修复",
+    "file": "src/renderer/js/terminal-panel.js:478,538",
+    "problem": "终端关闭时 keydown 和 wheel 监听器未移除。",
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "keydown/wheel 改具名 onKeyShield/onWheelShield，closeTerminal 时按 capture 匹配移除"
+    }
+  },
+  {
+    "id": "M27",
+    "severity": "MEDIUM",
+    "title": "currentProc 共享竞态",
+    "status": "待确认",
+    "file": "src/main-process/compare-worker-v6.js:18,27,28,108",
+    "problem": "模块级 currentProc 被多次 spawnProcess 覆盖，stop 消息只杀最新进程。",
+    "impact": "进程管理竞态。"
+  },
+  {
+    "id": "M28",
+    "severity": "MEDIUM",
+    "title": "GDB _cmdQueue 退出后未 reject",
+    "status": "待修复",
+    "file": "src/gdb-debugger.js:116-121",
+    "problem": "GDB 进程退出时未清空命令队列，等待中的 promise 永不 resolve/reject。",
+    "impact": "UI 挂起。"
+  },
+  {
+    "id": "M29",
+    "severity": "MEDIUM",
+    "title": "HTTP 响应体未 destroy",
+    "status": "待确认",
+    "file": "src/utils/multi-thread-downloader.js:66-88,92-100",
+    "problem": "checkRangeSupport 和 getFileSize 中 .body 流未读取或 destroy。",
+    "impact": "TCP socket 泄漏。"
+  },
+  {
+    "id": "M30",
+    "severity": "MEDIUM",
+    "title": "writer.write after end",
+    "status": "已修复",
+    "file": "src/utils/multi-thread-downloader.js:308-314",
+    "problem": "isCancelled 检查与 writer.write() 之间有 TOCTOU 竞态，可触发 ERR_STREAM_WRITE_AFTER_END。",
+    "impact": "流写入错误。",
+    "fix": {
+      "commit": "349cde0",
+      "note": "取消在 data 回调内同步 end+reject；tests/downloader.test.js 有覆盖（测试由 bfb5d04 引入）；未复现 TOCTOU 窗口。"
+    }
+  },
+  {
+    "id": "M31",
+    "severity": "MEDIUM",
+    "title": "GDB 队列死锁",
+    "status": "待修复",
+    "file": "src/gdb-debugger.js:62-63",
+    "problem": "GDB 静默崩溃时 _parseOutput 永不执行，_queueBusy 永远为 true。",
+    "impact": "队列永久卡住。"
+  },
+  {
+    "id": "M32",
+    "severity": "MEDIUM",
+    "title": "compare-engine-v2 双重终止",
+    "status": "无效",
+    "file": "src/main-process/compare-engine-v2.js:140-156",
+    "problem": "stop() 的 2 秒 setTimeout 可能终止新 start() 的 worker。",
+    "impact": "报告称双重终止。",
+    "invalid_reason": "stop() 中 setTimeout 闭包捕获 stop 时刻的 workers 快照，不会终止新 start() 创建的 worker。"
+  },
+  {
+    "id": "M33",
+    "severity": "MEDIUM",
+    "title": "parseGDBWatchValueRecursive 畸形输入无限循环",
+    "status": "待修复",
+    "file": "src/gdb-utils.js:207-403",
+    "problem": "getNextToken 返回未前进的 position 时 while(true) 死循环。",
+    "impact": "死循环。",
+    "note": "已证实存在死循环：实测输入 {, a = hello b = 5} 必现；报告所述 getNextToken 机制不成立，实际由 L401 与 L283-292 反向逗号回溯形成周期循环。"
+  },
+  {
+    "id": "M34",
+    "severity": "MEDIUM",
+    "title": "PID TOCTOU",
+    "status": "待修复",
+    "file": "src/terminal-manager.js:797-858",
+    "problem": "PID 复用后读取新进程的 /proc/PID/fd，返回错误 TTY。",
+    "impact": "终端管理错误。"
+  },
+  {
+    "id": "M35",
+    "severity": "MEDIUM",
+    "title": "disposeAll race",
+    "status": "待确认",
+    "file": "src/terminal-manager.js:503-509",
+    "problem": "close 事件处理器在 disposeAll 完成后仍发送消息到已销毁的 renderer。",
+    "impact": "竞态。"
+  },
+  {
+    "id": "M36",
+    "severity": "MEDIUM",
+    "title": "logger _flush buffer 增长",
+    "status": "待修复",
+    "file": "src/utils/logger.js:24-36",
+    "problem": "init() 失败后 buffer 仅在 >5000 行时截断一半，持续失败时无限增长。",
+    "impact": "内存增长。"
+  },
+  {
+    "id": "M37",
+    "severity": "MEDIUM",
+    "title": "Stray */ CSS 语法错误",
+    "status": "已修复",
+    "file": "src/renderer/css/monaco-editor.css:82",
+    "problem": "孤立的 */ 无匹配 /*，CSS 解析错误可能影响后续规则。",
+    "impact": "样式异常。",
+    "fix": {
+      "commit": "2374082",
+      "note": "删除孤立 */"
+    }
+  },
+  {
+    "id": "M38",
+    "severity": "MEDIUM",
+    "title": "Settings HTML 缺少 CSP",
+    "status": "无效",
+    "file": "settings/compiler.html, editor.html, templates.html, backup.html",
+    "problem": "无 meta http-equiv Content-Security-Policy 标签，独立窗口无 CSP 保护。",
+    "impact": "报告称无 CSP。",
+    "invalid_reason": "四个 settings/*.html 均含 Content-Security-Policy meta 标签。"
+  },
+  {
+    "id": "M39",
+    "severity": "MEDIUM",
+    "title": "compiler.js innerHTML XSS",
+    "status": "已修复",
+    "file": "src/renderer/settings/compiler.js:484-499",
+    "problem": "远程 API 返回的 compiler.name/version/platform/download_url 未经转义直接注入 innerHTML。",
+    "impact": "XSS。",
+    "fix": {
+      "commit": "2374082",
+      "note": "name/version/platform/download_url/error.message 两处全部 escapeHtml"
+    }
+  },
+  {
+    "id": "M40",
+    "severity": "MEDIUM",
+    "title": "compiler.js Python 浏览显示错误消息",
+    "status": "已修复",
+    "file": "src/renderer/settings/compiler.js:347",
+    "problem": "browsePythonInterpreter 显示 'testlib path saved' 而非 Python 相关消息。",
+    "impact": "提示错误。",
+    "fix": {
+      "commit": "2374082",
+      "note": "改用专用 key compiler.pythonPathSaved(en/zh-cn)"
+    }
+  },
+  {
+    "id": "M41",
+    "severity": "MEDIUM",
+    "title": "compiler.js Python 路径不持久化",
+    "status": "已修复",
+    "file": "src/renderer/settings/compiler.js:340-348",
+    "problem": "browsePythonInterpreter 只更新 UI，不调用 saveSetting()。",
+    "impact": "设置丢失。",
+    "fix": {
+      "commit": "2374082",
+      "note": "browsePythonInterpreter 成功分支调用 saveSetting 持久化 pythonInterpreterPath"
+    }
+  },
+  {
+    "id": "M42",
+    "severity": "MEDIUM",
+    "title": "compiler.js 并发 fetch 无防抖",
+    "status": "已修复",
+    "file": "src/renderer/settings/compiler.js:437,1164",
+    "problem": "showInstallDialog 无防抖，快速点击触发并发请求。",
+    "impact": "并发覆盖。",
+    "fix": {
+      "commit": "1ef212a",
+      "note": "列表加载入口 abort 旧请求，防并发覆盖"
+    }
+  },
+  {
+    "id": "M43",
+    "severity": "MEDIUM",
+    "title": "compiler.js fetch 无超时",
+    "status": "已修复",
+    "file": "src/renderer/settings/compiler.js:444,1171",
+    "problem": "无 AbortController，服务器无响应时 UI 永久挂起。",
+    "impact": "UI 挂起。",
+    "fix": {
+      "commit": "1ef212a",
+      "note": "AbortController 15 秒超时，超时提示可重试"
+    }
+  },
+  {
+    "id": "M44",
+    "severity": "MEDIUM",
+    "title": "settings-init.js 字体验证反馈循环",
+    "status": "待修复",
+    "file": "src/renderer/js/settings-init.js:80-89",
+    "problem": "字体修正触发 updateSettings → settings-changed → applySettingsToUI → 再次验证，循环 2 次。",
+    "impact": "反馈循环。"
+  },
+  {
+    "id": "M45",
+    "severity": "MEDIUM",
+    "title": "editor.js opacity bypass Cancel",
+    "status": "待修复",
+    "file": "src/renderer/settings/editor.js:1128-1133",
+    "problem": "opacity 变更立即 updateSettings，用户点 Cancel 也无法撤销。",
+    "impact": "设置无法取消。"
+  },
+  {
+    "id": "M46",
+    "severity": "MEDIUM",
+    "title": "monaco-editor-manager.js LSP 重启后文档状态不一致",
+    "status": "待确认",
+    "file": "src/renderer/js/monaco-editor-manager.js:366-371,410-415",
+    "problem": "_finishStartup 异常时 _lspReadyPromise 设为 null 但文档可能部分打开。",
+    "impact": "状态不一致。"
+  },
+  {
+    "id": "M47",
+    "severity": "MEDIUM",
+    "title": "installer.nsi 删除全局 .cpp 关联",
+    "status": "待修复",
+    "file": "installer.nsi:450-451",
+    "problem": "卸载器删除整个 .cpp 注册表键，可能删除其他程序设置的关联。",
+    "impact": "影响其他程序关联。"
+  },
+  {
+    "id": "M48",
+    "severity": "MEDIUM",
+    "title": "installer.nsi 路径含空格提权失败",
+    "status": "无效",
+    "file": "installer.nsi:154",
+    "problem": "$EXEFILE 未加引号，路径含空格时 ExecShell runas 失败。",
+    "impact": "报告称提权失败。",
+    "invalid_reason": "installer.nsi:154 实为 ExecShell 'runas' '$EXEFILE' '$R0'，$EXEFILE 已加引号。"
+  },
+  {
+    "id": "M49",
+    "severity": "MEDIUM",
+    "title": "settings/compiler.js saveSettings 遗漏 testlibPath",
+    "status": "无效",
+    "file": "src/renderer/settings/compiler.js:542-547",
+    "problem": "newSettings 对象不含 testlibPath，主保存按钮点击时丢失。",
+    "impact": "报告称设置丢失。",
+    "invalid_reason": "updateSettings 按键部分合并、不删除未传入的键，testlibPath 不会被丢弃。"
+  },
+  {
+    "id": "M50",
+    "severity": "MEDIUM",
+    "title": "settings/compiler.js 重复事件监听器",
+    "status": "待修复",
+    "file": "src/renderer/settings/compiler.js:142-150,255-261",
+    "problem": "close-install-dialog 按钮绑定两次 click 事件。",
+    "impact": "重复监听。"
+  },
+  {
+    "id": "L1",
+    "severity": "LOW",
+    "title": "死代码 — debugProcess/debugSession",
+    "status": "待修复",
+    "file": "src/main.js:1963-1964",
+    "problem": "声明但从未使用。",
+    "impact": "死代码。"
+  },
+  {
+    "id": "L2",
+    "severity": "LOW",
+    "title": "checkForUpdates 不可达代码",
+    "status": "待修复",
+    "file": "src/main.js:6919-7003",
+    "problem": "return; 使所有后续代码不可达。",
+    "impact": "不可达代码。"
+  },
+  {
+    "id": "L3",
+    "severity": "LOW",
+    "title": "ideLoginServer race 条件",
+    "status": "无效",
+    "file": "src/main.js:1183-1200",
+    "problem": "error 事件与 listen 回调竞态，可能导致 double-resolve。",
+    "impact": "报告称竞态。",
+    "invalid_reason": "与 M24 同因，Promise 二次 resolve 为无害 no-op。"
+  },
+  {
+    "id": "L4",
+    "severity": "LOW",
+    "title": "compile-output.js keydown 泄漏",
+    "status": "已修复",
+    "file": "src/renderer/js/compile-output.js:44-50",
+    "problem": "document.addEventListener('keydown', ...) 无对应移除。",
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "同 M19 修复，报告内部重复条目。"
+    }
+  },
+  {
+    "id": "L5",
+    "severity": "LOW",
+    "title": "sidebar.js mouse 监听器泄漏",
+    "status": "已修复",
+    "file": "src/renderer/js/sidebar.js:127-168",
+    "problem": "document.addEventListener('mousemove/mouseup') 从不清理。",
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "resize 的 mousemove/mouseup 改具名 function，mouseup 即移除"
+    }
+  },
+  {
+    "id": "L6",
+    "severity": "LOW",
+    "title": "monaco-editor.css 重复 :root",
+    "status": "待确认",
+    "file": "src/renderer/css/monaco-editor.css:1-18,557-583",
+    "problem": "两个 :root 块定义相同变量，第一个是死代码。",
+    "impact": "死代码。"
+  },
+  {
+    "id": "L7",
+    "severity": "LOW",
+    "title": "sidebar.css 重复 min-width",
+    "status": "待修复",
+    "file": "src/renderer/css/sidebar.css:109,113",
+    "problem": "min-width: 200px 被 min-width: 0 覆盖，前者是死代码。",
+    "impact": "死代码。"
+  },
+  {
+    "id": "L8",
+    "severity": "LOW",
+    "title": "templates.html textarea 样式泄漏",
+    "status": "待修复",
+    "file": "src/renderer/settings/templates.html:60-69",
+    "problem": ".message-toast.warning 含 textarea 属性（resize: vertical、monospace 字体）。",
+    "impact": "样式泄漏。"
+  },
+  {
+    "id": "L9",
+    "severity": "LOW",
+    "title": "templates.html 死代码",
+    "status": "待修复",
+    "file": "src/renderer/settings/templates.html:310-321",
+    "problem": "查询 .settings-tabs .tab-btn，但 HTML 用 .sidebar-item，永远无匹配。",
+    "impact": "死代码。"
+  },
+  {
+    "id": "L10",
+    "severity": "LOW",
+    "title": "英文翻译含中文",
+    "status": "待修复",
+    "file": "src/lang/en.json:789",
+    "problem": "compileOutput.analysisEmpty 值是中文而非英文。",
+    "impact": "翻译错误。"
+  },
+  {
+    "id": "L11",
+    "severity": "LOW",
+    "title": "zh-cn.json 缺少 tabs 章节",
+    "status": "无效",
+    "file": "src/lang/zh-cn.json",
+    "problem": "英文文件有 tabs 章节，中文文件完全缺失。",
+    "impact": "报告称翻译缺失。",
+    "invalid_reason": "zh-cn.json:1061 已存在 tabs 章节。"
+  },
+  {
+    "id": "L12",
+    "severity": "LOW",
+    "title": "终端 i18n key 缺失",
+    "status": "无效",
+    "file": "terminal-panel.js:309-310",
+    "problem": "terminal.unicodeAddonMissing、terminal.unicodeAddonDetail、terminal.tabLabel 在两个 JSON 文件中均不存在。",
+    "impact": "报告称 key 缺失。",
+    "invalid_reason": "三个 key 均存在：en.json 404/407/408，zh-cn.json 387/390/391。"
+  },
+  {
+    "id": "L13",
+    "severity": "LOW",
+    "title": "硬编码中文（12 处）",
+    "status": "无效",
+    "file": "src/renderer/js/terminal-panel.js",
+    "problem": "行号 135,136,285,286,297,298,390,410,1048-1050,1103,1111 存在硬编码中文。",
+    "impact": "报告称 i18n 缺失。",
+    "invalid_reason": "terminal-panel.js 全文硬编码中文扫描 0 命中，原 12 处已 i18n 化。"
+  },
+  {
+    "id": "L14",
+    "severity": "LOW",
+    "title": "硬编码中文（10 处）",
+    "status": "无效",
+    "file": "src/renderer/js/tabs.js",
+    "problem": "行号 1812,1818,1820,1822,1826-1831,1838,1899,1939 存在硬编码中文。",
+    "impact": "报告称 i18n 缺失。",
+    "invalid_reason": "tabs.js 硬编码中文扫描 0 命中，报告所列行号处已是 i18n 调用。"
+  },
+  {
+    "id": "L15",
+    "severity": "LOW",
+    "title": "lang/index.js reload() 无效",
+    "status": "待修复",
+    "file": "src/lang/index.js:29-31",
+    "problem": "资源静态加载，reloadResources() 什么都不做。",
+    "impact": "功能无效。"
+  },
+  {
+    "id": "L16",
+    "severity": "LOW",
+    "title": "ci-check.js 正则尾部匹配假阴性",
+    "status": "待修复",
+    "file": "scripts/ci-check.js:160",
+    "problem": "/oicpp\\.ico[^-]/ 不匹配文件末尾的 oicpp.ico。",
+    "impact": "假阴性。"
+  },
+  {
+    "id": "L17",
+    "severity": "LOW",
+    "title": "ci-check.js 秘密扫描用 warn",
+    "status": "待修复",
+    "file": "scripts/ci-check.js:474,489,494",
+    "problem": "标题说 FAIL 但用 warn() 而非 fail()。",
+    "impact": "检查未失败。"
+  },
+  {
+    "id": "L18",
+    "severity": "LOW",
+    "title": "ci-check.js IPC 一致性子串匹配",
+    "status": "无效",
+    "file": "scripts/ci-check.js:338",
+    "problem": "双向子串匹配产生误报。",
+    "impact": "报告称误报。",
+    "invalid_reason": "当前 ci-check.js E1 用 Set.has/includes 精确匹配，无双向子串匹配。"
+  },
+  {
+    "id": "L19",
+    "severity": "LOW",
+    "title": "download-clangd.js 重定向无深度限制",
+    "status": "待修复",
+    "file": "scripts/download-clangd.js:110",
+    "problem": "重定向用 retriesLeft 参数，重定向循环会耗尽重试次数。",
+    "impact": "重定向循环。"
+  },
+  {
+    "id": "L20",
+    "severity": "LOW",
+    "title": "generate-build-info.js author.name",
+    "status": "无效",
+    "file": "scripts/generate-build-info.js:54",
+    "problem": "packageJson.author.name 假设 author 是对象格式。",
+    "impact": "报告称假设错误。",
+    "invalid_reason": "package.json:5 author 是对象格式，author.name 合法。"
+  },
+  {
+    "id": "L21",
+    "severity": "LOW",
+    "title": "package.json sharp 重复",
+    "status": "待修复",
+    "file": "package.json:34,56",
+    "problem": "sharp 同时在 dependencies 和 devDependencies。",
+    "impact": "依赖重复。"
+  },
+  {
+    "id": "L22",
+    "severity": "LOW",
+    "title": "package.json 两个 markdown-it-katex",
+    "status": "待修复",
+    "file": "package.json:41,50",
+    "problem": "@iktakahiro/markdown-it-katex 和 markdown-it-katex 同时安装，后者未使用。",
+    "impact": "依赖冗余。"
+  },
+  {
+    "id": "L23",
+    "severity": "LOW",
+    "title": "pnpm-workspace.yaml 无效配置",
+    "status": "无效",
+    "file": "pnpm-workspace.yaml:1-5",
+    "problem": "allowBuilds 不是 pnpm 有效配置键，文件被静默忽略。",
+    "impact": "报告称配置无效。",
+    "invalid_reason": "实测 pnpm install --lockfile-only 对 totallyBogusKey 告警而对 allowBuilds 不告警，该键被识别。"
+  },
+  {
+    "id": "L24",
+    "severity": "LOW",
+    "title": "compare-worker-v6.js null .equals() 崩溃",
+    "status": "无效",
+    "file": "src/main-process/compare-worker-v6.js:67,161",
+    "problem": "进程退出码 0 但 _collect() 返回 null 时 output.equals() 崩溃。",
+    "impact": "报告称崩溃。",
+    "invalid_reason": "output 为 null 的路径已被 timeout/error 的前置 continue 拦截，到达 output.equals 时 _collect() 必为 Buffer。"
+  },
+  {
+    "id": "L25",
+    "severity": "LOW",
+    "title": "settings/editor.js catch 块缺少 fontLigaturesEnabled",
+    "status": "待修复",
+    "file": "src/renderer/settings/editor.js:1512-1539",
+    "problem": "catch 默认设置缺少 fontLigaturesEnabled。",
+    "impact": "设置缺失。"
+  },
+  {
+    "id": "L26",
+    "severity": "LOW",
+    "title": "settings-init.js 任意 100ms 延迟",
+    "status": "待修复",
+    "file": "src/renderer/js/settings-init.js:5",
+    "problem": "await new Promise(resolve => setTimeout(resolve, 100)) 导致可见闪烁。",
+    "impact": "UI 闪烁。"
+  },
+  {
+    "id": "L27",
+    "severity": "LOW",
+    "title": "settings/compiler.js 递归 browseCompiler",
+    "status": "待修复",
+    "file": "src/renderer/settings/compiler.js:400-402",
+    "problem": "取消时递归调用自身，应用循环替代。",
+    "impact": "递归风险。"
+  },
+  {
+    "id": "L28",
+    "severity": "LOW",
+    "title": "settings/compiler.js setTestlibPath 无空检查",
+    "status": "待修复",
+    "file": "src/renderer/settings/compiler.js:1365",
+    "problem": "document.getElementById('testlib-path').value 无空检查。",
+    "impact": "空引用风险。"
+  },
+  {
+    "id": "L29",
+    "severity": "LOW",
+    "title": "toast 重叠",
+    "status": "已修复",
+    "file": "settings/backup.js:260-301, compiler.js:857-905, editor.js:2061-2109",
+    "problem": "showMessage 不移除之前的 toast，快速操作时重叠。",
+    "impact": "UI 重叠。",
+    "fix": {
+      "commit": "af28a71",
+      "note": "backup/editor/compiler showMessage 开头移除既有 toast，对齐 templates.js"
+    }
+  },
+  {
+    "id": "L30",
+    "severity": "LOW",
+    "title": "cloudSync.js 混用硬编码中文和 i18n",
+    "status": "待修复",
+    "file": "src/renderer/js/sidebar/cloudSync.js:825,835,895,1054",
+    "problem": "部分消息硬编码中文，部分用 window.i18n.t()。",
+    "impact": "i18n 不一致。"
+  },
+  {
+    "id": "L31",
+    "severity": "LOW",
+    "title": "Buffer 暴露给 renderer",
+    "status": "待修复",
+    "file": "src/preload.js:703",
+    "problem": "contextBridge.exposeInMainWorld('Buffer', Buffer) 扩大攻击面。",
+    "impact": "攻击面扩大。"
+  },
+  {
+    "id": "L32",
+    "severity": "LOW",
+    "title": "main.js renderer showMessage 未定义",
+    "status": "无效",
+    "file": "src/renderer/js/main.js:181,188,275,402,413,433",
+    "problem": "OICPPApp 类未定义 showMessage()，每次调用抛 TypeError。",
+    "impact": "报告称 TypeError。",
+    "invalid_reason": "showMessage 已在 main.js:3954 定义，58 处调用正常。"
+  },
+  {
+    "id": "L33",
+    "severity": "LOW",
+    "title": "folder-picker.js process.platform",
+    "status": "无效",
+    "file": "src/renderer/js/folder-picker.js:41,52",
+    "problem": "contextIsolation 下 process 全局不可用。",
+    "impact": "报告称 ReferenceError。",
+    "invalid_reason": "与 H12 重复；process 已由 contextBridge 暴露，不会抛 ReferenceError。"
+  }
+]
