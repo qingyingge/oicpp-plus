@@ -1637,20 +1637,15 @@ class MonacoEditorManager {
                             26: monaco.languages.SymbolKind.TypeParameter
                         };
 
-                        return result.filter(Boolean).map((sym) => ({
+                        const mapSymbol = (sym) => ({
                             name: sym.name || '',
                             detail: sym.detail || '',
                             kind: kindMap[sym.kind] || monaco.languages.SymbolKind.Variable,
                             range: toRange(sym.range || sym.location?.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }),
                             selectionRange: toRange(sym.selectionRange || sym.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }),
-                            children: Array.isArray(sym.children) ? sym.children.filter(Boolean).map((child) => ({
-                                name: child.name || '',
-                                detail: child.detail || '',
-                                kind: kindMap[child.kind] || monaco.languages.SymbolKind.Variable,
-                                range: toRange(child.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }),
-                                selectionRange: toRange(child.selectionRange || child.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } })
-                            })) : []
-                        }));
+                            children: Array.isArray(sym.children) ? sym.children.filter(Boolean).map(mapSymbol) : []
+                        });
+                        return result.filter(Boolean).map(mapSymbol);
                     } catch (_) {
                         return [];
                     }
