@@ -6441,84 +6441,16 @@ class MonacoEditorManager {
 
     async formatCppCode() {
         try {
-            const model = this.currentEditor.getModel();
-
-            const lspReady = await this._ensureLspDocumentReady(model);
-            if (lspReady && this.lspClient) {
-                try {
-                    const uri = await this.getDocumentUriForModel(model);
-                    if (uri) {
-                        const opts = this.currentEditor.getOptions();
-                        const tabSize = opts.get(monaco.editor.EditorOption.tabSize) || 4;
-                        const result = await this.lspClient.request('textDocument/formatting', {
-                            textDocument: { uri },
-                            options: { tabSize, insertSpaces: true }
-                        });
-                        if (Array.isArray(result) && result.length > 0) {
-                            const edits = result.filter(Boolean).map((edit) => ({
-                                range: new monaco.Range(
-                                    (edit.range?.start?.line || 0) + 1,
-                                    (edit.range?.start?.character || 0) + 1,
-                                    (edit.range?.end?.line || 0) + 1,
-                                    (edit.range?.end?.character || 0) + 1
-                                ),
-                                text: edit.newText || ''
-                            }));
-                            this.currentEditor.executeEdits('format', edits);
-                            logInfo('[LSP] 代码格式化完成 (clang-format)');
-                            return true;
-                        }
-                    }
-                } catch (lspErr) {
-                    logWarn('[LSP] 格式化请求失败，回退到本地格式化:', lspErr?.message || lspErr);
-                }
-            }
-
-            const content = model.getValue();
-
-            // 优先使用 clangd LSP 格式化（对模板/宏/复杂表达式更准确）。
-            if (await this.formatCppViaLsp(model, content)) {
-                return true;
-            }
-
-            const opts = this.currentEditor.getOptions();
-            const editorTabSize = opts.get(monaco.editor.EditorOption.tabSize) || 4;
-            const style = this.normalizeClangFormatStyle(this.clangFormatStyle);
-            const tabSize = style.IndentWidth || editorTabSize;
-            const insertSpaces = style.UseTab === 'Never';
-
-            let formattedContent = content;
-            if (window.cppFormatter && typeof window.cppFormatter.format === 'function') {
-                formattedContent = window.cppFormatter.format(content, {
-                    tabSize,
-                    insertSpaces: !!insertSpaces,
-                    clangFormatStyle: style
-                });
-            } else {
-                formattedContent = content;
-            }
-
-            formattedContent = formattedContent.replace(/[\t ]+(?=\r?\n|$)/g, '');
-            
-            if (formattedContent !== content) {
-                const range = model.getFullModelRange();
-                const edit = {
-                    range: range,
-                    text: formattedContent
-                };
-                
-                this.currentEditor.executeEdits('format', [edit]);
-                return true;
-            } else {
-                return true;
-            }
+            const model = this.currentEditor?.getModel?.();
+            if (!model || model.isDisposed?.()) return false;
+            return await this.formatCppViaLsp(model);
         } catch (error) {
             logError('C++代码格式化失败:', error);
             return false;
         }
     }
 
-    async formatCppViaLsp(model, content) {
+    async formatCppViaLsp(model) {
         try {
             if (!model || model.isDisposed?.() || !this.lspClient) return false;
             const lspReady = await this._ensureLspDocumentReady(model);
@@ -6555,7 +6487,7 @@ class MonacoEditorManager {
             logInfo('[LSP] 已通过 clangd 完成代码格式化');
             return true;
         } catch (err) {
-            logWarn('[LSP] clangd 格式化失败，回退到本地格式化:', err?.message || err);
+            logWarn('[LSP] clangd 格式化失败:', err?.message || err);
             return false;
         }
     }

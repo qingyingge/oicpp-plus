@@ -22,11 +22,12 @@ const normalizePlatform = (raw) => {
     return value || process.platform;
 };
 
-const version = readArg('version', process.env.CLANGD_VERSION || '22.1.0');
+const version = readArg('version', process.env.CLANGD_VERSION || '23.1.0');
 const tag = readArg('tag', process.env.CLANGD_TAG || version);
 const repo = readArg('repo', process.env.CLANGD_REPO || 'clangd/clangd');
 const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANGD_PLATFORM || process.platform));
 const outputRoot = path.resolve(readArg('output', process.env.CLANGD_OUTPUT || path.join(__dirname, '..', 'build', 'clangd')));
+const directUrl = readArg('url', process.env.CLANGD_DOWNLOAD_URL || '');
 const skipSslVerify = process.env.OICPP_SKIP_SSL_VERIFY === '1' || process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';
 const tempRoot = path.join(outputRoot, '_download');
 
@@ -219,22 +220,47 @@ const main = async () => {
     }
 
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
-    const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${tag}`;
-    console.log(`[clangd] Fetching release ${releaseUrl}`);
-
-    const release = await requestJson(releaseUrl, token || undefined);
-    const assets = Array.isArray(release.assets) ? release.assets : [];
-
     const patterns = platformPatterns[platform] || [];
     let selected = null;
-    for (const pattern of patterns) {
-        selected = assets.find((asset) => pattern.test(asset.name));
-        if (selected) break;
-    }
 
-    if (!selected) {
-        const names = assets.map((asset) => asset.name).join(', ');
-        throw new Error(`clangd asset not found for ${platform}. Assets: ${names}`);
+    if (directUrl) {
+        const parsedUrl = new URL(directUrl);
+        selected = {
+            name: path.basename(parsedUrl.pathname) || `clangd-${platform}-${version}.zip`,
+            browser_download_url: parsedUrl.toString()
+        };
+        console.log(`[clangd] Using direct release asset: ${selected.name}`);
+    } else {
+        const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${tag}`;
+        console.log(`[clangd] Fetching release ${releaseUrl}`);
+
+        try {
+            const release = await requestJson(releaseUrl, token || undefined);
+            const assets = Array.isArray(release.assets) ? release.assets : [];
+            for (const pattern of patterns) {
+                selected = assets.find((asset) => pattern.test(asset.name));
+                if (selected) break;
+            }
+
+            if (!selected) {
+                const names = assets.map((asset) => asset.name).join(', ');
+                throw new Error(`clangd asset not found for ${platform}. Assets: ${names}`);
+            }
+        } catch (err) {
+            const fallbackAssetNames = {
+                win32: `clangd-windows-${version}.zip`,
+                darwin: `clangd-mac-${version}.zip`,
+                linux: `clangd-linux-${version}.zip`
+            };
+            const fallbackName = fallbackAssetNames[platform];
+            if (!fallbackName) throw err;
+
+            console.warn(`[clangd] Release API unavailable, trying direct asset: ${err?.message || err}`);
+            selected = {
+                name: fallbackName,
+                browser_download_url: `https://github.com/${repo}/releases/download/${tag}/${fallbackName}`
+            };
+        }
     }
 
     console.log(`[clangd] Selected asset: ${selected.name}`);

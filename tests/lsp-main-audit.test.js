@@ -27,6 +27,7 @@ function loadManagerClass() {
         EventEmitter,
         path: require('path'),
         fs: require('fs'),
+        LSP_REQUEST_TIMEOUT_MS: 30000,
         logInfo: () => {},
         logWarn: () => {},
         logError: () => {},
@@ -119,10 +120,15 @@ class FakeProc extends EventEmitter {
     console.log('[INFO] malformed-frame pending cleanup remains an explicit follow-up audit item');
 
     const cancelPromise = manager.request('textDocument/completion', {}, 'request-2');
+    const cancelOutcome = cancelPromise.then(
+        (value) => ({ value }),
+        (error) => ({ error })
+    );
     const cancelResult = manager.cancel('request-2');
     check('audit: main manager sends cancel request', cancelResult?.ok === true && proc.writes.some((line) => line.includes('$/cancelRequest')));
     manager._dispatchMessage({ id: 'request-2', result: { isIncomplete: false } });
-    await cancelPromise;
+    const cancelled = await cancelOutcome;
+    check('audit: main manager rejects cancelled request', /LSP request cancelled/.test(cancelled?.error?.message || ''));
 
     const errorPromise = manager.request('textDocument/definition', {}, 'request-3');
     manager._dispatchMessage({ id: 'request-3', error: { message: 'synthetic failure' } });
