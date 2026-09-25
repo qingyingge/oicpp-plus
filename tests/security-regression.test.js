@@ -22,6 +22,7 @@ const editorSettingsSource = read('src/renderer/settings/editor.js');
 const workerSource = read('src/main-process/compare-worker-v6.js');
 const downloaderSource = read('src/utils/multi-thread-downloader.js');
 const packageJson = JSON.parse(read('package.json'));
+const ciSource = read('scripts/ci-check.js');
 const gdbSource = `${read('src/gdb-debugger.js')}\n${read('src/gdb-mi-debugger.js')}`;
 const installerSource = read('installer.nsi');
 const workflows = ['build.yml', 'build-windows-test.yml', 'build-dmg-test.yml']
@@ -54,6 +55,7 @@ check('downloader releases probe response bodies', (downloaderSource.match(/\.bo
 check('comparer tracks all children and observes stop between awaits', workerSource.includes('const activeProcesses = new Set()') && !workerSource.includes('currentProc') && (workerSource.match(/if \(!running\) break;/g) || []).length >= 3);
 check('uninstaller preserves foreign cpp associations', installerSource.includes('ReadRegStr $0 HKCR ".cpp" ""') && installerSource.includes('${If} $0 == "OICPPIDE.cpp"') && !installerSource.includes('DeleteRegKey HKCR ".cpp"'));
 check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') && Object.hasOwn(packageJson.devDependencies, 'sharp'));
+check('CI icon boundary matching is exact', ciSource.includes('/oicpp\\.ico(?=$|[^-])/'));
 
 console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

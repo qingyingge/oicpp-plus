@@ -216,7 +216,7 @@ for (const f of iconRefFiles) {
   const fp = path.join(root, f);
   const content = readFile(fp);
   if (content) {
-    if (/oicpp\.ico[^-]/.test(content)) fail(`${f} still references oicpp.ico`); else ok(`${f}`);
+    if (/oicpp\.ico(?=$|[^-])/.test(content)) fail(`${f} still references oicpp.ico`); else ok(`${f}`);
   }
 }
 
@@ -249,7 +249,7 @@ if (brandOk) ok('no old brand refs');
 console.log(`\n${Y}[B4] installer.nsi${R}`);
 const nsiContent = readFile(path.join(root, 'installer.nsi'));
 if (nsiContent) {
-  if (/oicpp\.ico[^-]/.test(nsiContent)) fail('old icon'); else ok('icon OK');
+  if (/oicpp\.ico(?=$|[^-])/.test(nsiContent)) fail('old icon'); else ok('icon OK');
   if (/\.oicpp-plus/.test(nsiContent)) ok('data dir'); else fail('no .oicpp-plus');
   if (/OICPP-Plus IDE\.lnk/.test(nsiContent)) ok('shortcut'); else fail('shortcut wrong');
 }
