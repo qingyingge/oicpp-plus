@@ -28,12 +28,20 @@ class CompareEngineV2 extends EventEmitter {
         this._stopRequested = false;
         this._fastspawnErrorForwarded = false;
         this._completed = 0;
-        this._total = config.totalTests;
+        this._total = 0;
         this._errors = 0;
 
         try {
-            const threadCount = Math.min(config.threadCount || os.cpus().length, config.totalTests);
-            const perThread = Math.ceil(config.totalTests / threadCount);
+            const totalTests = Number(config.totalTests);
+            if (!Number.isInteger(totalTests) || totalTests <= 0 || totalTests > 100000) {
+                throw new Error('totalTests must be an integer between 1 and 100000');
+            }
+            const requestedThreads = Number.isInteger(config.threadCount) && config.threadCount > 0
+                ? config.threadCount
+                : os.cpus().length;
+            const threadCount = Math.min(Math.max(1, requestedThreads), totalTests, 32);
+            this._total = totalTests;
+            const perThread = Math.ceil(totalTests / threadCount);
             const workerPath = path.join(__dirname, 'compare-worker-v6.js');
 
             const resolvePath = (exe) => {
@@ -58,7 +66,7 @@ class CompareEngineV2 extends EventEmitter {
 
             for (let t = 0; t < threadCount; t++) {
                 const startIdx = t * perThread + 1;
-                const count = Math.min(perThread, config.totalTests - startIdx + 1);
+                const count = Math.min(perThread, totalTests - startIdx + 1);
                 if (count <= 0) continue;
 
                 const worker = new Worker(workerPath);
@@ -88,16 +96,13 @@ class CompareEngineV2 extends EventEmitter {
                                 stdMs: msg.stdMs,
                                 testMs: msg.testMs
                             });
-                        } else if (msg.type === 'fastspawn-load-error') {
-                            if (!this._fastspawnErrorForwarded) {
-                                this._fastspawnErrorForwarded = true;
-                                this.emit('error', {
-                                    testNumber: 0,
-                                    type: 'engine',
-                                    message: 'fastspawn load failed: ' + (msg.message || 'unknown error'),
-                                    input: ''
-                                });
-                            }
+                        } else if (msg.type === 'fastspawn-load-warning') {
+                            this.emit('warning', {
+                                testNumber: 0,
+                                type: 'engine',
+                                message: 'fastspawn unavailable; using Node child_process fallback: ' + (msg.message || 'unknown error'),
+                                input: ''
+                            });
                         } else if (msg.type === 'done') {
                             settle();
                         }

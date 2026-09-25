@@ -15,6 +15,7 @@ class FileExplorer {
         this._pendingDragOverRoot = false;
         this._dragHoverFrame = null;
         this.isDragging = false;
+        this.platform = window.electronAPI?.platform || '';
 
         this.setupKeyboardShortcuts();
     }
@@ -33,6 +34,9 @@ class FileExplorer {
         if (trimmedName.length === 0) {
             return { valid: false, error: window.i18n.t('fileExplorer.nameRequired')};
         }
+        if (trimmedName === '.' || trimmedName === '..') {
+            return { valid: false, error: '名称不能为 . 或 ..' };
+        }
 
         // Check for illegal characters
         // Windows: < > : " / \ | ? *
@@ -41,8 +45,10 @@ class FileExplorer {
         const illegalCharsUnix = /\//;
         
         // Detect platform from userAgent or assume Windows if unclear
-        const isWindows = navigator.platform?.toLowerCase().includes('win') || 
-                          navigator.userAgent?.toLowerCase().includes('windows');
+        const isWindows = this.platform
+            ? this.platform === 'win32'
+            : (navigator.platform?.toLowerCase().includes('win') ||
+                navigator.userAgent?.toLowerCase().includes('windows'));
         
         const illegalChars = isWindows ? illegalCharsWin : illegalCharsUnix;
         
@@ -164,9 +170,14 @@ class FileExplorer {
                 activeElement.classList?.contains?.('monaco-editor') ||
                 activeElement.closest?.('.tab-content')
             ));
+            const isInTerminal = !!(activeElement && (
+                activeElement.closest?.('.xterm') ||
+                activeElement.closest?.('.integrated-terminal-mount') ||
+                activeElement.closest?.('.editor-terminal-container')
+            ));
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
             const isTypingElement = tag === 'input' || tag === 'textarea' || !!activeElement?.isContentEditable;
-            if (isInEditor || isTypingElement) {
+            if (isInEditor || isInTerminal || isTypingElement) {
                 return;
             }
 

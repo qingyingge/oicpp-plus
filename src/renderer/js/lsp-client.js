@@ -174,6 +174,16 @@ class LspClientBridge {
             ? [{ uri: rootUri, name: options.workspaceName || 'workspace' }]
             : [];
 
+        if (startResult?.initialized && startResult?.serverCapabilities) {
+            this._serverCapabilities = startResult.serverCapabilities;
+            this._semanticTokensLegend = this._serverCapabilities?.semanticTokensProvider?.legend || null;
+            this._ready = true;
+            this._readyListeners.forEach((listener) => {
+                try { listener(this); } catch (_) {}
+            });
+            return { capabilities: this._serverCapabilities, reused: true };
+        }
+
         const fallbackFlags = Array.isArray(effectiveFallbackFlags)
             ? effectiveFallbackFlags
             : (Array.isArray(startResult?.fallbackFlags)
@@ -244,12 +254,6 @@ class LspClientBridge {
                     references: {},
                     rename: {
                         prepareSupport: true
-                    },
-                    formatting: {
-                        dynamicRegistration: false
-                    },
-                    rangeFormatting: {
-                        dynamicRegistration: false
                     },
                     inlayHint: {
                         dynamicRegistration: false,
@@ -429,7 +433,7 @@ class LspClientBridge {
         return this._serverCapabilities;
     }
 
-    supportsCapability(path, fallback = true) {
+    supportsCapability(path, fallback = false) {
         if (!path) return fallback;
         let value = this._serverCapabilities;
         for (const key of String(path).split('.')) {

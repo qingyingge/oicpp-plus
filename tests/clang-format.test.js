@@ -124,7 +124,7 @@ class FakeChildProcess extends EventEmitter {
     check('packaged app resolves a separately bundled clang-format', mainSource.includes("path.join(process.resourcesPath, 'clang-format')"));
 
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-    check('build downloads standalone clang-format with the system CA', packageJson.scripts['prebuild:clang-format'] === 'node --use-system-ca scripts/download-clang-format.js');
+    check('build downloads standalone clang-format', packageJson.scripts['prebuild:clang-format'] === 'node scripts/download-clang-format.js');
     const packagedSources = ['win', 'mac', 'linux'].flatMap(platform => packageJson.build[platform].extraResources || []);
     check('standalone clang-format is packaged for every desktop platform', packagedSources.filter(item => item.to === 'clang-format').length === 3);
 

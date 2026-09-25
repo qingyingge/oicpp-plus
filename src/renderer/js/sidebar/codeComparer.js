@@ -1069,7 +1069,18 @@ class CodeComparer {
 
                 } catch (error) {
                     logError(`第 ${i} 组测试出错:`, error);
-                    continue;
+                    errorOccurred = true;
+                    task.state.errorResult = {
+                        testNumber: i,
+                        input: '',
+                        stdOutput: '',
+                        testOutput: '',
+                        usedSpj: false,
+                        message: error?.message || String(error)
+                    };
+                    task.state.mode = 'error';
+                    this.renderIfActive(task);
+                    return;
                 }
             }
         };

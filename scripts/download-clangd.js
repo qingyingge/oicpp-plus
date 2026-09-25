@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { path7za } = require('7zip-bin');
 const extractZip = require('extract-zip');
@@ -30,6 +31,8 @@ const outputRoot = path.resolve(readArg('output', process.env.CLANGD_OUTPUT || p
 const directUrl = readArg('url', process.env.CLANGD_DOWNLOAD_URL || '');
 const skipSslVerify = process.env.OICPP_SKIP_SSL_VERIFY === '1' || process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';
 const tempRoot = path.join(outputRoot, '_download');
+const MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024;
+const MAX_REDIRECTS = 10;
 
 const platformPatterns = {
     win32: [
@@ -96,7 +99,7 @@ const requestJson = (url, token, retriesLeft = 3) => new Promise((resolve, rejec
     }).on('error', reject);
 });
 
-const downloadFile = (url, dest, token, retriesLeft = 3) => new Promise((resolve, reject) => {
+const downloadFile = (url, dest, token, retriesLeft = 3, redirectsLeft = MAX_REDIRECTS) => new Promise((resolve, reject) => {
     const opts = new URL(url);
     const headers = { 'User-Agent': 'oicpp-clangd-downloader' };
     if (token) {
@@ -108,12 +111,18 @@ const downloadFile = (url, dest, token, retriesLeft = 3) => new Promise((resolve
     https.get(opts, (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
             res.resume();
-            downloadFile(res.headers.location, dest, token, retriesLeft).then(resolve).catch(reject);
+            if (redirectsLeft <= 0) {
+                reject(new Error(`Too many redirects while downloading ${url}`));
+                return;
+            }
+            const nextUrl = new URL(res.headers.location, opts);
+            const nextToken = nextUrl.origin === opts.origin ? token : '';
+            downloadFile(nextUrl.toString(), dest, nextToken, retriesLeft, redirectsLeft - 1).then(resolve).catch(reject);
             return;
         }
         if (res.statusCode === 403) {
             res.resume();
-            const retry = retryAfterRateLimit(res.headers['retry-after'], retriesLeft, () => downloadFile(url, dest, token, retriesLeft - 1));
+            const retry = retryAfterRateLimit(res.headers['retry-after'], retriesLeft, () => downloadFile(url, dest, token, retriesLeft - 1, redirectsLeft));
             if (retry) {
                 retry.then(resolve, reject);
                 return;
@@ -124,24 +133,71 @@ const downloadFile = (url, dest, token, retriesLeft = 3) => new Promise((resolve
             reject(new Error(`Download failed ${res.statusCode}: ${url}`));
             return;
         }
+
+        let receivedBytes = 0;
+        let settled = false;
+        const fail = (error) => {
+            if (settled) return;
+            settled = true;
+            try { fs.unlinkSync(dest); } catch (_) {}
+            reject(error);
+        };
         const file = fs.createWriteStream(dest);
-        file.on('error', reject);
+        file.on('error', fail);
+        res.on('aborted', () => fail(new Error(`Download aborted: ${url}`)));
+        res.on('error', fail);
+        res.on('data', (chunk) => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > MAX_DOWNLOAD_BYTES) {
+                res.destroy();
+                fail(new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes: ${url}`));
+            }
+        });
         res.pipe(file);
-        file.on('finish', () => file.close(resolve));
+        file.on('finish', () => file.close((error) => {
+            if (settled) return;
+            settled = true;
+            if (error) reject(error);
+            else resolve();
+        }));
     }).on('error', (err) => {
         try { fs.unlinkSync(dest); } catch (_) {}
         reject(err);
     });
 });
 
-const ensureDownload = async (url, dest, token) => {
-    if (!fs.existsSync(dest)) {
-        console.log(`[clangd] Downloading to ${dest}`);
-        await downloadFile(url, dest, token);
-        return;
-    }
+const hashFile = (filePath) => new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+});
 
-    console.log('[clangd] Using cached download');
+const ensureDownload = async (url, dest, token, digest = '') => {
+    const expected = String(digest || '').replace(/^sha256:/i, '').toLowerCase();
+    for (let attempt = 0; attempt < 2; attempt++) {
+        if (fs.existsSync(dest)) {
+            console.log('[clangd] Using cached download');
+        } else {
+            const partPath = `${dest}.part`;
+            try { fs.unlinkSync(partPath); } catch (_) {}
+            console.log(`[clangd] Downloading to ${dest}`);
+            await downloadFile(url, partPath, token);
+            fs.renameSync(partPath, dest);
+        }
+        if (!expected) {
+            console.warn('[clangd] No SHA-256 digest was provided; archive integrity was not verified');
+            return;
+        }
+        const actual = await hashFile(dest);
+        if (actual === expected) return;
+        console.warn(`[clangd] SHA-256 mismatch for ${dest}`);
+        try { fs.unlinkSync(dest); } catch (_) {}
+        if (attempt === 1) {
+            throw new Error(`clangd archive SHA-256 mismatch: expected ${expected}, got ${actual}`);
+        }
+    }
 };
 
 const run7z = (argsList) => {
@@ -214,9 +270,15 @@ const main = async () => {
     }
 
     const targetRoot = path.join(outputRoot, platform);
-    if (fs.existsSync(targetRoot)) {
-        console.log(`[clangd] Target exists: ${targetRoot}, skipping`);
-        return;
+    const targetBinary = path.join(targetRoot, 'bin', platform === 'win32' ? 'clangd.exe' : 'clangd');
+    if (fs.existsSync(targetBinary)) {
+        const versionCheck = spawnSync(targetBinary, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        if (versionCheck.status === 0 && /clangd version/i.test(versionCheck.stdout || '')) {
+            console.log(`[clangd] Target exists: ${targetBinary}, skipping`);
+            return;
+        }
+        console.warn('[clangd] Existing target is incomplete or invalid; reinstalling');
+        fs.rmSync(targetRoot, { recursive: true, force: true });
     }
 
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
@@ -276,14 +338,15 @@ const main = async () => {
         await extractArchive(downloadPath, extractRoot);
     };
 
-    await ensureDownload(selected.browser_download_url, downloadPath, token || undefined);
+    const digest = String(selected.digest || process.env.CLANGD_SHA256 || '').replace(/^sha256:/i, '');
+    await ensureDownload(selected.browser_download_url, downloadPath, token || undefined, digest);
 
     try {
         await extractWithRetry();
     } catch (err) {
         console.log('[clangd] Cached archive failed to extract, re-downloading...');
         try { fs.unlinkSync(downloadPath); } catch (_) {}
-        await downloadFile(selected.browser_download_url, downloadPath, token || undefined);
+        await ensureDownload(selected.browser_download_url, downloadPath, token || undefined, digest);
         await extractWithRetry();
     }
 
@@ -297,8 +360,13 @@ const main = async () => {
 
     console.log(`[clangd] Copying ${installRoot} -> ${targetRoot}`);
     fs.cpSync(installRoot, targetRoot, { recursive: true });
+    const installedBinary = path.join(targetRoot, 'bin', platform === 'win32' ? 'clangd.exe' : 'clangd');
+    const versionCheck = spawnSync(installedBinary, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    if (versionCheck.status !== 0 || !/clangd version/i.test(versionCheck.stdout || '')) {
+        throw new Error(`Downloaded clangd binary is not executable: ${versionCheck.stderr || versionCheck.error || 'unknown error'}`);
+    }
 
-    console.log('[clangd] Done');
+    console.log(`[clangd] Installed ${versionCheck.stdout.trim()}`);
 };
 
 main().catch((err) => {

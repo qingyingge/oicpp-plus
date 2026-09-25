@@ -1239,6 +1239,7 @@
     "detectMacOS": "检测到 macOS 平台，已自动移除不兼容参数 -static",
     "ipcFailed": "IPC 调用失败",
     "electronUnavailable": "Electron 环境不可用",
+    "disabled": "OICPP-Plus 已禁用云端编译，不会发送本地源码。",
     "failed": "云编译失败",
     "codeTooLong": "代码长度为 {size}，超出云编译 20KB 限制。",
     "compiling": "正在云编译...",

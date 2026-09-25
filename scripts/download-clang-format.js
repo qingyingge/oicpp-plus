@@ -27,19 +27,24 @@ const tag = readArg('tag', process.env.CLANG_FORMAT_TAG || `llvmorg-${version}`)
 const repo = readArg('repo', process.env.CLANG_FORMAT_REPO || 'llvm/llvm-project');
 const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANG_FORMAT_PLATFORM || process.platform));
 const architecture = String(readArg('arch', process.env.OICPP_CLANG_FORMAT_ARCH || process.arch)).toLowerCase();
+const usesIntelMacFallback = platform === 'darwin' && architecture === 'x64'
+    && !args.includes('--version') && !process.env.CLANG_FORMAT_VERSION;
+const assetVersion = usesIntelMacFallback ? '19.1.7' : version;
+const releaseTag = usesIntelMacFallback ? 'llvmorg-19.1.7' : tag;
 const outputRoot = path.resolve(readArg('output', process.env.CLANG_FORMAT_OUTPUT || path.join(__dirname, '..', 'build', 'clang-format')));
 const directUrl = readArg('url', process.env.CLANG_FORMAT_DOWNLOAD_URL || '');
 const expectedDigest = String(readArg('digest', process.env.CLANG_FORMAT_SHA256 || '')).replace(/^sha256:/i, '').toLowerCase();
 const skipSslVerify = process.env.OICPP_SKIP_SSL_VERIFY === '1' || process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';
 const tempRoot = path.join(outputRoot, '_download');
+const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024 * 1024;
 
 const assetNames = {
-    'win32-x64': `clang+llvm-${version}-x86_64-pc-windows-msvc.tar.xz`,
-    'win32-arm64': `clang+llvm-${version}-aarch64-pc-windows-msvc.tar.xz`,
-    'darwin-x64': `LLVM-${version}-macOS-x86_64.tar.xz`,
-    'darwin-arm64': `LLVM-${version}-macOS-ARM64.tar.xz`,
-    'linux-x64': `LLVM-${version}-Linux-X64.tar.xz`,
-    'linux-arm64': `LLVM-${version}-Linux-ARM64.tar.xz`
+    'win32-x64': `clang+llvm-${assetVersion}-x86_64-pc-windows-msvc.tar.xz`,
+    'win32-arm64': `clang+llvm-${assetVersion}-aarch64-pc-windows-msvc.tar.xz`,
+    'darwin-x64': `LLVM-${assetVersion}-macOS-x86_64.tar.xz`,
+    'darwin-arm64': `LLVM-${assetVersion}-macOS-ARM64.tar.xz`,
+    'linux-x64': `LLVM-${assetVersion}-Linux-X64.tar.xz`,
+    'linux-arm64': `LLVM-${assetVersion}-Linux-ARM64.tar.xz`
 };
 
 const ensureDir = (dirPath) => {
@@ -109,7 +114,9 @@ const downloadFile = (url, dest, token, retriesLeft = 3, redirectsLeft = 10) => 
                 reject(new Error(`Too many redirects while downloading ${url}`));
                 return;
             }
-            downloadFile(res.headers.location, dest, token, retriesLeft, redirectsLeft - 1).then(resolve).catch(reject);
+            const nextUrl = new URL(res.headers.location, opts);
+            const nextToken = nextUrl.origin === opts.origin ? token : '';
+            downloadFile(nextUrl.toString(), dest, nextToken, retriesLeft, redirectsLeft - 1).then(resolve).catch(reject);
             return;
         }
         if (res.statusCode === 403) {
@@ -125,10 +132,33 @@ const downloadFile = (url, dest, token, retriesLeft = 3, redirectsLeft = 10) => 
             reject(new Error(`Download failed ${res.statusCode}: ${url}`));
             return;
         }
+
+        let receivedBytes = 0;
+        let settled = false;
+        const fail = (error) => {
+            if (settled) return;
+            settled = true;
+            try { fs.unlinkSync(dest); } catch (_) {}
+            reject(error);
+        };
         const file = fs.createWriteStream(dest);
-        file.on('error', reject);
+        file.on('error', fail);
+        res.on('aborted', () => fail(new Error(`Download aborted: ${url}`)));
+        res.on('error', fail);
+        res.on('data', (chunk) => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > MAX_DOWNLOAD_BYTES) {
+                res.destroy();
+                fail(new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes: ${url}`));
+            }
+        });
         res.pipe(file);
-        file.on('finish', () => file.close(resolve));
+        file.on('finish', () => file.close((error) => {
+            if (settled) return;
+            settled = true;
+            if (error) reject(error);
+            else resolve();
+        }));
     }).on('error', (err) => {
         try { fs.unlinkSync(dest); } catch (_) {}
         reject(err);
@@ -148,8 +178,11 @@ const ensureDownload = async (url, dest, token, digest) => {
         if (fs.existsSync(dest)) {
             console.log('[clang-format] Using cached download');
         } else {
+            const partPath = `${dest}.part`;
+            try { fs.unlinkSync(partPath); } catch (_) {}
             console.log(`[clang-format] Downloading to ${dest}`);
-            await downloadFile(url, dest, token);
+            await downloadFile(url, partPath, token);
+            fs.renameSync(partPath, dest);
         }
         if (!digest) return;
         const actual = await hashFile(dest);
@@ -163,7 +196,7 @@ const ensureDownload = async (url, dest, token, digest) => {
 };
 
 const run7z = (argsList) => {
-    const result = spawnSync(path7za, argsList, { stdio: 'inherit' });
+    const result = spawnSync(path7za, argsList, { stdio: 'inherit', timeout: 300000 });
     if (result.status !== 0) {
         throw new Error(`7z failed: ${argsList.join(' ')}`);
     }
@@ -240,7 +273,7 @@ const selectReleaseAsset = async (token) => {
         };
     }
 
-    const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${tag}`;
+    const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${releaseTag}`;
     console.log(`[clang-format] Fetching release ${releaseUrl}`);
     try {
         const release = await requestJson(releaseUrl, token || undefined);
@@ -254,7 +287,7 @@ const selectReleaseAsset = async (token) => {
         console.warn(`[clang-format] Release API unavailable, using the official asset URL: ${error?.message || error}`);
         return {
             name: assetName,
-            browser_download_url: `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(assetName)}`,
+            browser_download_url: `https://github.com/${repo}/releases/download/${releaseTag}/${encodeURIComponent(assetName)}`,
             digest: expectedDigest ? `sha256:${expectedDigest}` : null
         };
     }
@@ -303,19 +336,25 @@ const main = async () => {
         throw new Error(`Unable to locate LICENSE.TXT in ${path.basename(downloadPath)}`);
     }
 
-    fs.rmSync(targetRoot, { recursive: true, force: true });
-    ensureDir(path.dirname(targetBinary));
-    fs.copyFileSync(extractedBinary, targetBinary);
-    fs.copyFileSync(extractedLicense, targetLicense);
+    const stagingRoot = path.join(outputRoot, `.${platform}.staging-${process.pid}`);
+    const stagedBinary = path.join(stagingRoot, 'bin', binaryName);
+    const stagedLicense = path.join(stagingRoot, 'LICENSE.TXT');
+    fs.rmSync(stagingRoot, { recursive: true, force: true });
+    ensureDir(path.dirname(stagedBinary));
+    fs.copyFileSync(extractedBinary, stagedBinary);
+    fs.copyFileSync(extractedLicense, stagedLicense);
     if (platform !== 'win32') {
-        fs.chmodSync(targetBinary, 0o755);
+        fs.chmodSync(stagedBinary, 0o755);
     }
 
-    const versionResult = spawnSync(targetBinary, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+    const versionResult = spawnSync(stagedBinary, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
     if (versionResult.status !== 0 || !/clang-format version/i.test(versionResult.stdout || '')) {
+        fs.rmSync(stagingRoot, { recursive: true, force: true });
         throw new Error(`Downloaded clang-format binary is not executable: ${versionResult.stderr || versionResult.error || 'unknown error'}`);
     }
 
+    fs.rmSync(targetRoot, { recursive: true, force: true });
+    fs.renameSync(stagingRoot, targetRoot);
     console.log(`[clang-format] Installed ${versionResult.stdout.trim()}`);
 };
 

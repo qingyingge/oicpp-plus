@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { t } = require('./lang');
+const { terminateProcessTree } = require('./utils/process-supervisor');
 
 let pty = null;
 let ptyLoadError = null;
@@ -453,7 +454,8 @@ class IntegratedTerminalManager {
             cwd,
             env,
             windowsHide: true,
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: process.platform !== 'win32'
         });
 
         const sessionId = crypto.randomUUID();
@@ -753,7 +755,7 @@ class IntegratedTerminalManager {
         if (session.backend === 'process') {
             try {
                 if (session.process && !session.process.killed) {
-                    session.process.kill();
+                    terminateProcessTree(session.process);
                 }
             } catch (_) {}
             this.sessions.delete(terminalId);

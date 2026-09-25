@@ -49,6 +49,7 @@ class MonacoEditorManager {
         this._syntaxCheckEnabled = true;
         this._lspCompilerPath = undefined;
         this._lspProviders = new Map();
+        this._clangFormatProviders = new Map();
         this._lspCommandArguments = new Map();
         this._lspProvidersReady = false;
         this._lspGuardedModels = new WeakSet();
@@ -589,7 +590,7 @@ class MonacoEditorManager {
         }
         try {
             if (typeof monaco === 'undefined' || !monaco.languages) return;
-            const supports = (path, fallback = true) => (
+            const supports = (path, fallback = false) => (
                 typeof this.lspClient?.supportsCapability === 'function'
                     ? this.lspClient.supportsCapability(path, fallback)
                     : fallback
@@ -2020,7 +2021,7 @@ class MonacoEditorManager {
         const languages = ['cpp', 'c'];
         for (const language of languages) {
             const key = `${language}:clang-format`;
-            if (this._lspProviders.has(key)) continue;
+            if (this._clangFormatProviders.has(key)) continue;
             logInfo('[clang-format] 注册文档格式化提供器 (语言:', language, ')');
             const disposable = monaco.languages.registerDocumentFormattingEditProvider(language, {
                 provideDocumentFormattingEdits: async (model, _options, token) => {
@@ -2038,7 +2039,7 @@ class MonacoEditorManager {
                     }
                 }
             });
-            this._lspProviders.set(key, disposable);
+            this._clangFormatProviders.set(key, disposable);
         }
     }
 
@@ -2046,7 +2047,7 @@ class MonacoEditorManager {
         const languages = ['cpp', 'c'];
         for (const language of languages) {
             const key = `${language}:clang-format-range`;
-            if (this._lspProviders.has(key)) continue;
+            if (this._clangFormatProviders.has(key)) continue;
             const disposable = monaco.languages.registerDocumentRangeFormattingEditProvider(language, {
                 displayName: 'clang-format',
                 provideDocumentRangeFormattingEdits: async (model, range, _options, token) => {
@@ -2064,7 +2065,7 @@ class MonacoEditorManager {
                     }
                 }
             });
-            this._lspProviders.set(key, disposable);
+            this._clangFormatProviders.set(key, disposable);
         }
     }
 
@@ -3470,6 +3471,14 @@ class MonacoEditorManager {
         } catch (error) {
             logWarn('注册 C/C++ 语义高亮提供器失败:', error);
         }
+    }
+
+    resetLspSemanticProviders() {
+        if (!Array.isArray(this._lspSemanticProviders)) return;
+        for (const disposable of this._lspSemanticProviders) {
+            try { disposable?.dispose?.(); } catch (_) { }
+        }
+        this._lspSemanticProviders = [];
     }
 
     getDefaultKeybindings() {
@@ -6233,6 +6242,7 @@ class MonacoEditorManager {
     }
 
     resetLspProviders() {
+        this.resetLspSemanticProviders();
         if (this._lspProviders instanceof Map) {
             for (const disp of this._lspProviders.values()) {
                 try { disp?.dispose?.(); } catch (_) { }
@@ -6418,6 +6428,7 @@ class MonacoEditorManager {
         if (!window.electronAPI?.formatCppCode) {
             throw new Error('clang-format bridge is unavailable');
         }
+        const modelVersion = model.getVersion?.();
 
         const request = {
             content: model.getValue(),
@@ -6433,6 +6444,9 @@ class MonacoEditorManager {
         const result = await window.electronAPI.formatCppCode(request);
         if (!result?.ok || typeof result.content !== 'string') {
             throw new Error(result?.error || 'clang-format did not return formatted content');
+        }
+        if (model.isDisposed?.() || (modelVersion !== undefined && model.getVersion?.() !== modelVersion)) {
+            return null;
         }
         return result.content;
     }

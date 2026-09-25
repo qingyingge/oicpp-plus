@@ -456,7 +456,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'get-all-settings', 'update-settings', 'update-top-level-settings',
     'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
-    'compile-file', 'run-executable', 'check-file-exists', 'format-cpp-code'
+    'compile-file', 'run-program', 'run-interactive', 'run-executable', 'check-file-exists', 'format-cpp-code'
 ]);
 
 // 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
@@ -574,11 +574,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     selectTestlib: (version) => ipcRenderer.invoke('select-testlib', version),
     testTestlib: (testlibPath) => ipcRenderer.invoke('test-testlib', testlibPath),
 
-    compileFile: (options) => ipcRenderer.invoke('compile-file', options),
-    formatCppCode: (options) => ipcRenderer.invoke('format-cpp-code', options),
-    runExecutable: (options) => ipcRenderer.invoke('run-executable', options),
-    runProgram: (executablePath, input, timeLimit, memoryLimit) => ipcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
-    runInteractive: (options) => ipcRenderer.invoke('run-interactive', options),
+    compileFile: (options) => safeIpcRenderer.invoke('compile-file', options),
+    formatCppCode: (options) => safeIpcRenderer.invoke('format-cpp-code', options),
+    runExecutable: (options) => safeIpcRenderer.invoke('run-executable', options),
+    runProgram: (executablePath, input, timeLimit, memoryLimit) => safeIpcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
+    runInteractive: (options) => safeIpcRenderer.invoke('run-interactive', options),
 
     startCompare: (config) => ipcRenderer.invoke('compare-start', config),
     stopCompare: () => ipcRenderer.invoke('compare-stop'),
@@ -692,6 +692,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onMenuOpenFileHistory: (callback) => ipcRenderer.on('menu-open-file-history', callback),
 
     versions: process.versions,
+    platform: process.platform,
 
     relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
 

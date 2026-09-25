@@ -1239,6 +1239,7 @@
     "detectMacOS": "macOS detected, incompatible option -static has been automatically removed",
     "ipcFailed": "IPC call failed",
     "electronUnavailable": "Electron environment unavailable",
+    "disabled": "OICPP-Plus has disabled cloud compilation and will not send local source code.",
     "failed": "Cloud compilation failed",
     "codeTooLong": "Code size is {size}, exceeding the 20KB cloud compilation limit.",
     "compiling": "Compiling in cloud...",

@@ -28,6 +28,8 @@ function loadManagerClass() {
         path: require('path'),
         fs: require('fs'),
         LSP_REQUEST_TIMEOUT_MS: 30000,
+        LSP_MAX_MESSAGE_BYTES: 16 * 1024 * 1024,
+        terminateProcessTree: (proc) => { try { proc?.kill?.(); } catch (_) {} },
         logInfo: () => {},
         logWarn: () => {},
         logError: () => {},
@@ -115,9 +117,13 @@ class FakeProc extends EventEmitter {
     } catch (_) {
         malformedThrew = true;
     }
-    malformedManager._dispatchMessage({ id: 'malformed-1', result: { recovered: true } });
-    check('audit: malformed JSON does not crash the parser', !malformedThrew && (await malformedRequest)?.recovered === true);
-    console.log('[INFO] malformed-frame pending cleanup remains an explicit follow-up audit item');
+    let malformedError = null;
+    try {
+        await malformedRequest;
+    } catch (error) {
+        malformedError = error;
+    }
+    check('audit: malformed JSON is surfaced without crashing the parser', !malformedThrew && /Malformed LSP JSON/.test(malformedError?.message || ''));
 
     const cancelPromise = manager.request('textDocument/completion', {}, 'request-2');
     const cancelOutcome = cancelPromise.then(

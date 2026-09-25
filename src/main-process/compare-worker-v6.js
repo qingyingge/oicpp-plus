@@ -8,24 +8,61 @@
 const { parentPort } = require('worker_threads');
 
 let fast = null;
-try { fast = require('../../fastspawn.node'); } catch(e) { parentPort.postMessage({ type: 'fastspawn-load-error', message: e.message }); }
+try { fast = require('../../fastspawn.node'); } catch(e) { parentPort.postMessage({ type: 'fastspawn-load-warning', message: e.message }); }
 
 const { spawn } = require('child_process');
+const { terminateProcessTree } = require('../utils/process-supervisor');
+const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
+
+function normalizeOutput(value) {
+    return Buffer.from(value || '')
+        .toString('utf8')
+        .replace(/\r\n/g, '\n')
+        .split('\n')
+        .map((line) => line.replace(/[ \t]+$/, ''))
+        .join('\n')
+        .replace(/\n+$/, '');
+}
+
+function outputsEqual(left, right) {
+    return normalizeOutput(left) === normalizeOutput(right);
+}
 
 function spawnProcess(exePath, args, cwd) {
     return new Promise((resolve) => {
-        const proc = spawn(exePath, args || [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, cwd });
+        const proc = spawn(exePath, args || [], {
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            detached: process.platform !== 'win32',
+            cwd
+        });
         currentProc = proc;
         const stdout = [], stderr = [];
-        proc.stdout.on('data', d => stdout.push(d));
-        proc.stderr.on('data', d => stderr.push(d));
+        let outputBytes = 0;
+        let outputTruncated = false;
+        const append = (target, data) => {
+            if (outputTruncated) return;
+            const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+            const remaining = MAX_WORKER_OUTPUT_BYTES - outputBytes;
+            if (remaining <= 0 || buffer.length > remaining) {
+                outputTruncated = true;
+                if (remaining > 0) target.push(buffer.subarray(0, remaining));
+                terminateProcessTree(proc);
+                return;
+            }
+            target.push(buffer);
+            outputBytes += buffer.length;
+        };
+        proc.stdout.on('data', data => append(stdout, data));
+        proc.stderr.on('data', data => append(stderr, data));
         proc._collect = () => Buffer.concat(stdout);
         proc._stderr = () => Buffer.concat(stderr).toString('utf8');
+        proc._outputTruncated = () => outputTruncated;
         proc._done = false;
         proc._result = null;
         proc._collectors = [];
-        proc.on('close', (code) => { if (currentProc === proc) currentProc = null; proc._result = { exitCode: code }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
-        proc.on('error', (err) => { if (currentProc === proc) currentProc = null; proc._result = { exitCode: -1, error: err.message }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
+        proc.on('close', (code) => { if (currentProc === proc) currentProc = null; proc._result = { exitCode: code, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
+        proc.on('error', (err) => { if (currentProc === proc) currentProc = null; proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
         resolve(proc);
     });
 }
@@ -39,14 +76,14 @@ function waitForResult(proc, timeout) {
         if (timeout > 0) {
             timer = setTimeout(() => {
                 proc._collectors = proc._collectors.filter(c => c !== cb);
-                try { proc.kill('SIGKILL'); } catch(_) {}
+                terminateProcessTree(proc);
                 resolve({ exitCode: -1, timeout: true, error: 'timeout' });
             }, timeout);
         }
     });
 }
 
-function killProc(proc) { try { proc.kill('SIGKILL'); } catch(_) {} }
+function killProc(proc) { terminateProcessTree(proc); }
 
 function writeInput(proc, input) {
     return new Promise((resolve) => {
@@ -62,10 +99,10 @@ function writeInput(proc, input) {
 async function runJs(exePath, input, timeout, args, cwd) {
     const t0 = Date.now();
     const proc = await spawnProcess(exePath, args, cwd);
-    if (input) await writeInput(proc, input);
+    if (input !== null && input !== undefined) await writeInput(proc, input);
     const r = await waitForResult(proc, timeout);
     const output = (r.exitCode === -1 || r.exitCode === -3) ? null : proc._collect();
-    return { code: r.exitCode, output, timeout: !!r.timeout, error: r.error, ms: Date.now() - t0 };
+    return { code: r.exitCode, output, outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(), timeout: !!r.timeout, error: r.error, ms: Date.now() - t0 };
 }
 
 function runFast(exePath, input, timeout) {
@@ -87,6 +124,8 @@ function runFastPair(stdPath, testPath, input, timeout) {
     return {
         code1: r.code1, code2: r.code2,
         out1: r.out1, out2: r.out2,
+        truncated1: !!r.out1 && r.out1.length >= MAX_WORKER_OUTPUT_BYTES,
+        truncated2: !!r.out2 && r.out2.length >= MAX_WORKER_OUTPUT_BYTES,
         ms
     };
 }
@@ -139,8 +178,9 @@ parentPort.on('message', async (msg) => {
                     if (stdCode !== 0 && stdCode !== null) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'std_re', message: 'std exit ' + stdCode, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
                     if (testCode === -3) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_tle', message: 'test TLE', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
                     if (testCode !== 0 && testCode !== null) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_re', message: 'test exit ' + testCode, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
+                    if (pair.truncated1 || pair.truncated2) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'output_limit', message: 'program output exceeded limit', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
 
-                    if (!stdOut.equals(testOut)) {
+                    if (!outputsEqual(stdOut, testOut)) {
                         parentPort.postMessage({ type: 'error', testIndex: i, kind: 'mismatch', message: 'WA',
                             stdOutput: stdOut.toString('utf8', 0, 200), testOutput: testOut.toString('utf8', 0, 200),
                             genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) });
@@ -157,8 +197,9 @@ parentPort.on('message', async (msg) => {
                     if (stdR.error || (stdR.code !== 0 && stdR.code !== null)) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'std_re', message: stdR.error || ('std exit ' + stdR.code), genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
                     if (testR.timeout) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_tle', message: 'test TLE', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
                     if (testR.error || (testR.code !== 0 && testR.code !== null)) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_re', message: testR.error || ('test exit ' + testR.code), genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
+                    if (stdR.outputTruncated || testR.outputTruncated) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'output_limit', message: 'program output exceeded limit', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
 
-                    if (!stdR.output.equals(testR.output)) {
+                    if (!outputsEqual(stdR.output, testR.output)) {
                         parentPort.postMessage({ type: 'error', testIndex: i, kind: 'mismatch', message: 'WA',
                             stdOutput: stdR.output.toString('utf8', 0, 200), testOutput: testR.output.toString('utf8', 0, 200),
                             genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) });

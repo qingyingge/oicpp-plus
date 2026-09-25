@@ -20,6 +20,7 @@ const logger = require('./utils/logger');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
+const { terminateProcessTree } = require('./utils/process-supervisor');
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
@@ -28,6 +29,7 @@ const APP_VERSION = '1.5.4';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
 const LSP_REQUEST_TIMEOUT_MS = 30000;
+const LSP_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const EXTERNAL_OPEN_DEDUP_WINDOW_MS = 800;
 const recentExternalOpens = new Map();
 // Compiler probing starts child processes and filesystem scans. Results depend
@@ -627,11 +629,14 @@ class ClangdLspManager {
         this.proc = null;
         this.buffer = Buffer.alloc(0);
         this.pending = new Map();
+        this.canceledIds = new Set();
         this.nextId = 1;
         this.pendingApplyEdits = new Map();
         this.nextApplyEditId = 1;
         this.workspaceFolders = [];
         this.procGeneration = 0;
+        this.initialized = false;
+        this.serverCapabilities = null;
     }
 
     isRunning() {
@@ -641,7 +646,12 @@ class ClangdLspManager {
     async start(options = {}) {
         if (this.proc) {
             logInfo('[LSP] clangd 已在运行中，复用了现有进程');
-            return { ok: true, alreadyRunning: true };
+            return {
+                ok: true,
+                alreadyRunning: true,
+                initialized: this.initialized,
+                serverCapabilities: this.serverCapabilities
+            };
         }
 
         const ensured = ensureClangdUserBundle();
@@ -774,9 +784,16 @@ class ClangdLspManager {
         }
 
         logInfo('[LSP] 正在启动 clangd:', clangdPath, args.join(' '));
-        const proc = spawn(clangdPath, args, { stdio: 'pipe', ...(spawnCwd ? { cwd: spawnCwd } : {}) });
+        const proc = spawn(clangdPath, args, {
+            stdio: 'pipe',
+            detached: process.platform !== 'win32',
+            ...(spawnCwd ? { cwd: spawnCwd } : {})
+        });
         const generation = ++this.procGeneration;
         this.proc = proc;
+        this.initialized = false;
+        this.serverCapabilities = null;
+        this.canceledIds.clear();
         proc.stdout.on('data', (data) => this._handleData(data));
         proc.stderr.on('data', (data) => {
             try { logWarn('[clangd]', data.toString('utf8').trim()); } catch (_) {}
@@ -788,6 +805,8 @@ class ClangdLspManager {
             }
             logInfo('[LSP] clangd 进程已退出, code=' + (code ?? 'null') + (signal ? ', signal=' + signal : ''));
             this.proc = null;
+            this.initialized = false;
+            this.serverCapabilities = null;
             this.buffer = Buffer.alloc(0);
             const err = new Error(`clangd exited (${code || '0'})${signal ? ` signal=${signal}` : ''}`);
             this.pending.forEach((entry) => {
@@ -812,6 +831,8 @@ class ClangdLspManager {
             logError('[LSP] clangd 进程启动失败:', err?.message || err);
             if (generation !== this.procGeneration) return;
             this.proc = null;
+            this.initialized = false;
+            this.serverCapabilities = null;
             this.buffer = Buffer.alloc(0);
             this.pending.forEach((entry) => {
                 clearTimeout(entry.timer);
@@ -831,6 +852,9 @@ class ClangdLspManager {
         logInfo('[LSP] 正在停止 clangd (PID:', proc.pid, ')');
         this.procGeneration += 1;
         this.proc = null;
+        this.initialized = false;
+        this.serverCapabilities = null;
+        this.canceledIds.clear();
         this.buffer = Buffer.alloc(0);
         this.pending.forEach((entry) => {
             clearTimeout(entry.timer);
@@ -859,7 +883,7 @@ class ClangdLspManager {
             };
             proc.once('exit', onExit);
             try {
-                proc.kill();
+                terminateProcessTree(proc);
             } catch (_) {
                 clearTimeout(timeout);
                 finish();
@@ -870,13 +894,20 @@ class ClangdLspManager {
         return { ok: true };
     }
 
+    _failPending(error) {
+        this.pending.forEach((entry) => {
+            clearTimeout(entry.timer);
+            try { entry.reject(error); } catch (_) { }
+        });
+        this.pending.clear();
+    }
+
     request(method, params, requestId = null) {
         if (!this.proc) {
             return Promise.reject(new Error('clangd not running'));
         }
         const id = requestId ?? this.nextId++;
         const payload = { jsonrpc: '2.0', id, method, params: params || {} };
-        this._send(payload);
         return new Promise((resolve, reject) => {
             const entry = { resolve, reject, method, timer: null };
             entry.timer = setTimeout(() => {
@@ -892,6 +923,13 @@ class ClangdLspManager {
                 reject(error);
             }, LSP_REQUEST_TIMEOUT_MS);
             this.pending.set(id, entry);
+            try {
+                this._send(payload);
+            } catch (error) {
+                clearTimeout(entry.timer);
+                this.pending.delete(id);
+                reject(error);
+            }
         });
     }
 
@@ -911,6 +949,11 @@ class ClangdLspManager {
         if (entry) {
             clearTimeout(entry.timer);
             this.pending.delete(requestId);
+            this.canceledIds.add(requestId);
+            if (this.canceledIds.size > 1024) {
+                const oldest = this.canceledIds.values().next().value;
+                this.canceledIds.delete(oldest);
+            }
             const error = new Error(`LSP request cancelled: ${entry.method || requestId}`);
             error.code = 'ECANCELED';
             entry.reject(error);
@@ -952,6 +995,12 @@ class ClangdLspManager {
 
     _handleData(chunk) {
         this.buffer = Buffer.concat([this.buffer, chunk]);
+        if (this.buffer.length > LSP_MAX_MESSAGE_BYTES + 8192) {
+            logWarn('[LSP] 消息超过大小上限，丢弃缓冲区');
+            this.buffer = Buffer.alloc(0);
+            this._failPending(new Error('LSP message exceeds size limit'));
+            return;
+        }
         while (true) {
             const headerEnd = this.buffer.indexOf('\r\n\r\n');
             if (headerEnd === -1) return;
@@ -962,9 +1011,10 @@ class ClangdLspManager {
                 continue;
             }
             const length = parseInt(lengthMatch[1], 10);
-            if (!Number.isFinite(length) || length < 0) {
+            if (!Number.isFinite(length) || length < 0 || length > LSP_MAX_MESSAGE_BYTES) {
                 logWarn('[LSP] 收到非法的 Content-Length:', lengthMatch[1]);
                 this.buffer = Buffer.alloc(0);
+                this._failPending(new Error('Invalid LSP Content-Length'));
                 return;
             }
             const messageStart = headerEnd + 4;
@@ -979,6 +1029,7 @@ class ClangdLspManager {
                 payload = JSON.parse(body);
             } catch (err) {
                 logWarn('[LSP] 无法解析 clangd JSON 消息:', err?.message || err);
+                this._failPending(new Error('Malformed LSP JSON message'));
                 continue;
             }
             this._dispatchMessage(payload);
@@ -1077,7 +1128,13 @@ class ClangdLspManager {
         if (Object.prototype.hasOwnProperty.call(message, 'id')) {
             const entry = this.pending.get(message.id);
             if (!entry) {
-                this._handleServerRequest(message);
+                if (this.canceledIds.has(message.id)) {
+                    this.canceledIds.delete(message.id);
+                    return;
+                }
+                if (typeof message.method === 'string') {
+                    this._handleServerRequest(message);
+                }
                 return;
             }
             clearTimeout(entry.timer);
@@ -1086,6 +1143,10 @@ class ClangdLspManager {
                 logWarn('[LSP] 请求失败, id=' + message.id + ', 方法=' + (entry.method || '?'), message.error?.message || JSON.stringify(message.error));
                 entry.reject(new Error(message.error.message || 'clangd error'));
             } else {
+                if (entry.method === 'initialize') {
+                    this.initialized = true;
+                    this.serverCapabilities = message.result?.capabilities || null;
+                }
                 entry.resolve(message.result);
             }
             return;
@@ -1111,6 +1172,7 @@ class ClangdLspManager {
 const clangdLspManager = new ClangdLspManager();
 
 let mainWindow;
+const detachedRunProcesses = new Set();
 let sampleTesterServer = null; // HTTP 服务实例
 let competitiveCompanionServer = null; // Competitive Companion
 const terminalManager = new IntegratedTerminalManager({
@@ -1856,9 +1918,7 @@ function collectRejectedCompilerArgs(args) {
 const REMOTE_API_ORIGIN = 'https://oicpp.mywwzh.top';
 const ALLOWED_REMOTE_API_PATHS = new Set([
     '/api/getAvailableCompilerList',
-    '/api/getAvailableTestlibList',
-    '/api/cloudCompilation',
-    '/api/getCloudCompilationResult'
+    '/api/getAvailableTestlibList'
 ]);
 
 function getDefaultSettings() {
@@ -3124,7 +3184,10 @@ function createMenuBar() {
 // 任意网站 Origin（含沙箱 iframe 的 "null"）一律 403，防止恶意页面向 127.0.0.1 注入题目数据（H5）
 function isTrustedLocalOrigin(req) {
     const origin = req.headers && req.headers.origin;
-    if (origin === undefined) return true; // 非浏览器客户端不带 Origin
+    if (origin === undefined) {
+        const remote = String(req.socket?.remoteAddress || '');
+        return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+    }
     if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(origin)) return true;
     if (/^(chrome|moz)-extension:\/\//.test(origin)) return true;
     return false;
@@ -3138,12 +3201,15 @@ function rejectUntrustedOrigin(req, res) {
 }
 
 function writeJson(res, statusCode, payload) {
-    res.writeHead(statusCode, {
+    const origin = res.req?.headers?.origin;
+    const headers = {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS'
-    });
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Vary': 'Origin'
+    };
+    if (origin) headers['Access-Control-Allow-Origin'] = origin;
+    res.writeHead(statusCode, headers);
     res.end(JSON.stringify(payload));
 }
 
@@ -3162,13 +3228,18 @@ function getRequestPath(req) {
 
 function readJsonBody(req, res, callback) {
     let body = '';
+    let tooLarge = false;
     req.on('data', chunk => {
+        if (tooLarge) return;
         body += chunk;
-        if (body.length > 2 * 1024 * 1024) {
+        if (Buffer.byteLength(body, 'utf8') > 2 * 1024 * 1024) {
+            tooLarge = true;
+            writeJson(res, 413, { code: 413, message: 'Request body too large' });
             req.destroy();
         }
-    }); // 2MB 限制
+    });
     req.on('end', () => {
+        if (tooLarge) return;
         let data = null;
         try { data = JSON.parse(body || '{}'); } catch (_) { }
         if (!data || typeof data !== 'object') {
@@ -3349,6 +3420,7 @@ function validateSampleTesterPayload(data) {
     if (!data || typeof data !== 'object') return { valid: false, message: 'body must be JSON object', invalidField: 'body' };
     if (!data.problemName || typeof data.problemName !== 'string') return { valid: false, message: 'problemName missing.', invalidField: 'problemName' };
     if (!Array.isArray(data.samples) || data.samples.length === 0) return { valid: false, message: 'samples must not be empty.', invalidField: 'samples' };
+    if (data.samples.length > 2000) return { valid: false, message: 'too many samples (maximum 2000).', invalidField: 'samples' };
     const ids = new Set();
     for (const s of data.samples) {
         if (!s || typeof s !== 'object') return { valid: false, message: 'sample must be object', invalidField: 'samples' };
@@ -3356,7 +3428,9 @@ function validateSampleTesterPayload(data) {
         if (ids.has(s.id)) return { valid: false, message: 'duplicate sample id', invalidField: 'id' };
         ids.add(s.id);
         if (typeof s.input !== 'string') return { valid: false, message: 'input must be string', invalidField: 'input' };
+        if (s.input.length > 1024 * 1024) return { valid: false, message: 'input is too large', invalidField: 'input' };
         if (typeof s.output !== 'string') return { valid: false, message: 'output must be string', invalidField: 'output' };
+        if (s.output.length > 1024 * 1024) return { valid: false, message: 'output is too large', invalidField: 'output' };
         if (s.timeLimit !== undefined && (!Number.isInteger(s.timeLimit) || s.timeLimit <= 0)) return { valid: false, message: 'timeLimit must be positive integer', invalidField: 'timeLimit' };
     }
     return { valid: true };
@@ -3790,7 +3864,7 @@ function setupIPC() {
     });
 
     ipcMain.handle('get-settings-backup-info', async () => {
-        return getLatestSettingsBackupInfo();
+        return { success: false, error: 'CLOUD_DISABLED' };
     });
 
     ipcMain.handle('sync-settings-from-cloud', async () => {
@@ -4372,6 +4446,9 @@ function setupIPC() {
             const purePath = qIndex === -1 ? spec.path : spec.path.slice(0, qIndex);
             if (!ALLOWED_REMOTE_API_PATHS.has(purePath)) {
                 throw new Error('不允许请求的远程接口: ' + purePath);
+            }
+            if (spec.method && String(spec.method).toUpperCase() !== 'GET') {
+                throw new Error('远程接口只允许 GET 请求');
             }
             const url = REMOTE_API_ORIGIN + spec.path;
             let resp;
@@ -5102,7 +5179,10 @@ function setupIPC() {
         let skipPreKill = false;
         if (typeof executablePathOrOptions === 'object' && executablePathOrOptions && executablePathOrOptions.executablePath) {
             executablePath = executablePathOrOptions.executablePath;
-            args = executablePathOrOptions.args || [];
+            args = Array.isArray(executablePathOrOptions.args) ? executablePathOrOptions.args : [];
+            if (executablePathOrOptions.args !== undefined && !Array.isArray(executablePathOrOptions.args)) {
+                throw new Error('args must be an array');
+            }
             workingDirectory = executablePathOrOptions.workingDirectory;
             skipPreKill = !!executablePathOrOptions.skipPreKill;
             if (executablePathOrOptions.memoryLimit !== undefined) {
@@ -5110,6 +5190,12 @@ function setupIPC() {
             }
         } else {
             executablePath = executablePathOrOptions;
+        }
+        if (typeof executablePath !== 'string' || !executablePath.trim()) {
+            throw new Error('executablePath must be a non-empty string');
+        }
+        if (/^\s*(?:cmd(?:\.exe)?\s+\/c|powershell(?:\.exe)?\s+-command|pwsh(?:\.exe)?\s+-command)/i.test(executablePath)) {
+            throw new Error('Shell command strings are disabled; use executablePath and args');
         }
 
         const compilerPath = settings.compilerPath || '';
@@ -5173,20 +5259,12 @@ function setupIPC() {
         return new Promise((resolve) => {
             let childProcess;
 
-            if (executablePath.startsWith('cmd /c ')) {
-                const actualCommand = executablePath.substring(7); // 去掉"cmd /c "
-                // 由 cmd.exe 单次解析 /c 之后的命令串，不再叠加 shell:true 的二次解析（C2）
-                childProcess = spawn('cmd', ['/c', actualCommand], {
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    env: runtimeEnv,
-                    shell: false,
-                    cwd: workingDirectory
-                });
-            } else if (Array.isArray(args) && args.length > 0) {
+            if (Array.isArray(args) && args.length > 0) {
                 childProcess = spawn(executablePath, args, {
                     stdio: ['pipe', 'pipe', 'pipe'],
                     env: runtimeEnv,
                     shell: false, // SPJ不需要shell
+                    detached: process.platform !== 'win32',
                     cwd: workingDirectory
                 });
             } else {
@@ -5194,6 +5272,7 @@ function setupIPC() {
                 childProcess = spawn(absoluteExePath, [], {
                     stdio: ['pipe', 'pipe', 'pipe'],
                     env: runtimeEnv,
+                    detached: process.platform !== 'win32',
                     cwd: workingDirectory
                 });
             }
@@ -5275,7 +5354,7 @@ function setupIPC() {
                             } catch (_) { }
                             try {
                                 if (childProcess && !childProcess.killed) {
-                                    childProcess.kill('SIGKILL');
+                                    terminateProcessTree(childProcess);
                                 }
                             } catch (e) {
                                 logError('[主进程-程序调试] 终止进程(内存限制)出错:', e?.message || String(e));
@@ -5302,7 +5381,7 @@ function setupIPC() {
             const killTimer = useTimeouts ? setTimeout(() => {
                 try {
                     if (childProcess && !childProcess.killed) {
-                        childProcess.kill('SIGKILL');
+                        terminateProcessTree(childProcess);
                     }
                 } catch (e) {
                     logError('[主进程-程序调试] 尝试终止进程时出错:', e.message);
@@ -5326,7 +5405,7 @@ function setupIPC() {
                 } catch (_) { }
                 try {
                     if (childProcess && !childProcess.killed) {
-                        childProcess.kill('SIGKILL');
+                        terminateProcessTree(childProcess);
                     }
                 } catch (e) {
                     logError('[主进程-程序调试] 终止进程(输出限制)出错:', e?.message || String(e));
@@ -5466,6 +5545,9 @@ function setupIPC() {
             childProcess.on('error', (error) => {
                 if (tleTimer) clearTimeout(tleTimer);
                 if (killTimer) clearTimeout(killTimer);
+                if (memoryTimer) clearInterval(memoryTimer);
+                memoryTimer = null;
+                terminateProcessTree(childProcess);
 
                 const errorResult = {
                     output: error.message,
@@ -5486,7 +5568,7 @@ function setupIPC() {
                 resolve(errorResult);
             });
 
-            if (input && !(Array.isArray(args) && args.length > 0)) {
+            if (input !== undefined && input !== null && input !== '') {
                 childProcess.stdin.write(input);
             }
             childProcess.stdin.end();
@@ -5530,6 +5612,7 @@ function setupIPC() {
                     OICPP_INTERACTIVE_INPUT: inputFilePath,
                     OICPP_CONTESTANT_EXECUTABLE: contestantPath
                 },
+                detached: process.platform !== 'win32',
                 cwd: cwd || undefined
             }
         );
@@ -5594,9 +5677,7 @@ function setupIPC() {
                 } catch (_) { }
             };
             const kill = child => {
-                try {
-                    if (child && !child.killed && child.exitCode === null) child.kill('SIGKILL');
-                } catch (_) { }
+                terminateProcessTree(child);
             };
             const terminate = () => {
                 closeInput(contestant?.stdin);
@@ -5613,8 +5694,7 @@ function setupIPC() {
                 killTimer = null;
             };
 
-            const readMemory = () => new Promise((done) => {
-                const pid = contestant?.pid;
+            const readPidMemory = (pid) => new Promise((done) => {
                 if (!pid) return done(0);
                 if (process.platform === 'linux') {
                     fs.readFile('/proc/' + pid + '/status', 'utf8', (error, content) => {
@@ -5641,6 +5721,13 @@ function setupIPC() {
                 ps.on('close', () => done((Number(output.trim()) || 0) * 1024));
                 ps.on('error', () => done(0));
             });
+            const readMemory = async () => {
+                const [contestantMemory, graderMemory] = await Promise.all([
+                    readPidMemory(contestant?.pid),
+                    readPidMemory(grader?.pid)
+                ]);
+                return contestantMemory + graderMemory;
+            };
 
             const memoryLimitBytes = Number.isFinite(memoryLimit) && memoryLimit > 0
                 ? memoryLimit * 1024 * 1024
@@ -7987,7 +8074,7 @@ function loadSettings() {
 
         if (fs.existsSync(settingsPath)) {
             const savedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'lastOpen', 'recentFiles', 'fileHistory', 'lastOpenTabs', 'lastUpdateCheck', 'pendingUpdate', 'postInstallNotice', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'account', 'runAllSamples'];
+            const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'lastOpen', 'recentFiles', 'fileHistory', 'lastOpenTabs', 'lastUpdateCheck', 'pendingUpdate', 'postInstallNotice', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'];
             let needsSaveAfterMigration = false;
 
             for (const key of validKeys) {
@@ -8090,7 +8177,7 @@ function loadSettings() {
 
 function mergeSettings(defaultSettings, userSettings) {
     const result = JSON.parse(JSON.stringify(defaultSettings));
-    const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'account', 'runAllSamples'];
+    const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'];
 
     const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
     const deepMerge = (target, source) => {
@@ -8664,26 +8751,38 @@ async function compileFile(options) {
             cwd: workingDirectory,
             stdio: ['pipe', 'pipe', 'pipe'],
             env: compilerEnv,
-            shell: false // 禁用shell模式以避免路径解析问题
+            shell: false, // 禁用shell模式以避免路径解析问题
+            detached: process.platform !== 'win32'
         });
 
         let timedOut = false;
         const compilationTimeout = setTimeout(() => {
             timedOut = true;
             logWarn('[编译] 超过 120 秒，正在终止编译器进程:', inputFile);
-            try { compiler.kill(); } catch (_) { }
+            terminateProcessTree(compiler);
         }, 120000);
 
         const stdoutChunks = [];
         const stderrChunks = [];
+        const COMPILER_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
+        let compilerOutputBytes = 0;
+        let compilerOutputTruncated = false;
+        const appendCompilerOutput = (target, data) => {
+            const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+            const remaining = COMPILER_OUTPUT_LIMIT_BYTES - compilerOutputBytes;
+            if (remaining <= 0) {
+                compilerOutputTruncated = true;
+                terminateProcessTree(compiler);
+                return;
+            }
+            const captured = buffer.subarray(0, remaining);
+            target.push(captured);
+            compilerOutputBytes += captured.length;
+            if (captured.length < buffer.length) compilerOutputTruncated = true;
+        };
 
-        compiler.stdout.on('data', (data) => {
-            stdoutChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
-        });
-
-        compiler.stderr.on('data', (data) => {
-            stderrChunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
-        });
+        compiler.stdout.on('data', (data) => appendCompilerOutput(stdoutChunks, data));
+        compiler.stderr.on('data', (data) => appendCompilerOutput(stderrChunks, data));
 
         compiler.on('close', (code) => {
             clearTimeout(compilationTimeout);
@@ -8703,10 +8802,11 @@ async function compileFile(options) {
             const outputExists = fs.existsSync(outputFile);
 
             const result = {
-                success: code === 0 && !timedOut,
+                success: code === 0 && !timedOut && !compilerOutputTruncated,
                 exitCode: code,
                 stdout: stdout,
                 stderr: stderr,
+                outputTruncated: compilerOutputTruncated,
                 warnings: [],
                 errors: [],
                 diagnostics: []
@@ -8714,6 +8814,9 @@ async function compileFile(options) {
 
             if (timedOut) {
                 result.errors.push('编译超时（120 秒），已终止编译器进程。');
+            }
+            if (compilerOutputTruncated) {
+                result.errors.push('编译器输出超过 16 MiB，已截断。');
             }
 
             if (code !== 0 && !stderr.trim() && !stdout.trim()) {
@@ -8931,14 +9034,14 @@ async function runExecutable(options) {
                 reject(new Error('未找到consolepauser.exe，无法启动程序。请确保%userprofile%/.oicpp-plus/consolepauser.exe已正确生成。'));
                 return;
             }
-            command = 'cmd';
             const absoluteExePath = path.resolve(executablePath);
             const absoluteConsolePauserPath = path.resolve(consolePauserPath);
 
             logInfo('绝对路径 - ConsolePauser:', absoluteConsolePauserPath);
             logInfo('绝对路径 - 可执行文件:', absoluteExePath);
 
-            args = ['/c', `start "Program Running" "${absoluteConsolePauserPath}" "${absoluteExePath}"`];
+            command = absoluteConsolePauserPath;
+            args = [absoluteExePath];
 
             let runEnv = { ...process.env };
             const compilerPath = settings && settings.compilerPath;
@@ -8962,7 +9065,7 @@ async function runExecutable(options) {
                 cwd: workingDirectory,
                 detached: true,
                 stdio: 'ignore',
-                shell: true,
+                shell: false,
                 env: runEnv
             };
         } else {
@@ -9018,6 +9121,9 @@ async function runExecutable(options) {
 
         try {
             const child = spawn(command, args, spawnOptions);
+            detachedRunProcesses.add(child);
+            child.once('close', () => detachedRunProcesses.delete(child));
+            child.once('error', () => detachedRunProcesses.delete(child));
 
             child.unref(); // 允许父进程退出而不等待子进程
             child.on('error', (error) => {
@@ -9177,6 +9283,10 @@ app.on('before-quit', () => {
 
     stopHeartbeatService();
     disposeAllFileWatchers();
+    for (const child of detachedRunProcesses) {
+        terminateProcessTree(child);
+    }
+    detachedRunProcesses.clear();
     try { terminalManager.disposeAll(); } catch (_) { }
     try { clangdLspManager.stop(); } catch (_) { }
     try {
@@ -10132,25 +10242,8 @@ async function syncSettingsFromCloud() {
     return { success: true, info };
 }
 
-function scheduleAutoSettingsBackup(reason = 'auto') {
-    if (suppressAutoBackup) return;
-    if (!settings?.autoBackupSettings) return;
-    const now = Date.now();
-    if (autoBackupInFlight) return;
-    if (now - lastAutoBackupAt < AUTO_BACKUP_COOLDOWN_MS) return;
-    autoBackupInFlight = true;
-    backupSettingsToCloud({ reason })
-        .then((result) => {
-            if (result?.success) {
-                lastAutoBackupAt = Date.now();
-                logInfo('[设置备份] 自动备份成功:', { fileName: result?.info?.fileName || '', path: result?.info?.path || '' });
-            } else if (result?.error && result.error !== 'NOT_LOGGED_IN') {
-                logWarn('[设置备份] 自动备份失败:', result.error);
-            }
-        })
-        .finally(() => {
-            autoBackupInFlight = false;
-        });
+function scheduleAutoSettingsBackup() {
+    return;
 }
 
 async function uploadClientLogFile(filePath) {
@@ -10294,63 +10387,11 @@ function listClientLogFiles() {
     }
 }
 
-async function sendHeartbeat(type = 'heartbeat', username = '') {
-    try {
-        const actualUsername = (typeof username === 'string' && username.trim()) ? username.trim() : getLoggedInUsername();
-        const token = generateEncodedToken(actualUsername || '');
-        const device = getDeviceInfo();
-        const loginToken = getLoginToken();
-        let currentVersion = APP_VERSION;
-        try {
-            if (app && typeof app.getVersion === 'function') {
-                const v = app.getVersion();
-                if (typeof v === 'string' && v.length > 0) currentVersion = v;
-            }
-        } catch (_) { }
-
-        const data = {
-            type: type,
-            token: token,
-            version: currentVersion
-        };
-
-        if (loginToken) {
-            data.login_token = loginToken;
-        }
-
-        if (type === 'start') {
-            data.username = actualUsername || '';
-            data.device_name = device.deviceName;
-            data.cpu_id = device.cpuId;
-        }
-
-        const response = await fetch('https://oicpp.mywwzh.top/api/heartbeat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(data),
-            timeout: 10000 // 10秒超时
-        });
-
-        const result = await response.json();
-        return result;
-    } catch (error) {
-        return null;
-    }
+async function sendHeartbeat() {
+    return null;
 }
 
 function startHeartbeatService() {
-    sendHeartbeat('start', getLoggedInUsername());
-
-    if (heartbeatInterval) {
-        clearInterval(heartbeatInterval);
-    }
-
-    heartbeatInterval = setInterval(() => {
-        sendHeartbeat('heartbeat', getLoggedInUsername());
-    }, 30 * 60 * 1000); // 30分钟
-
 }
 
 function stopHeartbeatService() {
@@ -10361,15 +10402,16 @@ function stopHeartbeatService() {
 }
 
 ipcMain.handle('get-encoded-token', () => {
-    try {
-        return generateEncodedToken(getLoggedInUsername());
-    } catch (e) {
-        return '';
-    }
+    return '';
 });
 
 ipcMain.handle('get-device-info', () => {
-    return getDeviceInfo();
+    return {
+        deviceName: '',
+        cpuId: '',
+        os: process.platform,
+        arch: process.arch
+    };
 });
 
 ipcMain.handle('upload-client-log', async (_event, filePath) => {

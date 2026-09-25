@@ -69,6 +69,8 @@ jobs:
 
       - name: Prepare clangd bundle
         run: npm run prebuild:clangd
+      - name: Prepare clang-format bundle
+        run: npm run prebuild:clang-format
 
       - name: Verify node-pty windows binary
         shell: powershell

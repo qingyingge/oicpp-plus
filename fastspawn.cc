@@ -67,7 +67,7 @@ static int drainBoth(int outFd, int errFd, int64_t deadlineMs, pid_t pid,
         if (errOpen) { pfds[n].fd = errFd; pfds[n].events = POLLIN; pfds[n].revents = 0; n++; }
         int64_t remain = deadlineMs - nowMs();
         if (remain <= 0) {
-            kill(pid, SIGKILL);
+            kill(-pid, SIGKILL);
             int status = 0;
             for (;;) {
                 pid_t w2 = waitpid(pid, &status, 0);
@@ -118,7 +118,7 @@ static int waitpidTimed(pid_t pid, int64_t deadlineMs) {
             return -2;
         }
         if (nowMs() >= deadlineMs) {
-            kill(pid, SIGKILL);
+            kill(-pid, SIGKILL);
             for (;;) {
                 pid_t w2 = waitpid(pid, &status, 0);
                 if (w2 == pid) break;
@@ -142,6 +142,10 @@ static int runOne(const char* path, const char* input, size_t inputLen,
 
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
+    posix_spawnattr_t attributes;
+    posix_spawnattr_init(&attributes);
+    posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attributes, 0);
     posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO);
     posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, errPipe[1], STDERR_FILENO);
@@ -149,14 +153,17 @@ static int runOne(const char* path, const char* input, size_t inputLen,
     pid_t pid = -1;
     char* argvChild[] = { (char*)path, NULL };
     extern char** environ;
-    int rc = posix_spawn(&pid, path, &actions, NULL, argvChild, environ);
+    int rc = posix_spawn(&pid, path, &actions, &attributes, argvChild, environ);
     posix_spawn_file_actions_destroy(&actions);
+    posix_spawnattr_destroy(&attributes);
     if (rc != 0) {
         closePair(inPipe); closePair(outPipe); closePair(errPipe);
         return -2;
     }
 
     close(inPipe[0]); close(outPipe[1]); close(errPipe[1]);
+    int64_t deadlineMs = nowMs() + timeoutMs;
+    fcntl(inPipe[1], F_SETFL, fcntl(inPipe[1], F_GETFL, 0) | O_NONBLOCK);
 
     if (input && inputLen > 0) {
         size_t off = 0;
@@ -164,12 +171,19 @@ static int runOne(const char* path, const char* input, size_t inputLen,
             ssize_t w = write(inPipe[1], input + off, inputLen - off);
             if (w > 0) { off += (size_t)w; continue; }
             if (errno == EINTR) continue;
-            break;   // EPIPE (child exited) or error
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                struct pollfd writeFd = { inPipe[1], POLLOUT, 0 };
+                int64_t remain = deadlineMs - nowMs();
+                if (remain <= 0 || poll(&writeFd, 1, (int)(remain > 50 ? 50 : remain)) <= 0) {
+                    kill(-pid, SIGKILL);
+                    break;
+                }
+                continue;
+            }
+            break;
         }
     }
     close(inPipe[1]);
-
-    int64_t deadlineMs = nowMs() + timeoutMs;
 
     char* outBuf = NULL; size_t outLen_ = 0;
     char* errBuf = NULL; size_t errLen = 0;

@@ -1,3 +1,5 @@
+const MAX_PERSISTED_OUTPUT_BYTES = 1024 * 1024;
+
 class SampleTester {
     constructor() {
         this.samples = [];
@@ -714,15 +716,20 @@ class SampleTester {
         return (Array.isArray(samples) ? samples : []).map(sample => {
             const s = { ...sample };
             if (s.result) {
-                const fullOutput = s.result.rawOutput ?? s.result.output ?? '';
+                const fullOutput = String(s.result.rawOutput ?? s.result.output ?? '');
+                const outputSizeBytes = Number.isFinite(s.result.outputSizeBytes) && s.result.outputSizeBytes > 0
+                    ? s.result.outputSizeBytes
+                    : this.getOutputSizeBytes(fullOutput);
+                const persistedOutput = outputSizeBytes > MAX_PERSISTED_OUTPUT_BYTES
+                    ? fullOutput.slice(0, MAX_PERSISTED_OUTPUT_BYTES)
+                    : fullOutput;
                 const { rawOutput, ...restResult } = s.result;
                 s.result = {
                     ...restResult,
-                    output: fullOutput,
+                    output: persistedOutput,
                     outputExpanded: !!s.result.outputExpanded,
-                    outputSizeBytes: Number.isFinite(s.result.outputSizeBytes) && s.result.outputSizeBytes > 0
-                        ? s.result.outputSizeBytes
-                        : this.getOutputSizeBytes(fullOutput)
+                    outputSizeBytes,
+                    outputTruncated: !!s.result.outputTruncated || outputSizeBytes > MAX_PERSISTED_OUTPUT_BYTES
                 };
             }
             return s;
@@ -2484,6 +2491,11 @@ class SampleTester {
 
             } else {
 
+            }
+
+            if (!useInteractive && useTestlib === this.globalSettings.useTestlib && spjPath === this.globalSettings.spjPath) {
+                if (statusCallback) statusCallback('running');
+                return await this.executeSampleWithCompiledProgram(sample, executablePath, spjExecutablePath, graderExecutablePath);
             }
 
             let inputData = '';
