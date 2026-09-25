@@ -71,7 +71,7 @@
 为避免与另一台开发机的 LSP 实现修改冲突，本次没有改动 LSP 源码，只新增独立测试：
 
 - `tests/lsp-audit.test.js`：纯转换契约、renderer request ID、取消、诊断通知、applyEdit 回执和 listener 清理；
-- `tests/lsp-main-audit.test.js`：从当前 `main.js` 提取 `ClangdLspManager`，验证 pending、JSON-RPC 写入、响应、错误、取消和 stop 清理；
+- `tests/lsp-main-audit.test.js`：从当前 `main.js` 提取 `ClangdLspManager`，验证 pending、JSON-RPC 写入、分片/多帧解析、响应、错误、取消和 stop 清理；
 - `pnpm run ci:tests`：5/5 测试文件通过。
 
 主进程 fake-process 测试目前仍不能验证 request timeout、异常帧和 clangd crash/restart；这些被保留为下一阶段测试目标，而不是用当前测试假装覆盖。
