@@ -610,12 +610,12 @@ for (const f of jsFiles) {
   if (!content) continue;
   for (const pattern of secretPatterns) {
     if (pattern.test(content)) {
-      warn(`potential secret in ${rel}`);
+      fail(`potential secret in ${rel}`);
       secretsFound++;
     }
   }
 }
-if (secretsFound === 0) ok('no hardcoded secrets'); else warn(`${secretsFound} potential secrets (review manually)`);
+if (secretsFound === 0) ok('no hardcoded secrets'); else fail(`${secretsFound} potential secrets`);
 
 // E5: eval()/Function() detection — FAIL
 console.log(`\n${Y}[E5] Dangerous eval detection${R}`);

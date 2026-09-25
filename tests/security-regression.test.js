@@ -56,6 +56,7 @@ check('comparer tracks all children and observes stop between awaits', workerSou
 check('uninstaller preserves foreign cpp associations', installerSource.includes('ReadRegStr $0 HKCR ".cpp" ""') && installerSource.includes('${If} $0 == "OICPPIDE.cpp"') && !installerSource.includes('DeleteRegKey HKCR ".cpp"'));
 check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') && Object.hasOwn(packageJson.devDependencies, 'sharp'));
 check('CI icon boundary matching is exact', ciSource.includes('/oicpp\\.ico(?=$|[^-])/'));
+check('CI secret detections fail the build', ciSource.includes("fail(`potential secret in ${rel}`)"));
 
 console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;
