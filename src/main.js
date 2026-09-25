@@ -4757,6 +4757,51 @@ function setupIPC() {
         }
     });
 
+    ipcMain.handle('rename-file-invoke', async (_event, oldPath, newName) => {
+        try {
+            if (!oldPath || typeof oldPath !== 'string' || !newName || typeof newName !== 'string') {
+                throw new Error('无效的重命名参数');
+            }
+            assertSafeIoPath(oldPath);
+            const validation = validateFileName(newName);
+            if (!validation.valid) throw new Error(validation.error);
+            const dir = path.dirname(oldPath);
+            let newPath = path.join(dir, newName);
+            if (fs.existsSync(newPath)) {
+                newPath = getUniquePath(dir, newName);
+            }
+            assertSafeIoPath(newPath);
+            fs.renameSync(oldPath, newPath);
+            try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('file-renamed', oldPath, newPath, null); } catch (_) { }
+            return { success: true, filePath: newPath };
+        } catch (error) {
+            try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('file-renamed', oldPath, null, error.message); } catch (_) { }
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('delete-file-invoke', async (_event, filePath) => {
+        let previousWatchStates = [];
+        try {
+            if (!filePath || typeof filePath !== 'string') throw new Error('无效的文件路径');
+            const normalizedPath = path.resolve(filePath);
+            assertSafeIoPath(normalizedPath);
+            const stat = fs.statSync(normalizedPath);
+            previousWatchStates = markLocalDeletion(normalizedPath);
+            if (stat.isDirectory()) {
+                fs.rmSync(normalizedPath, { recursive: true, force: true });
+            } else {
+                fs.unlinkSync(normalizedPath);
+            }
+            try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('file-deleted', filePath, null); } catch (_) { }
+            return { success: true };
+        } catch (error) {
+            restoreFileWatchStates(previousWatchStates);
+            try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('file-deleted', filePath, error.message); } catch (_) { }
+            return { success: false, error: error.message };
+        }
+    });
+
     ipcMain.on('create-file', async (event, filePath, content = '') => {
         try {
             // Validate the file name

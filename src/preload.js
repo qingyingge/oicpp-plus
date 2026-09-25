@@ -586,8 +586,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onCompareComplete: (cb) => { const l = (_, data) => cb(data); ipcRenderer.on('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
 
     readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
-    renameFile: (oldPath, newPath) => ipcRenderer.invoke('rename-file', oldPath, newPath),
-    deleteFile: (filePath) => ipcRenderer.invoke('delete-file', filePath),
+    renameFile: (oldPath, newPath) => ipcRenderer.invoke('rename-file-invoke', oldPath, newPath),
+    deleteFile: (filePath) => ipcRenderer.invoke('delete-file-invoke', filePath),
     clearDirectoryContents: (dirPath) => ipcRenderer.invoke('clear-directory-contents', dirPath),
     writeFile: (filePath, content) => ipcRenderer.invoke('write-file', filePath, content),
     createFile: (filePath, content) => ipcRenderer.invoke('create-file', filePath, content),
