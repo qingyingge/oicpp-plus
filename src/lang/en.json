@@ -212,6 +212,8 @@
     "importNotSupported": "File import is not supported in current environment",
     "saveNotSupported": "File save is not supported in current environment",
     "imageFilesFilter": "Image Files",
+    "fontUnavailableTitle": "Font Unavailable",
+    "fontUnavailableMessage": "The font “{font}” was not found and has been replaced with “{fallback}”",
     "backgroundImageSelectFailed": "Failed to select a background image: {error}",
     "saveSuccess": "Settings saved successfully!",
     "saveFail": "Failed to save settings: {error}",

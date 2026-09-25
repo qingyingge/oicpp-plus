@@ -195,6 +195,8 @@
     "importNotSupported": "当前环境不支持文件导入",
     "saveNotSupported": "当前环境不支持文件保存",
     "imageFilesFilter": "图像文件",
+    "fontUnavailableTitle": "字体不可用",
+    "fontUnavailableMessage": "系统中未找到字体“{font}”，已自动切换到“{fallback}”",
     "backgroundImageSelectFailed": "选择背景图片失败：{error}",
     "saveSuccess": "设置保存成功！",
     "saveFail": "保存设置失败：{error}",

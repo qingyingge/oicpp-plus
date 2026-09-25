@@ -74,16 +74,6 @@ class FontDetector {
     showFontNotAvailableMessage(fontName) {
         const message = document.createElement('div');
         message.className = 'font-warning-message';
-        message.innerHTML = `
-            <div class="font-warning-content">
-                <div class="font-warning-icon" data-ui-icon="warning"></div>
-                <div class="font-warning-text">
-                    <strong>字体不可用</strong><br>
-                    系统中未找到字体 "${fontName}"，已自动切换到 "${this.defaultFont}"
-                </div>
-                <button class="font-warning-close" onclick="this.parentElement.parentElement.remove()">×</button>
-            </div>
-        `;
         
         message.style.cssText = `
             position: fixed;
@@ -99,35 +89,57 @@ class FontDetector {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             animation: slideInRight 0.3s ease-out;
         `;
-        
-        const content = message.querySelector('.font-warning-content');
+
+        const content = document.createElement('div');
+        content.className = 'font-warning-content';
         content.style.cssText = `
             display: flex;
             align-items: flex-start;
             padding: 12px 16px;
             gap: 12px;
         `;
-        
-        const icon = message.querySelector('.font-warning-icon');
+
+        const icon = document.createElement('div');
+        icon.className = 'font-warning-icon';
+        icon.dataset.uiIcon = 'warning';
         icon.style.cssText = `
             font-size: 20px;
             flex-shrink: 0;
             margin-top: 2px;
         `;
 
-        if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
-            window.uiIcons.hydrate(message);
-        }
-        
-        const text = message.querySelector('.font-warning-text');
+        const text = document.createElement('div');
+        text.className = 'font-warning-text';
         text.style.cssText = `
             flex: 1;
             color: #856404;
             font-size: 13px;
             line-height: 1.4;
         `;
-        
-        const closeBtn = message.querySelector('.font-warning-close');
+        const title = document.createElement('strong');
+        title.textContent = window.i18n.t('settings.fontUnavailableTitle');
+        text.append(
+            title,
+            document.createElement('br'),
+            document.createTextNode(window.i18n.t('settings.fontUnavailableMessage', {
+                font: fontName,
+                fallback: this.defaultFont
+            }))
+        );
+
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'font-warning-close';
+        closeBtn.textContent = '×';
+        closeBtn.setAttribute('aria-label', window.i18n.t('dialog.close'));
+        closeBtn.addEventListener('click', () => message.remove());
+
+        content.append(icon, text, closeBtn);
+        message.appendChild(content);
+
+        if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
+            window.uiIcons.hydrate(message);
+        }
         closeBtn.style.cssText = `
             background: none;
             border: none;
