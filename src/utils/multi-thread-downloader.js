@@ -70,6 +70,7 @@ class MultiThreadDownloader {
             });
 
             const acceptRanges = headResponse.headers.get('accept-ranges');
+            try { headResponse.body.resume(); } catch (_) { }
             if (acceptRanges === 'bytes') {
                 return true;
             }
@@ -95,6 +96,7 @@ class MultiThreadDownloader {
     async getFileSize(url) {
         try {
             const response = await makeRequest(url, { method: 'HEAD' });
+            try { response.body.resume(); } catch (_) { }
             const contentLength = response.headers.get('content-length');
             return contentLength ? parseInt(contentLength, 10) : null;
         } catch (error) {
