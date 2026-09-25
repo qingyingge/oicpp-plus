@@ -235,10 +235,14 @@
     "id": "M4",
     "severity": "MEDIUM",
     "title": "requestSaveAllAndClose 多次调用累积监听器",
-    "status": "待确认",
+    "status": "已修复",
     "file": "src/main.js:2296-2322",
     "problem": "每次调用注册新的 ipcMain.once 监听器和新 timeout，只第一个会触发。",
-    "impact": "其余监听器成为孤儿。"
+    "impact": "其余监听器成为孤儿。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "保存关闭请求改为单一 pending 状态；新请求会清理旧 timeout/监听器，完成和超时路径均只处理当前请求。"
+    }
   },
   {
     "id": "M5",
@@ -311,10 +315,14 @@
     "id": "M11",
     "severity": "MEDIUM",
     "title": "~30 个 on* 方法无 cleanup 函数",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/preload.js:568-663",
     "problem": "大多数 on* 方法返回 ipcRenderer.on() 的返回值，调用者无法移除监听器。",
-    "impact": "监听器泄漏。"
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "electronAPI 的事件方法统一通过 subscribeIpc 返回 removeListener cleanup，并统一经过事件白名单。"
+    }
   },
   {
     "id": "M12",
@@ -333,28 +341,40 @@
     "id": "M13",
     "severity": "MEDIUM",
     "title": "图片路径穿越",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/preload.js:315-325",
     "problem": "![x](../../etc/passwd) 经 path.join 解析为 file:///etc/passwd，无穿越检查。",
-    "impact": "路径穿越。"
+    "impact": "路径穿越。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "本地 Markdown 图片只允许文档目录内的相对路径，绝对路径和越界相对路径会被丢弃；新增回归断言。"
+    }
   },
   {
     "id": "M14",
     "severity": "MEDIUM",
     "title": "turndown fallback innerHTML",
-    "status": "待确认",
+    "status": "已修复",
     "file": "src/preload.js:343-345,351-353",
     "problem": "fallback 路径用 innerHTML 解析 HTML，可执行内联脚本和触发 onload/onerror。",
-    "impact": "XSS 风险。"
+    "impact": "XSS 风险。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "fallback 改用 DOMParser 清理脚本、事件属性和 javascript: URL；无 DOMParser 时仅做保守文本剥离。"
+    }
   },
   {
     "id": "M15",
     "severity": "MEDIUM",
     "title": "shouldRunAfterCompile 竞态",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/renderer/js/compile-manager.js:579-586",
     "problem": "compileCurrentFile() 成功但 handleCompileResult 未调用时标志残留为 true。",
-    "impact": "竞态。"
+    "impact": "竞态。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "编译异常和提前返回都会清理 shouldRunAfterCompile，避免下一次编译误触发运行。"
+    }
   },
   {
     "id": "M16",
@@ -521,10 +541,14 @@
     "id": "M31",
     "severity": "MEDIUM",
     "title": "GDB 队列死锁",
-    "status": "待修复",
-    "file": "src/gdb-debugger.js:62-63",
+    "status": "已修复",
+    "file": "src/gdb-mi-debugger.js:50-90",
     "problem": "GDB 静默崩溃时 _parseOutput 永不执行，_queueBusy 永远为 true。",
-    "impact": "队列永久卡住。"
+    "impact": "队列永久卡住。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "GDB 调试器改为结构化 GDB/MI2 协议，使用 token/result/event 生命周期管理请求；进程退出、超时和停止都会清理 pending 状态。"
+    }
   },
   {
     "id": "M32",
@@ -540,38 +564,53 @@
     "id": "M33",
     "severity": "MEDIUM",
     "title": "parseGDBWatchValueRecursive 畸形输入无限循环",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/gdb-utils.js:207-403",
     "problem": "getNextToken 返回未前进的 position 时 while(true) 死循环。",
     "impact": "死循环。",
-    "note": "已证实存在死循环：实测输入 {, a = hello b = 5} 必现；报告所述 getNextToken 机制不成立，实际由 L401 与 L283-292 反向逗号回溯形成周期循环。"
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "递归值解析增加迭代上限，畸形值会返回当前解析位置而不会阻塞主进程；新增回归样例。"
+    }
   },
   {
     "id": "M34",
     "severity": "MEDIUM",
     "title": "PID TOCTOU",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/terminal-manager.js:797-858",
     "problem": "PID 复用后读取新进程的 /proc/PID/fd，返回错误 TTY。",
-    "impact": "终端管理错误。"
+    "impact": "终端管理错误。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "解析 TTY 前后校验 Linux starttime/macOS lstart 进程身份，PID 复用窗口不再直接返回错误终端。"
+    }
   },
   {
     "id": "M35",
     "severity": "MEDIUM",
     "title": "disposeAll race",
-    "status": "待确认",
+    "status": "已修复",
     "file": "src/terminal-manager.js:503-509",
     "problem": "close 事件处理器在 disposeAll 完成后仍发送消息到已销毁的 renderer。",
-    "impact": "竞态。"
+    "impact": "竞态。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "disposeAll 标记 session.disposed，PTY/process 的迟到 data/exit 回调不再向 renderer 发送事件。"
+    }
   },
   {
     "id": "M36",
     "severity": "MEDIUM",
     "title": "logger _flush buffer 增长",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/utils/logger.js:24-36",
     "problem": "init() 失败后 buffer 仅在 >5000 行时截断一半，持续失败时无限增长。",
-    "impact": "内存增长。"
+    "impact": "内存增长。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "初始化失败和写入失败路径都强制保留最近 5000 行，缓冲上限不再依赖下一次成功写入。"
+    }
   },
   {
     "id": "M37",
@@ -924,8 +963,8 @@
     "problem": "重定向用 retriesLeft 参数，重定向循环会耗尽重试次数。",
     "impact": "重定向循环。",
     "fix": {
-      "commit": "c7e0ea2",
-      "note": "clangd/clang-format 下载均限制重定向次数、跨 origin 清除 Authorization，并采用 .part 临时文件；clangd 增加 digest/版本 smoke test。"
+      "commit": "1ed2aef",
+      "note": "clangd/clang-format 统一使用 scripts/lib/release-downloader.js：限制重定向次数、跨 origin 清除 Authorization、采用 .part 临时文件、响应大小上限和超时；clangd 保留 digest/版本 smoke test。"
     }
   },
   {
