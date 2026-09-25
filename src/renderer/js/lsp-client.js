@@ -53,7 +53,11 @@ class LspClientBridge {
         if (this._readyPromise) {
             return this._readyPromise;
         }
-        this._readyPromise = this._startInternal(options);
+        this._readyPromise = this._startInternal(options).catch((err) => {
+            this._ready = false;
+            this._readyPromise = null;
+            throw err;
+        });
         return this._readyPromise;
     }
 
