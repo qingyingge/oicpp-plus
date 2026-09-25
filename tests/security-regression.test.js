@@ -13,6 +13,7 @@ const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const mainSource = read('src/main.js');
 const preloadSource = read('src/preload.js');
+const rendererMainSource = read('src/renderer/js/main.js');
 const workerSource = read('src/main-process/compare-worker-v6.js');
 const gdbSource = `${read('src/gdb-debugger.js')}\n${read('src/gdb-mi-debugger.js')}`;
 const workflows = ['build.yml', 'build-windows-test.yml', 'build-dmg-test.yml']
@@ -35,6 +36,7 @@ check('native fastspawn has a reproducible POSIX build script', read('scripts/bu
 check('release downloaders share one hardened implementation', read('scripts/lib/release-downloader.js').includes('maxRedirects') && read('scripts/download-clangd.js').includes('createReleaseDownloader') && read('scripts/download-clang-format.js').includes('createReleaseDownloader'));
 check('disabled automatic update checks cannot leave UI busy', !mainSource.includes('function checkDailyUpdate') && !mainSource.includes('setAutoUpdateCheckInProgress(true)'));
 check('disabled update checks have no remote fallback', !mainSource.includes('oicpp.mywwzh.top/api/checkUpdate') && !mainSource.includes('oicpp.mywwzh.top/api/getUpdateFilelist') && !mainSource.includes('downloadAndInstallUpdate'));
+check('renderer Buffer bridge is removed', !preloadSource.includes("exposeInMainWorld('Buffer'") && !rendererMainSource.includes('window.Buffer') && rendererMainSource.includes('new Uint8Array(arrayBuffer)') && rendererMainSource.includes('btoa(binary)'));
 
 console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

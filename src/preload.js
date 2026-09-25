@@ -806,8 +806,6 @@ contextBridge.exposeInMainWorld('process', {
     }
 });
 
-contextBridge.exposeInMainWorld('Buffer', Buffer);
-
 const safeSendLog = (level, args) => {
     try {
         let meta = undefined;

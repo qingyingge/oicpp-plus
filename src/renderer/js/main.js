@@ -1672,9 +1672,6 @@ class OICPPApp {
             if (!arrayBuffer) {
                 return '';
             }
-            if (typeof window.Buffer !== 'undefined') {
-                return window.Buffer.from(arrayBuffer).toString('base64');
-            }
             const bytes = new Uint8Array(arrayBuffer);
             let binary = '';
             for (let i = 0; i < bytes.length; i += 1) {
@@ -1787,9 +1784,9 @@ class OICPPApp {
             return '';
         }
         try {
-            if (typeof file.arrayBuffer === 'function' && typeof window.Buffer !== 'undefined') {
+            if (typeof file.arrayBuffer === 'function') {
                 const buffer = await file.arrayBuffer();
-                return window.Buffer.from(buffer).toString('base64');
+                return this.arrayBufferToBase64(buffer);
             }
         } catch (error) {
             logWarn('通过 arrayBuffer 转 Base64 失败，尝试使用 FileReader:', error);
