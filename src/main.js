@@ -609,6 +609,7 @@ class ClangdLspManager {
         this.buffer = Buffer.alloc(0);
         this.pending = new Map();
         this.nextId = 1;
+        this.workspaceFolders = [];
         this.procGeneration = 0;
     }
 
@@ -735,6 +736,9 @@ class ClangdLspManager {
         }
 
         const workspaceRoot = typeof options.workspaceRoot === 'string' && options.workspaceRoot ? options.workspaceRoot : '';
+        this.workspaceFolders = workspaceRoot && options.rootUri
+            ? [{ uri: options.rootUri, name: path.basename(workspaceRoot) || workspaceRoot }]
+            : [];
         let spawnCwd = null;
         if (workspaceRoot && fs.existsSync(workspaceRoot)) {
             try {
@@ -819,16 +823,31 @@ class ClangdLspManager {
         return { ok: true };
     }
 
-    request(method, params) {
+    request(method, params, requestId = null) {
         if (!this.proc) {
             return Promise.reject(new Error('clangd not running'));
         }
-        const id = this.nextId++;
+        const id = requestId ?? this.nextId++;
         const payload = { jsonrpc: '2.0', id, method, params: params || {} };
         this._send(payload);
         return new Promise((resolve, reject) => {
             this.pending.set(id, { resolve, reject, method });
         });
+    }
+
+    cancel(requestId) {
+        if (!this.proc || requestId === null || requestId === undefined) {
+            return { ok: false, error: 'clangd not running or invalid request id' };
+        }
+        if (!this.pending.has(requestId)) {
+            return { ok: false, error: 'request not found' };
+        }
+        this._send({
+            jsonrpc: '2.0',
+            method: '$/cancelRequest',
+            params: { id: requestId }
+        });
+        return { ok: true };
     }
 
     notify(method, params) {
@@ -872,11 +891,51 @@ class ClangdLspManager {
         }
     }
 
+    _sendResult(id, result) {
+        this._send({
+            jsonrpc: '2.0',
+            id,
+            result: result === undefined ? null : result
+        });
+    }
+
+    _sendError(id, code, message) {
+        this._send({
+            jsonrpc: '2.0',
+            id,
+            error: { code, message }
+        });
+    }
+
+    _handleServerRequest(message) {
+        const id = message.id;
+        const method = message.method;
+        if (method === 'workspace/configuration') {
+            const items = Array.isArray(message.params?.items) ? message.params.items : [];
+            this._sendResult(id, items.map(() => ({})));
+            return;
+        }
+        if (method === 'client/registerCapability' || method === 'client/unregisterCapability'
+            || method === 'window/workDoneProgress/create' || method === 'window/showMessageRequest') {
+            this._sendResult(id, null);
+            return;
+        }
+        if (method === 'workspace/workspaceFolders') {
+            this._sendResult(id, this.workspaceFolders);
+            return;
+        }
+        logWarn('[LSP] 未处理的服务端请求:', method);
+        this._sendError(id, -32601, `Method not found: ${method}`);
+    }
+
     _dispatchMessage(message) {
         if (!message) return;
         if (Object.prototype.hasOwnProperty.call(message, 'id')) {
             const entry = this.pending.get(message.id);
-            if (!entry) return;
+            if (!entry) {
+                this._handleServerRequest(message);
+                return;
+            }
             this.pending.delete(message.id);
             if (message.error) {
                 logWarn('[LSP] 请求失败, id=' + message.id + ', 方法=' + (entry.method || '?'), message.error?.message || JSON.stringify(message.error));
@@ -3497,10 +3556,10 @@ function setupIPC() {
         return result;
     });
 
-    ipcMain.handle('lsp-request', async (_event, method, params) => {
+    ipcMain.handle('lsp-request', async (_event, method, params, requestId) => {
         logInfo('[LSP] 请求: ' + method);
         try {
-            const result = await clangdLspManager.request(method, params || {});
+            const result = await clangdLspManager.request(method, params || {}, requestId);
             if (method === 'initialize') {
                 const caps = result?.capabilities;
                 const version = result?.serverInfo?.version || '?';
@@ -3515,6 +3574,10 @@ function setupIPC() {
             logError('[LSP] 请求 ' + method + ' 失败:', err?.message || err);
             throw err;
         }
+    });
+
+    ipcMain.handle('lsp-cancel', (_event, requestId) => {
+        return clangdLspManager.cancel(requestId);
     });
 
     ipcMain.handle('lsp-notify', (_event, method, params) => {

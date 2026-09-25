@@ -4,6 +4,7 @@ class LspClientBridge {
         this._readyPromise = null;
         this._serverCapabilities = null;
         this._semanticTokensLegend = null;
+        this._nextRequestId = 1;
         this._readyListeners = new Set();
         this._diagnosticListeners = new Set();
         this._notificationListeners = new Set();
@@ -158,6 +159,8 @@ class LspClientBridge {
             capabilities: {
                 textDocument: {
                     synchronization: {
+                        openClose: true,
+                        change: 1,
                         didSave: true,
                         willSave: false,
                         willSaveWaitUntil: false
@@ -227,15 +230,34 @@ class LspClientBridge {
                         dynamicRegistration: false
                     },
                     semanticTokens: {
-                        requests: { full: true },
-                        tokenTypes: [],
-                        tokenModifiers: [],
-                        formats: ['relative']
+                        requests: {
+                            full: { delta: true }
+                        },
+                        tokenTypes: [
+                            'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter',
+                            'parameter', 'variable', 'property', 'enumMember', 'event', 'function', 'method',
+                            'macro', 'keyword', 'modifier', 'comment', 'string', 'number', 'regexp',
+                            'operator', 'decorator'
+                        ],
+                        tokenModifiers: [
+                            'declaration', 'definition', 'readonly', 'static', 'deprecated', 'abstract',
+                            'async', 'modification', 'documentation', 'defaultLibrary'
+                        ],
+                        formats: ['relative'],
+                        staticSupport: true,
+                        dynamicSupport: false,
+                        overlappingTokenSupport: false,
+                        multilineTokenSupport: false,
+                        serverCancelSupport: true,
+                        augmentsSyntaxTokens: true
                     }
                 },
                 workspace: {
                     workspaceFolders: true,
                     symbol: {
+                        dynamicRegistration: false
+                    },
+                    executeCommand: {
                         dynamicRegistration: false
                     }
                 }
@@ -265,12 +287,43 @@ class LspClientBridge {
         return initResult;
     }
 
-    async request(method, params) {
+    async request(method, params, cancellationToken = null) {
         const api = window.electronAPI;
         if (!api || typeof api.lspRequest !== 'function') {
             throw new Error('LSP request API unavailable');
         }
-        return await api.lspRequest(method, params);
+        if (cancellationToken?.isCancellationRequested) {
+            throw new Error('LSP request cancelled');
+        }
+
+        const requestId = `oicpp-renderer-${this._nextRequestId++}`;
+        const requestPromise = api.lspRequest(method, params, requestId);
+        if (!cancellationToken || typeof cancellationToken.onCancellationRequested !== 'function') {
+            return await requestPromise;
+        }
+
+        return await new Promise((resolve, reject) => {
+            let settled = false;
+            const listener = cancellationToken.onCancellationRequested(() => {
+                if (settled) return;
+                settled = true;
+                try { Promise.resolve(api.lspCancel?.(requestId)).catch(() => {}); } catch (_) {}
+                reject(new Error('LSP request cancelled'));
+            });
+            const finish = (callback) => (value) => {
+                if (settled) return;
+                settled = true;
+                listener?.dispose?.();
+                callback(value);
+            };
+            requestPromise.then(finish(resolve), finish(reject));
+            if (cancellationToken.isCancellationRequested && !settled) {
+                settled = true;
+                listener?.dispose?.();
+                try { Promise.resolve(api.lspCancel?.(requestId)).catch(() => {}); } catch (_) {}
+                reject(new Error('LSP request cancelled'));
+            }
+        });
     }
 
     async notify(method, params) {
@@ -313,6 +366,16 @@ class LspClientBridge {
 
     getServerCapabilities() {
         return this._serverCapabilities;
+    }
+
+    supportsCapability(path, fallback = true) {
+        if (!path) return fallback;
+        let value = this._serverCapabilities;
+        for (const key of String(path).split('.')) {
+            if (value === null || value === undefined) return fallback;
+            value = value[key];
+        }
+        return value === undefined ? fallback : !!value;
     }
 }
 
