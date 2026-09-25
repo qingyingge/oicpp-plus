@@ -26,6 +26,7 @@ const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const APP_VERSION = '1.5.4';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
+const LSP_REQUEST_TIMEOUT_MS = 30000;
 const EXTERNAL_OPEN_DEDUP_WINDOW_MS = 800;
 const recentExternalOpens = new Map();
 // Compiler probing starts child processes and filesystem scans. Results depend
@@ -772,6 +773,7 @@ class ClangdLspManager {
             this.buffer = Buffer.alloc(0);
             const err = new Error(`clangd exited (${code || '0'})${signal ? ` signal=${signal}` : ''}`);
             this.pending.forEach((entry) => {
+                clearTimeout(entry.timer);
                 try { entry.reject(err); } catch (_) {}
             });
             this.pending.clear();
@@ -793,6 +795,7 @@ class ClangdLspManager {
         this.proc = null;
         this.buffer = Buffer.alloc(0);
         this.pending.forEach((entry) => {
+            clearTimeout(entry.timer);
             try { entry.reject(new Error('clangd stopped')); } catch (_) {}
         });
         this.pending.clear();
@@ -837,7 +840,20 @@ class ClangdLspManager {
         const payload = { jsonrpc: '2.0', id, method, params: params || {} };
         this._send(payload);
         return new Promise((resolve, reject) => {
-            this.pending.set(id, { resolve, reject, method });
+            const entry = { resolve, reject, method, timer: null };
+            entry.timer = setTimeout(() => {
+                if (!this.pending.has(id)) return;
+                this.pending.delete(id);
+                this._send({
+                    jsonrpc: '2.0',
+                    method: '$/cancelRequest',
+                    params: { id }
+                });
+                const error = new Error(`LSP request timed out: ${method}`);
+                error.code = 'ETIMEDOUT';
+                reject(error);
+            }, LSP_REQUEST_TIMEOUT_MS);
+            this.pending.set(id, entry);
         });
     }
 
@@ -1006,6 +1022,7 @@ class ClangdLspManager {
                 this._handleServerRequest(message);
                 return;
             }
+            clearTimeout(entry.timer);
             this.pending.delete(message.id);
             if (message.error) {
                 logWarn('[LSP] 请求失败, id=' + message.id + ', 方法=' + (entry.method || '?'), message.error?.message || JSON.stringify(message.error));
