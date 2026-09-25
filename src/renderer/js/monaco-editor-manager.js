@@ -2201,7 +2201,11 @@ class MonacoEditorManager {
                         }, token);
                         if (!Array.isArray(result)) return { lenses: [], dispose: () => {} };
 
-                        const lenses = result.filter(Boolean).map((item) => ({
+                        const lenses = result.filter(Boolean).map((item) => {
+                            if (item.command) {
+                                this.registerLspCommand(item.command);
+                            }
+                            return {
                             range: new monaco.Range(
                                 (item.range?.start?.line || 0) + 1,
                                 (item.range?.start?.character || 0) + 1,
@@ -2213,8 +2217,9 @@ class MonacoEditorManager {
                                 title: item.command.title || '',
                                 arguments: item.command.arguments
                             } : undefined,
-                            __oicppLspCodeLens: item
-                        }));
+                                __oicppLspCodeLens: item
+                            };
+                        });
                         return { lenses, dispose: () => {} };
                     } catch (_) {
                         return { lenses: [], dispose: () => {} };
