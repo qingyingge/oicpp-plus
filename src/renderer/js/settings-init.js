@@ -81,11 +81,6 @@
                 const validatedFont = window.fontDetector.validateFont(settings.font);
                 if (validatedFont !== settings.font) {
                     fontFamily = validatedFont;
-                    if (window.electronAPI && window.electronAPI.updateSettings) {
-                        window.electronAPI.updateSettings({ font: validatedFont }).catch(err => {
-                            logError('更新字体设置失败:', err);
-                        });
-                    }
                 }
             }
 
