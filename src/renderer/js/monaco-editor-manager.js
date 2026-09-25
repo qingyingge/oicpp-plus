@@ -589,6 +589,7 @@ class MonacoEditorManager {
             if (supports('textDocument.referencesProvider')) this._registerLspReferencesProvider();
             if (supports('textDocument.renameProvider')) this._registerLspRenameProvider();
             if (supports('textDocument.documentFormattingProvider')) this._registerLspDocumentFormattingProvider();
+            if (supports('textDocument.inlayHintProvider')) this._registerLspInlayHintProvider();
             if (supports('textDocument.codeActionProvider')) this._registerLspCodeActionProvider();
             if (supports('textDocument.typeDefinitionProvider')) this._registerLspTypeDefinitionProvider();
             if (supports('textDocument.implementationProvider')) this._registerLspImplementationProvider();
@@ -1131,6 +1132,119 @@ class MonacoEditorManager {
                 resolveCompletionItem
             });
             this._lspProviders.set(key, disposableTrigger);
+        }
+    }
+
+    lspMarkupToMonaco(value) {
+        if (typeof value === 'string') return value;
+        if (value?.value) return { value: value.value };
+        return undefined;
+    }
+
+    lspInlayHintToMonaco(hint) {
+        if (!hint?.position) return null;
+        const label = Array.isArray(hint.label)
+            ? hint.label
+                .map((part) => {
+                    const text = String(part?.value ?? part?.label ?? '');
+                    if (!text) return null;
+                    const mapped = { label: text };
+                    const tooltip = this.lspMarkupToMonaco(part.tooltip);
+                    if (tooltip !== undefined) mapped.tooltip = tooltip;
+                    if (part.command) {
+                        mapped.command = {
+                            id: part.command.command || '',
+                            title: part.command.title || '',
+                            arguments: part.command.arguments
+                        };
+                    }
+                    if (part.location?.uri && part.location?.range) {
+                        mapped.location = {
+                            uri: monaco.Uri.parse(part.location.uri),
+                            range: this.lspRangeToMonaco(part.location.range)
+                        };
+                    }
+                    return mapped;
+                })
+                .filter(Boolean)
+            : String(hint.label || '');
+        if (!label || (Array.isArray(label) && label.length === 0)) return null;
+
+        const textEdits = Array.isArray(hint.textEdits)
+            ? hint.textEdits
+                .map((edit) => ({
+                    range: this.lspRangeToMonaco(edit.range),
+                    text: typeof edit.newText === 'string' ? edit.newText : ''
+                }))
+                .filter((edit) => edit.range)
+            : undefined;
+        const start = hint.position;
+        return {
+            position: new monaco.Position(
+                (Number(start.line) || 0) + 1,
+                (Number(start.character) || 0) + 1
+            ),
+            label,
+            tooltip: this.lspMarkupToMonaco(hint.tooltip),
+            textEdits,
+            kind: monaco.languages.InlayHintKind?.[hint.kind] ?? hint.kind,
+            paddingLeft: hint.paddingLeft,
+            paddingRight: hint.paddingRight,
+            __oicppLspInlayHint: hint
+        };
+    }
+
+    _registerLspInlayHintProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:inlayHint`;
+            if (this._lspProviders.has(key)) continue;
+            const disposable = monaco.languages.registerInlayHintsProvider(language, {
+                displayName: 'clangd',
+                provideInlayHints: async (model, range, token) => {
+                    const empty = { hints: [], dispose: () => { } };
+                    try {
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return empty;
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady || !this.lspClient || token?.isCancellationRequested) return empty;
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri || token?.isCancellationRequested) return empty;
+                        const result = await this.lspClient.request('textDocument/inlayHint', {
+                            textDocument: { uri },
+                            range: {
+                                start: {
+                                    line: range.startLineNumber - 1,
+                                    character: range.startColumn - 1
+                                },
+                                end: {
+                                    line: range.endLineNumber - 1,
+                                    character: range.endColumn - 1
+                                }
+                            }
+                        }, token);
+                        if (token?.isCancellationRequested) return null;
+                        if (!Array.isArray(result)) return empty;
+                        return {
+                            hints: result.map((hint) => this.lspInlayHintToMonaco(hint)).filter(Boolean),
+                            dispose: () => { }
+                        };
+                    } catch (_) {
+                        return empty;
+                    }
+                },
+                resolveInlayHint: async (hint, token) => {
+                    const original = hint?.__oicppLspInlayHint;
+                    if (!original || !this.lspClient || token?.isCancellationRequested) return hint;
+                    try {
+                        const result = await this.lspClient.request('inlayHint/resolve', original, token);
+                        const mapped = this.lspInlayHintToMonaco(result || original);
+                        return mapped ? { ...hint, ...mapped } : hint;
+                    } catch (_) {
+                        return hint;
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
         }
     }
 

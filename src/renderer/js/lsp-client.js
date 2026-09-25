@@ -217,6 +217,12 @@ class LspClientBridge {
                     formatting: {
                         dynamicRegistration: false
                     },
+                    inlayHint: {
+                        dynamicRegistration: false,
+                        resolveSupport: {
+                            properties: ['tooltip', 'textEdits', 'label.tooltip']
+                        }
+                    },
                     codeAction: {
                         codeActionLiteralSupport: {
                             codeActionKind: {
