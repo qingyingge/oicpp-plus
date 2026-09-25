@@ -567,7 +567,7 @@ class MonacoEditorManager {
         this.lspClient.onApplyEdit?.(async (edit) => {
             const workspaceEdit = this.lspWorkspaceEditToMonaco(edit);
             const applied = await this.applyLspWorkspaceEdit(workspaceEdit);
-            return { applied: applied.edits > 0, skipped: applied.skipped, conflicts: applied.conflicts };
+            return { applied: applied.edits > 0 || applied.fileOperations > 0, skipped: applied.skipped, conflicts: applied.conflicts, fileOperations: applied.fileOperations };
         });
         this.lspClient.onNotification((payload) => {
             if (payload?.method === 'lsp/serverStopped') {
@@ -1570,6 +1570,62 @@ class MonacoEditorManager {
         return window.OicppLspUtils?.toMonacoWorkspaceEdit(edit, monaco);
     }
 
+    lspUriToPath(resource) {
+        const uri = resource?.toString?.() || (typeof resource === 'string' ? resource : '');
+        if (!uri || typeof monaco === 'undefined' || !monaco.Uri) return '';
+        try {
+            const parsed = monaco.Uri.parse(uri);
+            if (parsed.scheme !== 'file') return '';
+            return parsed.fsPath || parsed.path || '';
+        } catch (_) {
+            return '';
+        }
+    }
+
+    async applyLspFileOperation(operation) {
+        const api = window.electronAPI;
+        if (!api || !operation?.fileOperation) return false;
+        try {
+            if (operation.fileOperation === 'create') {
+                const filePath = this.lspUriToPath(operation.resource);
+                if (!filePath || typeof api.createFile !== 'function') return false;
+                if (typeof api.checkFileExists === 'function' && await api.checkFileExists(filePath)) {
+                    if (operation.options?.ignoreIfExists) return true;
+                    if (operation.options?.overwrite && typeof api.writeFile === 'function') {
+                        const writeResult = await api.writeFile(filePath, '');
+                        return writeResult?.success !== false && writeResult?.ok !== false;
+                    }
+                    return false;
+                }
+                const result = await api.createFile(filePath, '');
+                return result?.success !== false;
+            }
+            if (operation.fileOperation === 'rename') {
+                const oldPath = this.lspUriToPath(operation.oldResource);
+                const newPath = this.lspUriToPath(operation.newResource);
+                if (!oldPath || !newPath || typeof api.renameFile !== 'function') return false;
+                if (typeof api.checkFileExists === 'function' && await api.checkFileExists(newPath)) {
+                    if (operation.options?.ignoreIfExists) return true;
+                    return false;
+                }
+                const result = await api.renameFile(oldPath, newPath, operation.options || {});
+                return result?.success !== false;
+            }
+            if (operation.fileOperation === 'delete') {
+                const filePath = this.lspUriToPath(operation.resource);
+                if (!filePath || typeof api.deleteFile !== 'function') return false;
+                if (operation.options?.ignoreIfNotExists && typeof api.checkFileExists === 'function' && !await api.checkFileExists(filePath)) {
+                    return true;
+                }
+                const result = await api.deleteFile(filePath, operation.options || {});
+                return result?.success !== false;
+            }
+        } catch (err) {
+            logWarn('[LSP] WorkspaceEdit 文件操作失败:', err?.message || err);
+        }
+        return false;
+    }
+
     async ensureModelForLspUri(uri) {
         const existing = this.findModelByLspUri(uri);
         if (existing) return { model: existing, created: false };
@@ -1598,14 +1654,80 @@ class MonacoEditorManager {
 
     async applyLspWorkspaceEdit(workspaceEdit) {
         if (!workspaceEdit || !Array.isArray(workspaceEdit.edits) || workspaceEdit.edits.length === 0) {
-            return { files: 0, edits: 0 };
+            return { files: 0, edits: 0, skipped: 0, fileOperations: 0 };
         }
-        const grouped = new Map();
-        const versions = new Map();
-        const conflicts = new Set();
-        const createdModels = new Set();
+        let grouped = new Map();
+        let versions = new Map();
+        let conflicts = new Set();
+        let createdModels = new Set();
         let skipped = 0;
+        let files = 0;
+        let edits = 0;
+        let conflictCount = 0;
+        let fileOperations = 0;
+
+        const flushTextEdits = async () => {
+            for (const [model, modelEdits] of grouped) {
+                if (conflicts.has(model)) {
+                    conflictCount++;
+                    continue;
+                }
+                const versionId = versions.get(model);
+                const document = this._lspDocuments.get(model);
+                if (versionId !== undefined && document && document.version !== versionId) {
+                    logWarn('[LSP] 忽略过期 WorkspaceEdit，文档版本不匹配:', document.version, '!=', versionId);
+                    conflictCount++;
+                    continue;
+                }
+                const created = createdModels.has(model);
+                const originalText = created && typeof model.getValue === 'function' ? model.getValue() : null;
+                let written = false;
+                try {
+                    model.pushEditOperations([], modelEdits, () => null);
+                    if (created) {
+                        const filePath = this.getModelFilePath(model);
+                        const writeResult = await window.electronAPI.writeFile(filePath, model.getValue());
+                        if (writeResult?.success === false || writeResult?.ok === false) {
+                            throw new Error(writeResult?.error || 'write failed');
+                        }
+                        written = true;
+                    }
+                    files++;
+                    edits += modelEdits.length;
+                } catch (err) {
+                    if (created) {
+                        if (!written && originalText !== null) {
+                            try { model.setValue(originalText); } catch (_) {}
+                        }
+                        try { model.dispose(); } catch (_) {}
+                    } else {
+                        logWarn('[LSP] 应用 WorkspaceEdit 失败:', err?.message || err);
+                    }
+                }
+                if (created && written) {
+                    try { model.dispose(); } catch (_) {}
+                }
+            }
+            for (const model of createdModels) {
+                if (model.isDisposed?.()) continue;
+                try { model.dispose(); } catch (_) {}
+            }
+            grouped = new Map();
+            versions = new Map();
+            conflicts = new Set();
+            createdModels = new Set();
+        };
+
         for (const item of workspaceEdit.edits) {
+            if (item?.fileOperation) {
+                await flushTextEdits();
+                if (await this.applyLspFileOperation(item)) {
+                    fileOperations++;
+                } else {
+                    skipped++;
+                }
+                continue;
+            }
             const resource = item?.resource;
             const uri = resource?.toString?.() || (typeof resource === 'string' ? resource : '');
             if (!uri || !item.textEdit?.range) {
@@ -1630,63 +1752,15 @@ class MonacoEditorManager {
                 }
                 versions.set(model, versionId);
             }
-            const edits = grouped.get(model) || [];
-            edits.push({
+            const modelEdits = grouped.get(model) || [];
+            modelEdits.push({
                 range: item.textEdit.range,
                 text: typeof item.textEdit.text === 'string' ? item.textEdit.text : ''
             });
-            grouped.set(model, edits);
+            grouped.set(model, modelEdits);
         }
-
-        let files = 0;
-        let edits = 0;
-        let conflictCount = 0;
-        for (const [model, modelEdits] of grouped) {
-            if (conflicts.has(model)) {
-                conflictCount++;
-                continue;
-            }
-            const versionId = versions.get(model);
-            const document = this._lspDocuments.get(model);
-            if (versionId !== undefined && document && document.version !== versionId) {
-                logWarn('[LSP] 忽略过期 WorkspaceEdit，文档版本不匹配:', document.version, '!=', versionId);
-                conflictCount++;
-                continue;
-            }
-            const created = createdModels.has(model);
-            const originalText = created && model.getValue ? model.getValue() : null;
-            let written = false;
-            try {
-                model.pushEditOperations([], modelEdits, () => null);
-                if (created) {
-                    const filePath = this.getModelFilePath(model);
-                    const writeResult = await window.electronAPI.writeFile(filePath, model.getValue());
-                    if (writeResult?.success === false || writeResult?.ok === false) {
-                        throw new Error(writeResult?.error || 'write failed');
-                    }
-                    written = true;
-                }
-                files++;
-                edits += modelEdits.length;
-            } catch (err) {
-                if (created) {
-                    if (!written && originalText !== null) {
-                        try { model.setValue(originalText); } catch (_) {}
-                    }
-                    try { model.dispose(); } catch (_) {}
-                } else {
-                    logWarn('[LSP] 应用 WorkspaceEdit 失败:', err?.message || err);
-                }
-            }
-            if (created && written) {
-                try { model.dispose(); } catch (_) {}
-            }
-        }
-        for (const model of createdModels) {
-            if (model.isDisposed?.()) continue;
-            try { model.dispose(); } catch (_) {}
-        }
-        return { files, edits, conflicts: conflictCount, skipped };
+        await flushTextEdits();
+        return { files, edits, conflicts: conflictCount, skipped, fileOperations };
     }
 
     _registerLspDocumentSymbolProvider() {
@@ -6842,7 +6916,7 @@ class MonacoEditorManager {
                         });
                         const workspaceEdit = this.lspWorkspaceEditToMonaco(renameResult);
                         const applied = await this.applyLspWorkspaceEdit(workspaceEdit);
-                        if (applied.edits > 0) {
+                        if (applied.edits > 0 || applied.fileOperations > 0) {
                             return;
                         }
                     }
@@ -6911,8 +6985,8 @@ class MonacoEditorManager {
 
             const workspaceEdit = this.lspWorkspaceEditToMonaco(result);
             const applied = await this.applyLspWorkspaceEdit(workspaceEdit);
-            if (applied.edits > 0) {
-                logInfo('[LSP] 通过 LSP 重命名标识符完成: ' + applied.files + ' 个文件, ' + applied.edits + ' 处替换');
+            if (applied.edits > 0 || applied.fileOperations > 0) {
+                logInfo('[LSP] 通过 LSP 重命名标识符完成: ' + applied.files + ' 个文件, ' + applied.edits + ' 处替换, ' + applied.fileOperations + ' 个文件操作');
                 return true;
             }
             return false;

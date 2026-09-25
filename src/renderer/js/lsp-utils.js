@@ -51,6 +51,41 @@
             return undefined;
         }
         const edits = [];
+        const appendFileOperation = (operation) => {
+            if (!operation || typeof operation !== 'object' || !monaco.Uri) return;
+            try {
+                if (operation.kind === 'create' && operation.uri) {
+                    edits.push({
+                        fileOperation: 'create',
+                        resource: monaco.Uri.parse(operation.uri),
+                        options: {
+                            overwrite: operation.options?.overwrite === true,
+                            ignoreIfExists: operation.options?.ignoreIfExists === true
+                        }
+                    });
+                } else if (operation.kind === 'rename' && operation.oldUri && operation.newUri) {
+                    edits.push({
+                        fileOperation: 'rename',
+                        oldResource: monaco.Uri.parse(operation.oldUri),
+                        newResource: monaco.Uri.parse(operation.newUri),
+                        options: {
+                            overwrite: operation.options?.overwrite === true,
+                            ignoreIfExists: operation.options?.ignoreIfExists === true
+                        }
+                    });
+                } else if (operation.kind === 'delete' && operation.uri) {
+                    edits.push({
+                        fileOperation: 'delete',
+                        resource: monaco.Uri.parse(operation.uri),
+                        options: {
+                            recursive: operation.options?.recursive === true,
+                            ignoreIfNotExists: operation.options?.ignoreIfNotExists === true
+                        }
+                    });
+                }
+            } catch (_) {
+            }
+        };
         const append = (uri, edit, versionId) => {
             if (!uri || !edit || !edit.range) {
                 return;
@@ -85,6 +120,10 @@
 
         if (Array.isArray(workspaceEdit.documentChanges)) {
             for (const documentChange of workspaceEdit.documentChanges) {
+                if (documentChange?.kind === 'create' || documentChange?.kind === 'rename' || documentChange?.kind === 'delete') {
+                    appendFileOperation(documentChange);
+                    continue;
+                }
                 const uri = documentChange?.textDocument?.uri;
                 if (!uri || !Array.isArray(documentChange.edits)) {
                     continue;

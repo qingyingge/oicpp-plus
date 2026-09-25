@@ -4757,18 +4757,27 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('rename-file-invoke', async (_event, oldPath, newName) => {
+    ipcMain.handle('rename-file-invoke', async (_event, oldPath, newName, options = {}) => {
         try {
             if (!oldPath || typeof oldPath !== 'string' || !newName || typeof newName !== 'string') {
                 throw new Error('无效的重命名参数');
             }
             assertSafeIoPath(oldPath);
-            const validation = validateFileName(newName);
+            const targetName = path.basename(newName);
+            const validation = validateFileName(targetName);
             if (!validation.valid) throw new Error(validation.error);
             const dir = path.dirname(oldPath);
-            let newPath = path.join(dir, newName);
+            let newPath = path.isAbsolute(newName) ? newName : path.join(dir, newName);
             if (fs.existsSync(newPath)) {
-                newPath = getUniquePath(dir, newName);
+                if (options?.ignoreIfExists) {
+                    return { success: true, filePath: newPath };
+                }
+                if (options?.overwrite) {
+                    assertSafeIoPath(newPath);
+                    fs.rmSync(newPath, { recursive: true, force: true });
+                } else {
+                    newPath = getUniquePath(path.dirname(newPath), targetName);
+                }
             }
             assertSafeIoPath(newPath);
             fs.renameSync(oldPath, newPath);
@@ -4780,13 +4789,16 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('delete-file-invoke', async (_event, filePath) => {
+    ipcMain.handle('delete-file-invoke', async (_event, filePath, options = {}) => {
         let previousWatchStates = [];
         try {
             if (!filePath || typeof filePath !== 'string') throw new Error('无效的文件路径');
             const normalizedPath = path.resolve(filePath);
             assertSafeIoPath(normalizedPath);
             const stat = fs.statSync(normalizedPath);
+            if (stat.isDirectory() && options?.recursive !== true) {
+                throw new Error('删除目录需要 recursive=true');
+            }
             previousWatchStates = markLocalDeletion(normalizedPath);
             if (stat.isDirectory()) {
                 fs.rmSync(normalizedPath, { recursive: true, force: true });
