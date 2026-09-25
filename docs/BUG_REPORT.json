@@ -711,6 +711,16 @@
     "impact": "重复监听。"
   },
   {
+    "id": "M51",
+    "severity": "MEDIUM",
+    "title": "[Bug] printf 格式化误改字符串字面量",
+    "status": "待修复",
+    "file": "src/renderer/js/monaco-editor-manager.js:1944-2029; src/renderer/js/formatters/cppFormatter.js",
+    "problem": "输入 `printf(\"printf (%d)\",10);` 后，自动格式化结果变为 `printf(\"printf(%d)\",10);`，字符串字面量内部的空格被移除。",
+    "impact": "格式化可能改变字符串内容，造成静默的代码语义变化。",
+    "note": "按用户要求暂不处理。"
+  },
+  {
     "id": "L1",
     "severity": "LOW",
     "title": "死代码 — debugProcess/debugSession",
