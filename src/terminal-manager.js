@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { t } = require('./lang');
 
 let pty = null;
 let ptyLoadError = null;
@@ -71,6 +72,16 @@ class IntegratedTerminalManager {
         return !!pty || this._isInteractiveFallbackAvailable();
     }
 
+    _getPtyLoadErrorDetail() {
+        const message = ptyLoadError
+            ? (ptyLoadError.message || String(ptyLoadError))
+            : t('terminal.nodePtyNotInstalled');
+        const targetInfo = ptyLoadTargets.length > 0
+            ? `\n${t('terminal.ptyLoadTargets', { targets: ptyLoadTargets.join(' | ') })}`
+            : '';
+        return `${message}${targetInfo}`;
+    }
+
     getStatus() {
         if (pty) {
             return {
@@ -81,45 +92,25 @@ class IntegratedTerminalManager {
         }
 
         if (this._isInteractiveFallbackAvailable()) {
-            const message = ptyLoadError
-                ? (ptyLoadError.message || String(ptyLoadError))
-                : 'node-pty not installed';
-            const targetInfo = ptyLoadTargets.length > 0
-                ? `\n尝试位置: ${ptyLoadTargets.join(' | ')}`
-                : '';
-
             return {
                 available: true,
-                reason: 'node-pty 不可用，已启用兼容终端',
-                detail: `${message}${targetInfo}`
+                reason: t('terminal.ptyFallbackActive'),
+                detail: this._getPtyLoadErrorDetail()
             };
         }
 
         if (this._isProcessFallbackAvailable() && process.platform === 'win32') {
-            const message = ptyLoadError
-                ? (ptyLoadError.message || String(ptyLoadError))
-                : 'node-pty not installed';
-            const targetInfo = ptyLoadTargets.length > 0
-                ? `\n尝试位置: ${ptyLoadTargets.join(' | ')}`
-                : '';
             return {
                 available: false,
-                reason: 'node-pty 不可用（Windows 终端需 PTY 支持）',
-                detail: `${message}${targetInfo}\n请重新安装依赖并确保 node-pty 原生模块可加载。`
+                reason: t('terminal.ptyRequiredWindows'),
+                detail: `${this._getPtyLoadErrorDetail()}\n${t('terminal.reinstallPty')}`
             };
         }
 
-        const message = ptyLoadError
-            ? (ptyLoadError.message || String(ptyLoadError))
-            : 'node-pty not installed';
-        const targetInfo = ptyLoadTargets.length > 0
-            ? `\n尝试位置: ${ptyLoadTargets.join(' | ')}`
-            : '';
-
         return {
             available: false,
-            reason: 'node-pty 不可用',
-            detail: `${message}${targetInfo}`
+            reason: t('terminal.ptyUnavailable'),
+            detail: this._getPtyLoadErrorDetail()
         };
     }
 
@@ -451,7 +442,7 @@ class IntegratedTerminalManager {
         const args = this._resolveProcessFallbackArgs(shellPath, requestedArgs);
         const preflight = this._runShellPreflight(shellPath, [], cwd, env);
         if (!preflight.ok) {
-            const err = new Error(`兼容终端预检查失败: ${preflight.detail}`);
+            const err = new Error(t('terminal.preflightFailed', { error: preflight.detail }));
             err.code = 'SHELL_PREFLIGHT_FAILED';
             throw err;
         }
@@ -496,7 +487,7 @@ class IntegratedTerminalManager {
         child.on('error', (error) => {
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
-                data: `\r\n[Error] 兼容终端进程异常: ${error?.message || String(error)}\r\n`
+                data: `\r\n[Error] ${t('terminal.processError', { error: error?.message || String(error) })}\r\n`
             });
         });
 
@@ -543,7 +534,7 @@ class IntegratedTerminalManager {
         const spawnEnv = this._buildSpawnEnv();
 
         if (shellCandidates.length === 0) {
-            const err = new Error('未找到可用的 shell 候选项');
+            const err = new Error(t('terminal.shellUnavailable'));
             err.code = 'SHELL_UNAVAILABLE';
             throw err;
         }
@@ -572,7 +563,8 @@ class IntegratedTerminalManager {
                 }
             }
 
-            const err = new Error(`兼容终端启动失败: ${fallbackErrors.join(' || ') || '未知错误'}`);
+            const errorDetail = fallbackErrors.join(' || ') || t('terminal.unknownError');
+            const err = new Error(t('terminal.fallbackStartFailed', { error: errorDetail }));
             err.code = 'PROCESS_FALLBACK_FAILED';
             throw err;
         }
@@ -639,11 +631,20 @@ class IntegratedTerminalManager {
 
             const detail = lastSpawnError
                 ? (lastSpawnError.message || String(lastSpawnError))
-                : '未知错误';
+                : t('terminal.unknownError');
             const attempted = shellCandidates.join(' | ');
-            const trace = spawnErrors.length > 0 ? `; node-pty: ${spawnErrors.join(' || ')}` : '';
-            const fallbackTrace = fallbackErrors.length > 0 ? `; 兼容终端: ${fallbackErrors.join(' || ')}` : '';
-            const err = new Error(`启动 shell 失败: ${detail}. 尝试候选: ${attempted}${trace}${fallbackTrace}`);
+            const ptyTrace = spawnErrors.length > 0
+                ? `; ${t('terminal.ptyAttempts', { attempts: spawnErrors.join(' || ') })}`
+                : '';
+            const fallbackTrace = fallbackErrors.length > 0
+                ? `; ${t('terminal.fallbackAttempts', { attempts: fallbackErrors.join(' || ') })}`
+                : '';
+            const err = new Error(t('terminal.shellSpawnFailed', {
+                error: detail,
+                candidates: attempted,
+                ptyTrace,
+                fallbackTrace
+            }));
             err.code = 'SHELL_SPAWN_FAILED';
             throw err;
         }

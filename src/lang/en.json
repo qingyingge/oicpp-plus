@@ -420,7 +420,21 @@
     "emptyHint": "Click \"New Terminal\" to start using the built-in terminal",
     "hideTerminal": "Hide Terminal",
     "unicodeAddonMissing": "xterm Unicode11 addon not loaded",
-    "unicodeAddonDetail": "Please ensure @xterm/addon-unicode11 is installed"
+    "unicodeAddonDetail": "Please ensure @xterm/addon-unicode11 is installed",
+    "nodePtyNotInstalled": "node-pty is not installed",
+    "ptyLoadTargets": "Locations tried: {targets}",
+    "ptyFallbackActive": "node-pty is unavailable; the compatibility terminal is enabled",
+    "ptyRequiredWindows": "node-pty is unavailable (Windows terminals require PTY support)",
+    "reinstallPty": "Reinstall the dependencies and ensure the native node-pty module can be loaded.",
+    "ptyUnavailable": "node-pty is unavailable",
+    "preflightFailed": "Compatibility terminal preflight failed: {error}",
+    "processError": "Compatibility terminal process error: {error}",
+    "shellUnavailable": "No usable shell candidate was found",
+    "fallbackStartFailed": "Failed to start the compatibility terminal: {error}",
+    "unknownError": "Unknown error",
+    "ptyAttempts": "node-pty: {attempts}",
+    "fallbackAttempts": "Compatibility terminal: {attempts}",
+    "shellSpawnFailed": "Failed to start shell: {error}. Candidates tried: {candidates}{ptyTrace}{fallbackTrace}"
   },
   "compiler": {
     "settings": "Compiler Settings",

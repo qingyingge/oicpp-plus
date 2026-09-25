@@ -403,7 +403,21 @@
     "emptyHint": "点击\"新建终端\"开始使用内置终端",
     "hideTerminal": "隐藏终端",
     "unicodeAddonMissing": "xterm Unicode11 插件未加载",
-    "unicodeAddonDetail": "请确认已安装 @xterm/addon-unicode11"
+    "unicodeAddonDetail": "请确认已安装 @xterm/addon-unicode11",
+    "nodePtyNotInstalled": "未安装 node-pty",
+    "ptyLoadTargets": "尝试位置：{targets}",
+    "ptyFallbackActive": "node-pty 不可用，已启用兼容终端",
+    "ptyRequiredWindows": "node-pty 不可用（Windows 终端需要 PTY 支持）",
+    "reinstallPty": "请重新安装依赖，并确保 node-pty 原生模块可以加载。",
+    "ptyUnavailable": "node-pty 不可用",
+    "preflightFailed": "兼容终端预检查失败：{error}",
+    "processError": "兼容终端进程异常：{error}",
+    "shellUnavailable": "未找到可用的 shell 候选项",
+    "fallbackStartFailed": "兼容终端启动失败：{error}",
+    "unknownError": "未知错误",
+    "ptyAttempts": "node-pty：{attempts}",
+    "fallbackAttempts": "兼容终端：{attempts}",
+    "shellSpawnFailed": "启动 shell 失败：{error}。尝试候选：{candidates}{ptyTrace}{fallbackTrace}"
   },
   "compiler": {
     "settings": "编译器设置",
