@@ -1570,12 +1570,23 @@ class MonacoEditorManager {
             return { files: 0, edits: 0 };
         }
         const grouped = new Map();
+        const versions = new Map();
+        const conflicts = new Set();
         for (const item of workspaceEdit.edits) {
             const resource = item?.resource;
             const uri = resource?.toString?.() || (typeof resource === 'string' ? resource : '');
             if (!uri || !item.textEdit?.range) continue;
             const model = this.findModelByLspUri(uri);
             if (!model || model.isDisposed?.()) continue;
+            const versionId = Number.isInteger(item.versionId) ? item.versionId : undefined;
+            if (versionId !== undefined) {
+                const knownVersion = versions.get(model);
+                if (knownVersion !== undefined && knownVersion !== versionId) {
+                    conflicts.add(model);
+                    continue;
+                }
+                versions.set(model, versionId);
+            }
             const edits = grouped.get(model) || [];
             edits.push({
                 range: item.textEdit.range,
@@ -1586,7 +1597,19 @@ class MonacoEditorManager {
 
         let files = 0;
         let edits = 0;
+        let conflictCount = 0;
         for (const [model, modelEdits] of grouped) {
+            if (conflicts.has(model)) {
+                conflictCount++;
+                continue;
+            }
+            const versionId = versions.get(model);
+            const document = this._lspDocuments.get(model);
+            if (versionId !== undefined && document && document.version !== versionId) {
+                logWarn('[LSP] 忽略过期 WorkspaceEdit，文档版本不匹配:', document.version, '!=', versionId);
+                conflictCount++;
+                continue;
+            }
             try {
                 model.pushEditOperations([], modelEdits, () => null);
                 files++;
@@ -1594,7 +1617,7 @@ class MonacoEditorManager {
             } catch (_) {
             }
         }
-        return { files, edits };
+        return { files, edits, conflicts: conflictCount };
     }
 
     _registerLspDocumentSymbolProvider() {
