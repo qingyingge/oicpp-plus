@@ -6780,11 +6780,7 @@ class MonacoEditorManager {
                 return;
             }
 
-            // 优先使用 LSP 进行作用域感知的符号重命名（可跨文件、自动跳过注释/字符串）。
-            if (await this.renameViaLsp(model, pos, newName)) {
-                return;
-            }
-
+            // LSP 请求已在上方执行；失败后直接回退，避免重复 prepare/rename。
             // 回退方案：在当前文件内进行简单的正则替换。
             const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const matches = model.findMatches(`\\b${escaped}\\b`, true, true, true, null, true);
