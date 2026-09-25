@@ -1242,6 +1242,8 @@ class MonacoEditorManager {
                 },
                 resolveInlayHint: async (hint, token) => {
                     const original = hint?.__oicppLspInlayHint;
+                    const capabilities = this.lspClient?.getServerCapabilities?.();
+                    if (capabilities?.inlayHintProvider?.resolveProvider === false) return hint;
                     if (!original || !this.lspClient || token?.isCancellationRequested) return hint;
                     try {
                         const result = await this.lspClient.request('inlayHint/resolve', original, token);
@@ -1346,6 +1348,8 @@ class MonacoEditorManager {
                 },
                 resolveLink: async (link, token) => {
                     const original = link?.__oicppLspDocumentLink;
+                    const capabilities = this.lspClient?.getServerCapabilities?.();
+                    if (capabilities?.documentLinkProvider?.resolveProvider === false) return link;
                     if (!original || !this.lspClient || token?.isCancellationRequested) return link;
                     try {
                         const result = await this.lspClient.request('documentLink/resolve', original, token);
@@ -2218,6 +2222,8 @@ class MonacoEditorManager {
                 },
                 resolveCodeLens: async (lens, token) => {
                     const original = lens?.__oicppLspCodeLens;
+                    const capabilities = this.lspClient?.getServerCapabilities?.();
+                    if (capabilities?.codeLensProvider?.resolveProvider === false) return lens;
                     if (!original || !this.lspClient || token?.isCancellationRequested) return lens;
                     try {
                         const result = await this.lspClient.request('codeLens/resolve', original, token);
