@@ -777,6 +777,10 @@ class ClangdLspManager {
                 try { entry.reject(err); } catch (_) {}
             });
             this.pending.clear();
+            this.pendingApplyEdits.forEach((entry) => {
+                try { entry.resolve({ applied: false }); } catch (_) {}
+            });
+            this.pendingApplyEdits.clear();
             if (mainWindow && !mainWindow.isDestroyed()) {
                 try {
                     mainWindow.webContents.send('lsp-notification', {
