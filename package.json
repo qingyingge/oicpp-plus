@@ -21,7 +21,7 @@
     "prebuild:icons": "node scripts/generate-icons.js",
     "prebuild:buildinfo": "node scripts/generate-build-info.js",
     "prebuild:clangd": "node scripts/download-clangd.js",
-    "prebuild:clang-format": "node scripts/download-clang-format.js",
+    "prebuild:clang-format": "node --use-system-ca scripts/download-clang-format.js",
     "prebuild:native": "node-gyp rebuild",
     "build": "pnpm run prebuild:buildinfo && pnpm run prebuild:icons && pnpm run prebuild:clangd && pnpm run prebuild:clang-format && electron-builder",
     "ci": "node scripts/ci-check.js",
