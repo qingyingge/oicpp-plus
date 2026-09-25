@@ -26,7 +26,7 @@ class CloudSyncPanel {
         this.bindHeaderActions();
         this.setupTreeEvents();
         this.setupKeyboardShortcuts();
-        this.renderEmptyState(('cloud.loginRequired'));
+        this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
     }
 
     bindQuotaHelpAction() {
@@ -221,7 +221,7 @@ class CloudSyncPanel {
             this.expandedFolders = new Set(['/']);
             this.selectedItems.clear();
             this.updateRemaining(null);
-            this.renderEmptyState(('cloud.loginRequired'));
+            this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
             return;
         }
         this.refresh();
@@ -236,7 +236,7 @@ class CloudSyncPanel {
         } catch (_) { }
 
         if (!this._lastLoggedIn) {
-            this.renderEmptyState(('cloud.loginRequired'));
+            this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
             return;
         }
         this.refresh();
@@ -245,7 +245,7 @@ class CloudSyncPanel {
     async refresh() {
         if (this.isLoading) return;
         if (!this._lastLoggedIn) {
-            this.renderEmptyState(('cloud.loginRequired'));
+            this.renderEmptyState(window.i18n.t('cloud.loginRequired'));
             return;
         }
         this.isLoading = true;
@@ -253,7 +253,7 @@ class CloudSyncPanel {
             await this.loadDirectory('/');
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || (('cloud.refreshFail')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.refreshFail')), 'error');
         } finally {
             this.isLoading = false;
         }
@@ -281,7 +281,7 @@ class CloudSyncPanel {
         if (!this.treeEl) return;
         const rootItems = this.itemsCache.get('/') || [];
         if (rootItems.length === 0) {
-            this.renderEmptyState(('cloud.noFiles'));
+            this.renderEmptyState(window.i18n.t('cloud.noFiles'));
             return;
         }
         this.treeEl.innerHTML = '';
@@ -360,11 +360,11 @@ class CloudSyncPanel {
 
         if (sourcePath === targetPath) return;
         if (sourceType === 'folder' && this.isDescendantPath(targetPath, sourcePath)) {
-            this.showMessage(('cloud.moveSelf'), 'warning');
+            this.showMessage(window.i18n.t('cloud.moveSelf'), 'warning');
             return;
         }
 
-        const ok = await window.dialogManager?.showConfirmDialog?.(('cloud.moveConfirm'), ('cloud.moveConfirmMsg', {name, targetFolder}));
+        const ok = await window.dialogManager?.showConfirmDialog?.(window.i18n.t('cloud.moveConfirm'), window.i18n.t('cloud.moveConfirmMsg', {name, targetFolder}));
         if (ok === false) return;
 
         try {
@@ -395,9 +395,9 @@ class CloudSyncPanel {
                 }
             }
             this.renderTree();
-            this.showMessage(('cloud.moveSuccess'), 'success');
+            this.showMessage(window.i18n.t('cloud.moveSuccess'), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (('cloud.moveFail')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.moveFail')), 'error');
         }
     }
 
@@ -470,7 +470,7 @@ class CloudSyncPanel {
         this.expandedFolders.add(path);
         if (!this.itemsCache.has(path)) {
             this.loadDirectory(path).then(() => this.renderTree()).catch(err => {
-                this.showMessage(err?.message || (('cloud.loadFolderFail')), 'error');
+                this.showMessage(err?.message || (window.i18n.t('cloud.loadFolderFail')), 'error');
                 this.renderTree();
             });
         } else {
@@ -516,23 +516,23 @@ class CloudSyncPanel {
                 }
             }
         } catch (error) {
-            this.showMessage(error?.message || (('cloud.openFileFail')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.openFileFail')), 'error');
         }
     }
 
     async saveCloudFile(cloudPath, content) {
         if (!this._lastLoggedIn) {
-            this.showMessage(('cloud.loginRequired'), 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return false;
         }
         const bytes = new TextEncoder().encode(content || '').length;
         if (bytes > this.maxFileSize) {
-            this.showMessage(('cloud.fileSizeExceeded'), 'error');
+            this.showMessage(window.i18n.t('cloud.fileSizeExceeded'), 'error');
             return false;
         }
         const ext = this.getExtension(cloudPath);
         if (!this.allowedExtensions.has(ext)) {
-            this.showMessage(('cloud.fileTypeNotSupported'), 'error');
+            this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
             return false;
         }
         try {
@@ -544,14 +544,14 @@ class CloudSyncPanel {
             this.renderTree();
             return true;
         } catch (error) {
-            this.showMessage(error?.message || (('cloud.saveFail')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.saveFail')), 'error');
             return false;
         }
     }
 
     async createNewFile() {
         if (!this._lastLoggedIn) {
-            this.showMessage(('cloud.loginRequired'), 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
         const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFileName'), window.i18n.t('cloud.untitled'), window.i18n.t('cloud.namePlaceholder'));
@@ -563,14 +563,14 @@ class CloudSyncPanel {
         }
         const ext = this.getExtension(name);
         if (!this.allowedExtensions.has(ext)) {
-            this.showMessage(('cloud.fileTypeNotSupported'), 'error');
+            this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
             return;
         }
         if (!this.checkRemainingCapacity()) return;
         const targetDir = this.getActionTargetFolder();
         await this.ensureDirectoryLoaded(targetDir);
         if (this.hasNameInDirectory(targetDir, name)) {
-            this.showMessage(('cloud.fileExists'), 'warning');
+            this.showMessage(window.i18n.t('cloud.fileExists'), 'warning');
             return;
         }
         const fullPath = this.joinPath(targetDir, name);
@@ -580,13 +580,13 @@ class CloudSyncPanel {
             this.renderTree();
             this.openCloudFile({ path: fullPath, name, type: 'file' });
         } catch (error) {
-            this.showMessage(error?.message || (('cloud.newFileFail')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.newFileFail')), 'error');
         }
     }
 
     async createNewFolder() {
         if (!this._lastLoggedIn) {
-            this.showMessage(('cloud.loginRequired'), 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
         const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFolderName'), window.i18n.t('cloud.defaultFolder'), window.i18n.t('cloud.folderPlaceholder'));
@@ -600,7 +600,7 @@ class CloudSyncPanel {
         const targetDir = this.getActionTargetFolder();
         await this.ensureDirectoryLoaded(targetDir);
         if (this.hasNameInDirectory(targetDir, name)) {
-            this.showMessage(('cloud.fileExists'), 'warning');
+            this.showMessage(window.i18n.t('cloud.fileExists'), 'warning');
             return;
         }
         const fullPath = this.joinPath(targetDir, name);
@@ -609,17 +609,17 @@ class CloudSyncPanel {
             await this.loadDirectory(targetDir);
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || (('cloud.newFolderFail')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.newFolderFail')), 'error');
         }
     }
 
     async uploadLocalFile() {
         if (!this._lastLoggedIn) {
-            this.showMessage(('cloud.loginRequired'), 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
         if (!window.electronAPI?.showOpenDialog) {
-            this.showMessage(('cloud.uploadUnavailable'), 'error');
+            this.showMessage(window.i18n.t('cloud.uploadUnavailable'), 'error');
             return;
         }
         try {
@@ -628,7 +628,7 @@ class CloudSyncPanel {
                 properties: ['openFile'],
                 filters: [
                     {
-                        name: ('cloud.supportedFileTypes'),
+                        name: window.i18n.t('cloud.supportedFileTypes'),
                         extensions: Array.from(this.allowedExtensions, (extension) => extension.slice(1))
                     }
                 ]
@@ -644,7 +644,7 @@ class CloudSyncPanel {
             const buffer = await window.electronAPI.readFileBuffer(filePath);
             const byteLength = buffer?.byteLength ?? buffer?.length ?? 0;
             if (byteLength > this.maxFileSize) {
-                this.showMessage(('cloud.fileSizeExceeded'), 'error');
+                this.showMessage(window.i18n.t('cloud.fileSizeExceeded'), 'error');
                 return;
             }
             const content = await window.electronAPI.readFileContent(filePath);
@@ -659,9 +659,9 @@ class CloudSyncPanel {
             await this.request('POST', '/cloudSync/upload', { path: fullPath, content: content || '' });
             await this.loadDirectory(targetDir);
             this.renderTree();
-            this.showMessage((('cloud.uploadSuccessSimple')), 'success');
+            this.showMessage((window.i18n.t('cloud.uploadSuccessSimple')), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (('cloud.uploadFailSimple')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
 
@@ -671,7 +671,7 @@ class CloudSyncPanel {
             return;
         }
         if (!window.electronAPI?.showOpenDialog || !window.electronAPI?.walkDirectory) {
-            this.showMessage(('cloud.uploadUnavailable'), 'error');
+            this.showMessage(window.i18n.t('cloud.uploadUnavailable'), 'error');
             return;
         }
         try {
@@ -789,40 +789,40 @@ class CloudSyncPanel {
             this.showMessage(message, uploaded > 0 ? 'success' : 'warning');
         } catch (error) {
             this.hideUploadProgress();
-            this.showMessage(error?.message || (('cloud.uploadFailSimple')), 'error');
+            this.showMessage(error?.message || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
 
     async downloadFile(file) {
         if (!window.electronAPI?.showSaveDialog) {
-            this.showMessage('下载功能不可用', 'error');
+            this.showMessage(window.i18n.t('cloud.downloadUnavailable'), 'error');
             return;
         }
         try {
             const data = await this.request('GET', '/cloudSync/download', { path: file.path });
             const content = typeof data?.content === 'string' ? data.content : '';
             const result = await window.electronAPI.showSaveDialog({
-                title: '保存云端文件',
+                title: window.i18n.t('cloud.saveCloudTitle'),
                 defaultPath: file.name
             });
             const targetPath = result?.filePath;
             if (!targetPath) return;
             const writeResult = await window.electronAPI.writeFile(targetPath, content);
             if (writeResult?.success === false) {
-                throw new Error(writeResult?.error || '写入失败');
+                throw new Error(writeResult?.error || window.i18n.t('cloud.writeFail'));
             }
-            this.showMessage('保存成功', 'success');
+            this.showMessage(window.i18n.t('cloud.saveSuccess'), 'success');
         } catch (error) {
-            this.showMessage(error?.message || '下载失败', 'error');
+            this.showMessage(error?.message || window.i18n.t('cloud.downloadFail'), 'error');
         }
     }
 
     async renameItem(file) {
         if (!this._lastLoggedIn) {
-            this.showMessage('请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
-        const newName = await window.dialogManager?.showInputDialog('重命名', file.name, '请输入新名称');
+        const newName = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.rename'), file.name, window.i18n.t('cloud.renamePlaceholder'));
         if (!newName || newName === file.name) return;
         const check = this.validateFileName(newName);
         if (!check.valid) {
@@ -832,7 +832,7 @@ class CloudSyncPanel {
         if (file.type === 'file') {
             const ext = this.getExtension(newName);
             if (!this.allowedExtensions.has(ext)) {
-                this.showMessage('仅支持 .ans .in .out .cpp .py .txt', 'error');
+                this.showMessage(window.i18n.t('cloud.fileTypeNotSupported'), 'error');
                 return;
             }
         }
@@ -859,7 +859,7 @@ class CloudSyncPanel {
             }
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || '重命名失败', 'error');
+            this.showMessage(error?.message || window.i18n.t('cloud.renameFail'), 'error');
         }
     }
 
@@ -889,10 +889,10 @@ class CloudSyncPanel {
 
     async deleteItem(file) {
         if (!this._lastLoggedIn) {
-            this.showMessage('请先登录账户', 'warning');
+            this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
-        const ok = await window.dialogManager?.showConfirmDialog('删除确认', `确定删除 ${file.name} 吗？`);
+        const ok = await window.dialogManager?.showConfirmDialog(window.i18n.t('cloud.deleteConfirm'), window.i18n.t('cloud.deleteConfirmMsg', { name: file.name }));
         if (!ok) return;
         try {
             await this.request('POST', '/cloudSync/delete', { path: file.path });
@@ -900,35 +900,35 @@ class CloudSyncPanel {
             await this.loadDirectory(parent);
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || '删除失败', 'error');
+            this.showMessage(error?.message || window.i18n.t('cloud.deleteFail'), 'error');
         }
     }
 
     showItemContextMenu(e, file) {
         const items = [];
         if (file.type === 'file') {
-            items.push({ label: '打开', action: () => this.openCloudFile(file) });
-            items.push({ label: '下载到本地', action: () => this.downloadFile(file) });
+            items.push({ label: window.i18n.t('cloud.open'), action: () => this.openCloudFile(file) });
+            items.push({ label: window.i18n.t('cloud.download'), action: () => this.downloadFile(file) });
         }
-        items.push({ label: '重命名', action: () => this.renameItem(file) });
-        items.push({ label: '删除', action: () => this.deleteItem(file) });
+        items.push({ label: window.i18n.t('cloud.rename'), action: () => this.renameItem(file) });
+        items.push({ label: window.i18n.t('cloud.delete'), action: () => this.deleteItem(file) });
         items.push({ separator: true });
-        items.push({ label: '新建文件', action: () => this.createNewFile() });
-        items.push({ label: '新建文件夹', action: () => this.createNewFolder() });
-        items.push({ label: '上传文件', action: () => this.uploadLocalFile() });
-        items.push({ label: '上传文件夹', action: () => this.uploadLocalFolder() });
-        items.push({ label: '刷新', action: () => this.refresh() });
+        items.push({ label: window.i18n.t('cloud.newFile'), action: () => this.createNewFile() });
+        items.push({ label: window.i18n.t('cloud.newFolder'), action: () => this.createNewFolder() });
+        items.push({ label: window.i18n.t('cloud.uploadFile'), action: () => this.uploadLocalFile() });
+        items.push({ label: window.i18n.t('cloud.uploadFolder'), action: () => this.uploadLocalFolder() });
+        items.push({ label: window.i18n.t('cloud.refresh'), action: () => this.refresh() });
         this.showContextMenu(items, e.clientX, e.clientY);
     }
 
     showEmptyAreaContextMenu(e) {
         const items = [
-            { label: '新建文件', action: () => this.createNewFile() },
-            { label: '新建文件夹', action: () => this.createNewFolder() },
-            { label: '上传文件', action: () => this.uploadLocalFile() },
-            { label: '上传文件夹', action: () => this.uploadLocalFolder() },
+            { label: window.i18n.t('cloud.newFile'), action: () => this.createNewFile() },
+            { label: window.i18n.t('cloud.newFolder'), action: () => this.createNewFolder() },
+            { label: window.i18n.t('cloud.uploadFile'), action: () => this.uploadLocalFile() },
+            { label: window.i18n.t('cloud.uploadFolder'), action: () => this.uploadLocalFolder() },
             { separator: true },
-            { label: '刷新', action: () => this.refresh() }
+            { label: window.i18n.t('cloud.refresh'), action: () => this.refresh() }
         ];
         this.showContextMenu(items, e.clientX, e.clientY);
     }
@@ -1000,7 +1000,7 @@ class CloudSyncPanel {
             <div class="empty-state">
                 <div class="empty-state-icon" data-ui-icon="cloud"></div>
                 <div class="empty-state-title">${message}</div>
-                <div class="empty-state-subtitle">云空间文件将在此显示</div>
+                <div class="empty-state-subtitle">${window.i18n.t('cloud.filesWillAppear')}</div>
             </div>
         `;
         if (window.uiIcons?.hydrate) {
@@ -1012,8 +1012,8 @@ class CloudSyncPanel {
         this.remainingFiles = typeof value === 'number' ? value : null;
         if (this.remainingEl) {
             this.remainingEl.textContent = typeof value === 'number'
-                ? `剩余文件数量: ${value}`
-                : '剩余文件数量: --';
+                ? window.i18n.t('cloud.remainingFiles', { count: value })
+                : window.i18n.t('cloud.remainingFilesUnknown');
         }
     }
 
@@ -1030,7 +1030,7 @@ class CloudSyncPanel {
         const percent = Math.min(100, Math.round((current / safeTotal) * 100));
         this.uploadProgressFillEl.style.width = `${percent}%`;
         if (this.uploadProgressTextEl) {
-            this.uploadProgressTextEl.textContent = text || `上传中: ${current}/${total}`;
+            this.uploadProgressTextEl.textContent = text || window.i18n.t('cloud.uploadProgress', { current, total });
         }
     }
 
@@ -1051,7 +1051,7 @@ class CloudSyncPanel {
     checkRemainingCapacity() {
         if (typeof this.remainingFiles !== 'number') return true;
         if (this.remainingFiles <= 0) {
-            this.showMessage('云端剩余文件数量不足', 'warning');
+            this.showMessage(window.i18n.t('cloud.remainingInsufficient'), 'warning');
             return false;
         }
         return true;
@@ -1090,28 +1090,28 @@ class CloudSyncPanel {
         const existing = this.getItemInDirectory(dirPath, name);
         if (!existing) return 'none';
 
-        const existingKind = existing.type === 'folder' ? '文件夹' : '文件';
-        const targetLabel = targetKind === 'folder' ? '文件夹' : '文件';
+        const existingKind = existing.type === 'folder' ? window.i18n.t('cloud.folder') : window.i18n.t('cloud.file');
+        const targetLabel = targetKind === 'folder' ? window.i18n.t('cloud.folder') : window.i18n.t('cloud.file');
 
         if (existing.type === 'folder' && targetKind === 'file') {
             const action = await window.dialogManager?.showActionDialog?.(
-                '上传冲突',
-                `云端已存在同名文件夹: ${name}，无法用${targetLabel}覆盖。`,
+                window.i18n.t('cloud.uploadConflict'),
+                window.i18n.t('cloud.uploadConflictFolderMsg', { name, target: targetLabel }),
                 [
-                    { id: 'skip', label: '跳过' },
-                    { id: 'cancel', label: '取消', className: 'dialog-btn-cancel' }
+                    { id: 'skip', label: window.i18n.t('cloud.skip') },
+                    { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
                 ]
             );
             return action || 'cancel';
         }
 
         const action = await window.dialogManager?.showActionDialog?.(
-            '上传冲突',
-            `云端已存在同名${existingKind}: ${name}，是否覆盖该${existingKind}？`,
+            window.i18n.t('cloud.uploadConflict'),
+            window.i18n.t('cloud.uploadConflictOverwriteMsg', { kind: existingKind, name }),
             [
-                { id: 'overwrite', label: '覆盖', className: 'dialog-btn-confirm' },
-                { id: 'skip', label: '跳过' },
-                { id: 'cancel', label: '取消', className: 'dialog-btn-cancel' }
+                { id: 'overwrite', label: window.i18n.t('cloud.overwrite'), className: 'dialog-btn-confirm' },
+                { id: 'skip', label: window.i18n.t('cloud.skip') },
+                { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
             ]
         );
 
@@ -1129,15 +1129,15 @@ class CloudSyncPanel {
 
     validateFileName(name) {
         if (!name || typeof name !== 'string') {
-            return { valid: false, error: '名称不能为空' };
+            return { valid: false, error: window.i18n.t('cloud.nameEmpty') };
         }
         const trimmedName = name.trim();
         if (trimmedName.length === 0) {
-            return { valid: false, error: '名称不能为空' };
+            return { valid: false, error: window.i18n.t('cloud.nameEmpty') };
         }
         const illegalChars = /[<>:"/\\|?*]/;
         if (illegalChars.test(trimmedName)) {
-            return { valid: false, error: '文件名不能包含以下字符: < > : " / \\ | ? *' };
+            return { valid: false, error: window.i18n.t('cloud.illegalChars') };
         }
         return { valid: true, error: null };
     }
@@ -1214,7 +1214,7 @@ class CloudSyncPanel {
 
     async request(method, path, params) {
         if (!window.electronAPI?.cloudSyncRequest) {
-            throw new Error('云同步接口不可用');
+            throw new Error(window.i18n.t('cloud.apiUnavailable'));
         }
         const payload = {
             method: method,
@@ -1227,14 +1227,14 @@ class CloudSyncPanel {
             if (response?.status === 401) {
                 try { await window.electronAPI.logoutIdeAccount?.(); } catch (_) { }
                 this.setLoggedInState(false);
-                throw new Error('登录已过期，请重新登录');
+                throw new Error(window.i18n.t('cloud.loginExpired'));
             }
-            const msg = response?.data?.msg || response?.error || '请求失败';
+            const msg = response?.data?.msg || response?.error || window.i18n.t('cloud.requestFail');
             throw new Error(msg);
         }
         const data = response?.data;
         if (data && data.code && data.code !== 200) {
-            throw new Error(data.msg || '服务器返回错误');
+            throw new Error(data.msg || window.i18n.t('cloud.serverError'));
         }
         return data?.data ?? data;
     }
