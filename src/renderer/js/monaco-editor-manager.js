@@ -590,6 +590,7 @@ class MonacoEditorManager {
             if (supports('textDocument.renameProvider')) this._registerLspRenameProvider();
             if (supports('textDocument.documentFormattingProvider')) this._registerLspDocumentFormattingProvider();
             if (supports('textDocument.inlayHintProvider')) this._registerLspInlayHintProvider();
+            if (supports('textDocument.selectionRangeProvider')) this._registerLspSelectionRangeProvider();
             if (supports('textDocument.codeActionProvider')) this._registerLspCodeActionProvider();
             if (supports('textDocument.typeDefinitionProvider')) this._registerLspTypeDefinitionProvider();
             if (supports('textDocument.implementationProvider')) this._registerLspImplementationProvider();
@@ -598,7 +599,7 @@ class MonacoEditorManager {
             if (supports('textDocument.codeLensProvider')) this._registerLspCodeLensProvider();
             if (supports('textDocument.foldingRangeProvider')) this._registerLspFoldingRangeProvider();
             this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠)');
+            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围)');
         } catch (err) {
             logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
         }
@@ -1241,6 +1242,54 @@ class MonacoEditorManager {
                         return mapped ? { ...hint, ...mapped } : hint;
                     } catch (_) {
                         return hint;
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    lspSelectionRangeToMonaco(selectionRange) {
+        const ranges = [];
+        let current = selectionRange;
+        while (current) {
+            const range = this.lspRangeToMonaco(current.range);
+            if (!range) break;
+            ranges.push({ range });
+            current = current.parent;
+        }
+        return ranges;
+    }
+
+    _registerLspSelectionRangeProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:selectionRange`;
+            if (this._lspProviders.has(key)) continue;
+            const disposable = monaco.languages.registerSelectionRangeProvider(language, {
+                provideSelectionRanges: async (model, positions, token) => {
+                    try {
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) {
+                            return positions.map(() => []);
+                        }
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady || !this.lspClient || token?.isCancellationRequested) {
+                            return positions.map(() => []);
+                        }
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri || token?.isCancellationRequested) return positions.map(() => []);
+                        const result = await this.lspClient.request('textDocument/selectionRange', {
+                            textDocument: { uri },
+                            positions: positions.map((position) => ({
+                                line: position.lineNumber - 1,
+                                character: position.column - 1
+                            }))
+                        }, token);
+                        if (token?.isCancellationRequested) return null;
+                        if (!Array.isArray(result)) return positions.map(() => []);
+                        return result.map((selectionRange) => this.lspSelectionRangeToMonaco(selectionRange));
+                    } catch (_) {
+                        return positions.map(() => []);
                     }
                 }
             });

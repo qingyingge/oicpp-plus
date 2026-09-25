@@ -223,6 +223,9 @@ class LspClientBridge {
                             properties: ['tooltip', 'textEdits', 'label.tooltip']
                         }
                     },
+                    selectionRange: {
+                        dynamicRegistration: false
+                    },
                     codeAction: {
                         codeActionLiteralSupport: {
                             codeActionKind: {
