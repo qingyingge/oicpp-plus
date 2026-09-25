@@ -2112,10 +2112,6 @@ function normalizeSettingsRuntimeShape(nextSettings) {
 
 let settings = getDefaultSettings();
 
-let isUpdateDownloading = false; // 是否正在下载更新
-let currentDownloadingVersion = null; // 正在下载的版本
-let currentUpdateDownloadProgress = 0; // 更新下载进度(0-100)
-const isAutoUpdateCheckInProgress = false; // 自动更新检查已禁用
 let pendingInstallerLaunch = null; // 退出后待启动的安装程序
 let pendingInstallerLaunchArmed = false;
 let pendingUpdateQuitPromptInProgress = false;
@@ -2241,10 +2237,10 @@ function notifyUser(title, body, level = 'info') {
 
 function getUpdateDownloadState() {
     return {
-        autoChecking: !!isAutoUpdateCheckInProgress,
-        downloading: !!isUpdateDownloading,
-        version: currentDownloadingVersion || '',
-        progress: Number.isFinite(currentUpdateDownloadProgress) ? Math.max(0, Math.min(100, Math.round(currentUpdateDownloadProgress))) : 0,
+        autoChecking: false,
+        downloading: false,
+        version: '',
+        progress: 0,
         pendingInstall: hasPendingUpdateToInstall(),
         pendingVersion: settings?.pendingUpdate?.version || ''
     };
@@ -2289,13 +2285,6 @@ function broadcastUpdateDownloadState(extra = {}) {
         try { mainWindow.webContents.send('update-download-status', state); } catch (_) { }
     }
     refreshNativeUpdateMenuState();
-}
-
-function setUpdateDownloadState({ downloading = false, version = '', progress = 0 } = {}) {
-    isUpdateDownloading = !!downloading;
-    currentDownloadingVersion = version || null;
-    currentUpdateDownloadProgress = Number.isFinite(progress) ? Math.max(0, Math.min(100, Number(progress))) : 0;
-    broadcastUpdateDownloadState();
 }
 
 function normalizeCompilerArgsForPlatform(inputArgs, platform = process.platform) {
@@ -3159,7 +3148,7 @@ function createMenuBar() {
                     id: 'check-update',
                     label: '检查更新',
                     click: () => {
-                        if (isUpdateDownloading || isAutoUpdateCheckInProgress) {
+                        if (hasPendingUpdateToInstall()) {
                             return;
                         }
                         checkForUpdates(true); // true 表示手动检查
@@ -7487,111 +7476,17 @@ function openBackupSettings() {
 }
 
 async function checkForUpdates(isManual = false) {
+    if (!isManual) return;
+
     try {
-        // OICPP-Plus: 暂未提供独立更新服务，禁用更新检查（避免误用官方服务器被覆盖）
-        if (isManual) {
-            dialog.showMessageBox(mainWindow, {
-                type: 'info',
-                title: '检查更新',
-                message: '更新检查功能暂不可用',
-                detail: 'OICPP-Plus 暂时没有独立的更新服务。请前往 GitHub Releases 页面下载新版本：https://github.com/qingyingge/oicpp-plus/releases'
-            });
-        }
-        return;
-
-        if (hasPendingUpdateToInstall()) {
-            if (isManual) {
-                dialog.showMessageBox(mainWindow, {
-                    type: 'info',
-                    title: '检查更新',
-                    message: '已有更新等待安装',
-                    detail: '请先退出 OICPP-Plus 完成当前更新安装，安装完成后再检查更新。'
-                });
-            }
-            return;
-        }
-
-        if (isManual && isAutoUpdateCheckInProgress) {
-            dialog.showMessageBox(mainWindow, {
-                type: 'info',
-                title: '检查更新',
-                message: '正在执行启动自动检查',
-                detail: '请等待自动检查完成后，再进行手动检查更新。'
-            });
-            return;
-        }
-
-        if (isUpdateDownloading) {
-            if (isManual) {
-                const state = getUpdateDownloadState();
-                const versionSuffix = state.version ? ` (${state.version})` : '';
-                dialog.showMessageBox(mainWindow, {
-                    type: 'info',
-                    title: '检查更新',
-                    message: '更新下载进行中',
-                    detail: `当前正在后台下载更新${versionSuffix}，进度 ${state.progress}%。`
-                });
-            }
-            return;
-        }
-
-        logInfo('开始检查更新...');
-        logInfo('检查类型:', isManual ? '手动检查' : '自动检查');
-
-        const response = await fetch('https://oicpp.mywwzh.top/api/checkUpdate');
-        logInfo('请求更新API状态码:', response.status);
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const updateInfo = await response.json();
-
-        const currentVersion = APP_VERSION; // 当前程序版本
-        const latestVersion = updateInfo.latestVersion;
-        const description = updateInfo.description || '';
-
-        try {
-            settings.lastUpdateCheck = new Date().toISOString();
-            saveSettings();
-        } catch (_) { }
-
-        const hasUpdate = compareVersions(currentVersion, latestVersion, settings.receiveBetaUpdates === true);
-
-        if (hasUpdate) {
-            logInfo('发现新版本:', latestVersion);
-
-            const formattedDescription = description.replace(/\\n/g, '\n');
-            if (isManual) {
-                dialog.showMessageBox(mainWindow, {
-                    type: 'info',
-                    title: '发现新版本',
-                    message: `发现新版本 ${latestVersion}`,
-                    detail: formattedDescription || '已开始后台下载更新包。'
-                }).catch(() => { });
-            }
-            downloadAndInstallUpdate(updateInfo, { isManual });
-        } else {
-            logInfo('当前已是最新版本');
-            if (isManual) {
-                dialog.showMessageBox(mainWindow, {
-                    type: 'info',
-                    title: '检查更新',
-                    message: '当前已是最新版本',
-                    detail: `您当前使用的版本 ${currentVersion} 已是最新版本。`
-                });
-            }
-        }
+        await dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: '检查更新',
+            message: '更新检查功能暂不可用',
+            detail: 'OICPP-Plus 暂时没有独立的更新服务。请前往 GitHub Releases 页面下载新版本：https://github.com/qingyingge/oicpp-plus/releases'
+        });
     } catch (error) {
-        logError('检查更新失败:', error);
-        if (isManual) {
-            dialog.showMessageBox(mainWindow, {
-                type: 'error',
-                title: '检查更新失败',
-                message: '无法连接到更新服务器',
-                detail: '请检查网络连接或稍后重试。'
-            });
-        }
+        logError('显示更新提示失败:', error);
     }
 }
 
@@ -7681,162 +7576,6 @@ function promptLinuxManualInstall(pendingUpdate) {
             try { shell.showItemInFolder(pendingUpdate.installerPath); } catch (_) { }
         }
     }).catch(() => { });
-}
-
-async function downloadAndInstallUpdate(updateInfo = null, options = {}) {
-    try {
-        logInfo('=== 开始下载安装程序(静默) ===');
-        const isManual = !!options.isManual;
-
-        if (isUpdateDownloading) {
-            logInfo('[更新] 已有静默下载进行中，忽略本次调用');
-            return;
-        }
-
-        let latestVersion = updateInfo?.latestVersion;
-        let updateDescription = updateInfo?.description || '';
-        if (!latestVersion) {
-            try {
-                const versionResponse = await fetch('https://oicpp.mywwzh.top/api/checkUpdate');
-                if (versionResponse.ok) {
-                    const versionInfo = await versionResponse.json();
-                    latestVersion = versionInfo.latestVersion;
-                    updateDescription = versionInfo.description || '';
-                }
-            } catch (e) {
-                logWarn('[更新] 获取远程版本失败，放弃下载');
-                return;
-            }
-        }
-        if (!latestVersion) return;
-
-        if (currentDownloadingVersion === latestVersion) {
-            logInfo('[更新] 同版本正在下载，跳过');
-            return;
-        }
-
-        const systemCandidates = process.platform === 'win32'
-            ? ['win']
-            : (process.platform === 'darwin' ? ['mac', 'macos', 'darwin'] : ['linux']);
-
-        let filelist = null;
-        for (const sysParam of systemCandidates) {
-            try {
-                const filelistResp = await fetch(`https://oicpp.mywwzh.top/api/getUpdateFilelist?version=${encodeURIComponent(latestVersion)}&sys=${sysParam}`);
-                if (!filelistResp.ok) {
-                    continue;
-                }
-                const data = await filelistResp.json();
-                if (data && Array.isArray(data.files) && data.files.length > 0) {
-                    filelist = data;
-                    break;
-                }
-            } catch (_) { }
-        }
-
-        if (!filelist || !filelist.files || filelist.files.length === 0) {
-            logWarn('[更新] 文件列表为空');
-            return;
-        }
-
-        let installerFile = null;
-        if (process.platform === 'win32') {
-            installerFile = filelist.files.find(f => /\.exe$/i.test(f.name));
-        } else if (process.platform === 'linux') {
-            installerFile = filelist.files.find(f => /\.deb$/i.test(f.name)) || filelist.files.find(f => /\.rpm$/i.test(f.name));
-        } else if (process.platform === 'darwin') {
-            installerFile = filelist.files.find(f => /\.dmg$/i.test(f.name))
-                || filelist.files.find(f => /\.pkg$/i.test(f.name))
-                || filelist.files.find(f => /\.zip$/i.test(f.name));
-        }
-        if (!installerFile || !installerFile.downloadUrl) {
-            logWarn('[更新] 未找到可用安装包');
-            return;
-        }
-
-        const userOicppDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
-        if (!fs.existsSync(userOicppDir)) fs.mkdirSync(userOicppDir, { recursive: true });
-        
-        // 在下载新安装包之前，清理旧的安装包
-        await cleanupOldInstallers();
-        
-        const installerPath = path.join(userOicppDir, installerFile.name);
-
-        if (fs.existsSync(installerPath)) {
-            logInfo('[更新] 安装程序已存在，复用已有文件');
-        } else {
-            setUpdateDownloadState({ downloading: true, version: latestVersion, progress: 0 });
-            notifyUser('更新下载已开始', `正在后台下载 ${latestVersion}，可继续正常使用。`, 'info');
-            const downloader = new MultiThreadDownloader({
-                maxConcurrency: 16,
-                chunkSize: 1024 * 1024 * 2,
-                timeout: 45000,
-                retryCount: 8,
-                progressCallback: (progress) => {
-                    if (!progress || (progress.type !== 'single' && progress.type !== 'multi')) {
-                        return;
-                    }
-                    const next = Number(progress.progress);
-                    if (!Number.isFinite(next)) {
-                        return;
-                    }
-                    const rounded = Math.max(0, Math.min(100, Math.round(next)));
-                    if (rounded !== Math.round(currentUpdateDownloadProgress || 0)) {
-                        currentUpdateDownloadProgress = rounded;
-                        broadcastUpdateDownloadState();
-                    }
-                }
-            });
-            try {
-                await downloader.download(installerFile.downloadUrl, installerPath);
-                logInfo('[更新] 静默下载完成');
-                if (process.platform === 'win32') {
-                    notifyUser('更新下载完成', `版本 ${latestVersion} 已下载完成，关闭 OICPP-Plus 后将自动安装。`, 'success');
-                } else {
-                    notifyUser('更新下载完成', `版本 ${latestVersion} 已下载完成，请手动运行安装包完成更新。`, 'success');
-                }
-            } catch (e) {
-                logError('[更新] 静默下载失败:', e.message);
-                setUpdateDownloadState({ downloading: false, version: '', progress: 0 });
-                notifyUser('更新下载失败', `后台下载失败: ${e.message || '请稍后重试'}`, 'error');
-                dialog.showMessageBox(mainWindow, {
-                    type: 'error',
-                    title: '更新下载失败',
-                    message: '更新下载安装程序失败',
-                    detail: e.message || '请稍后重试'
-                });
-                return;
-            } finally {
-                setUpdateDownloadState({ downloading: false, version: '', progress: 0 });
-            }
-        }
-
-        settings.pendingUpdate = {
-            version: latestVersion,
-            installerPath,
-            installerName: installerFile.name,
-            description: updateDescription || '',
-            autoInstallOnQuit: process.platform === 'win32',
-            downloadTime: new Date().toISOString()
-        };
-        saveSettings();
-        broadcastUpdateDownloadState();
-
-        if (process.platform === 'win32') {
-            armPendingUpdateSilentInstallOnQuit(isManual ? '手动检查更新' : '启动自动检查更新');
-        } else {
-            promptLinuxManualInstall(settings.pendingUpdate);
-        }
-    } catch (error) {
-        setUpdateDownloadState({ downloading: false, version: '', progress: 0 });
-        logError('[更新] 更新流程异常:', error.message);
-        dialog.showMessageBox(mainWindow, {
-            type: 'error',
-            title: '更新失败',
-            message: '获取更新或下载时出现错误',
-            detail: error.message || ''
-        });
-    }
 }
 
 function launchInstallerDetached(installerPath, installerArgs = []) {
@@ -9100,84 +8839,6 @@ async function runExecutable(options) {
             reject(new Error(`创建子进程失败: ${error.message}`));
         }
     });
-}
-
-function compareVersions(currentVersion, latestVersion, allowBetaUpdates = false) {
-    if (!latestVersion || !currentVersion) return false;
-
-    const semverRank = (id) => {
-        if (id == null) return 0;
-        const s = String(id).toLowerCase();
-        if (s === 'alpha' || s === 'a') return 1;
-        if (s === 'beta' || s === 'b') return 2;
-        if (s === 'rc') return 3;
-        return 10; // 其他未知标识放在后面，按字典序再比较
-    };
-
-    const tokenizePre = (pre) => {
-        if (!pre) return [];
-        const parts = pre.split('.').flatMap(p => {
-            const tokens = p.match(/[a-zA-Z]+|\d+/g);
-            return tokens ? tokens : [p];
-        });
-        return parts.map(tok => (/^\d+$/.test(tok) ? Number(tok) : String(tok)));
-    };
-
-    const parse = (v) => {
-        const vs = String(v).trim().replace(/^v/i, '');
-        const [preBuildSplit] = vs.split('+', 1);
-        const coreAndPre = preBuildSplit || vs;
-        const hy = coreAndPre.indexOf('-');
-        const core = hy >= 0 ? coreAndPre.slice(0, hy) : coreAndPre;
-        const pre = hy >= 0 ? coreAndPre.slice(hy + 1) : '';
-        const [maj, min, pat] = core.split('.').map(x => parseInt(x, 10) || 0);
-        return { core: [maj || 0, min || 0, pat || 0], pre: tokenizePre(pre) };
-    };
-
-    const latestParsed = parse(latestVersion);
-    if (!allowBetaUpdates && latestParsed.pre.length > 0) {
-        return false;
-    }
-
-    const cmpId = (a, b) => {
-        const aNum = typeof a === 'number';
-        const bNum = typeof b === 'number';
-        if (aNum && bNum) return a === b ? 0 : (a < b ? -1 : 1);
-        if (aNum && !bNum) return -1; // 数字标识优先级低于非数字
-        if (!aNum && bNum) return 1;
-        const ra = semverRank(a);
-        const rb = semverRank(b);
-        if (ra !== rb) return ra < rb ? -1 : 1;
-        const as = String(a).toLowerCase();
-        const bs = String(b).toLowerCase();
-        if (as === bs) return 0;
-        return as < bs ? -1 : 1;
-    };
-
-    const cmp = (a, b) => {
-        const A = parse(a);
-        const B = parse(b);
-        for (let i = 0; i < 3; i++) {
-            if (A.core[i] !== B.core[i]) return A.core[i] < B.core[i] ? -1 : 1;
-        }
-        const AhasPre = A.pre.length > 0;
-        const BhasPre = B.pre.length > 0;
-        if (!AhasPre && !BhasPre) return 0;
-        if (!AhasPre && BhasPre) return 1;  // A 为正式版，新于带预发布的 B
-        if (AhasPre && !BhasPre) return -1; // A 为预发布，旧于正式版 B
-        const len = Math.max(A.pre.length, B.pre.length);
-        for (let i = 0; i < len; i++) {
-            const ai = A.pre[i];
-            const bi = B.pre[i];
-            if (ai === undefined) return -1; // A 较短，优先级更低
-            if (bi === undefined) return 1;  // B 较短
-            const r = cmpId(ai, bi);
-            if (r !== 0) return r;
-        }
-        return 0;
-    };
-
-    return cmp(latestVersion, currentVersion) > 0;
 }
 
 app.whenReady().then(() => {
