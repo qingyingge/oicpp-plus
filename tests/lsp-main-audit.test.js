@@ -11,7 +11,7 @@ const check = (name, condition, extra = '') => {
     if (!condition) failures++;
 };
 
-function loadManagerClass(spawnImpl = undefined) {
+function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
     const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
     const start = source.indexOf('class ClangdLspManager');
     const end = source.indexOf('\nconst clangdLspManager', start);
@@ -28,6 +28,7 @@ function loadManagerClass(spawnImpl = undefined) {
         path: require('path'),
         fs: require('fs'),
         spawn: spawnImpl,
+        mainWindow,
         logInfo: () => {},
         logWarn: () => {},
         logError: () => {},
@@ -83,6 +84,23 @@ class FakeProc extends EventEmitter {
     manager._dispatchMessage({ id: 'request-1', result: { ok: true } });
     const response = await responsePromise;
     check('audit: main manager resolves response', response?.ok === true && !manager.pending.has('request-1'));
+
+    let sentApplyEdit = null;
+    const bridgeWindow = {
+        isDestroyed: () => false,
+        webContents: {
+            send: (channel, payload) => {
+                if (channel === 'lsp-apply-edit') sentApplyEdit = payload;
+            }
+        }
+    };
+    const WorkspaceEditManager = loadManagerClass(undefined, bridgeWindow);
+    const workspaceEditManager = new WorkspaceEditManager();
+    const rendererEditPromise = workspaceEditManager._requestRendererWorkspaceEdit({ changes: {} });
+    check('audit: main manager tracks renderer WorkspaceEdit request', workspaceEditManager.pendingApplyEdits.size === 1);
+    workspaceEditManager.resolveRendererWorkspaceEdit(sentApplyEdit.requestId, { applied: true });
+    const rendererEditResult = await rendererEditPromise;
+    check('audit: renderer WorkspaceEdit result resolves main request', rendererEditResult?.applied === true && workspaceEditManager.pendingApplyEdits.size === 0);
 
     const startupProc = new FakeProc();
     const StartupManager = loadManagerClass(() => startupProc);
