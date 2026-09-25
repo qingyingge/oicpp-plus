@@ -223,9 +223,6 @@ importers:
       pdfjs-dist:
         specifier: 6.3.289
         version: 6.3.289
-      sharp:
-        specifier: ^0.35.4
-        version: 0.35.4(@types/node@26.6.2)
       turndown:
         specifier: ^7.2.4
         version: 7.2.4
@@ -248,6 +245,9 @@ importers:
       monaco-editor-webpack-plugin:
         specifier: ^7.1.1
         version: 7.1.1(monaco-editor@0.56.0)(webpack@5.111.1)
+      sharp:
+        specifier: ^0.35.4
+        version: 0.35.4(@types/node@26.6.2)
       webpack:
         specifier: ^5.111.1
         version: 5.111.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.4(@types/node@26.6.2))(webpack-cli@7.2.3)
