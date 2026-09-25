@@ -18,6 +18,7 @@ const rendererInitSource = read('src/renderer/js/init.js');
 const settingsInitSource = read('src/renderer/js/settings-init.js');
 const tabsSource = read('src/renderer/js/tabs.js');
 const compilerSettingsSource = read('src/renderer/settings/compiler.js');
+const editorSettingsSource = read('src/renderer/settings/editor.js');
 const workerSource = read('src/main-process/compare-worker-v6.js');
 const gdbSource = `${read('src/gdb-debugger.js')}\n${read('src/gdb-mi-debugger.js')}`;
 const workflows = ['build.yml', 'build-windows-test.yml', 'build-dmg-test.yml']
@@ -45,6 +46,7 @@ check('renderer startup awaits ordered initialization', /await setUserIconPath\(
 check('startup font validation stays local', !settingsInitSource.includes('updateSettings({ font: validatedFont })') && settingsInitSource.includes('fontFamily = validatedFont'));
 check('PDF message listener is disposed', tabsSource.includes('dispose()') && tabsSource.includes("removeEventListener('message', this.handlePdfViewerMessage"));
 check('compiler settings listener binding is idempotent', compilerSettingsSource.includes('if (this._eventListenersBound) return;'));
+check('editor opacity uses cancellable preview updates', editorSettingsSource.includes('sendSettingsPreview({ windowOpacity })'));
 
 console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

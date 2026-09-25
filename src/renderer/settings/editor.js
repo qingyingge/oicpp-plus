@@ -1125,11 +1125,10 @@ class EditorSettings {
                 const windowOpacity = 1 - transparency;
                 opacityValue.textContent = Math.round(transparency * 100) + '%';
                 // 实时预览透明度
-                if (window.electronAPI && window.electronAPI.updateSettings) {
-                    // 简单的防抖
+                if (window.electronAPI && window.electronAPI.sendSettingsPreview) {
                     clearTimeout(this.opacityTimeout);
                     this.opacityTimeout = setTimeout(() => {
-                        window.electronAPI.updateSettings({ windowOpacity });
+                        window.electronAPI.sendSettingsPreview({ windowOpacity });
                     }, 100);
                 }
             });
