@@ -229,6 +229,9 @@ class LspClientBridge {
                     selectionRange: {
                         dynamicRegistration: false
                     },
+                    documentLink: {
+                        dynamicRegistration: false
+                    },
                     codeAction: {
                         codeActionLiteralSupport: {
                             codeActionKind: {

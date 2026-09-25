@@ -592,6 +592,7 @@ class MonacoEditorManager {
             if (supports('textDocument.documentRangeFormattingProvider')) this._registerLspDocumentRangeFormattingProvider();
             if (supports('textDocument.inlayHintProvider')) this._registerLspInlayHintProvider();
             if (supports('textDocument.selectionRangeProvider')) this._registerLspSelectionRangeProvider();
+            if (supports('textDocument.documentLinkProvider')) this._registerLspDocumentLinkProvider();
             if (supports('textDocument.codeActionProvider')) this._registerLspCodeActionProvider();
             if (supports('textDocument.typeDefinitionProvider')) this._registerLspTypeDefinitionProvider();
             if (supports('textDocument.implementationProvider')) this._registerLspImplementationProvider();
@@ -600,7 +601,7 @@ class MonacoEditorManager {
             if (supports('textDocument.codeLensProvider')) this._registerLspCodeLensProvider();
             if (supports('textDocument.foldingRangeProvider')) this._registerLspFoldingRangeProvider();
             this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、范围格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围)');
+            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、范围格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围、文档链接)');
         } catch (err) {
             logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
         }
@@ -1291,6 +1292,70 @@ class MonacoEditorManager {
                         return result.map((selectionRange) => this.lspSelectionRangeToMonaco(selectionRange));
                     } catch (_) {
                         return positions.map(() => []);
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspDocumentLinkProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:documentLink`;
+            if (this._lspProviders.has(key)) continue;
+            const disposable = monaco.languages.registerLinkProvider(language, {
+                provideLinks: async (model, token) => {
+                    try {
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return { links: [] };
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady || !this.lspClient || token?.isCancellationRequested) return { links: [] };
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri || token?.isCancellationRequested) return { links: [] };
+                        const result = await this.lspClient.request('textDocument/documentLink', {
+                            textDocument: { uri }
+                        }, token);
+                        if (token?.isCancellationRequested) return { links: [] };
+                        if (!Array.isArray(result)) return { links: [] };
+                        return {
+                            links: result
+                                .map((link) => {
+                                    const range = this.lspRangeToMonaco(link?.range);
+                                    if (!range || !link?.target) return null;
+                                    try {
+                                        return {
+                                            range,
+                                            url: monaco.Uri.parse(link.target),
+                                            tooltip: link.tooltip,
+                                            __oicppLspDocumentLink: link
+                                        };
+                                    } catch (_) {
+                                        return null;
+                                    }
+                                })
+                                .filter(Boolean)
+                        };
+                    } catch (_) {
+                        return { links: [] };
+                    }
+                },
+                resolveLink: async (link, token) => {
+                    const original = link?.__oicppLspDocumentLink;
+                    if (!original || !this.lspClient || token?.isCancellationRequested) return link;
+                    try {
+                        const result = await this.lspClient.request('documentLink/resolve', original, token);
+                        if (!result?.range || !result?.target) return link;
+                        const range = this.lspRangeToMonaco(result.range);
+                        if (!range) return link;
+                        return {
+                            ...link,
+                            range,
+                            url: monaco.Uri.parse(result.target),
+                            tooltip: result.tooltip ?? link.tooltip,
+                            __oicppLspDocumentLink: result
+                        };
+                    } catch (_) {
+                        return link;
                     }
                 }
             });
