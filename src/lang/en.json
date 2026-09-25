@@ -808,7 +808,15 @@
     "array": "Array",
     "container": "Container",
     "unknownFunction": "Unknown function",
-    "unknownFile": "Unknown file"
+    "unknownFile": "Unknown file",
+    "gdbProcessNotRunning": "GDB process is not running",
+    "gdbSessionStopped": "GDB session stopped",
+    "programHasExited": "Program has exited",
+    "programAlreadyRunning": "The program is already running",
+    "breakpointSetFailed": "Failed to set breakpoint",
+    "variableNotFound": "Variable {name} not found",
+    "variableValueError": "<error>",
+    "programConsoleTitle": "Program Console"
   },
   "cloud": {
     "title": "Cloud Space",

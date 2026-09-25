@@ -791,7 +791,15 @@
     "array": "数组",
     "container": "容器",
     "unknownFunction": "未知函数",
-    "unknownFile": "未知文件"
+    "unknownFile": "未知文件",
+    "gdbProcessNotRunning": "GDB 进程未运行",
+    "gdbSessionStopped": "GDB 会话已停止",
+    "programHasExited": "程序已退出",
+    "programAlreadyRunning": "程序已在运行",
+    "breakpointSetFailed": "设置断点失败",
+    "variableNotFound": "未找到变量 {name}",
+    "variableValueError": "<错误>",
+    "programConsoleTitle": "程序控制台"
   },
   "cloud": {
     "title": "云空间",

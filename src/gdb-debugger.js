@@ -8,6 +8,7 @@ const {
     parseGDBWatchValue,
     tokenizeBacktrace
 } = require('./gdb-utils');
+const { t } = require('./lang');
 const GDB_PROMPT = 'oicpp_gdb:';
 const FULL_GDB_PROMPT = '>>>>>>' + GDB_PROMPT;
 const reThreadSwitch = /^\[Switching to thread .*\]#0[ \t]+(0x[A-Fa-f0-9]+) in (.*) from (.*)/;
@@ -79,7 +80,7 @@ class GDBDebugger extends EventEmitter {
         try { global.logInfo?.('[GDB<<]', line.trim()); } catch (_) { }
         try {
             if (!this.gdbProcess || !this.gdbProcess.stdin || this.gdbProcess.killed || this.gdbProcess.exitCode !== null) {
-                throw new Error('GDB process is not running');
+                throw new Error(t('debug.gdbProcessNotRunning'));
             }
             this.gdbProcess.stdin.write(line);
         } catch (writeError) {
@@ -167,7 +168,7 @@ class GDBDebugger extends EventEmitter {
         this._queueBusy = false;
         const pendingCmds = this._cmdQueue.splice(0);
         for (const entry of pendingCmds) {
-            if (entry.reject) entry.reject(new Error('GDB session stopped'));
+            if (entry.reject) entry.reject(new Error(t('debug.gdbSessionStopped')));
         }
         await this._cleanupLinuxTTY();
     }
@@ -193,8 +194,8 @@ class GDBDebugger extends EventEmitter {
         });
     }
     async run() {
-        if (this.programExited) throw new Error('Program has exited');
-        if (this._inferiorRunning) throw new Error('The program is already running');
+        if (this.programExited) throw new Error(t('debug.programHasExited'));
+        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
         if (this._isStarted && !this.programExited) return this.continue();
         if (process.platform === 'linux') {
             try {
@@ -209,27 +210,27 @@ class GDBDebugger extends EventEmitter {
         }
     }
     async continue() {
-        if (this.programExited) throw new Error('Program has exited');
-        if (this._inferiorRunning) throw new Error('The program is already running');
+        if (this.programExited) throw new Error(t('debug.programHasExited'));
+        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
         if (!this._isStarted) return this.run();
         this._manualBreakOnEntry = false;
         this._sendContinue('cont').catch(e => global.logWarn?.('[GDB] cont 失败:', e?.message || e));
     }
     async stepOver() {
-        if (this.programExited) throw new Error('Program has exited');
-        if (this._inferiorRunning) throw new Error('The program is already running');
+        if (this.programExited) throw new Error(t('debug.programHasExited'));
+        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
         this._manualBreakOnEntry = false;
         this._sendContinue('next').catch(e => global.logWarn?.('[GDB] next 失败:', e?.message || e));
     }
     async stepInto() {
-        if (this.programExited) throw new Error('Program has exited');
-        if (this._inferiorRunning) throw new Error('The program is already running');
+        if (this.programExited) throw new Error(t('debug.programHasExited'));
+        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
         this._manualBreakOnEntry = false;
         this._sendContinue('step').catch(e => global.logWarn?.('[GDB] step 失败:', e?.message || e));
     }
     async stepOut() {
-        if (this.programExited) throw new Error('Program has exited');
-        if (this._inferiorRunning) throw new Error('The program is already running');
+        if (this.programExited) throw new Error(t('debug.programHasExited'));
+        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
         this._manualBreakOnEntry = false;
         this._sendContinue('finish').catch(e => global.logWarn?.('[GDB] finish 失败:', e?.message || e));
     }
@@ -250,7 +251,7 @@ class GDBDebugger extends EventEmitter {
             this.emit('breakpoint-set', bp);
             return bp;
         }
-        throw new Error(output || 'Failed to set breakpoint');
+        throw new Error(output || t('debug.breakpointSetFailed'));
     }
     async removeBreakpoint(number) {
         await this._send(`delete breakpoints ${number}`);
@@ -295,7 +296,7 @@ class GDBDebugger extends EventEmitter {
                 const e = { name: expr, value: out || '', type: typeStr, children: [] };
                 parseGDBWatchValue(e, out || '');
                 this._variables.watches[expr] = e;
-            } catch (_) { this._variables.watches[expr] = { name: expr, value: '<error>', children: [] }; }
+            } catch (_) { this._variables.watches[expr] = { name: expr, value: t('debug.variableValueError'), children: [] }; }
         }
         this.emit('variables-updated', this._variables);
         if (needsRetry) setTimeout(() => { if (this.isRunning && !this._inferiorRunning && !this.programExited) this.updateVariables().catch(() => { }); }, 500);
@@ -324,7 +325,7 @@ class GDBDebugger extends EventEmitter {
             else if (this._variables.local[name]) root = this._variables.local[name];
             else if (this._variables.global[name]) root = this._variables.global[name];
         }
-        if (!root) throw new Error(`Variable ${name} not found`);
+        if (!root) throw new Error(t('debug.variableNotFound', { name }));
         if ((!options.path || options.path.length === 0) && (!root.children || root.children.length === 0)) {
             try { const out = await this._send(`output ${name}`); parseGDBWatchValue(root, out || ''); } catch (e) { global.logWarn?.(`[GDB] 无法获取 ${name} 子项`, e); }
         }
@@ -559,7 +560,7 @@ class GDBDebugger extends EventEmitter {
         const tmpl = String(this._linuxTTYOptions.consoleTerminalTemplate || 'xterm -T \'$TITLE\' -e').trim() || 'xterm -T \'$TITLE\' -e';
         const token = 80000000 + Math.floor(Math.random() * 100000);
         const sleepCmd = `sleep ${token}`;
-        let cmd = tmpl.replace(/\$TITLE/g, "'Program Console'");
+        let cmd = tmpl.replace(/\$TITLE/g, `'${t('debug.programConsoleTitle').replace(/'/g, "'\\''")}'`);
         cmd = cmd.includes('$SCRIPT') ? cmd.replace(/\$SCRIPT/g, sleepCmd) : `${cmd} ${sleepCmd}`;
         try {
             this._ttyProcess = spawn('/bin/sh', ['-c', cmd], { detached: true, stdio: 'ignore', env: { ...process.env } });
