@@ -780,6 +780,14 @@ class ClangdLspManager {
         });
         proc.on('error', (err) => {
             logError('[LSP] clangd 进程启动失败:', err?.message || err);
+            if (generation !== this.procGeneration) return;
+            this.proc = null;
+            this.buffer = Buffer.alloc(0);
+            this.pending.forEach((entry) => {
+                clearTimeout(entry.timer);
+                try { entry.reject(err); } catch (_) {}
+            });
+            this.pending.clear();
         });
         logInfo('[LSP] clangd 已启动, PID:', proc.pid);
         return { ok: true, clangdPath, args, fallbackFlags };
