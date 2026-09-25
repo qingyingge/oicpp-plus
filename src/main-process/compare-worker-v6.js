@@ -36,7 +36,7 @@ function spawnProcess(exePath, args, cwd) {
             detached: process.platform !== 'win32',
             cwd
         });
-        currentProc = proc;
+        activeProcesses.add(proc);
         const stdout = [], stderr = [];
         let outputBytes = 0;
         let outputTruncated = false;
@@ -61,8 +61,8 @@ function spawnProcess(exePath, args, cwd) {
         proc._done = false;
         proc._result = null;
         proc._collectors = [];
-        proc.on('close', (code) => { if (currentProc === proc) currentProc = null; proc._result = { exitCode: code, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
-        proc.on('error', (err) => { if (currentProc === proc) currentProc = null; proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
+        proc.on('close', (code) => { activeProcesses.delete(proc); proc._result = { exitCode: code, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
+        proc.on('error', (err) => { activeProcesses.delete(proc); proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
         resolve(proc);
     });
 }
@@ -144,7 +144,7 @@ async function runGenerator(gen, timeout) {
 }
 
 let running = false;
-let currentProc = null;
+const activeProcesses = new Set();
 
 parentPort.on('message', async (msg) => {
     if (msg.type === 'run-tests') {
@@ -158,6 +158,7 @@ parentPort.on('message', async (msg) => {
             let genOut = null;
             try {
                 genOut = await runGenerator(gen, genTimeout);
+                if (!running) break;
                 lastGenMs = genOut.ms || 0;
                 if (genOut.timeout || genOut.error || genOut.code !== 0) {
                     parentPort.postMessage({ type: 'error', testIndex: i, kind: 'generator', message: genOut.error || 'gen fail', genMs: lastGenMs, input: genOut.output ? genOut.output.toString('utf8', 0, 2000) : '' });
@@ -165,6 +166,7 @@ parentPort.on('message', async (msg) => {
                 }
 
                 if (useFast) {
+                    if (!running) break;
                     const pair = runFastPair(stdPath, testPath, genOut.output, timeout);
                     lastStdMs = pair.ms;
                     lastTestMs = pair.ms;
@@ -189,8 +191,10 @@ parentPort.on('message', async (msg) => {
                     parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
                 } else {
                     const stdR = await runJs(stdPath, genOut.output, timeout);
+                    if (!running) break;
                     lastStdMs = stdR.ms || 0;
                     const testR = await runJs(testPath, genOut.output, timeout);
+                    if (!running) break;
                     lastTestMs = testR.ms || 0;
 
                     if (stdR.timeout) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'std_tle', message: 'std TLE', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
@@ -217,6 +221,7 @@ parentPort.on('message', async (msg) => {
         parentPort.postMessage({ type: 'done' });
     } else if (msg.type === 'stop') {
         running = false;
-        if (currentProc) { killProc(currentProc); currentProc = null; }
+        for (const proc of activeProcesses) killProc(proc);
+        activeProcesses.clear();
     }
 });
