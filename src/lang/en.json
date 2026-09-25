@@ -211,6 +211,14 @@
     "loadingFonts": "Loading fonts...",
     "importNotSupported": "File import is not supported in current environment",
     "saveNotSupported": "File save is not supported in current environment",
+    "imageFilesFilter": "Image Files",
+    "backgroundImageSelectFailed": "Failed to select a background image: {error}",
+    "saveSuccess": "Settings saved successfully!",
+    "saveFail": "Failed to save settings: {error}",
+    "resetSuccess": "Settings have been reset to defaults",
+    "resetFail": "Failed to reset settings: {error}",
+    "apiUnavailable": "Settings API is unavailable",
+    "unknownError": "Unknown error",
     "compilerOutputTitle": "Compile Output"
   },
   "keybinding": {

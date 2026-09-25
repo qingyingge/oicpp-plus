@@ -194,6 +194,14 @@
     "loadingFonts": "正在加载字体...",
     "importNotSupported": "当前环境不支持文件导入",
     "saveNotSupported": "当前环境不支持文件保存",
+    "imageFilesFilter": "图像文件",
+    "backgroundImageSelectFailed": "选择背景图片失败：{error}",
+    "saveSuccess": "设置保存成功！",
+    "saveFail": "保存设置失败：{error}",
+    "resetSuccess": "设置已重置为默认值",
+    "resetFail": "重置设置失败：{error}",
+    "apiUnavailable": "设置 API 不可用",
+    "unknownError": "未知错误",
     "compilerOutputTitle": "编译输出"
   },
   "keybinding": {
