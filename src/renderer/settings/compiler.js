@@ -331,14 +331,14 @@ class CompilerSettings {
     async browsePythonInterpreter() {
         try {
             const platform = await this.getCurrentPlatform();
-            let title = '选择 Python 解释器';
-            let filters = [{ name: '所有文件', extensions: ['*'] }];
+            let title = window.i18n.t('compiler.selectPythonDialog');
+            let filters = [{ name: window.i18n.t('compiler.allFiles'), extensions: ['*'] }];
 
             if (platform === 'windows') {
-                title = '选择 Python 解释器 (python.exe)';
+                title = window.i18n.t('compiler.selectPythonWindowsDialog');
                 filters = [
-                    { name: '可执行文件 (*.exe)', extensions: ['exe'] },
-                    { name: '所有文件', extensions: ['*'] }
+                    { name: window.i18n.t('compiler.executableFiles'), extensions: ['exe'] },
+                    { name: window.i18n.t('compiler.allFiles'), extensions: ['*'] }
                 ];
             }
 
@@ -362,28 +362,28 @@ class CompilerSettings {
             }
         } catch (error) {
             logError('浏览 Python 解释器失败:', error);
-            this.showMessage((window.i18n.t('compiler.browseFailed', {error: error.message})), 'error');
+            this.showMessage((window.i18n.t('compiler.browsePythonFailed', {error: error.message})), 'error');
         }
     }
 
     async browseCompiler() {
         try {
             const platform = await this.getCurrentPlatform();
-            let title = '选择 C++ 编译器';
+            let title = window.i18n.t('compiler.selectCompilerDialog');
             let filters = [];
             let defaultPath = '';
 
             if (platform === 'windows') {
-                title = '选择 C++ 编译器 (请选择 g++.exe / gcc.exe / clang++.exe)';
+                title = window.i18n.t('compiler.selectCompilerWindowsDialog');
                 filters = [
-                    { name: '可执行文件 (*.exe)', extensions: ['exe'] },
-                    { name: '所有文件', extensions: ['*'] }
+                    { name: window.i18n.t('compiler.executableFiles'), extensions: ['exe'] },
+                    { name: window.i18n.t('compiler.allFiles'), extensions: ['*'] }
                 ];
                 defaultPath = '';
             } else {
-                title = '选择 C++ 编译器 (g++, gcc, clang++)';
+                title = window.i18n.t('compiler.selectCompilerUnixDialog');
                 filters = [
-                    { name: '所有文件', extensions: ['*'] }
+                    { name: window.i18n.t('compiler.allFiles'), extensions: ['*'] }
                 ];
             }
 
@@ -405,10 +405,10 @@ class CompilerSettings {
 
         if (!looksLikeCompiler) {
                     const confirmed = await this.showConfirmDialog(
-                        '文件选择确认',
-            `您选择的文件是 "${fileName}"，这可能不是 C++ 编译器。\n\n推荐选择：\n• g++ (推荐)\n• gcc\n• clang++\n\n是否继续使用此文件？`,
-                        '继续使用',
-                        '重新选择'
+                        window.i18n.t('compiler.selectCompilerConfirmTitle'),
+                        window.i18n.t('compiler.selectCompilerConfirm', { name: escapeHtml(fileName) }),
+                        window.i18n.t('compiler.continueUse'),
+                        window.i18n.t('compiler.reselect')
                     );
                     
                     if (!confirmed) {
@@ -419,7 +419,7 @@ class CompilerSettings {
                 this.settings.compilerPath = selectedPath;
                 document.getElementById('compiler-path').value = this.settings.compilerPath;
                 
-                this.showMessage(`已选择编译器: ${fileName}`, 'success');
+                this.showMessage(window.i18n.t('compiler.selectedCompiler', { name: fileName }), 'success');
                 
             } else if (platform !== 'windows' && !result.canceled) {
                 this.showMessage((window.i18n.t('compiler.noFileSelected')), 'error');
@@ -464,7 +464,10 @@ class CompilerSettings {
             const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableCompilerList', method: 'GET' });
             
             if (!response.ok) {
-                throw new Error(`Network error: ${response.status} ${response.statusText}`);
+                throw new Error(window.i18n.t('compiler.networkRequestFailed', {
+                    status: response.status,
+                    statusText: response.statusText || ''
+                }));
             }
             
             const compilers = response.data;
@@ -477,7 +480,7 @@ class CompilerSettings {
             compilerList.innerHTML = '';
             
             if (!compilers || compilers.length === 0) {
-                compilerList.innerHTML = '<div class="no-compilers">暂无可用编译器</div>';
+                compilerList.innerHTML = `<div class="no-compilers">${window.i18n.t('compiler.noCompilerAvailable')}</div>`;
                 return;
             }
             
@@ -488,7 +491,7 @@ class CompilerSettings {
             );
             
             if (platformCompilers.length === 0) {
-                compilerList.innerHTML = `<div class="no-compilers">暂无适用于 ${platform} 平台的编译器</div>`;
+                compilerList.innerHTML = `<div class="no-compilers">${window.i18n.t('compiler.noCompilerForPlatform', { platform: escapeHtml(platform) })}</div>`;
                 return;
             }
             
@@ -500,12 +503,13 @@ class CompilerSettings {
                 
                 const compilerDiv = document.createElement('div');
                 compilerDiv.className = `compiler-item ${isDownloaded ? 'downloaded' : ''} ${isSelected ? 'selected' : ''}`;
+                compilerDiv.dataset.version = compiler.version;
                 
                 compilerDiv.innerHTML = `
                     <div class="compiler-info">
                         <h4>${escapeHtml(compiler.name)}</h4>
-                        <p><span data-i18n="compiler.versionSelectedPrefix">Version:</span> ${escapeHtml(compiler.version)}</p>
-                        <span class="platform"><span data-i18n="compiler.platformPrefix">Platform:</span> ${escapeHtml(compiler.platform)}</span>
+                        <p><span>${window.i18n.t('compiler.versionSelectedPrefix')}</span> ${escapeHtml(compiler.version)}</p>
+                        <span class="platform"><span>${window.i18n.t('compiler.platformPrefix')}</span> ${escapeHtml(compiler.platform)}</span>
                     </div>
                     <div class="compiler-actions">
                         ${isSelected ? 
@@ -528,12 +532,12 @@ class CompilerSettings {
             if (controller !== this._compilerListAbort) {
                 return;
             }
-            if (error && (error.name === 'AbortError' || /timeout|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
+            if (error && (error.name === 'AbortError' || /timeout|timed out|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
                 logError('获取编译器列表超时:', error);
                 compilerList.innerHTML = `
                     <div class="error-message">
-                        <p>请求超时，请稍后重试</p>
-                        <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
+                        <p>${window.i18n.t('compiler.requestTimeout')}</p>
+                        <button class="retry-btn">${window.i18n.t('compiler.retry')}</button>
                     </div>
                 `;
                 const timeoutRetryBtn = compilerList.querySelector('.retry-btn');
@@ -599,7 +603,8 @@ class CompilerSettings {
                 if (result.success) {
                     this.showMessage((window.i18n.t('compiler.saveSuccess')), 'success');
                 } else {
-                    this.showMessage((window.i18n.t('compiler.saveFail', {error: result.error || '未知错误'})), 'error');
+                    const errorMessage = result.error || window.i18n.t('compiler.unknownError');
+                    this.showMessage(window.i18n.t('compiler.saveFail', { error: errorMessage }), 'error');
                 }
             } else {
                 this.showMessage((window.i18n.t('compiler.apiUnavailable')), 'error');
@@ -607,7 +612,7 @@ class CompilerSettings {
             
         } catch (error) {
             logError('保存编译器设置失败:', error);
-            this.showMessage('保存设置失败：' + error.message, 'error');
+            this.showMessage(window.i18n.t('compiler.saveFail', { error: error.message }), 'error');
         }
     }
 
@@ -620,14 +625,15 @@ class CompilerSettings {
                     this.updateUI();
                     this.showMessage((window.i18n.t('compiler.resetSuccess')), 'success');
                 } else {
-                    this.showMessage('重置设置失败：' + (result.error || '未知错误'), 'error');
+                    const errorMessage = result.error || window.i18n.t('compiler.unknownError');
+                    this.showMessage(window.i18n.t('compiler.resetFail', { error: errorMessage }), 'error');
                 }
             } else {
-                this.showMessage('设置 API 不可用', 'error');
+                this.showMessage(window.i18n.t('compiler.apiUnavailable'), 'error');
             }
         } catch (error) {
             logError('重置设置失败:', error);
-            this.showMessage('重置设置失败：' + error.message, 'error');
+            this.showMessage(window.i18n.t('compiler.resetFail', { error: error.message }), 'error');
         }
     }
 
@@ -742,10 +748,13 @@ class CompilerSettings {
 
         try {
             downloadBtn.disabled = true;
-            downloadBtn.textContent = '下载中...';
+            downloadBtn.textContent = window.i18n.t('compiler.downloading');
             logInfo('[编译器设置] 按钮状态已更新为下载中');
 
-            this.showMessage(`开始下载 ${compiler.name} ${compiler.version}...`, 'info');
+            this.showMessage(window.i18n.t('compiler.startDownload', {
+                name: compiler.name,
+                version: compiler.version
+            }), 'info');
 
             logInfo('[编译器设置] 准备调用下载API，参数:', {
                 url: compiler.download_url,
@@ -765,9 +774,12 @@ class CompilerSettings {
 
                 if (result.success) {
                     logInfo('[编译器设置] 下载成功，准备更新UI状态');
-                    this.showMessage(`${compiler.name} ${compiler.version} 下载并安装成功！`, 'success');
+                    this.showMessage(window.i18n.t('compiler.downloadSuccess', {
+                        name: compiler.name,
+                        version: compiler.version
+                    }), 'success');
                     
-                    downloadBtn.textContent = '已下载';
+                    downloadBtn.textContent = window.i18n.t('compiler.downloaded');
                     downloadBtn.disabled = false;
                     downloadBtn.classList.remove('download-btn');
                     downloadBtn.classList.add('downloaded-btn');
@@ -784,20 +796,20 @@ class CompilerSettings {
                     }
                 } else {
                     logError('[编译器设置] 下载失败，result.success为false:', result);
-                    throw new Error(result.error || '下载失败');
+                    throw new Error(result.error || window.i18n.t('compiler.unknownError'));
                 }
             } else {
                 logError('[编译器设置] 下载 API 不可用');
-                throw new Error('下载 API 不可用');
+                throw new Error(window.i18n.t('compiler.downloadApiUnavailable'));
             }
 
         } catch (error) {
             logError('[编译器设置] 下载编译器失败:', error);
-            this.showMessage(`下载失败: ${error.message}`, 'error');
+            this.showMessage(window.i18n.t('compiler.downloadFail', { error: error.message }), 'error');
             
             if (downloadBtn) {
                 downloadBtn.disabled = false;
-                downloadBtn.textContent = '下载';
+                downloadBtn.textContent = window.i18n.t('compiler.download');
                 logInfo('[编译器设置] 按钮状态已恢复为下载');
             }
         }
@@ -817,28 +829,19 @@ class CompilerSettings {
                     logInfo(`找到 ${allCompilerItems.length} 个编译器项`);
                     
                     allCompilerItems.forEach(item => {
-                        let itemVersion = null;
+                        let itemVersion = item.dataset.version || null;
                         
-                        const versionEl = item.querySelector('[data-version]');
-                        if (versionEl) {
-                            itemVersion = versionEl.getAttribute('data-version');
+                        if (!itemVersion) {
+                            const versionEl = item.querySelector('[data-version]');
+                            if (versionEl) {
+                                itemVersion = versionEl.getAttribute('data-version');
+                            }
                         }
                         
                         if (!itemVersion) {
                             const buttonEl = item.querySelector('button[data-version]');
                             if (buttonEl) {
                                 itemVersion = buttonEl.getAttribute('data-version');
-                            }
-                        }
-                        
-                        if (!itemVersion) {
-                            const infoDiv = item.querySelector('.compiler-info');
-                            if (infoDiv) {
-                                const versionText = infoDiv.textContent;
-                                const versionMatch = versionText.match(/版本:\s*([^\s]+)/);
-                                if (versionMatch) {
-                                    itemVersion = versionMatch[1];
-                                }
                             }
                         }
                         
@@ -857,17 +860,17 @@ class CompilerSettings {
                     logInfo(`设置编译器 ${version} 为选中状态`);
                     this.refreshCompilerItemState(version, 'selected');
                     
-                    this.showMessage(`已选择编译器版本 ${version}`, 'success');
+                    this.showMessage(window.i18n.t('compiler.versionSelected', { version }), 'success');
                     
                 } else {
-                    throw new Error(result.error || '选择编译器失败');
+                    throw new Error(result.error || window.i18n.t('compiler.unknownError'));
                 }
             } else {
-                throw new Error('选择编译器 API 不可用');
+                throw new Error(window.i18n.t('compiler.selectApiUnavailable'));
             }
         } catch (error) {
             logError('选择编译器失败:', error);
-            this.showMessage(`选择编译器失败: ${error.message}`, 'error');
+            this.showMessage(window.i18n.t('compiler.selectFail', { error: error.message }), 'error');
         }
     }
 
@@ -953,7 +956,7 @@ class CompilerSettings {
         }, 3000);
     }
 
-    showConfirmDialog(title, message, confirmText = '确定', cancelText = '取消') {
+    showConfirmDialog(title, message, confirmText = window.i18n.t('dialog.confirm'), cancelText = window.i18n.t('dialog.cancel')) {
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
             overlay.className = 'dialog-overlay';
@@ -1086,8 +1089,8 @@ class CompilerSettings {
                 compilerItem.classList.add('downloaded');
                 compilerItem.classList.remove('selected');
                 actionsDiv.innerHTML = `
-                    <button class="select-btn" data-version="${version}">选择</button>
-                    <span class="status downloaded-status">已下载</span>
+                    <button class="select-btn" data-version="${version}">${window.i18n.t('compiler.select')}</button>
+                    <span class="status downloaded-status">${window.i18n.t('compiler.downloaded')}</span>
                 `;
                 const selectBtn = actionsDiv.querySelector('.select-btn');
                 if (selectBtn) {
@@ -1104,8 +1107,8 @@ class CompilerSettings {
                 logInfo(`设置编译器为已选中状态: ${version}`);
                 compilerItem.classList.add('downloaded', 'selected');
                 actionsDiv.innerHTML = `
-                    <span class="status selected-status">已选中</span>
-                    <span class="status downloaded-status">已下载</span>
+                    <span class="status selected-status">${window.i18n.t('compiler.selected')}</span>
+                    <span class="status downloaded-status">${window.i18n.t('compiler.downloaded')}</span>
                 `;
                 break;
                 
@@ -1122,11 +1125,11 @@ class CompilerSettings {
         try {
             if (window.electronAPI && window.electronAPI.showOpenDialog) {
                 const result = await window.electronAPI.showOpenDialog({
-                    title: '选择testlib.h文件',
+                    title: window.i18n.t('compiler.selectTestlibDialog'),
                     properties: ['openFile'],
                     filters: [
-                        { name: 'Testlib头文件', extensions: ['h'] },
-                        { name: '所有文件', extensions: ['*'] }
+                        { name: window.i18n.t('compiler.testlibHeaderFilter'), extensions: ['h'] },
+                        { name: window.i18n.t('compiler.allFiles'), extensions: ['*'] }
                     ]
                 });
                 
@@ -1171,27 +1174,28 @@ class CompilerSettings {
         };
         
         if (!testlibPath) {
-            renderTestResult('error', '请先设置 Testlib 路径');
+            renderTestResult('error', window.i18n.t('compiler.setTestlibPathFirst'));
             return;
         }
         
-        renderTestResult('testing', '正在测试 Testlib 环境...');
+        renderTestResult('testing', window.i18n.t('compiler.testingTestlib'));
         
         try {
             if (window.electronAPI && window.electronAPI.testTestlib) {
                 const result = await window.electronAPI.testTestlib(testlibPath);
                 
                 if (result.success) {
-                    renderTestResult('success', 'Testlib 测试成功！');
+                    renderTestResult('success', window.i18n.t('compiler.testlibSuccess'));
                 } else {
-                    renderTestResult('error', `Testlib 测试失败：${result.error || '未知错误'}`);
+                    const errorMessage = result.error || window.i18n.t('compiler.unknownError');
+                    renderTestResult('error', window.i18n.t('compiler.testlibFail', { error: errorMessage }));
                 }
             } else {
-                renderTestResult('error', '测试 API 不可用');
+                renderTestResult('error', window.i18n.t('compiler.testApiUnavailable'));
             }
         } catch (error) {
             logError('测试Testlib失败:', error);
-            renderTestResult('error', `测试失败：${error.message}`);
+            renderTestResult('error', window.i18n.t('compiler.testFail', { error: error.message }));
         }
     }
     
@@ -1220,13 +1224,16 @@ class CompilerSettings {
         this._testlibListAbort = controller;
         const timeoutTimer = setTimeout(() => controller.abort(), 15000);
         
-        testlibList.innerHTML = '<div class="loading">正在获取Testlib列表...</div>';
+        testlibList.innerHTML = `<div class="loading">${window.i18n.t('compiler.fetchingTestlibList')}</div>`;
         
         try {
             const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableTestlibList', method: 'GET' });
             
             if (!response.ok) {
-                throw new Error(`Network error: ${response.status} ${response.statusText}`);
+                throw new Error(window.i18n.t('compiler.networkRequestFailed', {
+                    status: response.status,
+                    statusText: response.statusText || ''
+                }));
             }
             
             const testlibs = response.data;
@@ -1234,7 +1241,7 @@ class CompilerSettings {
             testlibList.innerHTML = '';
             
             if (!testlibs || testlibs.length === 0) {
-                testlibList.innerHTML = '<div class="no-compilers">暂无可用Testlib版本</div>';
+                testlibList.innerHTML = `<div class="no-compilers">${window.i18n.t('compiler.noTestlibAvailable')}</div>`;
                 return;
             }
             
@@ -1251,7 +1258,7 @@ class CompilerSettings {
                     ? testlib.downloadUrl 
                     : `https://oicpp.mywwzh.top${testlib.downloadUrl}`;
                 
-                const versionLabel = window.i18n ? window.i18n.t('compiler.versionSelected').split(' ')[0] : 'Version:';
+                const versionLabel = window.i18n.t('compiler.versionSelectedPrefix');
                 const sizeLabel = window.i18n.t('compiler.testlibSize', { size: testlib.file_size_mb });
                 testlibDiv.innerHTML = `
                     <div class="compiler-info">
@@ -1280,12 +1287,12 @@ class CompilerSettings {
             if (controller !== this._testlibListAbort) {
                 return;
             }
-            if (error && (error.name === 'AbortError' || /timeout|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
+            if (error && (error.name === 'AbortError' || /timeout|timed out|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
                 logError('获取Testlib列表超时:', error);
                 testlibList.innerHTML = `
                     <div class="error-message">
-                        <p>请求超时，请稍后重试</p>
-                        <button class="retry-btn" data-i18n="compiler.retry">Retry</button>
+                        <p>${window.i18n.t('compiler.requestTimeout')}</p>
+                        <button class="retry-btn">${window.i18n.t('compiler.retry')}</button>
                     </div>
                 `;
                 const timeoutRetryBtn = testlibList.querySelector('.retry-btn');
@@ -1344,9 +1351,12 @@ class CompilerSettings {
         
         try {
             downloadBtn.disabled = true;
-            downloadBtn.textContent = '下载中...';
+            downloadBtn.textContent = window.i18n.t('compiler.downloading');
             
-            this.showMessage(`开始下载 ${testlib.name} ${testlib.version}...`, 'info');
+            this.showMessage(window.i18n.t('compiler.startDownload', {
+                name: testlib.name,
+                version: testlib.version
+            }), 'info');
             
             if (window.electronAPI && window.electronAPI.downloadTestlib) {
                 const fullUrl = testlib.downloadUrl.startsWith('http') 
@@ -1360,9 +1370,12 @@ class CompilerSettings {
                 });
                 
                 if (result.success) {
-                    this.showMessage(`${testlib.name} ${testlib.version} 下载并安装成功！`, 'success');
+                    this.showMessage(window.i18n.t('compiler.downloadSuccess', {
+                        name: testlib.name,
+                        version: testlib.version
+                    }), 'success');
                     
-                    downloadBtn.textContent = '已下载';
+                    downloadBtn.textContent = window.i18n.t('compiler.downloaded');
                     downloadBtn.disabled = false;
                     downloadBtn.classList.remove('download-btn');
                     downloadBtn.classList.add('downloaded-btn');
@@ -1372,18 +1385,18 @@ class CompilerSettings {
                         await this.selectTestlib(testlib.version);
                     }
                 } else {
-                    throw new Error(result.error || '下载失败');
+                    throw new Error(result.error || window.i18n.t('compiler.unknownError'));
                 }
             } else {
-                throw new Error('下载 API 不可用');
+                throw new Error(window.i18n.t('compiler.downloadApiUnavailable'));
             }
         } catch (error) {
             logError('下载Testlib失败:', error);
-            this.showMessage(`下载失败: ${error.message}`, 'error');
+            this.showMessage(window.i18n.t('compiler.downloadFail', { error: error.message }), 'error');
             
             if (downloadBtn) {
                 downloadBtn.disabled = false;
-                downloadBtn.textContent = '下载';
+                downloadBtn.textContent = window.i18n.t('compiler.download');
             }
         }
     }
@@ -1394,7 +1407,7 @@ class CompilerSettings {
                 const result = await window.electronAPI.selectTestlib(version);
                 
                 if (result.success) {
-                    this.showMessage(`已选择Testlib ${version}`, 'success');
+                    this.showMessage(window.i18n.t('compiler.testlibSelected', { version }), 'success');
                     
                     if (result.testlibPath) {
                         await this.setTestlibPath(result.testlibPath);
@@ -1409,16 +1422,16 @@ class CompilerSettings {
                                 item.classList.add('selected');
                                 const actionsDiv = item.querySelector('.compiler-actions');
                                 actionsDiv.innerHTML = `
-                                    <span class="status selected-status">已选中</span>
-                                    <span class="status downloaded-status">已下载</span>
+                                    <span class="status selected-status">${window.i18n.t('compiler.selected')}</span>
+                                    <span class="status downloaded-status">${window.i18n.t('compiler.downloaded')}</span>
                                 `;
                             } else {
                                 item.classList.remove('selected');
                                 if (item.classList.contains('downloaded')) {
                                     const actionsDiv = item.querySelector('.compiler-actions');
                                     actionsDiv.innerHTML = `
-                                        <button class="select-btn" data-version="${itemVersion}">选择</button>
-                                        <span class="status downloaded-status">已下载</span>
+                                        <button class="select-btn" data-version="${itemVersion}">${window.i18n.t('compiler.select')}</button>
+                                        <span class="status downloaded-status">${window.i18n.t('compiler.downloaded')}</span>
                                     `;
                                     const newSelectBtn = actionsDiv.querySelector('.select-btn');
                                     if (newSelectBtn) {
@@ -1432,12 +1445,12 @@ class CompilerSettings {
                         }
                     });
                 } else {
-                    throw new Error(result.error || '选择失败');
+                    throw new Error(result.error || window.i18n.t('compiler.unknownError'));
                 }
             }
         } catch (error) {
             logError('选择Testlib失败:', error);
-            this.showMessage(`选择失败: ${error.message}`, 'error');
+            this.showMessage(window.i18n.t('compiler.testlibSelectFail', { error: error.message }), 'error');
         }
     }
     
