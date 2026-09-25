@@ -30,6 +30,8 @@ class TabManager {
         if (typeof window !== 'undefined') {
             this.handlePdfViewerMessage = this.handlePdfViewerMessage.bind(this);
             window.addEventListener('message', this.handlePdfViewerMessage, false);
+            this._beforeUnloadHandler = () => this.dispose();
+            window.addEventListener('beforeunload', this._beforeUnloadHandler, { once: true });
         }
 
         this.init();
@@ -2491,6 +2493,17 @@ class TabManager {
         }
 
         return fileName;
+    }
+
+    dispose() {
+        if (typeof window === 'undefined') return;
+        if (this.handlePdfViewerMessage) {
+            window.removeEventListener('message', this.handlePdfViewerMessage, false);
+        }
+        if (this._beforeUnloadHandler) {
+            window.removeEventListener('beforeunload', this._beforeUnloadHandler);
+            this._beforeUnloadHandler = null;
+        }
     }
 
     isPdfFile(fileName = '') {
