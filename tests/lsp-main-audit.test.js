@@ -11,7 +11,7 @@ const check = (name, condition, extra = '') => {
     if (!condition) failures++;
 };
 
-function loadManagerClass() {
+function loadManagerClass(spawnImpl = undefined) {
     const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
     const start = source.indexOf('class ClangdLspManager');
     const end = source.indexOf('\nconst clangdLspManager', start);
@@ -27,6 +27,7 @@ function loadManagerClass() {
         EventEmitter,
         path: require('path'),
         fs: require('fs'),
+        spawn: spawnImpl,
         logInfo: () => {},
         logWarn: () => {},
         logError: () => {},
@@ -56,6 +57,8 @@ class FakeProc extends EventEmitter {
     constructor() {
         super();
         this.writes = [];
+        this.stdout = new EventEmitter();
+        this.stderr = new EventEmitter();
         this.stdin = {
             write: (data) => this.writes.push(String(data))
         };
@@ -80,6 +83,21 @@ class FakeProc extends EventEmitter {
     manager._dispatchMessage({ id: 'request-1', result: { ok: true } });
     const response = await responsePromise;
     check('audit: main manager resolves response', response?.ok === true && !manager.pending.has('request-1'));
+
+    const startupProc = new FakeProc();
+    const StartupManager = loadManagerClass(() => startupProc);
+    const startupManager = new StartupManager();
+    const started = await startupManager.start({});
+    const initializePromise = startupManager.request('initialize', {}, 'request-initialize');
+    startupProc.stdout.emit('data', Buffer.from(protocolFrame({
+        jsonrpc: '2.0',
+        id: 'request-initialize',
+        result: { capabilities: { textDocument: { hoverProvider: true } } }
+    }), 'utf8'));
+    const initializeResult = await initializePromise;
+    check('audit: main manager starts a fake clangd process', started?.ok === true && startupManager.proc === startupProc);
+    check('audit: initialize response is parsed through stdout framing', initializeResult?.capabilities?.textDocument?.hoverProvider === true);
+    await startupManager.stop();
 
     const framedManager = new Manager();
     const framedProc = new FakeProc();
