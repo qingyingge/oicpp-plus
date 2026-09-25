@@ -2115,7 +2115,7 @@ let settings = getDefaultSettings();
 let isUpdateDownloading = false; // 是否正在下载更新
 let currentDownloadingVersion = null; // 正在下载的版本
 let currentUpdateDownloadProgress = 0; // 更新下载进度(0-100)
-let isAutoUpdateCheckInProgress = false; // 启动自动检查更新是否进行中
+const isAutoUpdateCheckInProgress = false; // 自动更新检查已禁用
 let pendingInstallerLaunch = null; // 退出后待启动的安装程序
 let pendingInstallerLaunchArmed = false;
 let pendingUpdateQuitPromptInProgress = false;
@@ -2295,11 +2295,6 @@ function setUpdateDownloadState({ downloading = false, version = '', progress = 
     isUpdateDownloading = !!downloading;
     currentDownloadingVersion = version || null;
     currentUpdateDownloadProgress = Number.isFinite(progress) ? Math.max(0, Math.min(100, Number(progress))) : 0;
-    broadcastUpdateDownloadState();
-}
-
-function setAutoUpdateCheckInProgress(inProgress = false) {
-    isAutoUpdateCheckInProgress = !!inProgress;
     broadcastUpdateDownloadState();
 }
 
@@ -2847,13 +2842,6 @@ function createWindow() {
         showPostInstallNoticeIfNeeded();
         checkPendingUpdate();
 
-        setAutoUpdateCheckInProgress(true);
-        checkDailyUpdate()
-            .catch(err => logError('启动时检查更新失败:', err))
-            .finally(() => {
-                setAutoUpdateCheckInProgress(false);
-            });
-        
         // 清理启动时可能遗留的旧安装包（延迟执行，避免影响启动速度）
         setTimeout(async () => {
             try {
@@ -8005,69 +7993,6 @@ function checkPendingUpdate() {
             broadcastUpdateDownloadState();
         }
     }
-}
-
-const UPDATE_CHECK_INTERVAL_MS = 3 * 60 * 60 * 1000;
-let updateCheckTimerId = null;
-
-function getLastUpdateCheckTimestamp() {
-    const value = settings.lastUpdateCheck;
-    if (!value) {
-        return 0;
-    }
-
-    const timestamp = new Date(value).getTime();
-    return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function scheduleNextUpdateCheck(delayMs = UPDATE_CHECK_INTERVAL_MS) {
-    // OICPP-Plus: 云服务已禁用（无独立更新服务），不调度自动检查
-    return;
-
-    if (updateCheckTimerId) {
-        clearTimeout(updateCheckTimerId);
-    }
-
-    updateCheckTimerId = setTimeout(() => {
-        updateCheckTimerId = null;
-        checkDailyUpdate().catch(err => logError('定时检查更新失败:', err));
-    }, delayMs);
-}
-
-async function checkDailyUpdate() {
-    // OICPP-Plus: 云服务已禁用（无独立更新服务），不调度自动检查
-    return;
-
-    if (hasPendingUpdateToInstall()) {
-        logInfo('已有待安装更新，停止自动检查更新直到安装完成');
-        return;
-    }
-
-    const lastCheckTimestamp = getLastUpdateCheckTimestamp();
-    const now = Date.now();
-    const elapsed = lastCheckTimestamp > 0 ? now - lastCheckTimestamp : Number.POSITIVE_INFINITY;
-    const remainingMs = lastCheckTimestamp > 0 ? Math.max(0, UPDATE_CHECK_INTERVAL_MS - elapsed) : 0;
-
-    logInfo('启动时检查更新...');
-    logInfo('上次检查时间:', lastCheckTimestamp > 0 ? new Date(lastCheckTimestamp).toISOString() : '从未检查');
-
-    return new Promise(resolve => {
-        setTimeout(async () => {
-            try {
-                if (lastCheckTimestamp > 0 && elapsed < UPDATE_CHECK_INTERVAL_MS) {
-                    logInfo('距离上次检查不足 3 小时，本次自动检查已跳过');
-                } else {
-                    logInfo('开始执行启动时自动检查更新');
-                    await checkForUpdates(false); // false 表示自动检查
-                }
-            } catch (err) {
-                logError('启动时检查更新失败:', err);
-            } finally {
-                scheduleNextUpdateCheck(lastCheckTimestamp > 0 && elapsed < UPDATE_CHECK_INTERVAL_MS ? remainingMs : UPDATE_CHECK_INTERVAL_MS);
-                resolve();
-            }
-        }, 5000);
-    });
 }
 
 function getSettingsPath() {
