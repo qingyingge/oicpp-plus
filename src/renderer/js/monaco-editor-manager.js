@@ -1386,7 +1386,7 @@ class MonacoEditorManager {
             const disposable = monaco.languages.registerSignatureHelpProvider(language, {
                 signatureHelpTriggerCharacters: ['(', ','],
                 signatureHelpRetriggerCharacters: [','],
-                provideSignatureHelp: async (model, position, token) => {
+                provideSignatureHelp: async (model, position, token, context) => {
                     try {
                         const lspReady = await this._ensureLspDocumentReady(model);
                         if (!lspReady) return createSignatureHelpResult(emptySignatureHelp);
@@ -1399,7 +1399,12 @@ class MonacoEditorManager {
                             position: {
                                 line: position.lineNumber - 1,
                                 character: position.column - 1
-                            }
+                            },
+                            context: context ? {
+                                triggerKind: context.triggerKind,
+                                triggerCharacter: context.triggerCharacter,
+                                isRetrigger: context.isRetrigger === true
+                            } : undefined
                         }, token);
                         if (!result || !Array.isArray(result.signatures) || result.signatures.length === 0) {
                             return createSignatureHelpResult(emptySignatureHelp);

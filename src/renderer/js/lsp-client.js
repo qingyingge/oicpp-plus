@@ -196,6 +196,7 @@ class LspClientBridge {
                         contentFormat: ['markdown', 'plaintext']
                     },
                     signatureHelp: {
+                        contextSupport: true,
                         signatureInformation: {
                             documentationFormat: ['markdown', 'plaintext'],
                             parameterInformation: {
