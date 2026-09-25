@@ -566,8 +566,8 @@ class MonacoEditorManager {
         });
         this.lspClient.onApplyEdit?.(async (edit) => {
             const workspaceEdit = this.lspWorkspaceEditToMonaco(edit);
-            const applied = this.applyLspWorkspaceEdit(workspaceEdit);
-            return { applied: applied.edits > 0 };
+            const applied = await this.applyLspWorkspaceEdit(workspaceEdit);
+            return { applied: applied.edits > 0, skipped: applied.skipped, conflicts: applied.conflicts };
         });
         this.lspClient.onReady(() => {
             this.registerCppSemanticHighlightingProviders();
@@ -1565,19 +1565,57 @@ class MonacoEditorManager {
         return window.OicppLspUtils?.toMonacoWorkspaceEdit(edit, monaco);
     }
 
-    applyLspWorkspaceEdit(workspaceEdit) {
+    async ensureModelForLspUri(uri) {
+        const existing = this.findModelByLspUri(uri);
+        if (existing) return { model: existing, created: false };
+        if (typeof monaco === 'undefined' || !monaco.editor?.createModel || !monaco.Uri) {
+            return { model: null, created: false };
+        }
+        if (!window.electronAPI?.readFileContent || !window.electronAPI?.writeFile) {
+            return { model: null, created: false };
+        }
+        try {
+            const fileUri = monaco.Uri.parse(uri);
+            if (fileUri.scheme !== 'file') return { model: null, created: false };
+            const filePath = fileUri.fsPath || fileUri.path;
+            if (!filePath) return { model: null, created: false };
+            const content = await window.electronAPI.readFileContent(filePath);
+            const extension = filePath.toLowerCase().split('.').pop();
+            const languageId = extension === 'c' || extension === 'h' ? 'c' : 'cpp';
+            const model = monaco.editor.createModel(typeof content === 'string' ? content : '', languageId, fileUri);
+            model.__oicppFilePath = filePath;
+            return { model, created: true };
+        } catch (err) {
+            logWarn('[LSP] 为 WorkspaceEdit 打开文件失败:', err?.message || err);
+            return { model: null, created: false };
+        }
+    }
+
+    async applyLspWorkspaceEdit(workspaceEdit) {
         if (!workspaceEdit || !Array.isArray(workspaceEdit.edits) || workspaceEdit.edits.length === 0) {
             return { files: 0, edits: 0 };
         }
         const grouped = new Map();
         const versions = new Map();
         const conflicts = new Set();
+        const createdModels = new Set();
+        let skipped = 0;
         for (const item of workspaceEdit.edits) {
             const resource = item?.resource;
             const uri = resource?.toString?.() || (typeof resource === 'string' ? resource : '');
-            if (!uri || !item.textEdit?.range) continue;
-            const model = this.findModelByLspUri(uri);
-            if (!model || model.isDisposed?.()) continue;
+            if (!uri || !item.textEdit?.range) {
+                skipped++;
+                continue;
+            }
+            const resolved = await this.ensureModelForLspUri(uri);
+            const model = resolved.model;
+            if (!model || model.isDisposed?.()) {
+                skipped++;
+                continue;
+            }
+            if (resolved.created) {
+                createdModels.add(model);
+            }
             const versionId = Number.isInteger(item.versionId) ? item.versionId : undefined;
             if (versionId !== undefined) {
                 const knownVersion = versions.get(model);
@@ -1610,14 +1648,40 @@ class MonacoEditorManager {
                 conflictCount++;
                 continue;
             }
+            const created = createdModels.has(model);
+            const originalText = created && model.getValue ? model.getValue() : null;
+            let written = false;
             try {
                 model.pushEditOperations([], modelEdits, () => null);
+                if (created) {
+                    const filePath = this.getModelFilePath(model);
+                    const writeResult = await window.electronAPI.writeFile(filePath, model.getValue());
+                    if (writeResult?.success === false || writeResult?.ok === false) {
+                        throw new Error(writeResult?.error || 'write failed');
+                    }
+                    written = true;
+                }
                 files++;
                 edits += modelEdits.length;
-            } catch (_) {
+            } catch (err) {
+                if (created) {
+                    if (!written && originalText !== null) {
+                        try { model.setValue(originalText); } catch (_) {}
+                    }
+                    try { model.dispose(); } catch (_) {}
+                } else {
+                    logWarn('[LSP] 应用 WorkspaceEdit 失败:', err?.message || err);
+                }
+            }
+            if (created && written) {
+                try { model.dispose(); } catch (_) {}
             }
         }
-        return { files, edits, conflicts: conflictCount };
+        for (const model of createdModels) {
+            if (model.isDisposed?.()) continue;
+            try { model.dispose(); } catch (_) {}
+        }
+        return { files, edits, conflicts: conflictCount, skipped };
     }
 
     _registerLspDocumentSymbolProvider() {
@@ -6754,7 +6818,7 @@ class MonacoEditorManager {
                             newName
                         });
                         const workspaceEdit = this.lspWorkspaceEditToMonaco(renameResult);
-                        const applied = this.applyLspWorkspaceEdit(workspaceEdit);
+                        const applied = await this.applyLspWorkspaceEdit(workspaceEdit);
                         if (applied.edits > 0) {
                             return;
                         }
@@ -6823,7 +6887,7 @@ class MonacoEditorManager {
             if (!result) return false;
 
             const workspaceEdit = this.lspWorkspaceEditToMonaco(result);
-            const applied = this.applyLspWorkspaceEdit(workspaceEdit);
+            const applied = await this.applyLspWorkspaceEdit(workspaceEdit);
             if (applied.edits > 0) {
                 logInfo('[LSP] 通过 LSP 重命名标识符完成: ' + applied.files + ' 个文件, ' + applied.edits + ' 处替换');
                 return true;
