@@ -17,14 +17,18 @@ class LspClientBridge {
             window.electronAPI.onLspApplyEdit(async (payload) => {
                 if (!payload?.requestId) return;
                 let applied = false;
+                let skipped = 0;
+                let conflicts = 0;
                 for (const listener of this._applyEditListeners) {
                     try {
                         const result = await listener(payload.edit);
                         if (result?.applied !== false) applied = true;
+                        if (Number.isInteger(result?.skipped)) skipped += result.skipped;
+                        if (Number.isInteger(result?.conflicts)) conflicts += result.conflicts;
                     } catch (_) {}
                 }
                 try {
-                    await window.electronAPI.lspApplyEditResult?.(payload.requestId, { applied });
+                    await window.electronAPI.lspApplyEditResult?.(payload.requestId, { applied, skipped, conflicts });
                 } catch (_) {}
             });
         }

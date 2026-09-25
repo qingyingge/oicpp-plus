@@ -1008,6 +1008,8 @@ class ClangdLspManager {
         if (!entry) return false;
         entry.resolve({
             applied: result?.applied === true,
+            skipped: Number.isInteger(result?.skipped) ? result.skipped : 0,
+            conflicts: Number.isInteger(result?.conflicts) ? result.conflicts : 0,
             failureReason: result?.failureReason || undefined
         });
         return true;
