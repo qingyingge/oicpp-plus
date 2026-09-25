@@ -7,6 +7,7 @@ dist/
 out/
 *.tgz
 *.log
+assets/
 
 # 运行时下载的 clangd 压缩包
 build/clangd/_download/
