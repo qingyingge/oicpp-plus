@@ -3,10 +3,14 @@
     "id": "C1",
     "severity": "CRITICAL",
     "title": "IPC 白名单完全被绕过",
-    "status": "待确认",
-    "file": "src/preload.js:483-675",
+    "status": "已修复",
+    "file": "src/preload.js:472-790",
     "problem": "electronAPI 直接调用 ipcRenderer.invoke()/send()，完全绕过 safeIpcRenderer；ALLOWED_SEND_CHANNELS 和 ALLOWED_INVOKE_CHANNELS 白名单是死代码。",
-    "impact": "渲染进程可调用任意 IPC channel，包括未在白名单中的 channel。"
+    "impact": "渲染进程可调用任意 IPC channel，包括未在白名单中的 channel。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "electronAPI 的 invoke/send/on 全部改为 safeIpcRenderer，统一白名单并为事件订阅返回 cleanup；CI 同步审计 safeIpcRenderer 调用。"
+    }
   },
   {
     "id": "C2",
@@ -271,10 +275,14 @@
     "id": "M7",
     "severity": "MEDIUM",
     "title": "checkDailyUpdate 死代码",
-    "status": "待确认",
-    "file": "src/main.js:7431-7478",
+    "status": "已修复",
+    "file": "src/main.js:2829-2839",
     "problem": "return; 使后续代码不可达，isAutoUpdateCheckInProgress 设为 true 后永不清除。",
-    "impact": "菜单显示“自动检查更新中...”且禁用手动检查按钮。"
+    "impact": "菜单显示“自动检查更新中...”且禁用手动检查按钮。",
+    "fix": {
+      "commit": "fc31d61",
+      "note": "移除禁用的启动自动检查、调度器和可变的检查中状态；手动更新入口及 update-download-status 响应结构保持兼容。"
+    }
   },
   {
     "id": "M8",
@@ -393,10 +401,14 @@
     "id": "M17",
     "severity": "MEDIUM",
     "title": "setCloudPanelVisible 忽略参数",
-    "status": "待修复",
-    "file": "src/renderer/js/sidebar.js:523-524",
+    "status": "已修复",
+    "file": "src/renderer/js/sidebar.js:517-538",
     "problem": "visible 参数被 const show = false 完全丢弃。",
-    "impact": "功能异常。"
+    "impact": "功能异常。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "云服务已明确禁用，面板统一由 bootstrapCloudVisibility 隐藏并清除云登录状态；不再发起登录状态请求。"
+    }
   },
   {
     "id": "M18",
@@ -460,10 +472,14 @@
     "id": "M23",
     "severity": "MEDIUM",
     "title": "init.js 未 await initializeApp()",
-    "status": "待修复",
-    "file": "src/renderer/js/init.js:12",
+    "status": "已修复",
+    "file": "src/renderer/js/init.js:1-35",
     "problem": "initializeApp() 是 async 但未 await，setTimeout 在 350ms 后运行。",
-    "impact": "不管初始化是否完成。"
+    "impact": "不管初始化是否完成。",
+    "fix": {
+      "commit": "dda2278",
+      "note": "DOMContentLoaded 初始化链现在等待用户图标、i18n 和 initializeApp 完成，避免启动定时任务抢跑。"
+    }
   },
   {
     "id": "M24",
@@ -479,10 +495,14 @@
     "id": "M25",
     "severity": "MEDIUM",
     "title": "tabs.js PDF 监听器泄漏",
-    "status": "待修复",
-    "file": "src/renderer/js/tabs.js:31-32",
+    "status": "已修复",
+    "file": "src/renderer/js/tabs.js:31-34,2498-2507",
     "problem": "构造函数添加 window.addEventListener('message', ...) 从不移除。",
-    "impact": "监听器泄漏。"
+    "impact": "监听器泄漏。",
+    "fix": {
+      "commit": "03abf82",
+      "note": "保存 beforeunload 清理处理器，并在 TabManager.dispose() 中对称移除 PDF message 与 unload 监听器。"
+    }
   },
   {
     "id": "M26",
@@ -501,28 +521,40 @@
     "id": "M27",
     "severity": "MEDIUM",
     "title": "currentProc 共享竞态",
-    "status": "待确认",
-    "file": "src/main-process/compare-worker-v6.js:18,27,28,108",
+    "status": "已修复",
+    "file": "src/main-process/compare-worker-v6.js:31-65,146-147,157-200,222-225",
     "problem": "模块级 currentProc 被多次 spawnProcess 覆盖，stop 消息只杀最新进程。",
-    "impact": "进程管理竞态。"
+    "impact": "进程管理竞态。",
+    "fix": {
+      "commit": "76bd729",
+      "note": "使用 activeProcesses 集合跟踪并终止全部子进程；生成器及标准程序异步返回后重新检查 running，避免停止后继续启动测试程序。"
+    }
   },
   {
     "id": "M28",
     "severity": "MEDIUM",
     "title": "GDB _cmdQueue 退出后未 reject",
-    "status": "待修复",
-    "file": "src/gdb-debugger.js:116-121",
+    "status": "已修复",
+    "file": "src/gdb-mi-debugger.js:150-175",
     "problem": "GDB 进程退出时未清空命令队列，等待中的 promise 永不 resolve/reject。",
-    "impact": "UI 挂起。"
+    "impact": "UI 挂起。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "MI2 pending 请求在进程退出和 stop 时统一 reject，并清理 timer；错误事件也会释放请求状态。"
+    }
   },
   {
     "id": "M29",
     "severity": "MEDIUM",
     "title": "HTTP 响应体未 destroy",
-    "status": "待确认",
-    "file": "src/utils/multi-thread-downloader.js:66-88,92-100",
+    "status": "已修复",
+    "file": "src/utils/multi-thread-downloader.js:66-105",
     "problem": "checkRangeSupport 和 getFileSize 中 .body 流未读取或 destroy。",
-    "impact": "TCP socket 泄漏。"
+    "impact": "TCP socket 泄漏。",
+    "fix": {
+      "commit": "cce1ae6",
+      "note": "HEAD/Range 探测路径统一 resume 响应体，确保连接释放。"
+    }
   },
   {
     "id": "M30",
@@ -704,37 +736,53 @@
     "id": "M44",
     "severity": "MEDIUM",
     "title": "settings-init.js 字体验证反馈循环",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/renderer/js/settings-init.js:80-89",
     "problem": "字体修正触发 updateSettings → settings-changed → applySettingsToUI → 再次验证，循环 2 次。",
-    "impact": "反馈循环。"
+    "impact": "反馈循环。",
+    "fix": {
+      "commit": "fe25937",
+      "note": "启动应用只使用验证后的字体进行本地渲染，不再从启动回调反向 updateSettings。"
+    }
   },
   {
     "id": "M45",
     "severity": "MEDIUM",
     "title": "editor.js opacity bypass Cancel",
-    "status": "待修复",
-    "file": "src/renderer/settings/editor.js:1128-1133",
+    "status": "已修复",
+    "file": "src/renderer/settings/editor.js:1120-1135",
     "problem": "opacity 变更立即 updateSettings，用户点 Cancel 也无法撤销。",
-    "impact": "设置无法取消。"
+    "impact": "设置无法取消。",
+    "fix": {
+      "commit": "4ceb179",
+      "note": "透明度改为 sendSettingsPreview 防抖，Cancel 统一回滚到初始设置。"
+    }
   },
   {
     "id": "M46",
     "severity": "MEDIUM",
     "title": "monaco-editor-manager.js LSP 重启后文档状态不一致",
-    "status": "待确认",
-    "file": "src/renderer/js/monaco-editor-manager.js:366-371,410-415",
+    "status": "已修复",
+    "file": "src/renderer/js/monaco-editor-manager.js:356-416",
     "problem": "_finishStartup 异常时 _lspReadyPromise 设为 null 但文档可能部分打开。",
-    "impact": "状态不一致。"
+    "impact": "状态不一致。",
+    "fix": {
+      "commit": "1ed2aef",
+      "note": "clangd 重启前清理文档/诊断/语义缓存，重启成功后逐个重新打开 C/C++ 文档并重建 provider；失败路径释放 ready promise。"
+    }
   },
   {
     "id": "M47",
     "severity": "MEDIUM",
     "title": "installer.nsi 删除全局 .cpp 关联",
-    "status": "待修复",
-    "file": "installer.nsi:450-451",
+    "status": "已修复",
+    "file": "installer.nsi:449-456",
     "problem": "卸载器删除整个 .cpp 注册表键，可能删除其他程序设置的关联。",
-    "impact": "影响其他程序关联。"
+    "impact": "影响其他程序关联。",
+    "fix": {
+      "commit": "f2099ca",
+      "note": "卸载前读取 HKCR\\.cpp 默认值，仅当仍指向 OICPPIDE.cpp 时删除该值，不再删除整个扩展名注册表键。"
+    }
   },
   {
     "id": "M48",
@@ -760,10 +808,14 @@
     "id": "M50",
     "severity": "MEDIUM",
     "title": "settings/compiler.js 重复事件监听器",
-    "status": "待修复",
-    "file": "src/renderer/settings/compiler.js:142-150,255-261",
+    "status": "已修复",
+    "file": "src/renderer/settings/compiler.js:94-98",
     "problem": "close-install-dialog 按钮绑定两次 click 事件。",
-    "impact": "重复监听。"
+    "impact": "重复监听。",
+    "fix": {
+      "commit": "54852a5",
+      "note": "设置页初始化事件绑定增加实例级幂等保护，重复 init 不再叠加监听器。"
+    }
   },
   {
     "id": "M51",
@@ -791,10 +843,14 @@
     "id": "L2",
     "severity": "LOW",
     "title": "checkForUpdates 不可达代码",
-    "status": "待修复",
-    "file": "src/main.js:6919-7003",
+    "status": "已修复",
+    "file": "src/main.js:2238-2248,7478-7490",
     "problem": "return; 使所有后续代码不可达。",
-    "impact": "不可达代码。"
+    "impact": "不可达代码。",
+    "fix": {
+      "commit": "1d76a84",
+      "note": "手动入口仅显示不可用提示；删除不可达的远程检查、下载和版本比较实现，保留 update-download-status 兼容字段及既有待安装更新处理。"
+    }
   },
   {
     "id": "L3",
@@ -930,19 +986,27 @@
     "id": "L16",
     "severity": "LOW",
     "title": "ci-check.js 正则尾部匹配假阴性",
-    "status": "待修复",
-    "file": "scripts/ci-check.js:160",
+    "status": "已修复",
+    "file": "scripts/ci-check.js:219,252",
     "problem": "/oicpp\\.ico[^-]/ 不匹配文件末尾的 oicpp.ico。",
-    "impact": "假阴性。"
+    "impact": "假阴性。",
+    "fix": {
+      "commit": "5aeb9d3",
+      "note": "图标旧品牌检查改为允许文件末尾匹配的精确正则。"
+    }
   },
   {
     "id": "L17",
     "severity": "LOW",
     "title": "ci-check.js 秘密扫描用 warn",
-    "status": "待修复",
-    "file": "scripts/ci-check.js:474,489,494",
+    "status": "已修复",
+    "file": "scripts/ci-check.js:598-618",
     "problem": "标题说 FAIL 但用 warn() 而非 fail()。",
-    "impact": "检查未失败。"
+    "impact": "检查未失败。",
+    "fix": {
+      "commit": "baa128b",
+      "note": "秘密扫描命中现在使用 fail()，CI 会阻断构建。"
+    }
   },
   {
     "id": "L18",
@@ -981,19 +1045,24 @@
     "id": "L21",
     "severity": "LOW",
     "title": "package.json sharp 重复",
-    "status": "待修复",
-    "file": "package.json:34,56",
+    "status": "已修复",
+    "file": "package.json:34-42",
     "problem": "sharp 同时在 dependencies 和 devDependencies。",
-    "impact": "依赖重复。"
+    "impact": "依赖重复。",
+    "fix": {
+      "commit": "e62060a",
+      "note": "sharp 仅保留在 devDependencies，图标生成脚本仍由构建环境提供。"
+    }
   },
   {
     "id": "L22",
     "severity": "LOW",
     "title": "package.json 两个 markdown-it-katex",
-    "status": "待修复",
-    "file": "package.json:41,50",
+    "status": "无效",
+    "file": "package.json:43-64",
     "problem": "@iktakahiro/markdown-it-katex 和 markdown-it-katex 同时安装，后者未使用。",
-    "impact": "依赖冗余。"
+    "impact": "依赖冗余。",
+    "invalid_reason": "package.json 仅声明 @iktakahiro/markdown-it-katex，未声明未使用的 markdown-it-katex。"
   },
   {
     "id": "L23",
@@ -1077,10 +1146,14 @@
     "id": "L31",
     "severity": "LOW",
     "title": "Buffer 暴露给 renderer",
-    "status": "待修复",
-    "file": "src/preload.js:703",
+    "status": "已修复",
+    "file": "src/preload.js:800-804; src/renderer/js/main.js:1670-1680,1784-1790",
     "problem": "contextBridge.exposeInMainWorld('Buffer', Buffer) 扩大攻击面。",
-    "impact": "攻击面扩大。"
+    "impact": "攻击面扩大。",
+    "fix": {
+      "commit": "e3780cb",
+      "note": "移除 Buffer 全局暴露，renderer 的 Base64 转换改用 Uint8Array/btoa。"
+    }
   },
   {
     "id": "L32",
