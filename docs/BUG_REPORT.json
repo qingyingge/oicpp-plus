@@ -17,8 +17,8 @@
     "problem": "executablePath 参数直接来自渲染进程 IPC，以 cmd /c 开头时 actualCommand 未经过滤直接传入 spawn。",
     "impact": "Windows 上的 OS 级命令注入。",
     "fix": {
-      "commit": "671732a",
-      "note": "cmd /c 分支禁用 shell 透传并对命令过滤"
+      "commit": "c7e0ea2",
+      "note": "run-program 拒绝 cmd/pwsh 原始命令字符串，仅接受 executablePath + args；run-program/run-interactive/compile-file 经过统一 IPC 白名单，Windows 运行不再经过 cmd /c shell。"
     }
   },
   {
@@ -95,8 +95,8 @@
     "problem": "SampleTesterAPI 和 CompetitiveCompanion 绑定 127.0.0.1 但响应头含 Access-Control-Allow-Origin: *。",
     "impact": "恶意 webview 可向 SampleTester 注入题目数据。",
     "fix": {
-      "commit": "671732a",
-      "note": "本机 HTTP 端点新增 isTrustedLocalOrigin/rejectUntrustedOrigin 来源校验"
+      "commit": "c7e0ea2",
+      "note": "本机 HTTP 端点继续校验 loopback/扩展来源；无 Origin 请求不再默认放行，CORS 改为回显已校验 Origin，样例数量和单样例长度均有限制。"
     }
   },
   {
@@ -199,19 +199,27 @@
     "id": "M1",
     "severity": "MEDIUM",
     "title": "LSP request() 无超时",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/main.js:821-831",
     "problem": "clangd 挂起时 pending promise 永不 resolve/reject。",
-    "impact": "hang 情况下永久泄漏。"
+    "impact": "hang 情况下永久泄漏。",
+    "fix": {
+      "commit": "6c3b506",
+      "note": "LSP 请求增加 30 秒超时和取消清理；本批次 c7e0ea2 进一步补充 pending 先注册、取消迟到响应隔离、消息大小上限和进程退出清理。"
+    }
   },
   {
     "id": "M2",
     "severity": "MEDIUM",
     "title": "LSP JSON 解析失败静默丢弃",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/main.js:869",
     "problem": "JSON.parse 失败时 continue 跳过，pending map 中对应条目永不清理。",
-    "impact": "长时间运行会累积泄漏。"
+    "impact": "长时间运行会累积泄漏。",
+    "fix": {
+      "commit": "c7e0ea2",
+      "note": "非法 JSON、非法 Content-Length 和超限帧会显式 reject/清理 pending，不再静默丢弃。"
+    }
   },
   {
     "id": "M3",
@@ -268,19 +276,27 @@
     "id": "M8",
     "severity": "MEDIUM",
     "title": "Base64 token 泄露设备指纹",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/main.js:9215-9222",
     "problem": "generateEncodedToken 是 base64 编码的明文，含用户名、主机名、CPU 型号、OS。",
-    "impact": "作为 X-OICPP-Token 头发送，可被网络观察者解码。"
+    "impact": "作为 X-OICPP-Token 头发送，可被网络观察者解码。",
+    "fix": {
+      "commit": "c7e0ea2",
+      "note": "OICPP-Plus 已禁用云编译、心跳和自动云备份；get-encoded-token IPC 不再返回设备指纹，云端 POST 接口也从代理白名单移除。"
+    }
   },
   {
     "id": "M9",
     "severity": "MEDIUM",
     "title": "readJsonBody 超限后 res 未关闭",
-    "status": "待确认",
+    "status": "已修复",
     "file": "src/main.js:2829-2844",
     "problem": "req.destroy() 后 end 事件不触发，res 永不关闭。",
-    "impact": "客户端连接挂起。"
+    "impact": "客户端连接挂起。",
+    "fix": {
+      "commit": "c7e0ea2",
+      "note": "超限请求立即返回 413，并停止继续读取和解析请求体。"
+    }
   },
   {
     "id": "M10",
@@ -903,10 +919,14 @@
     "id": "L19",
     "severity": "LOW",
     "title": "download-clangd.js 重定向无深度限制",
-    "status": "待修复",
+    "status": "已修复",
     "file": "scripts/download-clangd.js:110",
     "problem": "重定向用 retriesLeft 参数，重定向循环会耗尽重试次数。",
-    "impact": "重定向循环。"
+    "impact": "重定向循环。",
+    "fix": {
+      "commit": "c7e0ea2",
+      "note": "clangd/clang-format 下载均限制重定向次数、跨 origin 清除 Authorization，并采用 .part 临时文件；clangd 增加 digest/版本 smoke test。"
+    }
   },
   {
     "id": "L20",
