@@ -1414,7 +1414,12 @@ class MonacoEditorManager {
                                     : undefined,
                                 parameters: Array.isArray(sig.parameters)
                                     ? sig.parameters.map((p, idx) => ({
-                                        label: typeof p.label === 'string' ? p.label : (Array.isArray(p.label) ? p.label.join('') : `[${idx}]`),
+                                        label: typeof p.label === 'string'
+                                            ? p.label
+                                            : (Array.isArray(p.label) && p.label.length === 2
+                                                && Number.isInteger(p.label[0]) && Number.isInteger(p.label[1])
+                                                ? [p.label[0], p.label[1]]
+                                                : `[${idx}]`),
                                         documentation: p.documentation
                                             ? (typeof p.documentation === 'string' ? p.documentation : (p.documentation.value || ''))
                                             : undefined
