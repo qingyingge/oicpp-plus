@@ -1028,7 +1028,7 @@
     "backupFail": "Backup failed: {error}",
     "backupSuccess": "Settings backed up to cloud",
     "syncUnavailable": "Sync feature is unavailable",
-    "restoreFailEmpty": "Restore failed: EMPTY_BACKUP",
+    "restoreFailEmpty": "Restore failed: the cloud backup is empty",
     "restoreFailInvalid": "Cloud backup file format is invalid",
     "syncFail": "Sync failed: {error}",
     "syncSuccess": "Settings synced from cloud",

@@ -5,7 +5,7 @@ class BackupSettings {
             theme: 'dark'
         };
         this._saving = false;
-        this.init();
+        this._latestBackupState = { type: 'unavailable' };
     }
 
     async init() {
@@ -15,10 +15,12 @@ class BackupSettings {
             this.applyTheme(themeFromUrl);
         }
         await this.loadSettings();
+        this.latestInfoEl = document.getElementById('latest-backup-info');
+        this.latestInfoEl?.removeAttribute('data-i18n');
         this.setupEventListeners();
         this.setupThemeListener();
+        this.setupLanguageListener();
         this.updateUI();
-        this.latestInfoEl = document.getElementById('latest-backup-info');
         this.refreshLatestBackupInfo();
     }
 
@@ -37,6 +39,16 @@ class BackupSettings {
                 }
             });
         }
+    }
+
+    setupLanguageListener() {
+        if (!window.i18n || typeof window.i18n.onChange !== 'function') {
+            return;
+        }
+
+        window.i18n.onChange(() => {
+            this.renderLatestBackupInfo();
+        });
     }
 
     applyTheme(theme) {
@@ -103,35 +115,66 @@ class BackupSettings {
         }
     }
 
-    updateLatestInfoText(text) {
-        if (this.latestInfoEl) {
-            this.latestInfoEl.textContent = text;
+    setLatestBackupState(type, params = {}) {
+        this._latestBackupState = { type, params };
+        this.renderLatestBackupInfo();
+    }
+
+    renderLatestBackupInfo() {
+        if (!this.latestInfoEl) return;
+
+        const { type, params } = this._latestBackupState;
+        switch (type) {
+            case 'notLoggedIn':
+                this.latestInfoEl.textContent = window.i18n.t('backup.latestNotLoggedIn');
+                break;
+            case 'none':
+                this.latestInfoEl.textContent = window.i18n.t('backup.latestNone');
+                break;
+            case 'failed':
+                this.latestInfoEl.textContent = window.i18n.t('backup.latestFetchFailed');
+                break;
+            case 'info':
+                this.latestInfoEl.textContent = window.i18n.t('backup.latestInfo', {
+                    timeLabel: params.timeLabel || window.i18n.t('backup.unknownTime'),
+                    deviceName: params.deviceName || window.i18n.t('backup.unknownDevice')
+                });
+                break;
+            default:
+                this.latestInfoEl.textContent = window.i18n.t('backup.latestBackup');
         }
     }
 
     async refreshLatestBackupInfo() {
         if (!this.latestInfoEl) return;
         if (!window.electronAPI?.getSettingsBackupInfo) {
-            this.updateLatestInfoText('最近备份：--');
-            return;
-        }
-        const result = await window.electronAPI.getSettingsBackupInfo();
-        if (!result || !result.success) {
-            const error = result?.error || 'UNKNOWN';
-            if (error === 'NOT_LOGGED_IN') {
-                this.updateLatestInfoText('最近备份：未登录');
-            } else if (error === 'NO_BACKUP') {
-                this.updateLatestInfoText('最近备份：暂无');
-            } else {
-                this.updateLatestInfoText('最近备份：获取失败');
-            }
+            this.setLatestBackupState('unavailable');
             return;
         }
 
-        const info = result.info || {};
-        const timeLabel = info.displayTime || info.timestampRaw || '未知时间';
-        const deviceName = info.deviceName || '未知设备';
-        this.updateLatestInfoText(`最近备份：${timeLabel}（${deviceName}）`);
+        try {
+            const result = await window.electronAPI.getSettingsBackupInfo();
+            if (!result || !result.success) {
+                const error = result?.error || 'UNKNOWN';
+                if (error === 'NOT_LOGGED_IN') {
+                    this.setLatestBackupState('notLoggedIn');
+                } else if (error === 'NO_BACKUP') {
+                    this.setLatestBackupState('none');
+                } else {
+                    this.setLatestBackupState('failed');
+                }
+                return;
+            }
+
+            const info = result.info || {};
+            this.setLatestBackupState('info', {
+                timeLabel: info.displayTime || info.timestampRaw,
+                deviceName: info.deviceName
+            });
+        } catch (error) {
+            logError('获取最近备份信息失败:', error);
+            this.setLatestBackupState('failed');
+        }
     }
 
     collectSettings() {
@@ -156,16 +199,17 @@ class BackupSettings {
 
             if (result && result.success) {
                 this.settings.autoBackupSettings = newSettings.autoBackupSettings;
-                this.showMessage((('backup.saveSuccess')), 'success');
+                this.showMessage(window.i18n.t('backup.saveSuccess'), 'success');
                 if (newSettings.autoBackupSettings) {
                     await this.backupNow(true);
                 }
             } else {
-                const errorMsg = result?.error || '未知错误';
-                this.showMessage((('backup.saveFail', {error: errorMsg})), 'error');
+                const errorMsg = result?.error || window.i18n.t('backup.unknownError');
+                this.showMessage(window.i18n.t('backup.saveFail', { error: errorMsg }), 'error');
             }
         } catch (error) {
-            this.showMessage((('backup.saveFailSimple', {error: error.message})), 'error');
+            logError('保存备份设置失败:', error);
+            this.showMessage(window.i18n.t('backup.saveFailSimple', { error: error.message }), 'error');
         } finally {
             this._saving = false;
         }
@@ -173,25 +217,26 @@ class BackupSettings {
 
     async backupNow(silent = false) {
         if (!window.electronAPI?.backupSettingsToCloud) {
-            if (!silent) this.showMessage((('backup.backupUnavailable')), 'error');
+            if (!silent) this.showMessage(window.i18n.t('backup.backupUnavailable'), 'error');
             return false;
         }
 
         const result = await window.electronAPI.backupSettingsToCloud();
         if (!result || !result.success) {
-            const error = result?.error || 'Backup failed';
+            const error = result?.error;
             if (error === 'NOT_LOGGED_IN') {
-                this.showMessage((('backup.loginFirst')), 'warning');
+                this.showMessage(window.i18n.t('backup.loginFirst'), 'warning');
             } else if (error === 'NO_SETTINGS') {
-                if (!silent) this.showMessage((('backup.nothingToBackup')), 'warning');
+                if (!silent) this.showMessage(window.i18n.t('backup.nothingToBackup'), 'warning');
             } else {
-                if (!silent) this.showMessage((('backup.backupFailSimple', {error: error})), 'error');
+                const errorMsg = error || window.i18n.t('backup.unknownError');
+                if (!silent) this.showMessage(window.i18n.t('backup.backupFailSimple', { error: errorMsg }), 'error');
             }
             return false;
         }
 
         if (!silent) {
-            this.showMessage((('backup.backupSuccess')), 'success');
+            this.showMessage(window.i18n.t('backup.backupSuccess'), 'success');
         }
         this.refreshLatestBackupInfo();
         return true;
@@ -199,55 +244,69 @@ class BackupSettings {
 
     async syncFromCloud() {
         if (!window.electronAPI?.getSettingsBackupInfo || !window.electronAPI?.syncSettingsFromCloud) {
-            this.showMessage((('backup.syncUnavailable')), 'error');
+            this.showMessage(window.i18n.t('backup.syncUnavailable'), 'error');
             return false;
         }
 
         const infoResult = await window.electronAPI.getSettingsBackupInfo();
         if (!infoResult || !infoResult.success) {
             logInfo('获取云端备份信息失败:', infoResult);
-            const error = infoResult?.error || 'Sync failed';
+            const error = infoResult?.error;
             if (error === 'NOT_LOGGED_IN') {
-                this.showMessage((('backup.loginFirst')), 'warning');
+                this.showMessage(window.i18n.t('backup.loginFirst'), 'warning');
             } else if (error === 'NO_BACKUP') {
-                this.showMessage((('backup.noBackupFound')), 'warning');
+                this.showMessage(window.i18n.t('backup.noBackupFound'), 'warning');
             } else {
-                this.showMessage((('backup.fetchBackupFail')), 'error');
+                this.showMessage(window.i18n.t('backup.fetchBackupFail'), 'error');
             }
             return false;
         }
 
         const info = infoResult.info || {};
-        const timeLabel = info.displayTime || info.timestampRaw || '未知时间';
-        const deviceName = info.deviceName || '未知设备';
-        const confirmText = (('backup.syncConfirm', {time: timeLabel, device: deviceName}));
-        const confirmed = await this.confirmDialog((('backup.syncConfirmTitle')), confirmText);
+        const timeLabel = info.displayTime || info.timestampRaw || window.i18n.t('backup.unknownTime');
+        const deviceName = info.deviceName || window.i18n.t('backup.unknownDevice');
+        const confirmText = window.i18n.t('backup.syncConfirm', {
+            time: this.escapeHtml(timeLabel),
+            device: this.escapeHtml(deviceName)
+        });
+        const confirmed = await this.confirmDialog(window.i18n.t('backup.syncConfirmTitle'), confirmText);
         if (!confirmed) {
             return false;
         }
 
         const syncResult = await window.electronAPI.syncSettingsFromCloud();
         if (!syncResult || !syncResult.success) {
-            const error = syncResult?.error || 'Sync failed';
+            const error = syncResult?.error;
             if (error === 'NOT_LOGGED_IN') {
-                this.showMessage(('backup.loginFirst'), 'warning');
+                this.showMessage(window.i18n.t('backup.loginFirst'), 'warning');
             } else if (error === 'NO_BACKUP') {
-                this.showMessage((('backup.noBackupFound')), 'warning');
+                this.showMessage(window.i18n.t('backup.noBackupFound'), 'warning');
             } else if (error === 'EMPTY_BACKUP') {
-                this.showMessage((('backup.restoreFailEmpty')), 'error');
+                this.showMessage(window.i18n.t('backup.restoreFailEmpty'), 'error');
             } else if (error === 'INVALID_BACKUP') {
-                this.showMessage((('backup.restoreFailInvalid')), 'error');
+                this.showMessage(window.i18n.t('backup.restoreFailInvalid'), 'error');
+            } else if (error) {
+                this.showMessage(window.i18n.t('backup.syncFail', { error }), 'error');
             } else {
-                this.showMessage(`同步设置失败：${error}`, 'error');
+                this.showMessage(window.i18n.t('backup.syncFailSimple'), 'error');
             }
             return false;
         }
 
         await this.loadSettings();
         this.updateUI();
-        this.showMessage((('backup.syncSuccess')), 'success');
+        this.showMessage(window.i18n.t('backup.syncSuccess'), 'success');
         this.refreshLatestBackupInfo();
         return true;
+    }
+
+    escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     async confirmDialog(title, message) {
@@ -306,6 +365,10 @@ class BackupSettings {
     }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-    new BackupSettings();
+window.addEventListener('DOMContentLoaded', async () => {
+    if (window.i18n && typeof window.i18n.init === 'function') {
+        await window.i18n.init();
+    }
+    const backupSettings = new BackupSettings();
+    await backupSettings.init();
 });
