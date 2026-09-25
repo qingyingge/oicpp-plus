@@ -869,6 +869,14 @@ class ClangdLspManager {
             method: '$/cancelRequest',
             params: { id: requestId }
         });
+        const entry = this.pending.get(requestId);
+        if (entry) {
+            clearTimeout(entry.timer);
+            this.pending.delete(requestId);
+            const error = new Error(`LSP request cancelled: ${entry.method || requestId}`);
+            error.code = 'ECANCELED';
+            entry.reject(error);
+        }
         return { ok: true };
     }
 
