@@ -562,6 +562,11 @@ class MonacoEditorManager {
         this.lspClient.onDiagnostics((uri, diagnostics) => {
             this.applyLspDiagnostics(uri, diagnostics);
         });
+        this.lspClient.onApplyEdit?.(async (edit) => {
+            const workspaceEdit = this.lspWorkspaceEditToMonaco(edit);
+            const applied = this.applyLspWorkspaceEdit(workspaceEdit);
+            return { applied: applied.edits > 0 };
+        });
         this.lspClient.onReady(() => {
             this.registerCppSemanticHighlightingProviders();
             this.registerAllLspProviders();

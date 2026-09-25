@@ -609,6 +609,8 @@ class ClangdLspManager {
         this.buffer = Buffer.alloc(0);
         this.pending = new Map();
         this.nextId = 1;
+        this.pendingApplyEdits = new Map();
+        this.nextApplyEditId = 1;
         this.workspaceFolders = [];
         this.procGeneration = 0;
     }
@@ -794,6 +796,10 @@ class ClangdLspManager {
             try { entry.reject(new Error('clangd stopped')); } catch (_) {}
         });
         this.pending.clear();
+        this.pendingApplyEdits.forEach((entry) => {
+            try { entry.resolve({ applied: false }); } catch (_) {}
+        });
+        this.pendingApplyEdits.clear();
 
         await new Promise((resolve) => {
             let settled = false;
@@ -907,6 +913,48 @@ class ClangdLspManager {
         });
     }
 
+    _requestRendererWorkspaceEdit(edit) {
+        return new Promise((resolve) => {
+            if (!mainWindow || mainWindow.isDestroyed()) {
+                resolve({ applied: false });
+                return;
+            }
+            const requestId = `apply-edit-${this.nextApplyEditId++}`;
+            let settled = false;
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                const entry = this.pendingApplyEdits.get(requestId);
+                if (entry) {
+                    clearTimeout(entry.timer);
+                    this.pendingApplyEdits.delete(requestId);
+                }
+                resolve(result);
+            };
+            const timer = setTimeout(() => {
+                logWarn('[LSP] 等待渲染进程应用 WorkspaceEdit 超时:', requestId);
+                finish({ applied: false });
+            }, 5000);
+            this.pendingApplyEdits.set(requestId, { resolve: finish, timer });
+            try {
+                mainWindow.webContents.send('lsp-apply-edit', { requestId, edit });
+            } catch (err) {
+                logWarn('[LSP] 向渲染进程发送 WorkspaceEdit 失败:', err?.message || err);
+                finish({ applied: false });
+            }
+        });
+    }
+
+    resolveRendererWorkspaceEdit(requestId, result) {
+        const entry = this.pendingApplyEdits.get(requestId);
+        if (!entry) return false;
+        entry.resolve({
+            applied: result?.applied === true,
+            failureReason: result?.failureReason || undefined
+        });
+        return true;
+    }
+
     _handleServerRequest(message) {
         const id = message.id;
         const method = message.method;
@@ -922,6 +970,12 @@ class ClangdLspManager {
         }
         if (method === 'workspace/workspaceFolders') {
             this._sendResult(id, this.workspaceFolders);
+            return;
+        }
+        if (method === 'workspace/applyEdit') {
+            this._requestRendererWorkspaceEdit(message.params?.edit || {}).then((result) => {
+                this._sendResult(id, result);
+            });
             return;
         }
         logWarn('[LSP] 未处理的服务端请求:', method);
@@ -3578,6 +3632,10 @@ function setupIPC() {
 
     ipcMain.handle('lsp-cancel', (_event, requestId) => {
         return clangdLspManager.cancel(requestId);
+    });
+
+    ipcMain.handle('lsp-apply-edit-result', (_event, requestId, result) => {
+        return { ok: clangdLspManager.resolveRendererWorkspaceEdit(requestId, result || {}) };
     });
 
     ipcMain.handle('lsp-notify', (_event, method, params) => {

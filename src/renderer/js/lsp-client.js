@@ -8,10 +8,26 @@ class LspClientBridge {
         this._readyListeners = new Set();
         this._diagnosticListeners = new Set();
         this._notificationListeners = new Set();
+        this._applyEditListeners = new Set();
         this._bindNotifications();
     }
 
     _bindNotifications() {
+        if (typeof window.electronAPI?.onLspApplyEdit === 'function') {
+            window.electronAPI.onLspApplyEdit(async (payload) => {
+                if (!payload?.requestId) return;
+                let applied = false;
+                for (const listener of this._applyEditListeners) {
+                    try {
+                        const result = await listener(payload.edit);
+                        if (result?.applied !== false) applied = true;
+                    } catch (_) {}
+                }
+                try {
+                    await window.electronAPI.lspApplyEditResult?.(payload.requestId, { applied });
+                } catch (_) {}
+            });
+        }
         if (!window.electronAPI || typeof window.electronAPI.onLspNotification !== 'function') {
             return;
         }
@@ -367,6 +383,12 @@ class LspClientBridge {
         if (typeof listener !== 'function') return () => {};
         this._diagnosticListeners.add(listener);
         return () => this._diagnosticListeners.delete(listener);
+    }
+
+    onApplyEdit(listener) {
+        if (typeof listener !== 'function') return () => {};
+        this._applyEditListeners.add(listener);
+        return () => this._applyEditListeners.delete(listener);
     }
 
     onNotification(listener) {

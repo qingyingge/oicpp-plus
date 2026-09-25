@@ -476,7 +476,8 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     'file-deleted', 'file-pasted', 'file-moved', 'file-move-error',
     'directory-read', 'directory-read-error',
     // 窗口/应用
-    'window-maximized', 'window-unmaximized', 'app-close-requested'
+    'window-maximized', 'window-unmaximized', 'app-close-requested',
+    'lsp-apply-edit'
 ]);
 
 const safeIpcRenderer = {
@@ -703,8 +704,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     lspRestart: (options) => ipcRenderer.invoke('lsp-restart', options),
     lspRequest: (method, params, requestId) => ipcRenderer.invoke('lsp-request', method, params, requestId),
     lspCancel: (requestId) => ipcRenderer.invoke('lsp-cancel', requestId),
+    lspApplyEditResult: (requestId, result) => ipcRenderer.invoke('lsp-apply-edit-result', requestId, result),
     lspNotify: (method, params) => ipcRenderer.invoke('lsp-notify', method, params),
     onLspNotification: (callback) => ipcRenderer.on('lsp-notification', (_event, payload) => callback && callback(payload)),
+    onLspApplyEdit: (callback) => ipcRenderer.on('lsp-apply-edit', (_event, payload) => callback && callback(payload)),
 
     onRequestSaveAll: (callback) => ipcRenderer.on('request-save-all', () => callback && callback()),
     notifySaveAllComplete: () => ipcRenderer.send('save-all-complete'),
