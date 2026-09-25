@@ -706,8 +706,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     lspCancel: (requestId) => ipcRenderer.invoke('lsp-cancel', requestId),
     lspApplyEditResult: (requestId, result) => ipcRenderer.invoke('lsp-apply-edit-result', requestId, result),
     lspNotify: (method, params) => ipcRenderer.invoke('lsp-notify', method, params),
-    onLspNotification: (callback) => ipcRenderer.on('lsp-notification', (_event, payload) => callback && callback(payload)),
-    onLspApplyEdit: (callback) => ipcRenderer.on('lsp-apply-edit', (_event, payload) => callback && callback(payload)),
+    onLspNotification: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('lsp-notification', listener);
+        return () => ipcRenderer.removeListener('lsp-notification', listener);
+    },
+    onLspApplyEdit: (callback) => {
+        if (typeof callback !== 'function') return () => {};
+        const listener = (_event, payload) => callback(payload);
+        ipcRenderer.on('lsp-apply-edit', listener);
+        return () => ipcRenderer.removeListener('lsp-apply-edit', listener);
+    },
 
     onRequestSaveAll: (callback) => ipcRenderer.on('request-save-all', () => callback && callback()),
     notifySaveAllComplete: () => ipcRenderer.send('save-all-complete'),
