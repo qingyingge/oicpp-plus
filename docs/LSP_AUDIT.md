@@ -40,9 +40,9 @@
 
 ### 2. WorkspaceEdit 只覆盖已打开 model
 
-`src/renderer/js/monaco-editor-manager.js:1566-1595` 通过 `findModelByLspUri()` 查找现有 model，找不到就跳过。`versionId` 虽然在转换层保留，但应用时没有冲突校验。
+`src/renderer/js/monaco-editor-manager.js:1566-1595` 通过 `findModelByLspUri()` 查找现有 model，找不到就跳过。`versionId` 虽然在转换层保留，但应用时没有冲突校验。`src/renderer/js/lsp-utils.js:75-98` 也只处理文本 edit，不处理 `createFile` / `renameFile` / `deleteFile` 资源操作。
 
-需要测试：单文件、多文件、未打开文件、同文件多个 edit、版本不匹配和部分失败。
+需要测试：单文件、多文件、未打开文件、同文件多个 edit、版本不匹配、资源操作和部分失败。
 
 ### 3. Rename 存在两条重叠路径
 
@@ -53,6 +53,8 @@
 ### 4. Provider 没有完整生命周期
 
 `registerAllLspProviders()` 用 `_lspProvidersReady` 防止重复注册，但当前没有统一的 dispose/reset 路径。clangd 重启或 renderer 重建时，旧 provider 是否失效需要验证。
+
+此外，`supportsCapability()`（`src/renderer/js/lsp-client.js:415-423`）在属性缺失时返回默认 fallback，而 provider 注册大量使用 fallback `true`；需要明确“服务器未声明能力”时是跳过还是尝试请求，并用 fake capability matrix 固定语义。
 
 ### 5. 现有测试覆盖范围有限
 
