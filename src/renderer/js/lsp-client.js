@@ -258,7 +258,10 @@ class LspClientBridge {
                     },
                     foldingRange: {},
                     codeLens: {
-                        dynamicRegistration: false
+                        dynamicRegistration: false,
+                        resolveSupport: {
+                            properties: ['command']
+                        }
                     },
                     semanticTokens: {
                         requests: {

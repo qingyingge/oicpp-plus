@@ -2203,11 +2203,32 @@ class MonacoEditorManager {
                                 id: item.command.command || '',
                                 title: item.command.title || '',
                                 arguments: item.command.arguments
-                            } : undefined
+                            } : undefined,
+                            __oicppLspCodeLens: item
                         }));
                         return { lenses, dispose: () => {} };
                     } catch (_) {
                         return { lenses: [], dispose: () => {} };
+                    }
+                },
+                resolveCodeLens: async (lens, token) => {
+                    const original = lens?.__oicppLspCodeLens;
+                    if (!original || !this.lspClient || token?.isCancellationRequested) return lens;
+                    try {
+                        const result = await this.lspClient.request('codeLens/resolve', original, token);
+                        if (!result) return lens;
+                        return {
+                            ...lens,
+                            range: this.lspRangeToMonaco(result.range) || lens.range,
+                            command: result.command ? {
+                                id: result.command.command || '',
+                                title: result.command.title || '',
+                                arguments: result.command.arguments
+                            } : lens.command,
+                            __oicppLspCodeLens: result
+                        };
+                    } catch (_) {
+                        return lens;
                     }
                 }
             });
