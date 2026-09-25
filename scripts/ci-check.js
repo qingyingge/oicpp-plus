@@ -173,10 +173,14 @@ if (fileExists(icoPath)) {
 } else {
   fail('oicpp-plus.ico missing');
 }
-if (fileExists(path.join(root, 'build', 'icons', 'png'))) {
-  fail('build/icons/png should be deleted');
+const generatedPngDir = path.join(root, 'build', 'icons', 'png');
+if (fileExists(generatedPngDir)) {
+  const requiredSizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024];
+  const missingIcons = requiredSizes.filter((size) => !fileExists(path.join(generatedPngDir, `${size}x${size}.png`)));
+  if (missingIcons.length > 0) fail(`generated icon sizes missing: ${missingIcons.join(', ')}`);
+  else ok('generated PNG icon sizes ready');
 } else {
-  ok('build/icons/png removed');
+  ok('generated PNG icons not present (prebuild will create them)');
 }
 
 // A4: Dependencies

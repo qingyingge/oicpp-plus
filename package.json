@@ -68,6 +68,7 @@
     "directories": {
       "output": "dist"
     },
+    "electronDist": "node_modules/electron/dist",
     "files": [
       "src/**/*",
       "src/lang/**/*",
@@ -75,6 +76,7 @@
       "oicpp-plus.ico",
       "fastspawn.node"
     ],
+    "npmRebuild": false,
     "asarUnpack": [
       "node_modules/node-pty/**/*",
       "fastspawn.node"
@@ -100,7 +102,12 @@
       "perMachine": false,
       "selectPerMachineByDefault": false,
       "allowToChangeInstallationDirectory": true,
-      "allowElevation": true
+      "allowElevation": false,
+      "packElevateHelper": false,
+      "installerLanguages": [
+        "en-US",
+        "zh-CN"
+      ]
     },
     "mac": {
       "icon": "build/icons/png",

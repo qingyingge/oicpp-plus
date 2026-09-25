@@ -28,7 +28,8 @@ const icojs = require('icojs');
   }
 
   const buf = fs.readFileSync(icoPath);
-  const images = await icojs.parse(buf, 'image/png');
+  const decodeIco = typeof icojs.decodeIco === 'function' ? icojs.decodeIco : icojs.parse;
+  const images = await decodeIco(buf);
   let largest = images.sort((a,b)=> (b.width*b.height)-(a.width*a.height))[0];
   let basePng = largest && largest.buffer ? Buffer.from(largest.buffer) : null;
   if (!basePng) {
