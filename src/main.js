@@ -19,6 +19,7 @@ try {
 const logger = require('./utils/logger');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
+const { formatCodeWithClangFormat } = require('./clang-format-service');
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
@@ -204,6 +205,23 @@ function resolveClangdExecutable(rootDir) {
     if (!rootDir) return null;
     const exeName = getClangdExecutableName();
     const candidate = path.join(rootDir, 'bin', exeName);
+    return fs.existsSync(candidate) ? candidate : null;
+}
+
+function getClangFormatExecutableName() {
+    return process.platform === 'win32' ? 'clang-format.exe' : 'clang-format';
+}
+
+function resolveClangFormatRootFromBundle() {
+    const bundled = app.isPackaged
+        ? path.join(process.resourcesPath, 'clang-format')
+        : path.join(__dirname, '..', 'build', 'clang-format', getClangdPlatformKey());
+    return bundled && fs.existsSync(bundled) ? bundled : null;
+}
+
+function resolveClangFormatExecutable(rootDir) {
+    if (!rootDir) return null;
+    const candidate = path.join(rootDir, 'bin', getClangFormatExecutableName());
     return fs.existsSync(candidate) ? candidate : null;
 }
 
@@ -3649,6 +3667,38 @@ function setupIPC() {
             return {
                 ok: false,
                 tty: null,
+                error: error?.message || String(error)
+            };
+        }
+    });
+
+    ipcMain.handle('format-cpp-code', async (_event, request = {}) => {
+        try {
+            const executablePath = resolveClangFormatExecutable(resolveClangFormatRootFromBundle());
+            if (!executablePath) {
+                return {
+                    ok: false,
+                    error: 'Bundled clang-format was not found. Run pnpm run prebuild:clang-format.'
+                };
+            }
+            const result = await formatCodeWithClangFormat({
+                executablePath,
+                content: request.content,
+                filePath: request.filePath,
+                style: request.style,
+                styleRaw: request.styleRaw,
+                fallbackStyle: request.fallbackStyle,
+                startLine: request.startLine,
+                endLine: request.endLine
+            });
+            return {
+                ok: true,
+                content: result.content
+            };
+        } catch (error) {
+            logError('[clang-format] 格式化失败:', error?.message || error);
+            return {
+                ok: false,
                 error: error?.message || String(error)
             };
         }

@@ -94,6 +94,11 @@ check('renderer 所有 send 通道通过白名单', blockedSends.length === 0, b
 check('无 IPC send blocked 警告', !warns.some(w => w.includes('IPC send blocked')), warns.join(' | '));
 
 (async () => {
+    invoked.length = 0;
+    await exposed.electronAPI.formatCppCode({ content: 'int main(){}', style: { IndentWidth: 4 } });
+    check('electronAPI exposes standalone clang-format bridge',
+        invoked.length === 1 && invoked[0].ch === 'format-cpp-code' && invoked[0].args[0].content === 'int main(){}');
+
     const blockedInvokes = [];
     for (const ch of invokeChannels) {
         try {

@@ -456,7 +456,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'get-all-settings', 'update-settings', 'update-top-level-settings',
     'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
-    'compile-file', 'run-executable', 'check-file-exists'
+    'compile-file', 'run-executable', 'check-file-exists', 'format-cpp-code'
 ]);
 
 // 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
@@ -575,6 +575,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     testTestlib: (testlibPath) => ipcRenderer.invoke('test-testlib', testlibPath),
 
     compileFile: (options) => ipcRenderer.invoke('compile-file', options),
+    formatCppCode: (options) => ipcRenderer.invoke('format-cpp-code', options),
     runExecutable: (options) => ipcRenderer.invoke('run-executable', options),
     runProgram: (executablePath, input, timeLimit, memoryLimit) => ipcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
     runInteractive: (options) => ipcRenderer.invoke('run-interactive', options),

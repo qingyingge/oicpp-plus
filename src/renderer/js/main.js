@@ -3765,7 +3765,8 @@ ${data.message || '程序已加载，等待开始执行'}
         const openSourceLibs = [
             { name: 'Electron', license: 'MIT', url: 'https://github.com/electron/electron' },
             { name: 'Monaco Editor', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },
-            { name: 'clangd', license: 'Apache-2.0', url: 'https://github.com/llvm/llvm-project' },
+            { name: 'LLVM clangd 23.1.0', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clangd.llvm.org/' },
+            { name: 'LLVM clang-format 23.1.2', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clang.llvm.org/docs/ClangFormat.html' },
             { name: 'xterm.js', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
             { name: '@xterm/addon-fit', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
             { name: 'node-pty', license: 'MIT', url: 'https://github.com/nicely-bot/node-pty' },

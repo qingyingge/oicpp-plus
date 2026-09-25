@@ -35,6 +35,7 @@ class MonacoEditorManager {
         this.unifiedPreprocessorColor = false;
         this.formatterIndentStyle = 'editor';
         this.clangFormatStyle = this.getDefaultClangFormatStyle();
+        this.clangFormatRaw = '';
         this._lspSemanticProviders = [];
         this._lspSemanticTokenCache = new WeakMap();
         this._lspDiagnosticsByModel = new WeakMap();
@@ -316,6 +317,8 @@ class MonacoEditorManager {
             // as Monaco is available so suggestions remain usable while the
             // language server is starting or recovering.
             this._registerLocalCompletionProvider();
+            this._registerClangFormatDocumentFormattingProvider();
+            this._registerClangFormatDocumentRangeFormattingProvider();
             
             this.isInitialized = true;
             logInfo('Monaco Editor 管理器初始化完成');
@@ -600,8 +603,6 @@ class MonacoEditorManager {
             if (supports('textDocument.declarationProvider')) this._registerLspLocationProviders();
             if (supports('textDocument.referencesProvider')) this._registerLspReferencesProvider();
             if (supports('textDocument.renameProvider')) this._registerLspRenameProvider();
-            if (supports('textDocument.documentFormattingProvider')) this._registerLspDocumentFormattingProvider();
-            if (supports('textDocument.documentRangeFormattingProvider')) this._registerLspDocumentRangeFormattingProvider();
             if (supports('textDocument.inlayHintProvider')) this._registerLspInlayHintProvider();
             if (supports('textDocument.selectionRangeProvider')) this._registerLspSelectionRangeProvider();
             if (supports('textDocument.documentLinkProvider')) this._registerLspDocumentLinkProvider();
@@ -613,7 +614,7 @@ class MonacoEditorManager {
             if (supports('textDocument.codeLensProvider')) this._registerLspCodeLensProvider();
             if (supports('textDocument.foldingRangeProvider')) this._registerLspFoldingRangeProvider();
             this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、范围格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围、文档链接)');
+            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围、文档链接)');
         } catch (err) {
             logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
         }
@@ -2015,40 +2016,24 @@ class MonacoEditorManager {
         }
     }
 
-    _registerLspDocumentFormattingProvider() {
+    _registerClangFormatDocumentFormattingProvider() {
         const languages = ['cpp', 'c'];
         for (const language of languages) {
-            const key = `${language}:formatting`;
+            const key = `${language}:clang-format`;
             if (this._lspProviders.has(key)) continue;
-            logInfo('[LSP] 注册格式化提供器 (语言:', language, ')');
+            logInfo('[clang-format] 注册文档格式化提供器 (语言:', language, ')');
             const disposable = monaco.languages.registerDocumentFormattingEditProvider(language, {
-                provideDocumentFormattingEdits: async (model, options, token) => {
+                provideDocumentFormattingEdits: async (model, _options, token) => {
                     try {
-                        const lspReady = await this._ensureLspDocumentReady(model);
-                        if (!lspReady) return [];
-                        if (!this.lspClient) return [];
-                        const uri = await this.getDocumentUriForModel(model);
-                        if (!uri) return [];
-
-                        const result = await this.lspClient.request('textDocument/formatting', {
-                            textDocument: { uri },
-                            options: {
-                                tabSize: options.tabSize || 4,
-                                insertSpaces: options.insertSpaces !== false
-                            }
-                        }, token);
-                        if (!Array.isArray(result)) return [];
-
-                        return result.filter(Boolean).map((edit) => ({
-                            range: new monaco.Range(
-                                (edit.range?.start?.line || 0) + 1,
-                                (edit.range?.start?.character || 0) + 1,
-                                (edit.range?.end?.line || 0) + 1,
-                                (edit.range?.end?.character || 0) + 1
-                            ),
-                            text: edit.newText || ''
-                        }));
-                    } catch (_) {
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return [];
+                        const content = await this.requestClangFormattedCode(model);
+                        if (content === null || token?.isCancellationRequested || model.isDisposed?.()) return [];
+                        return [{
+                            range: model.getFullModelRange(),
+                            text: content
+                        }];
+                    } catch (error) {
+                        logWarn('[clang-format] 文档格式化失败:', error?.message || error);
                         return [];
                     }
                 }
@@ -2057,45 +2042,24 @@ class MonacoEditorManager {
         }
     }
 
-    _registerLspDocumentRangeFormattingProvider() {
+    _registerClangFormatDocumentRangeFormattingProvider() {
         const languages = ['cpp', 'c'];
         for (const language of languages) {
-            const key = `${language}:rangeFormatting`;
+            const key = `${language}:clang-format-range`;
             if (this._lspProviders.has(key)) continue;
             const disposable = monaco.languages.registerDocumentRangeFormattingEditProvider(language, {
-                displayName: 'clangd',
-                provideDocumentRangeFormattingEdits: async (model, range, options, token) => {
+                displayName: 'clang-format',
+                provideDocumentRangeFormattingEdits: async (model, range, _options, token) => {
                     try {
                         if (!model || model.isDisposed?.() || token?.isCancellationRequested) return [];
-                        const lspReady = await this._ensureLspDocumentReady(model);
-                        if (!lspReady || !this.lspClient || token?.isCancellationRequested) return [];
-                        const uri = await this.getDocumentUriForModel(model);
-                        if (!uri || token?.isCancellationRequested) return [];
-                        const result = await this.lspClient.request('textDocument/rangeFormatting', {
-                            textDocument: { uri },
-                            range: {
-                                start: {
-                                    line: range.startLineNumber - 1,
-                                    character: range.startColumn - 1
-                                },
-                                end: {
-                                    line: range.endLineNumber - 1,
-                                    character: range.endColumn - 1
-                                }
-                            },
-                            options: {
-                                tabSize: options.tabSize || 4,
-                                insertSpaces: options.insertSpaces !== false
-                            }
-                        }, token);
-                        if (token?.isCancellationRequested || !Array.isArray(result)) return [];
-                        return result
-                            .map((edit) => ({
-                                range: this.lspRangeToMonaco(edit.range),
-                                text: typeof edit.newText === 'string' ? edit.newText : ''
-                            }))
-                            .filter((edit) => edit.range);
-                    } catch (_) {
+                        const content = await this.requestClangFormattedCode(model, range);
+                        if (content === null || token?.isCancellationRequested || model.isDisposed?.()) return [];
+                        return [{
+                            range: model.getFullModelRange(),
+                            text: content
+                        }];
+                    } catch (error) {
+                        logWarn('[clang-format] 范围格式化失败:', error?.message || error);
                         return [];
                     }
                 }
@@ -4195,6 +4159,7 @@ class MonacoEditorManager {
                         }
                         this.loadKeybindingsFromSettings(allSettings);
                         this.updateFormatterSettings(allSettings);
+                        this.updateClangFormatSettings(allSettings);
                     }
                 }
             } catch (error) {
@@ -5889,6 +5854,10 @@ class MonacoEditorManager {
             return;
         }
 
+        if (Object.prototype.hasOwnProperty.call(settings, 'clangFormatRaw')) {
+            this.clangFormatRaw = typeof settings.clangFormatRaw === 'string' ? settings.clangFormatRaw : '';
+        }
+
         const source = settings.clangFormatStyle || settings.clangFormat || settings.clangFormatSettings || null;
         if (source && typeof source === 'object') {
             this.clangFormatStyle = this.normalizeClangFormatStyle(source);
@@ -6439,55 +6408,50 @@ class MonacoEditorManager {
         }
     }
 
+    getClangFormatModelPath(model) {
+        const uri = model?.uri;
+        return uri?.scheme && uri.scheme !== 'file' ? '' : (uri?.fsPath || '');
+    }
+
+    async requestClangFormattedCode(model, range = null) {
+        if (!model || model.isDisposed?.()) return null;
+        if (!window.electronAPI?.formatCppCode) {
+            throw new Error('clang-format bridge is unavailable');
+        }
+
+        const request = {
+            content: model.getValue(),
+            filePath: this.getClangFormatModelPath(model),
+            style: this.normalizeClangFormatStyle(this.clangFormatStyle),
+            styleRaw: this.clangFormatRaw,
+            fallbackStyle: 'LLVM'
+        };
+        if (range) {
+            request.startLine = range.startLineNumber;
+            request.endLine = range.endLineNumber;
+        }
+        const result = await window.electronAPI.formatCppCode(request);
+        if (!result?.ok || typeof result.content !== 'string') {
+            throw new Error(result?.error || 'clang-format did not return formatted content');
+        }
+        return result.content;
+    }
+
     async formatCppCode() {
         try {
             const model = this.currentEditor?.getModel?.();
             if (!model || model.isDisposed?.()) return false;
-            return await this.formatCppViaLsp(model);
-        } catch (error) {
-            logError('C++代码格式化失败:', error);
-            return false;
-        }
-    }
+            const content = await this.requestClangFormattedCode(model);
+            if (content === null || model.isDisposed?.()) return false;
 
-    async formatCppViaLsp(model) {
-        try {
-            if (!model || model.isDisposed?.() || !this.lspClient) return false;
-            const lspReady = await this._ensureLspDocumentReady(model);
-            if (!lspReady || !this.lspClient || model.isDisposed?.()) return false;
-            const uri = await this.getDocumentUriForModel(model);
-            if (!uri) return false;
-
-            const opts = this.currentEditor.getOptions();
-            const editorTabSize = opts.get(monaco.editor.EditorOption.tabSize) || 4;
-            const style = this.normalizeClangFormatStyle(this.clangFormatStyle);
-            const tabSize = style.IndentWidth || editorTabSize;
-            const insertSpaces = style.UseTab === 'Never';
-
-            const result = await this.lspClient.request('textDocument/formatting', {
-                textDocument: { uri },
-                options: { tabSize, insertSpaces }
-            });
-            if (!Array.isArray(result) || !result.length) return false;
-
-            const edits = result
-                .filter((e) => e && e.range)
-                .map((e) => ({
-                    range: new monaco.Range(
-                        (e.range.start?.line || 0) + 1,
-                        (e.range.start?.character || 0) + 1,
-                        (e.range.end?.line || 0) + 1,
-                        (e.range.end?.character || 0) + 1
-                    ),
-                    text: e.newText || ''
-                }))
-                .sort((a, b) => (b.range.startLineNumber - a.range.startLineNumber) || (b.range.startColumn - a.range.startColumn));
-            if (!edits.length) return false;
-            this.currentEditor.executeEdits('format-lsp', edits);
-            logInfo('[LSP] 已通过 clangd 完成代码格式化');
+            this.currentEditor.executeEdits('clang-format', [{
+                range: model.getFullModelRange(),
+                text: content
+            }]);
+            logInfo('[clang-format] 已使用用户配置完成代码格式化');
             return true;
-        } catch (err) {
-            logWarn('[LSP] clangd 格式化失败:', err?.message || err);
+        } catch (error) {
+            logError('[clang-format] C++代码格式化失败:', error);
             return false;
         }
     }

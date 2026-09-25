@@ -21,8 +21,9 @@
     "prebuild:icons": "node scripts/generate-icons.js",
     "prebuild:buildinfo": "node scripts/generate-build-info.js",
     "prebuild:clangd": "node scripts/download-clangd.js",
+    "prebuild:clang-format": "node scripts/download-clang-format.js",
     "prebuild:native": "node-gyp rebuild",
-    "build": "pnpm run prebuild:buildinfo && pnpm run prebuild:icons && pnpm run prebuild:clangd && electron-builder",
+    "build": "pnpm run prebuild:buildinfo && pnpm run prebuild:icons && pnpm run prebuild:clangd && pnpm run prebuild:clang-format && electron-builder",
     "ci": "node scripts/ci-check.js",
     "ci:tests": "node scripts/ci-check.js --only tests",
     "ci:fast": "node scripts/ci-check.js --skip tests",
@@ -94,6 +95,10 @@
         {
           "from": "build/clangd/win32",
           "to": "clangd"
+        },
+        {
+          "from": "build/clang-format/win32",
+          "to": "clang-format"
         }
       ]
     },
@@ -115,6 +120,10 @@
         {
           "from": "build/clangd/darwin",
           "to": "clangd"
+        },
+        {
+          "from": "build/clang-format/darwin",
+          "to": "clang-format"
         }
       ]
     },
@@ -130,6 +139,10 @@
         {
           "from": "build/clangd/linux",
           "to": "clangd"
+        },
+        {
+          "from": "build/clang-format/linux",
+          "to": "clang-format"
         }
       ]
     },
