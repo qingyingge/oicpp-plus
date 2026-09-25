@@ -1,15 +1,17 @@
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     logInfo('DOM 加载完成，开始初始化应用...');
-    setUserIconPath();
-    // Initialize i18n before app
+    await setUserIconPath();
     if (window.i18n && typeof window.i18n.init === 'function') {
-        window.i18n.init().then(() => {
+        try {
+            await window.i18n.init();
             if (typeof window.i18n.enableAutoTranslate === 'function') {
                 window.i18n.enableAutoTranslate();
             }
-        }).catch(err => logError('i18n 初始化失败:', err));
+        } catch (err) {
+            logError('i18n 初始化失败:', err);
+        }
     }
-    initializeApp();
+    await initializeApp();
     setTimeout(() => {
         try {
             const now = new Date();
