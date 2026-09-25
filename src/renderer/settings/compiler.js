@@ -92,6 +92,8 @@ class CompilerSettings {
     }
 
     setupEventListeners() {
+        if (this._eventListenersBound) return;
+        this._eventListenersBound = true;
         logInfo('[编译器设置] 开始设置事件监听器');
         
         this.setupSidebarNavigation();
