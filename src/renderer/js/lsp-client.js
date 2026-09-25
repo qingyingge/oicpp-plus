@@ -292,6 +292,9 @@ class LspClientBridge {
                 },
                 workspace: {
                     workspaceFolders: true,
+                    didChangeWatchedFiles: {
+                        dynamicRegistration: false
+                    },
                     symbol: {
                         dynamicRegistration: false
                     },

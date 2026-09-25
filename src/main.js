@@ -2,7 +2,7 @@ const { app, BrowserWindow, Menu, ipcMain, dialog, shell, webContents } = requir
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
-const { URL } = require('url');
+const { URL, pathToFileURL } = require('url');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -865,6 +865,22 @@ class ClangdLspManager {
         return { ok: true };
     }
 
+    notifyFileChange(filePath, changeType = 'modified') {
+        if (!filePath || !this.proc) {
+            return { ok: false, error: 'clangd not running or invalid file path' };
+        }
+        let uri;
+        try {
+            uri = pathToFileURL(path.resolve(filePath)).toString();
+        } catch (_) {
+            return { ok: false, error: 'invalid file path' };
+        }
+        const type = changeType === 'created' ? 1 : (changeType === 'deleted' ? 3 : 2);
+        return this.notify('workspace/didChangeWatchedFiles', {
+            changes: [{ uri, type }]
+        });
+    }
+
     _send(payload) {
         if (!this.proc || !this.proc.stdin) return;
         const json = JSON.stringify(payload);
@@ -1546,6 +1562,9 @@ async function handleWatcherEvent(key, eventType) {
     };
 
     broadcastExternalChange(entry, payload);
+    try {
+        clangdLspManager.notifyFileChange(entry.resolvedPath, changeType);
+    } catch (_) { }
 
     if (getSubscriberCount(entry) === 0) {
         disposeWatcher(entry, key);
