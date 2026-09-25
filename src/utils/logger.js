@@ -9,6 +9,7 @@ class Logger {
         this.logFile = null;
         this._buffer = [];
         this._batchSize = 200;
+        this._maxBufferLines = 5000;
         this._flushScheduled = false;
     }
 
@@ -26,13 +27,18 @@ class Logger {
         const lines = this._buffer;
         try {
             if (!this.initialized) this.init();
-            if (!this.logFile) return; // 初始化失败时保留缓冲，待下次重试
+            if (!this.logFile) {
+                if (this._buffer.length > this._maxBufferLines) {
+                    this._buffer = this._buffer.slice(-this._maxBufferLines);
+                }
+                return;
+            }
             fs.appendFileSync(this.logFile, lines.join(''), 'utf8');
             this._buffer = [];
         } catch (e) {
             console.error('[Logger] 写入日志失败:', e.message || e);
-            if (this._buffer.length > 5000) {
-                this._buffer = this._buffer.slice(Math.floor(this._buffer.length / 2));
+            if (this._buffer.length > this._maxBufferLines) {
+                this._buffer = this._buffer.slice(-this._maxBufferLines);
             }
         }
     }

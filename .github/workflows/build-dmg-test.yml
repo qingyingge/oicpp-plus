@@ -26,6 +26,8 @@ jobs:
         run: npm run prebuild:clangd
       - name: Prepare clang-format bundle
         run: npm run prebuild:clang-format
+      - name: Build optional native helper
+        run: npm run prebuild:native
 
       - name: Build macOS DMG
         env:

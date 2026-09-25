@@ -1,6 +1,30 @@
 const { contextBridge, ipcRenderer, shell, clipboard } = require('electron');
 const path = require('path');
 
+const htmlToPlainText = (html) => {
+    const source = String(html || '');
+    if (typeof DOMParser === 'function') {
+        try {
+            const documentNode = new DOMParser().parseFromString(source, 'text/html');
+            documentNode.querySelectorAll('script,style,iframe,object,embed,link,meta').forEach((node) => node.remove());
+            documentNode.querySelectorAll('*').forEach((node) => {
+                for (const attribute of Array.from(node.attributes || [])) {
+                    if (/^on/i.test(attribute.name) || /^javascript:/i.test(attribute.value || '')) {
+                        node.removeAttribute(attribute.name);
+                    }
+                }
+            });
+            return documentNode.body?.textContent || '';
+        } catch (_) { }
+    }
+    return source
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+};
+
 const showToast = (message, type = 'info', durationMs = 1200) => {
     try {
         const safeMsg = String(message ?? '');
@@ -311,9 +335,19 @@ if (md) {
             const filePath = env && env.filePath;
             if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
                 if (filePath) {
+                    if (path.isAbsolute(src)) {
+                        token.attrs[srcIndex][1] = '';
+                        return defaultImageRender(tokens, idx, options, env, self);
+                    }
                     const dir = path.dirname(filePath);
                     if (!path.isAbsolute(src)) {
-                        src = path.join(dir, src);
+                        const resolved = path.resolve(dir, src);
+                        const relative = path.relative(dir, resolved);
+                        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                            token.attrs[srcIndex][1] = '';
+                            return defaultImageRender(tokens, idx, options, env, self);
+                        }
+                        src = resolved;
                     }
                     src = src.replace(/\\/g, '/');
                     if (!src.startsWith('/')) {
@@ -344,17 +378,13 @@ contextBridge.exposeInMainWorld('turndownAPI', {
     toMarkdown: (html) => {
         if (!turndownInstance) {
             console.warn('Turndown not initialized, returning plain text');
-            const temp = document.createElement('div');
-            temp.innerHTML = html;
-            return temp.textContent || temp.innerText || '';
+            return htmlToPlainText(html);
         }
         try {
             return turndownInstance.turndown(html);
         } catch (err) {
             console.error('Turndown error:', err);
-            const temp = document.createElement('div');
-            temp.innerHTML = html;
-            return temp.textContent || temp.innerText || '';
+            return htmlToPlainText(html);
         }
     }
 });
@@ -409,7 +439,7 @@ try {
             if (window.electronAPI && typeof window.electronAPI.clipboardWriteText === 'function') {
                 await window.electronAPI.clipboardWriteText(text);
             } else {
-                ipcRenderer.invoke('clipboard-write-text', text);
+                safeIpcRenderer.invoke('clipboard-write-text', text);
             }
             showToast('已复制到剪贴板', 'success', 1200);
         } catch (err) {
@@ -436,7 +466,7 @@ const ALLOWED_SEND_CHANNELS = new Set([
     'debug-send-input', 'start-debug', 'stop-debug',
     'debug-continue', 'debug-step-over', 'debug-step-into', 'debug-step-out',
     'debug-add-watch', 'debug-request-variables',
-    'open-template-settings', 'check-updates-manual'
+    'open-template-settings', 'check-updates-manual', 'logger-log'
 ]);
 
 const ALLOWED_INVOKE_CHANNELS = new Set([
@@ -456,7 +486,8 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'get-all-settings', 'update-settings', 'update-top-level-settings',
     'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
-    'compile-file', 'run-program', 'run-interactive', 'run-executable', 'check-file-exists', 'format-cpp-code'
+    'compile-file', 'run-program', 'run-interactive', 'run-executable', 'check-file-exists', 'format-cpp-code',
+    'get-settings', 'reset-settings', 'export-settings', 'import-settings', 'save-setting', 'get-platform', 'get-user-home', 'get-user-icon-path', 'get-build-info', 'get-downloaded-compilers', 'download-compiler', 'select-compiler', 'get-downloaded-testlibs', 'download-testlib', 'select-testlib', 'test-testlib', 'compare-start', 'compare-stop', 'read-directory', 'rename-file-invoke', 'delete-file-invoke', 'clear-directory-contents', 'write-file', 'create-file', 'create-folder', 'get-path-info', 'ensure-directory', 'watch-file', 'unwatch-file', 'path-join', 'path-dirname', 'get-home-dir', 'ensure-dir', 'terminal-feature-status', 'terminal-create', 'terminal-write', 'terminal-resize', 'terminal-kill', 'terminal-list', 'terminal-get-tty', 'get-update-download-status', 'consume-startup-workspace-to-open', 'get-cpu-threads', 'list-client-logs', 'upload-client-log', 'get-device-info', 'get-encoded-token', 'open-external', 'get-language', 'get-available-languages', 'ide-login-start', 'ide-login-status', 'ide-logout', 'cloud-sync-request', 'backup-settings-to-cloud', 'get-settings-backup-info', 'sync-settings-from-cloud', 'get-recent-files', 'open-recent-file', 'get-file-history', 'add-to-file-history', 'open-file-from-history', 'clear-file-history', 'save-last-open-tabs', 'get-last-open-tabs', 'relaunch-app', 'clipboard-write-text', 'clipboard-read-text', 'walk-directory', 'lsp-start', 'lsp-stop', 'lsp-restart', 'lsp-request', 'lsp-cancel', 'lsp-apply-edit-result', 'lsp-notify', 'browser-resolve-url', 'browser-get-page-title',
 ]);
 
 // 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
@@ -477,7 +508,8 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     'directory-read', 'directory-read-error',
     // 窗口/应用
     'window-maximized', 'window-unmaximized', 'app-close-requested',
-    'lsp-apply-edit'
+    'lsp-apply-edit',
+    'compare-progress', 'compare-error', 'compare-complete', 'menu-save-file', 'apply-settings-preview', 'settings-applied', 'menu-format-code', 'menu-find-replace', 'menu-compile', 'menu-compile-run', 'menu-debug', 'menu-new-temp-file', 'menu-open-file', 'menu-open-folder', 'menu-save-as', 'menu-open-terminal', 'menu-open-browser', 'menu-new-browser-tab', 'menu-about', 'menu-settings', 'menu-check-updates', 'update-download-status', 'app-toast', 'show-debug-developing-message', 'file-opened', 'folder-opened', 'file-opened-from-args', 'external-file-changed', 'sample-tester-create-problem', 'terminal-data', 'terminal-exit', 'ide-login-updated', 'ide-login-error', 'menu-open-file-history', 'lsp-notification', 'request-save-all', 'browser-open-new-tab',
 ]);
 
 const safeIpcRenderer = {
@@ -526,53 +558,58 @@ contextBridge.exposeInMainWorld('getElectronModule', () => {
     };
 });
 
+const subscribeIpc = (channel, listener) => {
+    safeIpcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+};
+
 contextBridge.exposeInMainWorld('electronAPI', {
-    openFile: () => ipcRenderer.send('open-file-dialog'),
-    openFolder: () => ipcRenderer.send('open-folder-dialog'),
-    saveFile: (filePath, content) => ipcRenderer.invoke('save-file', filePath, content),
-    saveAsFile: (content) => ipcRenderer.invoke('save-as-file', content),
-    readFileContent: (filePath) => ipcRenderer.invoke('read-file-content', filePath),
-    readFileBuffer: (filePath) => ipcRenderer.invoke('read-file-buffer', filePath),
-    readZipTextFiles: (zipPath) => ipcRenderer.invoke('read-zip-text-files', zipPath),
-    showItemInFolder: (filePath) => ipcRenderer.invoke('open-path', filePath, { reveal: true }),
-    openPath: (targetPath, options = {}) => ipcRenderer.invoke('open-path', targetPath, options),
-    showOpenDialog: (options) => ipcRenderer.invoke('show-open-dialog', options),
-    showSaveDialog: (options) => ipcRenderer.invoke('show-save-dialog', options),
+    openFile: () => safeIpcRenderer.send('open-file-dialog'),
+    openFolder: () => safeIpcRenderer.send('open-folder-dialog'),
+    saveFile: (filePath, content) => safeIpcRenderer.invoke('save-file', filePath, content),
+    saveAsFile: (content) => safeIpcRenderer.invoke('save-as-file', content),
+    readFileContent: (filePath) => safeIpcRenderer.invoke('read-file-content', filePath),
+    readFileBuffer: (filePath) => safeIpcRenderer.invoke('read-file-buffer', filePath),
+    readZipTextFiles: (zipPath) => safeIpcRenderer.invoke('read-zip-text-files', zipPath),
+    showItemInFolder: (filePath) => safeIpcRenderer.invoke('open-path', filePath, { reveal: true }),
+    openPath: (targetPath, options = {}) => safeIpcRenderer.invoke('open-path', targetPath, options),
+    showOpenDialog: (options) => safeIpcRenderer.invoke('show-open-dialog', options),
+    showSaveDialog: (options) => safeIpcRenderer.invoke('show-save-dialog', options),
 
-    saveTempFile: (filePath, content) => ipcRenderer.invoke('save-temp-file', filePath, content),
-    saveBinaryTempFile: (fileName, base64Data) => ipcRenderer.invoke('save-binary-temp-file', fileName, base64Data),
-    loadTempFile: (filePath) => ipcRenderer.invoke('load-temp-file', filePath),
-    deleteTempFile: (filePath) => ipcRenderer.invoke('delete-temp-file', filePath),
+    saveTempFile: (filePath, content) => safeIpcRenderer.invoke('save-temp-file', filePath, content),
+    saveBinaryTempFile: (fileName, base64Data) => safeIpcRenderer.invoke('save-binary-temp-file', fileName, base64Data),
+    loadTempFile: (filePath) => safeIpcRenderer.invoke('load-temp-file', filePath),
+    deleteTempFile: (filePath) => safeIpcRenderer.invoke('delete-temp-file', filePath),
 
-    getAllSettings: () => ipcRenderer.invoke('get-all-settings'),
-    getSettings: () => ipcRenderer.invoke('get-settings'),
-    sendSettingsPreview: (settings) => ipcRenderer.send('settings-preview', settings),
-    updateSettings: (newSettings) => ipcRenderer.invoke('update-settings', newSettings),
+    getAllSettings: () => safeIpcRenderer.invoke('get-all-settings'),
+    getSettings: () => safeIpcRenderer.invoke('get-settings'),
+    sendSettingsPreview: (settings) => safeIpcRenderer.send('settings-preview', settings),
+    updateSettings: (newSettings) => safeIpcRenderer.invoke('update-settings', newSettings),
     updateEditorSettings: () => {}, // deprecated, kept for backward compatibility
-    resetSettings: () => ipcRenderer.invoke('reset-settings'),
-    exportSettings: () => ipcRenderer.invoke('export-settings'),
-    importSettings: () => ipcRenderer.invoke('import-settings'),
-    saveSetting: (key, value) => ipcRenderer.invoke('save-setting', key, value),
+    resetSettings: () => safeIpcRenderer.invoke('reset-settings'),
+    exportSettings: () => safeIpcRenderer.invoke('export-settings'),
+    importSettings: () => safeIpcRenderer.invoke('import-settings'),
+    saveSetting: (key, value) => safeIpcRenderer.invoke('save-setting', key, value),
 
-    openCompilerSettings: () => ipcRenderer.invoke('open-compiler-settings'),
-    openEditorSettings: () => ipcRenderer.invoke('open-editor-settings'),
-    openTemplateSettings: () => ipcRenderer.send('open-template-settings'),
-    openBackupSettings: () => ipcRenderer.invoke('open-backup-settings'),
+    openCompilerSettings: () => safeIpcRenderer.invoke('open-compiler-settings'),
+    openEditorSettings: () => safeIpcRenderer.invoke('open-editor-settings'),
+    openTemplateSettings: () => safeIpcRenderer.send('open-template-settings'),
+    openBackupSettings: () => safeIpcRenderer.invoke('open-backup-settings'),
 
-    getPlatform: () => ipcRenderer.invoke('get-platform'),
-    getUserHome: () => ipcRenderer.invoke('get-user-home'),
-    getUserIconPath: () => ipcRenderer.invoke('get-user-icon-path'),
-    getBuildInfo: () => ipcRenderer.invoke('get-build-info'),
+    getPlatform: () => safeIpcRenderer.invoke('get-platform'),
+    getUserHome: () => safeIpcRenderer.invoke('get-user-home'),
+    getUserIconPath: () => safeIpcRenderer.invoke('get-user-icon-path'),
+    getBuildInfo: () => safeIpcRenderer.invoke('get-build-info'),
 
-    getDownloadedCompilers: () => ipcRenderer.invoke('get-downloaded-compilers'),
-    downloadCompiler: (config) => ipcRenderer.invoke('download-compiler', config),
-    selectCompiler: (version) => ipcRenderer.invoke('select-compiler', version),
+    getDownloadedCompilers: () => safeIpcRenderer.invoke('get-downloaded-compilers'),
+    downloadCompiler: (config) => safeIpcRenderer.invoke('download-compiler', config),
+    selectCompiler: (version) => safeIpcRenderer.invoke('select-compiler', version),
 
 
-    getDownloadedTestlibs: () => ipcRenderer.invoke('get-downloaded-testlibs'),
-    downloadTestlib: (config) => ipcRenderer.invoke('download-testlib', config),
-    selectTestlib: (version) => ipcRenderer.invoke('select-testlib', version),
-    testTestlib: (testlibPath) => ipcRenderer.invoke('test-testlib', testlibPath),
+    getDownloadedTestlibs: () => safeIpcRenderer.invoke('get-downloaded-testlibs'),
+    downloadTestlib: (config) => safeIpcRenderer.invoke('download-testlib', config),
+    selectTestlib: (version) => safeIpcRenderer.invoke('select-testlib', version),
+    testTestlib: (testlibPath) => safeIpcRenderer.invoke('test-testlib', testlibPath),
 
     compileFile: (options) => safeIpcRenderer.invoke('compile-file', options),
     formatCppCode: (options) => safeIpcRenderer.invoke('format-cpp-code', options),
@@ -580,157 +617,157 @@ contextBridge.exposeInMainWorld('electronAPI', {
     runProgram: (executablePath, input, timeLimit, memoryLimit) => safeIpcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
     runInteractive: (options) => safeIpcRenderer.invoke('run-interactive', options),
 
-    startCompare: (config) => ipcRenderer.invoke('compare-start', config),
-    stopCompare: () => ipcRenderer.invoke('compare-stop'),
-    onCompareProgress: (cb) => { const l = (_, data) => cb(data); ipcRenderer.on('compare-progress', l); return () => ipcRenderer.removeListener('compare-progress', l); },
-    onCompareError: (cb) => { const l = (_, data) => cb(data); ipcRenderer.on('compare-error', l); return () => ipcRenderer.removeListener('compare-error', l); },
-    onCompareComplete: (cb) => { const l = (_, data) => cb(data); ipcRenderer.on('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
+    startCompare: (config) => safeIpcRenderer.invoke('compare-start', config),
+    stopCompare: () => safeIpcRenderer.invoke('compare-stop'),
+    onCompareProgress: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-progress', l); return () => ipcRenderer.removeListener('compare-progress', l); },
+    onCompareError: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-error', l); return () => ipcRenderer.removeListener('compare-error', l); },
+    onCompareComplete: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
 
-    readDirectory: (dirPath) => ipcRenderer.invoke('read-directory', dirPath),
-    renameFile: (oldPath, newPath, options = {}) => ipcRenderer.invoke('rename-file-invoke', oldPath, newPath, options),
-    deleteFile: (filePath, options = {}) => ipcRenderer.invoke('delete-file-invoke', filePath, options),
-    clearDirectoryContents: (dirPath) => ipcRenderer.invoke('clear-directory-contents', dirPath),
-    writeFile: (filePath, content) => ipcRenderer.invoke('write-file', filePath, content),
-    createFile: (filePath, content) => ipcRenderer.invoke('create-file', filePath, content),
-    createFolder: (folderPath) => ipcRenderer.invoke('create-folder', folderPath),
-    checkFileExists: (filePath) => ipcRenderer.invoke('check-file-exists', filePath),
-    getPathInfo: (filePath) => ipcRenderer.invoke('get-path-info', filePath),
-    ensureDirectory: (dirPath) => ipcRenderer.invoke('ensure-directory', dirPath),
-    watchFile: (filePath) => ipcRenderer.invoke('watch-file', filePath),
-    unwatchFile: (filePath) => ipcRenderer.invoke('unwatch-file', filePath),
+    readDirectory: (dirPath) => safeIpcRenderer.invoke('read-directory', dirPath),
+    renameFile: (oldPath, newPath, options = {}) => safeIpcRenderer.invoke('rename-file-invoke', oldPath, newPath, options),
+    deleteFile: (filePath, options = {}) => safeIpcRenderer.invoke('delete-file-invoke', filePath, options),
+    clearDirectoryContents: (dirPath) => safeIpcRenderer.invoke('clear-directory-contents', dirPath),
+    writeFile: (filePath, content) => safeIpcRenderer.invoke('write-file', filePath, content),
+    createFile: (filePath, content) => safeIpcRenderer.invoke('create-file', filePath, content),
+    createFolder: (folderPath) => safeIpcRenderer.invoke('create-folder', folderPath),
+    checkFileExists: (filePath) => safeIpcRenderer.invoke('check-file-exists', filePath),
+    getPathInfo: (filePath) => safeIpcRenderer.invoke('get-path-info', filePath),
+    ensureDirectory: (dirPath) => safeIpcRenderer.invoke('ensure-directory', dirPath),
+    watchFile: (filePath) => safeIpcRenderer.invoke('watch-file', filePath),
+    unwatchFile: (filePath) => safeIpcRenderer.invoke('unwatch-file', filePath),
 
-    pathJoin: (...paths) => ipcRenderer.invoke('path-join', ...paths),
-    pathDirname: (filePath) => ipcRenderer.invoke('path-dirname', filePath),
-    getHomeDir: () => ipcRenderer.invoke('get-home-dir'),
-    ensureDir: (dirPath) => ipcRenderer.invoke('ensure-dir', dirPath),
+    pathJoin: (...paths) => safeIpcRenderer.invoke('path-join', ...paths),
+    pathDirname: (filePath) => safeIpcRenderer.invoke('path-dirname', filePath),
+    getHomeDir: () => safeIpcRenderer.invoke('get-home-dir'),
+    ensureDir: (dirPath) => safeIpcRenderer.invoke('ensure-dir', dirPath),
 
-    getTerminalFeatureStatus: () => ipcRenderer.invoke('terminal-feature-status'),
-    createTerminal: (options) => ipcRenderer.invoke('terminal-create', options),
-    writeTerminal: (terminalId, data) => ipcRenderer.invoke('terminal-write', terminalId, data),
-    resizeTerminal: (terminalId, cols, rows) => ipcRenderer.invoke('terminal-resize', terminalId, cols, rows),
-    killTerminal: (terminalId) => ipcRenderer.invoke('terminal-kill', terminalId),
-    listTerminals: () => ipcRenderer.invoke('terminal-list'),
-    getTerminalTTY: (terminalId) => ipcRenderer.invoke('terminal-get-tty', terminalId),
+    getTerminalFeatureStatus: () => safeIpcRenderer.invoke('terminal-feature-status'),
+    createTerminal: (options) => safeIpcRenderer.invoke('terminal-create', options),
+    writeTerminal: (terminalId, data) => safeIpcRenderer.invoke('terminal-write', terminalId, data),
+    resizeTerminal: (terminalId, cols, rows) => safeIpcRenderer.invoke('terminal-resize', terminalId, cols, rows),
+    killTerminal: (terminalId) => safeIpcRenderer.invoke('terminal-kill', terminalId),
+    listTerminals: () => safeIpcRenderer.invoke('terminal-list'),
+    getTerminalTTY: (terminalId) => safeIpcRenderer.invoke('terminal-get-tty', terminalId),
 
-    onMenuSaveFile: (callback) => ipcRenderer.on('menu-save-file', callback),
-    onApplySettingsPreview: (callback) => ipcRenderer.on('apply-settings-preview', (event, ...args) => callback(...args)),
-    onSettingsApplied: (callback) => ipcRenderer.on('settings-applied', (event, ...args) => callback(...args)),
-    onMenuFormatCode: (callback) => ipcRenderer.on('menu-format-code', callback),
-    onMenuFindReplace: (callback) => ipcRenderer.on('menu-find-replace', callback),
-    onMenuCompile: (callback) => ipcRenderer.on('menu-compile', callback),
-    onMenuCompileRun: (callback) => ipcRenderer.on('menu-compile-run', callback),
-    onMenuDebug: (callback) => ipcRenderer.on('menu-debug', callback),
-    onMenuNewTempFile: (callback) => ipcRenderer.on('menu-new-temp-file', callback),
-    onMenuOpenFile: (callback) => ipcRenderer.on('menu-open-file', callback),
-    onMenuOpenFolder: (callback) => ipcRenderer.on('menu-open-folder', callback),
-    onMenuSaveAs: (callback) => ipcRenderer.on('menu-save-as', callback),
-    onMenuOpenTerminal: (callback) => ipcRenderer.on('menu-open-terminal', callback),
-    onMenuOpenBrowser: (callback) => ipcRenderer.on('menu-open-browser', callback),
-    onMenuNewBrowserTab: (callback) => ipcRenderer.on('menu-new-browser-tab', callback),
-    onMenuAbout: (callback) => ipcRenderer.on('menu-about', callback),
-    onMenuSettings: (callback) => ipcRenderer.on('menu-settings', callback),
-    onMenuCheckUpdates: (callback) => ipcRenderer.on('menu-check-updates', callback),
-    getUpdateDownloadStatus: () => ipcRenderer.invoke('get-update-download-status'),
-    onUpdateDownloadStatus: (callback) => ipcRenderer.on('update-download-status', (_event, payload) => callback && callback(payload)),
-    onAppToast: (callback) => ipcRenderer.on('app-toast', (_event, payload) => callback && callback(payload)),
+    onMenuSaveFile: (callback) => subscribeIpc('menu-save-file', callback),
+    onApplySettingsPreview: (callback) => subscribeIpc('apply-settings-preview', (event, ...args) => callback(...args)),
+    onSettingsApplied: (callback) => subscribeIpc('settings-applied', (event, ...args) => callback(...args)),
+    onMenuFormatCode: (callback) => subscribeIpc('menu-format-code', callback),
+    onMenuFindReplace: (callback) => subscribeIpc('menu-find-replace', callback),
+    onMenuCompile: (callback) => subscribeIpc('menu-compile', callback),
+    onMenuCompileRun: (callback) => subscribeIpc('menu-compile-run', callback),
+    onMenuDebug: (callback) => subscribeIpc('menu-debug', callback),
+    onMenuNewTempFile: (callback) => subscribeIpc('menu-new-temp-file', callback),
+    onMenuOpenFile: (callback) => subscribeIpc('menu-open-file', callback),
+    onMenuOpenFolder: (callback) => subscribeIpc('menu-open-folder', callback),
+    onMenuSaveAs: (callback) => subscribeIpc('menu-save-as', callback),
+    onMenuOpenTerminal: (callback) => subscribeIpc('menu-open-terminal', callback),
+    onMenuOpenBrowser: (callback) => subscribeIpc('menu-open-browser', callback),
+    onMenuNewBrowserTab: (callback) => subscribeIpc('menu-new-browser-tab', callback),
+    onMenuAbout: (callback) => subscribeIpc('menu-about', callback),
+    onMenuSettings: (callback) => subscribeIpc('menu-settings', callback),
+    onMenuCheckUpdates: (callback) => subscribeIpc('menu-check-updates', callback),
+    getUpdateDownloadStatus: () => safeIpcRenderer.invoke('get-update-download-status'),
+    onUpdateDownloadStatus: (callback) => subscribeIpc('update-download-status', (_event, payload) => callback && callback(payload)),
+    onAppToast: (callback) => subscribeIpc('app-toast', (_event, payload) => callback && callback(payload)),
 
-    onShowDebugDevelopingMessage: (callback) => ipcRenderer.on('show-debug-developing-message', callback),
-    onSettingsChanged: (callback) => ipcRenderer.on('settings-changed', callback),
-    onSettingsReset: (callback) => ipcRenderer.on('settings-reset', (_e, payload) => callback(payload)),
-    onSettingsImported: (callback) => ipcRenderer.on('settings-imported', (_e, payload) => callback(payload)),
-    onThemeChanged: (callback) => ipcRenderer.on('theme-changed', (_e, payload) => callback(payload)),
-    onFileOpened: (callback) => ipcRenderer.on('file-opened', callback),
-    onFileSaved: (callback) => ipcRenderer.on('file-saved', (event, filePath, error) => callback(filePath, error)),
-    onFolderOpened: (callback) => ipcRenderer.on('folder-opened', (event, folderPath) => callback(folderPath)),
-    reportWorkspacePath: (folderPath) => ipcRenderer.send('workspace-path-report', folderPath),
-    onFileOpenedFromArgs: (callback) => ipcRenderer.on('file-opened-from-args', (event, data) => callback(data)),
-    consumeStartupWorkspaceToOpen: () => ipcRenderer.invoke('consume-startup-workspace-to-open'),
+    onShowDebugDevelopingMessage: (callback) => subscribeIpc('show-debug-developing-message', callback),
+    onSettingsChanged: (callback) => subscribeIpc('settings-changed', callback),
+    onSettingsReset: (callback) => subscribeIpc('settings-reset', (_e, payload) => callback(payload)),
+    onSettingsImported: (callback) => subscribeIpc('settings-imported', (_e, payload) => callback(payload)),
+    onThemeChanged: (callback) => subscribeIpc('theme-changed', (_e, payload) => callback(payload)),
+    onFileOpened: (callback) => subscribeIpc('file-opened', callback),
+    onFileSaved: (callback) => subscribeIpc('file-saved', (event, filePath, error) => callback(filePath, error)),
+    onFolderOpened: (callback) => subscribeIpc('folder-opened', (event, folderPath) => callback(folderPath)),
+    reportWorkspacePath: (folderPath) => safeIpcRenderer.send('workspace-path-report', folderPath),
+    onFileOpenedFromArgs: (callback) => subscribeIpc('file-opened-from-args', (event, data) => callback(data)),
+    consumeStartupWorkspaceToOpen: () => safeIpcRenderer.invoke('consume-startup-workspace-to-open'),
     onExternalFileChange: (callback) => {
         if (typeof callback !== 'function') return () => { };
         const listener = (_event, payload) => callback(payload);
-        ipcRenderer.on('external-file-changed', listener);
+        subscribeIpc('external-file-changed', listener);
         return () => ipcRenderer.removeListener('external-file-changed', listener);
     },
-    onSampleTesterCreateProblem: (callback) => ipcRenderer.on('sample-tester-create-problem', (_e, data) => callback && callback(data)),
-    onTerminalData: (callback) => ipcRenderer.on('terminal-data', (_event, payload) => callback && callback(payload)),
-    onTerminalExit: (callback) => ipcRenderer.on('terminal-exit', (_event, payload) => callback && callback(payload)),
+    onSampleTesterCreateProblem: (callback) => subscribeIpc('sample-tester-create-problem', (_e, data) => callback && callback(data)),
+    onTerminalData: (callback) => subscribeIpc('terminal-data', (_event, payload) => callback && callback(payload)),
+    onTerminalExit: (callback) => subscribeIpc('terminal-exit', (_event, payload) => callback && callback(payload)),
 
-    getCpuThreads: () => ipcRenderer.invoke('get-cpu-threads'),
+    getCpuThreads: () => safeIpcRenderer.invoke('get-cpu-threads'),
 
     sendFeedback: () => {}, // deprecated, kept for backward compatibility
-    listClientLogs: () => ipcRenderer.invoke('list-client-logs'),
-    uploadClientLog: (filePath) => ipcRenderer.invoke('upload-client-log', filePath),
-    getDeviceInfo: () => ipcRenderer.invoke('get-device-info'),
-    getEncodedToken: () => ipcRenderer.invoke('get-encoded-token'),
+    listClientLogs: () => safeIpcRenderer.invoke('list-client-logs'),
+    uploadClientLog: (filePath) => safeIpcRenderer.invoke('upload-client-log', filePath),
+    getDeviceInfo: () => safeIpcRenderer.invoke('get-device-info'),
+    getEncodedToken: () => safeIpcRenderer.invoke('get-encoded-token'),
 
-    openExternal: (url) => ipcRenderer.invoke('open-external', url),
+    openExternal: (url) => safeIpcRenderer.invoke('open-external', url),
 
-    getLanguage: () => ipcRenderer.invoke('get-language'),
-    getLanguageFile: (langCode) => ipcRenderer.invoke('get-language-file', langCode),
-    getAvailableLanguages: () => ipcRenderer.invoke('get-available-languages'),
-    onLanguageChanged: (callback) => ipcRenderer.on('language-changed', (_event, langCode) => callback && callback(langCode)),
+    getLanguage: () => safeIpcRenderer.invoke('get-language'),
+    getLanguageFile: (langCode) => safeIpcRenderer.invoke('get-language-file', langCode),
+    getAvailableLanguages: () => safeIpcRenderer.invoke('get-available-languages'),
+    onLanguageChanged: (callback) => subscribeIpc('language-changed', (_event, langCode) => callback && callback(langCode)),
 
-    startIdeLogin: () => ipcRenderer.invoke('ide-login-start'),
-    getIdeLoginStatus: () => ipcRenderer.invoke('ide-login-status'),
-    logoutIdeAccount: () => ipcRenderer.invoke('ide-logout'),
-    cloudSyncRequest: (payload) => ipcRenderer.invoke('cloud-sync-request', payload),
-    backupSettingsToCloud: () => ipcRenderer.invoke('backup-settings-to-cloud'),
-    getSettingsBackupInfo: () => ipcRenderer.invoke('get-settings-backup-info'),
-    syncSettingsFromCloud: () => ipcRenderer.invoke('sync-settings-from-cloud'),
-    onIdeLoginUpdated: (callback) => ipcRenderer.on('ide-login-updated', (_event, payload) => callback && callback(payload)),
-    onIdeLoginError: (callback) => ipcRenderer.on('ide-login-error', (_event, payload) => callback && callback(payload)),
+    startIdeLogin: () => safeIpcRenderer.invoke('ide-login-start'),
+    getIdeLoginStatus: () => safeIpcRenderer.invoke('ide-login-status'),
+    logoutIdeAccount: () => safeIpcRenderer.invoke('ide-logout'),
+    cloudSyncRequest: (payload) => safeIpcRenderer.invoke('cloud-sync-request', payload),
+    backupSettingsToCloud: () => safeIpcRenderer.invoke('backup-settings-to-cloud'),
+    getSettingsBackupInfo: () => safeIpcRenderer.invoke('get-settings-backup-info'),
+    syncSettingsFromCloud: () => safeIpcRenderer.invoke('sync-settings-from-cloud'),
+    onIdeLoginUpdated: (callback) => subscribeIpc('ide-login-updated', (_event, payload) => callback && callback(payload)),
+    onIdeLoginError: (callback) => subscribeIpc('ide-login-error', (_event, payload) => callback && callback(payload)),
 
-    getRecentFiles: () => ipcRenderer.invoke('get-recent-files'),
-    openRecentFile: (filePath) => ipcRenderer.invoke('open-recent-file', filePath),
+    getRecentFiles: () => safeIpcRenderer.invoke('get-recent-files'),
+    openRecentFile: (filePath) => safeIpcRenderer.invoke('open-recent-file', filePath),
 
-    getFileHistory: () => ipcRenderer.invoke('get-file-history'),
-    addToFileHistory: (filePath) => ipcRenderer.invoke('add-to-file-history', filePath),
-    openFileFromHistory: (filePath) => ipcRenderer.invoke('open-file-from-history', filePath),
-    clearFileHistory: () => ipcRenderer.invoke('clear-file-history'),
-    saveLastOpenTabs: (tabs) => ipcRenderer.invoke('save-last-open-tabs', tabs),
-    getLastOpenTabs: () => ipcRenderer.invoke('get-last-open-tabs'),
-    onMenuOpenFileHistory: (callback) => ipcRenderer.on('menu-open-file-history', callback),
+    getFileHistory: () => safeIpcRenderer.invoke('get-file-history'),
+    addToFileHistory: (filePath) => safeIpcRenderer.invoke('add-to-file-history', filePath),
+    openFileFromHistory: (filePath) => safeIpcRenderer.invoke('open-file-from-history', filePath),
+    clearFileHistory: () => safeIpcRenderer.invoke('clear-file-history'),
+    saveLastOpenTabs: (tabs) => safeIpcRenderer.invoke('save-last-open-tabs', tabs),
+    getLastOpenTabs: () => safeIpcRenderer.invoke('get-last-open-tabs'),
+    onMenuOpenFileHistory: (callback) => subscribeIpc('menu-open-file-history', callback),
 
     versions: process.versions,
     platform: process.platform,
 
-    relaunchApp: () => ipcRenderer.invoke('relaunch-app'),
+    relaunchApp: () => safeIpcRenderer.invoke('relaunch-app'),
 
-    clipboardWriteText: (text) => ipcRenderer.invoke('clipboard-write-text', text),
-    clipboardReadText: () => ipcRenderer.invoke('clipboard-read-text'),
+    clipboardWriteText: (text) => safeIpcRenderer.invoke('clipboard-write-text', text),
+    clipboardReadText: () => safeIpcRenderer.invoke('clipboard-read-text'),
 
-    walkDirectory: (dirPath, options) => ipcRenderer.invoke('walk-directory', dirPath, options),
+    walkDirectory: (dirPath, options) => safeIpcRenderer.invoke('walk-directory', dirPath, options),
 
-    lspStart: (options) => ipcRenderer.invoke('lsp-start', options),
-    lspStop: () => ipcRenderer.invoke('lsp-stop'),
-    lspRestart: (options) => ipcRenderer.invoke('lsp-restart', options),
-    lspRequest: (method, params, requestId) => ipcRenderer.invoke('lsp-request', method, params, requestId),
-    lspCancel: (requestId) => ipcRenderer.invoke('lsp-cancel', requestId),
-    lspApplyEditResult: (requestId, result) => ipcRenderer.invoke('lsp-apply-edit-result', requestId, result),
-    lspNotify: (method, params) => ipcRenderer.invoke('lsp-notify', method, params),
+    lspStart: (options) => safeIpcRenderer.invoke('lsp-start', options),
+    lspStop: () => safeIpcRenderer.invoke('lsp-stop'),
+    lspRestart: (options) => safeIpcRenderer.invoke('lsp-restart', options),
+    lspRequest: (method, params, requestId) => safeIpcRenderer.invoke('lsp-request', method, params, requestId),
+    lspCancel: (requestId) => safeIpcRenderer.invoke('lsp-cancel', requestId),
+    lspApplyEditResult: (requestId, result) => safeIpcRenderer.invoke('lsp-apply-edit-result', requestId, result),
+    lspNotify: (method, params) => safeIpcRenderer.invoke('lsp-notify', method, params),
     onLspNotification: (callback) => {
         if (typeof callback !== 'function') return () => {};
         const listener = (_event, payload) => callback(payload);
-        ipcRenderer.on('lsp-notification', listener);
+        subscribeIpc('lsp-notification', listener);
         return () => ipcRenderer.removeListener('lsp-notification', listener);
     },
     onLspApplyEdit: (callback) => {
         if (typeof callback !== 'function') return () => {};
         const listener = (_event, payload) => callback(payload);
-        ipcRenderer.on('lsp-apply-edit', listener);
+        subscribeIpc('lsp-apply-edit', listener);
         return () => ipcRenderer.removeListener('lsp-apply-edit', listener);
     },
 
-    onRequestSaveAll: (callback) => ipcRenderer.on('request-save-all', () => callback && callback()),
-    notifySaveAllComplete: () => ipcRenderer.send('save-all-complete'),
+    onRequestSaveAll: (callback) => subscribeIpc('request-save-all', () => callback && callback()),
+    notifySaveAllComplete: () => safeIpcRenderer.send('save-all-complete'),
 
     // === 内置浏览器 API ===
-    browserResolveUrl: (url) => ipcRenderer.invoke('browser-resolve-url', url),
-    browserGetPageTitle: (url) => ipcRenderer.invoke('browser-get-page-title', url),
+    browserResolveUrl: (url) => safeIpcRenderer.invoke('browser-resolve-url', url),
+    browserGetPageTitle: (url) => safeIpcRenderer.invoke('browser-get-page-title', url),
     onBrowserOpenNewTab: (callback) => {
         if (typeof callback !== 'function') return () => {};
         const listener = (_event, payload) => callback(payload);
-        ipcRenderer.on('browser-open-new-tab', listener);
+        subscribeIpc('browser-open-new-tab', listener);
         return () => ipcRenderer.removeListener('browser-open-new-tab', listener);
     }
 });
@@ -782,7 +819,7 @@ const safeSendLog = (level, args) => {
                 stack: (() => { try { throw new Error('__trace__'); } catch (e) { return e.stack; } })(),
             };
         }
-        ipcRenderer.send('logger-log', { level, args, meta });
+        safeIpcRenderer.send('logger-log', { level, args, meta });
     } catch (_) { }
     // 仅在开发模式或显式开启时输出到控制台
     if (process.env.NODE_ENV === 'development' || process.env.OICPP_CONSOLE_LOG === '1') {

@@ -45,6 +45,8 @@ jobs:
         run: npm run prebuild:clangd
       - name: Prepare clang-format bundle
         run: npm run prebuild:clang-format
+      - name: Build optional native helper
+        run: npm run prebuild:native
 
       - name: Verify node-pty linux binary
         run: |
@@ -140,6 +142,8 @@ jobs:
         run: npm run prebuild:clangd
       - name: Prepare clang-format bundle
         run: npm run prebuild:clang-format
+      - name: Build optional native helper
+        run: npm run prebuild:native
 
       - name: Ensure dmg-license is installed
         run: pnpm add --no-save dmg-license
@@ -240,6 +244,8 @@ jobs:
         run: npm run prebuild:clangd
       - name: Prepare clang-format bundle
         run: npm run prebuild:clang-format
+      - name: Build optional native helper
+        run: npm run prebuild:native
 
       - name: Verify node-pty windows binary
         shell: powershell

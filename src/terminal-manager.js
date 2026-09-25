@@ -477,6 +477,7 @@ class IntegratedTerminalManager {
         this.sessions.set(sessionId, session);
 
         const onData = (data) => {
+            if (session.disposed) return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
                 data: typeof data === 'string' ? data : Buffer.from(data || '').toString('utf8')
@@ -487,6 +488,7 @@ class IntegratedTerminalManager {
         child.stderr?.on('data', onData);
 
         child.on('error', (error) => {
+            if (session.disposed) return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
                 data: `\r\n[Error] ${t('terminal.processError', { error: error?.message || String(error) })}\r\n`
@@ -495,6 +497,7 @@ class IntegratedTerminalManager {
 
         child.on('close', (code, signal) => {
             this.sessions.delete(sessionId);
+            if (session.disposed) return;
             this.sendToRenderer('terminal-exit', {
                 terminalId: sessionId,
                 exitCode: typeof code === 'number' ? code : null,
@@ -670,6 +673,7 @@ class IntegratedTerminalManager {
         this.sessions.set(sessionId, session);
 
         ptyProcess.onData((data) => {
+            if (session.disposed) return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
                 data
@@ -678,6 +682,7 @@ class IntegratedTerminalManager {
 
         ptyProcess.onExit((event = {}) => {
             this.sessions.delete(sessionId);
+            if (session.disposed) return;
             this.sendToRenderer('terminal-exit', {
                 terminalId: sessionId,
                 exitCode: event.exitCode,
@@ -798,6 +803,28 @@ class IntegratedTerminalManager {
         return Number.isInteger(pid) && pid > 0 ? pid : null;
     }
 
+    _readProcessStartToken(pid) {
+        if (!Number.isInteger(Number(pid)) || Number(pid) <= 0) return null;
+        if (process.platform === 'linux') {
+            try {
+                const stat = fs.readFileSync(`/proc/${Number(pid)}/stat`, 'utf8');
+                const close = stat.lastIndexOf(')');
+                if (close === -1) return null;
+                const fields = stat.slice(close + 2).trim().split(/\s+/);
+                return fields[19] || null;
+            } catch (_) {
+                return null;
+            }
+        }
+        if (process.platform === 'darwin') {
+            try {
+                const result = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' });
+                if (result.status === 0) return String(result.stdout || '').trim() || null;
+            } catch (_) { }
+        }
+        return null;
+    }
+
     _resolvePosixTTYFromPid(pid) {
         if (process.platform === 'darwin') {
             try {
@@ -875,12 +902,18 @@ class IntegratedTerminalManager {
         if (!pid) {
             return null;
         }
+        const startToken = this._readProcessStartToken(pid);
+        const tty = this._resolvePosixTTYFromPid(pid);
+        if (!tty) return null;
+        const afterToken = this._readProcessStartToken(pid);
+        if (startToken && afterToken && startToken !== afterToken) return null;
 
-        return this._resolvePosixTTYFromPid(pid);
+        return tty;
     }
 
     disposeAll() {
-        for (const [id] of this.sessions.entries()) {
+        for (const [id, session] of this.sessions.entries()) {
+            session.disposed = true;
             this.kill(id);
         }
         this.sessions.clear();

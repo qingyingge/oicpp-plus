@@ -485,9 +485,9 @@ if (fileExists(preloadPath)) {
   const preloadContent = readFile(preloadPath);
   if (preloadContent && mainJsContent) {
     const sendChannels = [];
-    for (const m of preloadContent.matchAll(/ipcRenderer\.send\('([^']+)'/g)) sendChannels.push(m[1]);
+    for (const m of preloadContent.matchAll(/(?:ipcRenderer|safeIpcRenderer)\.send\('([^']+)'/g)) sendChannels.push(m[1]);
     const invokeChannels = [];
-    for (const m of preloadContent.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)) invokeChannels.push(m[1]);
+    for (const m of preloadContent.matchAll(/(?:ipcRenderer|safeIpcRenderer)\.invoke\('([^']+)'/g)) invokeChannels.push(m[1]);
     const preloadChannels = [...new Set([...sendChannels, ...invokeChannels])];
     const mainRegistered = [];
     for (const m of mainJsContent.matchAll(/ipcMain\.(handle|on|once)\('([^']+)'/g)) mainRegistered.push(m[2]);

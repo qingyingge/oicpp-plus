@@ -1,7 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const crypto = require('crypto');
+const { createReleaseDownloader } = require('./lib/release-downloader');
 const { spawn, spawnSync } = require('child_process');
 const { path7za } = require('7zip-bin');
 
@@ -34,9 +33,15 @@ const releaseTag = usesIntelMacFallback ? 'llvmorg-19.1.7' : tag;
 const outputRoot = path.resolve(readArg('output', process.env.CLANG_FORMAT_OUTPUT || path.join(__dirname, '..', 'build', 'clang-format')));
 const directUrl = readArg('url', process.env.CLANG_FORMAT_DOWNLOAD_URL || '');
 const expectedDigest = String(readArg('digest', process.env.CLANG_FORMAT_SHA256 || '')).replace(/^sha256:/i, '').toLowerCase();
-const skipSslVerify = process.env.OICPP_SKIP_SSL_VERIFY === '1' || process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0';
+const skipSslVerify = process.env.NODE_ENV === 'development' && process.env.OICPP_SKIP_SSL_VERIFY === '1';
 const tempRoot = path.join(outputRoot, '_download');
-const MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024 * 1024;
+const { requestJson, ensureDownload } = createReleaseDownloader({
+    label: 'clang-format',
+    userAgent: 'oicpp-clang-format-downloader',
+    skipSslVerify,
+    maxBytes: 4 * 1024 * 1024 * 1024,
+    maxRedirects: 10
+});
 
 const assetNames = {
     'win32-x64': `clang+llvm-${assetVersion}-x86_64-pc-windows-msvc.tar.xz`,
@@ -49,150 +54,6 @@ const assetNames = {
 
 const ensureDir = (dirPath) => {
     fs.mkdirSync(dirPath, { recursive: true });
-};
-
-const getRetryDelayMs = (retryAfter) => {
-    const seconds = Number.parseInt(retryAfter, 10);
-    return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 30 * 1000;
-};
-
-const retryAfterRateLimit = (retryAfter, retriesLeft, action) => {
-    if (retriesLeft <= 0) return null;
-    const delayMs = getRetryDelayMs(retryAfter);
-    console.warn(`[clang-format] GitHub returned 403, retrying in ${Math.ceil(delayMs / 1000)} seconds (${retriesLeft} retries left)`);
-    return new Promise((resolve) => setTimeout(resolve, delayMs)).then(action);
-};
-
-const requestJson = (url, token, retriesLeft = 3) => new Promise((resolve, reject) => {
-    const opts = new URL(url);
-    const headers = {
-        'User-Agent': 'oicpp-clang-format-downloader',
-        'Accept': 'application/vnd.github+json'
-    };
-    if (token) {
-        headers.Authorization = `Bearer ${token}`;
-    }
-    opts.headers = headers;
-    if (skipSslVerify) opts.rejectUnauthorized = false;
-    https.get(opts, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-            if (res.statusCode === 403) {
-                const retry = retryAfterRateLimit(res.headers['retry-after'], retriesLeft, () => requestJson(url, token, retriesLeft - 1));
-                if (retry) {
-                    retry.then(resolve, reject);
-                    return;
-                }
-            }
-            if (res.statusCode && res.statusCode >= 400) {
-                reject(new Error(`GitHub API error ${res.statusCode}: ${data.slice(0, 200)}`));
-                return;
-            }
-            try {
-                resolve(JSON.parse(data));
-            } catch (err) {
-                reject(err);
-            }
-        });
-    }).on('error', reject);
-});
-
-const downloadFile = (url, dest, token, retriesLeft = 3, redirectsLeft = 10) => new Promise((resolve, reject) => {
-    const opts = new URL(url);
-    const headers = { 'User-Agent': 'oicpp-clang-format-downloader' };
-    if (token) {
-        headers.Authorization = `Bearer ${token}`;
-    }
-    opts.headers = headers;
-    if (skipSslVerify) opts.rejectUnauthorized = false;
-
-    https.get(opts, (res) => {
-        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            res.resume();
-            if (redirectsLeft <= 0) {
-                reject(new Error(`Too many redirects while downloading ${url}`));
-                return;
-            }
-            const nextUrl = new URL(res.headers.location, opts);
-            const nextToken = nextUrl.origin === opts.origin ? token : '';
-            downloadFile(nextUrl.toString(), dest, nextToken, retriesLeft, redirectsLeft - 1).then(resolve).catch(reject);
-            return;
-        }
-        if (res.statusCode === 403) {
-            res.resume();
-            const retry = retryAfterRateLimit(res.headers['retry-after'], retriesLeft, () => downloadFile(url, dest, token, retriesLeft - 1, redirectsLeft));
-            if (retry) {
-                retry.then(resolve, reject);
-                return;
-            }
-        }
-        if (res.statusCode && res.statusCode >= 400) {
-            res.resume();
-            reject(new Error(`Download failed ${res.statusCode}: ${url}`));
-            return;
-        }
-
-        let receivedBytes = 0;
-        let settled = false;
-        const fail = (error) => {
-            if (settled) return;
-            settled = true;
-            try { fs.unlinkSync(dest); } catch (_) {}
-            reject(error);
-        };
-        const file = fs.createWriteStream(dest);
-        file.on('error', fail);
-        res.on('aborted', () => fail(new Error(`Download aborted: ${url}`)));
-        res.on('error', fail);
-        res.on('data', (chunk) => {
-            receivedBytes += chunk.length;
-            if (receivedBytes > MAX_DOWNLOAD_BYTES) {
-                res.destroy();
-                fail(new Error(`Download exceeds ${MAX_DOWNLOAD_BYTES} bytes: ${url}`));
-            }
-        });
-        res.pipe(file);
-        file.on('finish', () => file.close((error) => {
-            if (settled) return;
-            settled = true;
-            if (error) reject(error);
-            else resolve();
-        }));
-    }).on('error', (err) => {
-        try { fs.unlinkSync(dest); } catch (_) {}
-        reject(err);
-    });
-});
-
-const hashFile = (filePath) => new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fs.createReadStream(filePath);
-    stream.on('error', reject);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-});
-
-const ensureDownload = async (url, dest, token, digest) => {
-    for (let attempt = 0; attempt < 2; attempt++) {
-        if (fs.existsSync(dest)) {
-            console.log('[clang-format] Using cached download');
-        } else {
-            const partPath = `${dest}.part`;
-            try { fs.unlinkSync(partPath); } catch (_) {}
-            console.log(`[clang-format] Downloading to ${dest}`);
-            await downloadFile(url, partPath, token);
-            fs.renameSync(partPath, dest);
-        }
-        if (!digest) return;
-        const actual = await hashFile(dest);
-        if (actual === digest) return;
-        console.warn(`[clang-format] SHA-256 mismatch for ${dest}`);
-        fs.unlinkSync(dest);
-        if (attempt === 1) {
-            throw new Error(`clang-format archive SHA-256 mismatch: expected ${digest}, got ${actual}`);
-        }
-    }
 };
 
 const run7z = (argsList) => {

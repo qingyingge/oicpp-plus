@@ -25,17 +25,7 @@ class SidebarManager {
     }
 
     async bootstrapCloudVisibility() {
-        try {
-            if (!window.electronAPI?.getIdeLoginStatus) return;
-            const status = await window.electronAPI.getIdeLoginStatus();
-            logInfo('[CloudSpace] 启动时登录状态:', {
-                loggedIn: !!status?.loggedIn,
-                user: status?.user?.username || ''
-            });
-            this.setCloudPanelVisible(!!status?.loggedIn);
-        } catch (error) {
-            logWarn('初始化云空间面板可见性失败:', error);
-        }
+        this.setCloudPanelVisible(false);
     }
 
     setupEventListeners() {

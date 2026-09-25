@@ -204,7 +204,9 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
     let lastWasClosingBrace = false;
     let tokenRealEnd = 0;
     let pythonToStringValue = '';
+    let iterations = 0;
     while (true) {
+        if (++iterations > 100000) return position;
         const res = getNextToken(value, position);
         if (!res.success) break;
         const token = res.token;

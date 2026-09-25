@@ -20,7 +20,7 @@ const logger = require('./utils/logger');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
-const { terminateProcessTree } = require('./utils/process-supervisor');
+const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
@@ -1172,6 +1172,7 @@ class ClangdLspManager {
 const clangdLspManager = new ClangdLspManager();
 
 let mainWindow;
+let pendingSaveAllClose = null;
 const detachedRunProcesses = new Set();
 let sampleTesterServer = null; // HTTP 服务实例
 let competitiveCompanionServer = null; // Competitive Companion
@@ -2671,30 +2672,35 @@ ipcMain.handle('get-build-info', () => {
 });
 
 function requestSaveAllAndClose(context = '关闭窗口') {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-        return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (pendingSaveAllClose) {
+        clearTimeout(pendingSaveAllClose.timer);
+        try { ipcMain.removeListener('save-all-complete', pendingSaveAllClose.onComplete); } catch (_) { }
+        pendingSaveAllClose = null;
     }
-    
+    const closeWindow = () => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+    };
+    const onComplete = () => {
+        if (!pendingSaveAllClose || pendingSaveAllClose.onComplete !== onComplete) return;
+        clearTimeout(pendingSaveAllClose.timer);
+        pendingSaveAllClose = null;
+        closeWindow();
+    };
+    const timer = setTimeout(() => {
+        try { logWarn(`[${context}] 保存超时，强制关闭窗口`); } catch (_) { }
+        if (pendingSaveAllClose?.onComplete === onComplete) pendingSaveAllClose = null;
+        closeWindow();
+    }, SAVE_ALL_TIMEOUT);
+    pendingSaveAllClose = { timer, onComplete };
     try {
         mainWindow.webContents.send('request-save-all');
-        const timeout = setTimeout(() => {
-            try { logWarn(`[${context}] 保存超时，强制关闭窗口`); } catch (_) { }
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.close();
-            }
-        }, SAVE_ALL_TIMEOUT);
-        
-        ipcMain.once('save-all-complete', () => {
-            clearTimeout(timeout);
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.close();
-            }
-        });
-    } catch (e) {
-        try { logWarn(`[${context}] 发送保存请求失败，直接关闭:`, e?.message || String(e)); } catch (_) { }
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.close();
-        }
+        ipcMain.once('save-all-complete', onComplete);
+    } catch (error) {
+        clearTimeout(timer);
+        pendingSaveAllClose = null;
+        try { logWarn(`[${context}] 发送保存请求失败，直接关闭:`, error?.message || String(error)); } catch (_) { }
+        closeWindow();
     }
 }
 
@@ -5256,26 +5262,21 @@ function setupIPC() {
             });
         } catch (_) { }
 
-        return new Promise((resolve) => {
-            let childProcess;
+        const normalizedArgs = Array.isArray(args) ? args : [];
+        const normalizedExecutable = normalizedArgs.length > 0 ? executablePath : path.resolve(executablePath);
+        const limitedSpawn = getResourceLimitedSpawn(normalizedExecutable, normalizedArgs, memoryLimit);
+        const spawnCommand = limitedSpawn?.command || normalizedExecutable;
+        const spawnArguments = limitedSpawn?.args || normalizedArgs;
+        const hardMemoryLimitApplied = !!limitedSpawn;
 
-            if (Array.isArray(args) && args.length > 0) {
-                childProcess = spawn(executablePath, args, {
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    env: runtimeEnv,
-                    shell: false, // SPJ不需要shell
-                    detached: process.platform !== 'win32',
-                    cwd: workingDirectory
-                });
-            } else {
-                const absoluteExePath = path.resolve(executablePath);
-                childProcess = spawn(absoluteExePath, [], {
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    env: runtimeEnv,
-                    detached: process.platform !== 'win32',
-                    cwd: workingDirectory
-                });
-            }
+        return new Promise((resolve) => {
+            let childProcess = spawn(spawnCommand, spawnArguments, {
+                stdio: ['pipe', 'pipe', 'pipe'],
+                env: runtimeEnv,
+                shell: false,
+                detached: process.platform !== 'win32',
+                cwd: workingDirectory
+            });
 
             const stdoutChunks = [];
             const stderrChunks = [];
@@ -5515,6 +5516,7 @@ function setupIPC() {
                     outputLimitExceeded,
                     memoryLimitExceeded,
                     memoryLimitBytes,
+                    hardMemoryLimitApplied,
                     memoryBytes: peakMemoryBytes,
                     outputLimitBytes: OUTPUT_LIMIT_BYTES,
                     capturedOutputBytes: combinedOutputBytes,
@@ -5559,6 +5561,7 @@ function setupIPC() {
                     outputLimitExceeded: false,
                     memoryLimitExceeded: false,
                     memoryLimitBytes,
+                    hardMemoryLimitApplied,
                     outputLimitBytes: OUTPUT_LIMIT_BYTES,
                     capturedOutputBytes: combinedOutputBytes,
                     observedOutputBytes
@@ -5602,20 +5605,27 @@ function setupIPC() {
             }
         }
 
-        const spawnChild = (target, args, cwd) => spawn(
-            path.resolve(target),
-            Array.isArray(args) ? args : [],
-            {
-                stdio: ['pipe', 'pipe', 'pipe'],
-                env: {
-                    ...runtimeEnv,
-                    OICPP_INTERACTIVE_INPUT: inputFilePath,
-                    OICPP_CONTESTANT_EXECUTABLE: contestantPath
-                },
-                detached: process.platform !== 'win32',
-                cwd: cwd || undefined
-            }
-        );
+        let hardMemoryLimitApplied = false;
+        const spawnChild = (target, args, cwd) => {
+            const normalizedTarget = path.resolve(target);
+            const normalizedArgs = Array.isArray(args) ? args : [];
+            const limitedSpawn = getResourceLimitedSpawn(normalizedTarget, normalizedArgs, memoryLimit);
+            hardMemoryLimitApplied = hardMemoryLimitApplied || !!limitedSpawn;
+            return spawn(
+                limitedSpawn?.command || normalizedTarget,
+                limitedSpawn?.args || normalizedArgs,
+                {
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                    env: {
+                        ...runtimeEnv,
+                        OICPP_INTERACTIVE_INPUT: inputFilePath,
+                        OICPP_CONTESTANT_EXECUTABLE: contestantPath
+                    },
+                    detached: process.platform !== 'win32',
+                    cwd: cwd || undefined
+                }
+            );
+        };
 
         return new Promise((resolve) => {
             let contestant;
@@ -5643,6 +5653,7 @@ function setupIPC() {
                     stderr: error?.message || String(error),
                     outputLimitExceeded: false,
                     memoryLimitExceeded: false,
+                    hardMemoryLimitApplied,
                     memoryBytes: 0
                 });
                 return;
@@ -5811,6 +5822,7 @@ function setupIPC() {
                     observedOutputBytes: observedBytes,
                     memoryLimitExceeded,
                     memoryLimitBytes,
+                    hardMemoryLimitApplied,
                     memoryBytes: peakMemoryBytes
                 });
             };

@@ -439,6 +439,7 @@ class CompilerManager {
         try {
             this.shouldRunAfterCompile = true;
             await this.compileCurrentFile();
+            if (!this.isCompiling) this.shouldRunAfterCompile = false;
         } catch (error) {
             logError('编译并运行失败:', error);
             this.shouldRunAfterCompile = false;
@@ -1141,6 +1142,7 @@ class CompilerManager {
 
     handleCompileError(error) {
         this.isCompiling = false;
+        this.shouldRunAfterCompile = false;
         this.setStatus(this.t('compileOutput.failSimple', null, 'Compilation failed'));
         const msg = this._stringifyError(error);
         this.appendOutput(`${this.t('compileOutput.failSimple', null, 'Compilation failed')}: ${msg}\n`, 'error');
