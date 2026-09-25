@@ -14,6 +14,7 @@
 !include "nsDialogs.nsh"
 !include "WinMessages.nsh"
 !include "FileFunc.nsh"
+!include "LogicLib.nsh"
 
 Unicode true
 
@@ -446,8 +447,11 @@ Section Uninstall
   RMDir "$INSTDIR\resources"
   RMDir "$INSTDIR\locales"
   RMDir "$INSTDIR"
-  ; Remove file association keys created by installer (if present)
-  DeleteRegKey HKCR ".cpp"
+  ; Remove only the association created by this installer.
+  ReadRegStr $0 HKCR ".cpp" ""
+  ${If} $0 == "OICPPIDE.cpp"
+    DeleteRegValue HKCR ".cpp" ""
+  ${EndIf}
   DeleteRegKey HKCR "OICPPIDE.cpp"
 
   DeleteRegKey ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}"
