@@ -1045,7 +1045,7 @@ class CompilerManager {
             seen.add(key);
             items.push({
                 severity: diag.severity,
-                location: diag.location || (('compileOutput.title')),
+                location: diag.location || window.i18n.t('compileOutput.title'),
                 message: diag.message,
                 hint: translated || hint.title,
                 suggestion: hint.suggestion

@@ -394,7 +394,7 @@ class IntegratedTerminalPanel {
         }
 
         if (!created?.ok || !created?.terminalId) {
-            terminal.writeln(`\r\n[Error] ${created?.error || (('panel.terminalCreateFailed'))}`);
+            terminal.writeln(`\r\n[Error] ${created?.error || window.i18n.t('panel.terminalCreateFailed')}`);
             tab.classList.remove('pending');
             this.renderEmptyState();
             return;
@@ -885,7 +885,7 @@ class IntegratedTerminalPanel {
 
     async runExecutableInNewTerminal(executablePath, options = {}) {
         if (!executablePath) {
-            throw new Error(('panel.terminalExePathEmpty'));
+            throw new Error(window.i18n.t('panel.terminalExePathEmpty'));
         }
 
         await this.init();
@@ -898,7 +898,7 @@ class IntegratedTerminalPanel {
         const cwd = options.workingDirectory || await this.getPreferredCwd();
         const terminalId = await this.createTerminal({ cwd });
         if (!terminalId) {
-            throw new Error(('panel.terminalCreateFailed2'));
+            throw new Error(window.i18n.t('panel.terminalCreateFailed2'));
         }
 
         this.activateTerminal(terminalId);

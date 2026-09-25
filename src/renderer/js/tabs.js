@@ -258,7 +258,7 @@ class TabManager {
             if (!entry || !entry.fileName) {
                 continue;
             }
-            const displayName = entry.fileName || (('panel.unknownFile'));
+            const displayName = entry.fileName || window.i18n.t('panel.unknownFile');
             try {
                 if (entry.fileObject && window.oicppApp?.openDroppedFile) {
                     await window.oicppApp.openDroppedFile(entry.fileObject, {
@@ -307,7 +307,7 @@ class TabManager {
                     continue;
                 }
 
-                throw new Error(('panel.cannotReadFile'));
+                throw new Error(window.i18n.t('panel.cannotReadFile'));
             } catch (error) {
                 this.showDropError(displayName, error);
             }
@@ -320,9 +320,9 @@ class TabManager {
         if (!window.dialogManager?.showError) {
             return;
         }
-        const name = displayName || (('panel.unknownFile'));
-        const message = error?.message || String(error || (('panel.unknownError')));
-        window.dialogManager.showError((('panel.cannotOpenFile', {name, message})));
+        const name = displayName || window.i18n.t('panel.unknownFile');
+        const message = error?.message || String(error || window.i18n.t('panel.unknownError'));
+        window.dialogManager.showError(window.i18n.t('panel.cannotOpenFile', {name, message}));
     }
 
     ensureSplitOverlay() {
@@ -3428,7 +3428,7 @@ class TabManager {
     async openBrowserTab(options = {}) {
         const url = options.url || '';
         const targetGroupId = options.groupId || this.activeGroupId || this.groupOrder[0] || 'group-1';
-        const title = options.title || (('browser.newTab'));
+        const title = options.title || window.i18n.t('browser.newTab');
 
         const uniqueKey = `browser:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
 

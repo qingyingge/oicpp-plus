@@ -96,7 +96,7 @@ async function initializeApp() {
         
     } catch (error) {
         logError('应用初始化失败:', error);
-        showErrorMessage((('app.appInitFailed', {msg: error.message})));
+        showErrorMessage(window.i18n.t('app.appInitFailed', {msg: error.message}));
     }
 }
 

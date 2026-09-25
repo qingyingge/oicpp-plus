@@ -185,7 +185,7 @@ class OICPPApp {
                             this.showMessage(('message.updateAutoChecking'), 'info');
                         } else if (this.updateDownloadState.downloading) {
                             const versionSuffix = this.updateDownloadState.version ? ` (${this.updateDownloadState.version})` : '';
-                            this.showMessage((('message.updateDownloading', {version: versionSuffix, progress: this.updateDownloadState.progress})), 'info');
+                            this.showMessage(window.i18n.t('message.updateDownloading', {version: versionSuffix, progress: this.updateDownloadState.progress}), 'info');
                         }
                     }
                     return;
@@ -337,7 +337,7 @@ class OICPPApp {
 
         if (typeof window.electronAPI.onIdeLoginError === 'function') {
             window.electronAPI.onIdeLoginError((payload) => {
-                const msg = payload?.message || (('message.loginFailed'));
+                const msg = payload?.message || window.i18n.t('message.loginFailed');
                 this.showMessage(msg, 'error');
             });
         }

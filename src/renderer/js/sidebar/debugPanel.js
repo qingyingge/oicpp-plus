@@ -324,7 +324,7 @@ class DebugPanel {
         if (!container) return;
         const names = Object.keys(variables || {});
         if (names.length === 0) {
-            const emptyText = scope === 'watch' ? (('debug.noItems')) : (('debug.none'));
+            const emptyText = scope === 'watch' ? window.i18n.t('debug.noItems') : window.i18n.t('debug.none');
             container.innerHTML = `<div class="no-debug-message">${emptyText}</div>`;
             return;
         }
@@ -533,7 +533,7 @@ class DebugPanel {
             return;
         }
 
-        childrenWrap.innerHTML = '<div class="no-debug-message">' + (('debug.loading')) + '</div>';
+        childrenWrap.innerHTML = '<div class="no-debug-message">' + window.i18n.t('debug.loading') + '</div>';
         const payload = {
             scope,
             path,
@@ -601,12 +601,12 @@ class DebugPanel {
         if (forceVisible) {
             button.textContent = arrow;
         } else if (withLabel) {
-            const text = expanded ? (('debug.collapse')) : (('debug.expand'));
+            const text = expanded ? window.i18n.t('debug.collapse') : window.i18n.t('debug.expand');
             button.innerHTML = `<span class="arrow">${arrow}</span><span class="label">${text}</span>`;
         } else {
             button.textContent = arrow;
         }
-        button.setAttribute('aria-label', expanded ? (('debug.collapseVar')) : (('debug.expandVar')));
+        button.setAttribute('aria-label', expanded ? window.i18n.t('debug.collapseVar') : window.i18n.t('debug.expandVar'));
     }
 
     _shouldForceToggle(scope, data, elementCount) {
@@ -670,10 +670,10 @@ class DebugPanel {
                 more.className = 'variable-item more-items';
                 const label = document.createElement('span');
                 label.className = 'variable-name';
-                label.textContent = child.name || (('debug.more'));
+                label.textContent = child.name || window.i18n.t('debug.more');
                 const val = document.createElement('span');
                 val.className = 'variable-value';
-                val.textContent = child.value || (('debug.clickToLoad'));
+                val.textContent = child.value || window.i18n.t('debug.clickToLoad');
                 more.appendChild(label);
                 more.appendChild(val);
 
@@ -738,14 +738,14 @@ class DebugPanel {
         const c = this.root.querySelector('#call-stack');
         if (!c) return;
         c.innerHTML = '';
-        if (!Array.isArray(stack) || stack.length === 0) { c.innerHTML = '<div class="no-debug-message">' + (('debug.none')) + '</div>'; return; }
+        if (!Array.isArray(stack) || stack.length === 0) { c.innerHTML = '<div class="no-debug-message">' + window.i18n.t('debug.none') + '</div>'; return; }
         for (let i = 0; i < stack.length; i++) {
             const f = stack[i];
             const el = document.createElement('div');
             el.className = 'callstack-item';
             el.innerHTML = `
-        <div class="frame-info"><span class="frame-index">#${i}</span><span class="frame-function">${f.function || (('debug.unknownFunction'))}</span></div>
-        <div class="frame-location"><span class="frame-file">${f.file || (('debug.unknownFile'))}</span>${f.line ? `<span class="frame-line">:${f.line}</span>` : ''}</div>`;
+        <div class="frame-info"><span class="frame-index">#${i}</span><span class="frame-function">${f.function || window.i18n.t('debug.unknownFunction')}</span></div>
+        <div class="frame-location"><span class="frame-file">${f.file || window.i18n.t('debug.unknownFile')}</span>${f.line ? `<span class="frame-line">:${f.line}</span>` : ''}</div>`;
             c.appendChild(el);
         }
     }
@@ -763,7 +763,7 @@ class DebugPanel {
         }
         if (data.isArray || data.isContainer) {
             const cnt = data.elementCount != null ? data.elementCount : '?';
-            const typeLabel = data.isArray ? (('debug.array')) : (('debug.container'));
+            const typeLabel = data.isArray ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
             display = `${typeLabel}[${cnt}] ${display}`;
         }
         if (display.length > 60) display = display.slice(0, 57) + '...';
