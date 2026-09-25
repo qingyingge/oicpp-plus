@@ -389,6 +389,8 @@ class MonacoEditorManager {
             });
 
             await this._lspReadyPromise;
+            this.resetLspProviders();
+            this.registerAllLspProviders();
 
             const allModels = typeof monaco !== 'undefined' && monaco.editor ? monaco.editor.getModels() : [];
             for (const model of allModels) {
@@ -6075,6 +6077,16 @@ class MonacoEditorManager {
         } catch (err) {
             logWarn('[LSP] 刷新语法检查失败:', err?.message || err);
         }
+    }
+
+    resetLspProviders() {
+        if (this._lspProviders instanceof Map) {
+            for (const disp of this._lspProviders.values()) {
+                try { disp?.dispose?.(); } catch (_) { }
+            }
+            this._lspProviders.clear();
+        }
+        this._lspProvidersReady = false;
     }
 
     disableEnhancedCompletionProviders() {
