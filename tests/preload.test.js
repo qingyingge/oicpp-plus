@@ -131,6 +131,19 @@ check('无 IPC send blocked 警告', !warns.some(w => w.includes('IPC send block
     (listeners.get('settings-changed') || [])[0]?.(ev, 'editor', { x: 1 });
     check('settings-changed 保持 (event,type,settings) 签名', args && args[0] === ev && args[1] === 'editor' && args[2].x === 1);
 
+    // LSP 事件桥接：先验证 payload 解包；listener cleanup 作为审计项单独报告。
+    let lspNotification = null;
+    const lspNotificationCleanup = exposed.electronAPI.onLspNotification(payload => { lspNotification = payload; });
+    (listeners.get('lsp-notification') || [])[0]?.({ sender: 'fake' }, { method: 'textDocument/publishDiagnostics' });
+    check('lsp-notification 解包出 payload', lspNotification?.method === 'textDocument/publishDiagnostics');
+    console.log(`[AUDIT] onLspNotification cleanup: ${typeof lspNotificationCleanup === 'function' ? 'present' : 'missing'}`);
+
+    let lspApplyEdit = null;
+    const lspApplyEditCleanup = exposed.electronAPI.onLspApplyEdit(payload => { lspApplyEdit = payload; });
+    (listeners.get('lsp-apply-edit') || [])[0]?.({ sender: 'fake' }, { requestId: 'audit-1', edit: {} });
+    check('lsp-apply-edit 解包出 payload', lspApplyEdit?.requestId === 'audit-1');
+    console.log(`[AUDIT] onLspApplyEdit cleanup: ${typeof lspApplyEditCleanup === 'function' ? 'present' : 'missing'}`);
+
     // compare 监听器清理只移除自己的通道
     const off = exposed.electronAPI.onCompareProgress(() => { });
     off();
