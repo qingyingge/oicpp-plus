@@ -5,9 +5,7 @@ class TemplatesSettings {
         this.settings = {
             cppTemplate: ''
         };
-    this.snippets = [];
-        
-        this.init();
+        this.snippets = [];
     }
 
     async init() {
@@ -21,6 +19,7 @@ class TemplatesSettings {
         this.setupEventListeners();
         this.setupSidebarNavigation();
         this.setupThemeListener();
+        this.setupLanguageListener();
         await this.applyCurrentTheme();
         this.updateUI();
     }
@@ -52,6 +51,17 @@ class TemplatesSettings {
                 this.applyTheme(theme);
             });
         }
+    }
+
+    setupLanguageListener() {
+        if (!window.i18n || typeof window.i18n.onChange !== 'function') {
+            return;
+        }
+
+        window.i18n.onChange(() => {
+            this.renderSnippets();
+            queueMicrotask(() => this.updateSnippetDialogLabels());
+        });
     }
 
     async applyCurrentTheme() {
@@ -247,7 +257,7 @@ class TemplatesSettings {
             logInfo('模板设置加载完成:', this.settings);
         } catch (error) {
             logError('加载模板设置失败:', error);
-            this.showMessage('加载设置失败，使用默认模板', 'error');
+            this.showMessage(window.i18n.t('templates.loadFail'), 'error');
         }
     }
 
@@ -270,14 +280,14 @@ class TemplatesSettings {
             
             const cppTemplateTextarea = document.getElementById('cpp-template');
             if (!cppTemplateTextarea) {
-                throw new Error('找不到模板编辑器');
+                throw new Error(window.i18n.t('templates.editorNotFound'));
             }
             
             const cppTemplate = cppTemplateTextarea.value.trim();
             
             // 允许文件模板为空，只要有关键词代码片段即可保存
             if (!cppTemplate && (!this.snippets || this.snippets.length === 0)) {
-                this.showMessage('模板内容和代码片段不能同时为空，请至少填写一项', 'error');
+                this.showMessage(window.i18n.t('templates.saveTemplateFail'), 'error');
                 return;
             }
             
@@ -296,17 +306,17 @@ class TemplatesSettings {
             }
             
             if (result && result.success) {
-                this.showMessage((('templates.saveSuccess')), 'success');
+                this.showMessage(window.i18n.t('templates.saveSuccess'), 'success');
                 logInfo('设置保存成功');
             } else {
-                const errorMsg = result ? result.error : '未知错误';
-                this.showMessage((('templates.saveFail', {error: errorMsg})), 'error');
+                const errorMsg = result?.error || window.i18n.t('templates.unknownError');
+                this.showMessage(window.i18n.t('templates.saveFail', { error: errorMsg }), 'error');
                 logError('保存设置失败:', errorMsg);
             }
             
         } catch (error) {
             logError('保存模板设置失败:', error);
-            this.showMessage('保存设置失败：' + error.message, 'error');
+            this.showMessage(window.i18n.t('templates.saveFail', { error: error.message }), 'error');
         }
     }
 
@@ -314,10 +324,11 @@ class TemplatesSettings {
         try {
             logInfo('重置设置中...');
             
-            if (confirm('确定要重置模板为默认设置吗？这将丢失当前的自定义模板。')) {
+            if (window.confirm(window.i18n.t('templates.resetConfirm'))) {
                 const defaultTemplate = '';
                 this.settings.cppTemplate = defaultTemplate;
                 this.snippets = [];
+                this.renderSnippets();
                 
                 const cppTemplateTextarea = document.getElementById('cpp-template');
                 if (cppTemplateTextarea) {
@@ -334,15 +345,16 @@ class TemplatesSettings {
                 }
                 
                 if (result && result.success) {
-                    this.showMessage((('templates.resetSuccess')), 'success');
+                    this.showMessage(window.i18n.t('templates.resetSuccess'), 'success');
                     logInfo('设置重置成功');
                 } else {
-                    this.showMessage('重置设置失败：' + (result ? result.error : '未知错误'), 'error');
+                    const errorMsg = result?.error || window.i18n.t('templates.unknownError');
+                    this.showMessage(window.i18n.t('templates.resetFail', { error: errorMsg }), 'error');
                 }
             }
         } catch (error) {
             logError('重置设置失败:', error);
-            this.showMessage('重置设置失败：' + error.message, 'error');
+            this.showMessage(window.i18n.t('templates.resetFail', { error: error.message }), 'error');
         }
     }
 
@@ -362,22 +374,36 @@ class TemplatesSettings {
             if (descEl) descEl.value = item.description || '';
             if (contentEl) contentEl.value = item.content || '';
             dialog.setAttribute('data-edit-index', editIndex);
-            const titleEl = document.getElementById('snippet-dialog-title');
-            if (titleEl) titleEl.textContent = '编辑代码片段';
         } else {
             if (kwEl) kwEl.value = '';
             if (descEl) descEl.value = '';
             if (contentEl) contentEl.value = '';
             dialog.removeAttribute('data-edit-index');
-            const titleEl = document.getElementById('snippet-dialog-title');
-            if (titleEl) titleEl.textContent = '添加代码片段';
         }
 
+        this.updateSnippetDialogLabels(editIndex);
         dialog.style.display = 'block';
         // 自动聚焦到关键词输入框
         setTimeout(() => {
             if (kwEl) kwEl.focus();
         }, 100);
+    }
+
+    updateSnippetDialogLabels(editIndex = null) {
+        const dialog = document.getElementById('snippet-dialog');
+        const resolvedEditIndex = editIndex === null && dialog
+            ? parseInt(dialog.getAttribute('data-edit-index'), 10)
+            : editIndex;
+        const isEditing = Number.isFinite(resolvedEditIndex) && resolvedEditIndex >= 0;
+
+        const titleEl = document.getElementById('snippet-dialog-title');
+        const confirmBtn = document.getElementById('confirm-snippet-btn');
+        if (titleEl) {
+            titleEl.textContent = window.i18n.t(isEditing ? 'templates.snippetDialogEditTitle' : 'templates.snippetDialogTitle');
+        }
+        if (confirmBtn) {
+            confirmBtn.textContent = window.i18n.t(isEditing ? 'templates.snippetConfirmEdit' : 'templates.snippetConfirm');
+        }
     }
 
     closeSnippetDialog() {
@@ -392,16 +418,16 @@ class TemplatesSettings {
         const descEl = document.getElementById('snippet-dialog-desc');
         const contentEl = document.getElementById('snippet-dialog-content');
         const keyword = (kwEl?.value || '').trim();
-        const description = (descEl?.value || '').trim() || '用户代码片段';
+        const description = (descEl?.value || '').trim() || window.i18n.t('templates.defaultDesc');
         const content = (contentEl?.value || '').trim();
 
         if (!keyword) {
-            this.showMessage('请输入片段关键词', 'warning');
+            this.showMessage(window.i18n.t('templates.needKeyword'), 'warning');
             if (kwEl) kwEl.focus();
             return;
         }
         if (!content) {
-            this.showMessage('请输入片段内容', 'warning');
+            this.showMessage(window.i18n.t('templates.needContent'), 'warning');
             if (contentEl) contentEl.focus();
             return;
         }
@@ -412,16 +438,16 @@ class TemplatesSettings {
         if (Number.isFinite(editIndex) && editIndex >= 0 && editIndex < this.snippets.length) {
             // 编辑模式：更新已有片段
             this.snippets[editIndex] = { keyword, description, content };
-            this.showMessage('片段已更新，点击保存写入设置', 'success');
+            this.showMessage(window.i18n.t('templates.snippetUpdated'), 'success');
         } else {
             // 添加模式：检查重复关键词
             const idx = this.snippets.findIndex(s => (s.keyword || '').toLowerCase() === keyword.toLowerCase());
             if (idx >= 0) {
                 this.snippets[idx] = { keyword, description, content };
-                this.showMessage('已覆盖同名片段，点击保存写入设置', 'success');
+                this.showMessage(window.i18n.t('templates.snippetOverwritten'), 'success');
             } else {
                 this.snippets.push({ keyword, description, content });
-                this.showMessage('片段已添加，点击保存写入设置', 'success');
+                this.showMessage(window.i18n.t('templates.snippetAdded'), 'success');
             }
         }
 
@@ -432,45 +458,68 @@ class TemplatesSettings {
     renderSnippets() {
         const list = document.getElementById('snippets-list');
         if (!list) return;
+
         if (!this.snippets || this.snippets.length === 0) {
-            list.innerHTML = '<div style="opacity:.8; font-size:12px; padding:6px;">' + (('templates.emptySnippetList')) + '</div>';
+            const emptyState = document.createElement('div');
+            emptyState.style.cssText = 'opacity:.8; font-size:12px; padding:6px;';
+            emptyState.textContent = window.i18n.t('templates.emptySnippetList');
+            list.replaceChildren(emptyState);
             return;
         }
-        const rows = this.snippets.map((s, i) => {
-            const k = this.escapeHtml(s.keyword || '');
-            const d = this.escapeHtml(s.description || '');
-            return `
-                <div class="snippet-row" data-index="${i}" style="display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--settings-border);">
-                    <div style="flex:0 0 160px; font-weight:600;">${k}</div>
-                    <div style="flex:1; opacity:.85;">${d}</div>
-                    <button class="preview-btn" data-action="edit" style="background:#6c757d;">编辑</button>
-                    <button class="preview-btn" data-action="delete" style="background:#dc3545;">删除</button>
-                </div>`;
-        }).join('');
-        list.innerHTML = rows;
-        list.querySelectorAll('button[data-action]')?.forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const row = e.target.closest('.snippet-row');
-                const idx = parseInt(row?.dataset.index || '-1', 10);
-                const action = e.target.dataset.action;
-                if (Number.isNaN(idx) || idx < 0) return;
-                if (action === 'delete') {
-                    this.snippets.splice(idx, 1);
+
+        const rows = this.snippets.map((snippet, index) => {
+            const row = document.createElement('div');
+            row.className = 'snippet-row';
+            row.dataset.index = String(index);
+            row.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--settings-border);';
+
+            const keyword = String(snippet.keyword || '');
+            const keywordEl = document.createElement('div');
+            keywordEl.style.cssText = 'flex:0 0 160px; font-weight:600;';
+            keywordEl.textContent = keyword;
+
+            const description = document.createElement('div');
+            description.style.cssText = 'flex:1; opacity:.85;';
+            description.textContent = String(snippet.description || '').trim() || window.i18n.t('templates.defaultDesc');
+
+            const editButton = document.createElement('button');
+            editButton.type = 'button';
+            editButton.className = 'preview-btn';
+            editButton.dataset.action = 'edit';
+            editButton.style.background = '#6c757d';
+            editButton.textContent = window.i18n.t('templates.edit');
+            editButton.setAttribute('aria-label', `${window.i18n.t('templates.edit')}: ${keyword}`);
+
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'preview-btn';
+            deleteButton.dataset.action = 'delete';
+            deleteButton.style.background = '#dc3545';
+            deleteButton.textContent = window.i18n.t('templates.delete');
+            deleteButton.setAttribute('aria-label', `${window.i18n.t('templates.delete')}: ${keyword}`);
+
+            row.appendChild(keywordEl);
+            row.appendChild(description);
+            row.appendChild(editButton);
+            row.appendChild(deleteButton);
+            return row;
+        });
+
+        list.replaceChildren(...rows);
+        list.querySelectorAll('button[data-action]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const row = button.closest('.snippet-row');
+                const index = parseInt(row?.dataset.index || '-1', 10);
+                if (Number.isNaN(index) || index < 0) return;
+
+                if (button.dataset.action === 'delete') {
+                    this.snippets.splice(index, 1);
                     this.renderSnippets();
-                } else if (action === 'edit') {
-                    this.openSnippetDialog(idx);
+                } else if (button.dataset.action === 'edit') {
+                    this.openSnippetDialog(index);
                 }
             });
         });
-    }
-
-    escapeHtml(s) {
-        return s
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
     }
 
     showPreview() {
@@ -478,11 +527,11 @@ class TemplatesSettings {
         
         const cppTemplateTextarea = document.getElementById('cpp-template');
         if (!cppTemplateTextarea) {
-            this.showMessage('找不到模板内容', 'error');
+            this.showMessage(window.i18n.t('templates.templateNotFound'), 'error');
             return;
         }
         
-        const templateContent = cppTemplateTextarea.value || (('templates.templateEmpty'));
+        const templateContent = cppTemplateTextarea.value || window.i18n.t('templates.templateEmpty');
         
         const previewContent = document.getElementById('preview-content');
         if (previewContent) {
@@ -549,11 +598,15 @@ class TemplatesSettings {
     }
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
     logInfo('DOM加载完成，初始化模板设置');
     
     try {
-        new TemplatesSettings();
+        if (window.i18n && typeof window.i18n.init === 'function') {
+            await window.i18n.init();
+        }
+        const templatesSettings = new TemplatesSettings();
+        await templatesSettings.init();
     } catch (error) {
         logError('初始化模板设置失败:', error);
     }
