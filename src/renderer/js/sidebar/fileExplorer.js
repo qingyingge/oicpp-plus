@@ -345,10 +345,10 @@ class FileExplorer {
         fileTree.innerHTML = `
             <div class="empty-state">
                 <div class="empty-state-icon" data-ui-icon="folder"></div>
-                <div class="empty-state-title">${window.i18n.t('fileExplorer.noFolder')}</div>
-                <div class="empty-state-subtitle">${window.i18n.t('fileExplorer.noFolderDesc')}</div>
-                <button class="empty-state-button" onclick="window.oicppApp.openFolder()">
-                    ${window.i18n.t('fileExplorer.openFolder')}
+                <div class="empty-state-title" data-i18n="fileExplorer.noFolder">没有打开的文件夹</div>
+                <div class="empty-state-subtitle" data-i18n="fileExplorer.noFolderDesc">您还没有打开文件夹</div>
+                <button class="empty-state-button" onclick="window.oicppApp.openFolder()" data-i18n="fileExplorer.openFolder">
+                    打开文件夹
                 </button>
             </div>
         `;
@@ -1142,7 +1142,8 @@ class FileExplorer {
                     if (sourcePath === file.path) {
                         if (error) {
                             logError(`${operation === 'copy' ? '复制' : '移动'}文件失败:`, file.name, error);
-                            this.showError(operation === 'copy' ? window.i18n.t('fileExplorer.copyFail') : window.i18n.t('fileExplorer.moveFail'));
+                            const opLabel = operation === 'copy' ? window.i18n.t('fileExplorer.copy') : window.i18n.t('fileExplorer.move');
+                            this.showError(window.i18n.t('fileExplorer.pasteFail', { op: opLabel, error }));
                         } else {
                             logInfo(`文件${operation === 'copy' ? '复制' : '移动'}成功:`, file.name, '->', destPath);
 
@@ -1170,7 +1171,7 @@ class FileExplorer {
 
             setTimeout(() => this.refresh(), 1000);
         } else {
-            this.showError(window.i18n.t('fileExplorer.pasteEnvRequired'));
+            this.showError(window.i18n.t('fileExplorer.pasteNeedApp'));
         }
 
         if (this.clipboard.operation === 'cut') {
@@ -1191,10 +1192,10 @@ class FileExplorer {
             }
             const dm = window.dialogManager || (typeof dialogManager !== 'undefined' ? dialogManager : null);
             if (!dm || typeof dm.showInputDialog !== 'function') {
-                this.showError(window.i18n.t('fileExplorer.dialogUnavailableRename'));
+                this.showError(window.i18n.t('fileExplorer.dialogUnavailable'));
                 return;
             }
-            const newName = await dm.showInputDialog(window.i18n.t('fileExplorer.rename'), name, window.i18n.t('fileExplorer.newNamePrompt'), {
+            const newName = await dm.showInputDialog(window.i18n.t('fileExplorer.rename'), name, window.i18n.t('fileExplorer.renameDialogPlaceholder'), {
                 selectStart,
                 selectEnd
             });
@@ -1217,7 +1218,7 @@ class FileExplorer {
                         if (oldPath === file.path) {
                             if (error) {
                                 logError('重命名文件失败:', error);
-                                this.showError(window.i18n.t('fileExplorer.renameFail').replace('{error}', error));
+                                this.showError(window.i18n.t('fileExplorer.renameFail', { error }));
                             } else {
                                 logInfo('文件重命名成功:', oldPath, '->', newPath);
                                 this.refresh();
@@ -1244,7 +1245,7 @@ class FileExplorer {
 
                     window.electronIPC.on('file-renamed', handleRenameResult);
                 } else {
-                    this.showError(window.i18n.t('fileExplorer.renameEnvRequired'));
+                    this.showError(window.i18n.t('fileExplorer.renameNeedApp'));
                 }
             }
         } catch (error) {
@@ -1412,7 +1413,10 @@ class FileExplorer {
                 const exists = await window.electronIPC.invoke('check-file-exists', newPath);
 
                 if (exists) {
-                    const shouldOverwrite = await this.confirmOperation(window.i18n.t('fileExplorer.overwriteTitle'), window.i18n.t('fileExplorer.overwriteConfirm').replace('{name}', file.name));
+                    const shouldOverwrite = await this.confirmOperation(
+                        window.i18n.t('fileExplorer.overwriteConfirmTitle'),
+                        window.i18n.t('fileExplorer.overwriteConfirmMsg', { name: file.name })
+                    );
                     if (!shouldOverwrite) {
                         logInfo('用户取消了文件移动操作');
                         return;
@@ -1470,7 +1474,7 @@ class FileExplorer {
 
         } catch (error) {
             logError('移动文件时出错:', error);
-            this.showError(window.i18n.t('fileExplorer.moveError').replace('{error}', error?.message || error));
+            this.showError(window.i18n.t('fileExplorer.moveError', { error: error?.message || error }));
         }
     }
 
@@ -1544,7 +1548,7 @@ class FileExplorer {
                 }
             } catch (error) {
                 logError('读取文件失败:', error);
-                this.showError(window.i18n.t('fileExplorer.readFileFail').replace('{error}', error?.message || error));
+                this.showError(window.i18n.t('fileExplorer.readFileFail', { error: error?.message || error }));
             }
         }
     }
@@ -1557,7 +1561,7 @@ class FileExplorer {
         }
 
         if (!window.tabManager || typeof window.tabManager.openDiff !== 'function') {
-            this.showError(window.i18n.t('fileExplorer.compareUnsupported'));
+            this.showError(window.i18n.t('fileExplorer.compareNotSupported'));
             return;
         }
 
@@ -1565,7 +1569,7 @@ class FileExplorer {
             await window.tabManager.openDiff(files);
         } catch (error) {
             logError('打开文件对比失败:', error);
-            this.showError(window.i18n.t('fileExplorer.compareFail').replace('{error}', error?.message || error));
+            this.showError(window.i18n.t('fileExplorer.compareFail', { error: error?.message || error }));
         }
     }
 
@@ -1627,7 +1631,7 @@ class FileExplorer {
                     break;
                 }
 
-                errorMessage = window.i18n.t('fileExplorer.fileExistsChooseAnother').replace('{name}', fileName);
+                errorMessage = window.i18n.t('fileExplorer.fileExistsName', { name: fileName });
                 logWarn(errorMessage);
                 attempts++;
                 const m = fileName.match(/^(.*?)(\d+)(\.[^.]+)$/);
@@ -1680,7 +1684,7 @@ class FileExplorer {
                             handleFileCreated._handled = true;
                             if (error) {
                                 logError('创建文件失败:', error);
-                                this.showError(window.i18n.t('fileExplorer.createFileFail').replace('{error}', error));
+                                this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
                             } else {
                                 logInfo('文件创建成功:', createdPath);
                                 this.refresh();
@@ -1696,7 +1700,7 @@ class FileExplorer {
 
                     window.electronIPC.on('file-created', handleFileCreated);
                 } else {
-                    this.showError(window.i18n.t('fileExplorer.createFileEnvRequired'));
+                    this.showError(window.i18n.t('fileExplorer.createFileNeedApp'));
                 }
             }
         } catch (error) {
@@ -1731,7 +1735,7 @@ class FileExplorer {
                         if (createdPath && createdPath.startsWith(this.currentPath)) {
                             if (error) {
                                 logError('创建文件夹失败:', error);
-                                this.showError(window.i18n.t('fileExplorer.createFolderFail').replace('{error}', error));
+                                this.showError(window.i18n.t('fileExplorer.createFolderFail', { error }));
                             } else {
                                 logInfo('文件夹创建成功:', createdPath);
                                 this.refresh();
@@ -1742,7 +1746,7 @@ class FileExplorer {
 
                     window.electronIPC.on('folder-created', handleFolderCreated);
                 } else {
-                    this.showError(window.i18n.t('fileExplorer.createFolderEnvRequired'));
+                    this.showError(window.i18n.t('fileExplorer.createFolderNeedApp'));
                 }
             }
         } catch (error) {
@@ -1807,7 +1811,7 @@ class FileExplorer {
                         if (createdPath === filePath) {
                             if (error) {
                                 logError('创建文件失败:', error);
-                                this.showError(window.i18n.t('fileExplorer.createFileFail').replace('{error}', error));
+                                this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
                             } else {
                                 logInfo('在文件夹', folder.name, '中创建文件:', fileName);
                                 this.refresh();
@@ -1821,7 +1825,7 @@ class FileExplorer {
 
                     window.electronIPC.on('file-created', handleFileCreated);
                 } else {
-                    this.showError(window.i18n.t('fileExplorer.createFileEnvRequired'));
+                    this.showError(window.i18n.t('fileExplorer.createFileNeedApp'));
                 }
             }
         } catch (error) {
@@ -1851,7 +1855,7 @@ class FileExplorer {
                         if (createdPath === folderPath) {
                             if (error) {
                                 logError('创建文件夹失败:', error);
-                                this.showError(window.i18n.t('fileExplorer.createFolderFail').replace('{error}', error));
+                                this.showError(window.i18n.t('fileExplorer.createFolderFail', { error }));
                             } else {
                                 logInfo('在文件夹', parentFolder.name, '中创建文件夹:', folderName);
                                 this.refresh();
@@ -1862,7 +1866,7 @@ class FileExplorer {
 
                     window.electronIPC.on('folder-created', handleFolderCreated);
                 } else {
-                    this.showError(window.i18n.t('fileExplorer.createFolderEnvRequired'));
+                    this.showError(window.i18n.t('fileExplorer.createFolderNeedApp'));
                 }
             }
         } catch (error) {
@@ -1907,9 +1911,10 @@ class FileExplorer {
             return this.deleteFile(uniqueFiles[0]);
         }
 
-        const preview = uniqueFiles.slice(0, 3).map(f => `"${f.name}"`).join('、') + (uniqueFiles.length > 3 ? window.i18n.t('fileExplorer.previewEtc') : '');
-        const message = window.i18n.t('fileExplorer.confirmDeleteMany', { count: uniqueFiles.length, preview });
-        const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteTitle'), message);
+        const preview = uniqueFiles.slice(0, 3).map(f => `"${f.name}"`).join(window.i18n.t('fileExplorer.deleteListJoiner'));
+        const moreHint = uniqueFiles.length > 3 ? window.i18n.t('fileExplorer.deleteMoreSuffix') : '';
+        const message = window.i18n.t('fileExplorer.deleteMultiConfirm', { count: uniqueFiles.length, preview: preview + moreHint });
+        const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteConfirmTitle'), message);
         if (!confirmed) {
             this.refocusSelectedFile();
             return;
@@ -1938,7 +1943,7 @@ class FileExplorer {
         logInfo('删除文件:', file.name);
 
         if (!skipConfirm) {
-            const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteTitle'), window.i18n.t('fileExplorer.confirmDeleteOne', { name: file.name }));
+            const confirmed = await this.confirmOperation(window.i18n.t('fileExplorer.deleteConfirmTitle'), window.i18n.t('fileExplorer.deleteSingleConfirm', { name: file.name }));
             if (!confirmed) {
                 if (!suppressFocus) this.refocusSelectedFile();
                 return;
@@ -1955,7 +1960,7 @@ class FileExplorer {
                     if (deletedPath === file.path) {
                         if (error) {
                             logError('删除文件失败:', error);
-                            this.showError(window.i18n.t('fileExplorer.deleteFail').replace('{error}', error));
+                            this.showError(window.i18n.t('fileExplorer.deleteFail', { error }));
                             if (!suppressFocus) setTimeout(() => this.refocusSelectedFile(), 0);
                         } else {
                             this.selectedFiles.delete(file.path);
@@ -1993,7 +1998,7 @@ class FileExplorer {
             });
         }
 
-        this.showError(window.i18n.t('fileExplorer.deleteEnvRequired'));
+        this.showError(window.i18n.t('fileExplorer.deleteNeedApp'));
         if (!suppressFocus) this.refocusSelectedFile();
     }
 
@@ -2011,11 +2016,11 @@ class FileExplorer {
         const dm = window.dialogManager;
         if (dm && typeof dm.showActionDialog === 'function') {
             const actions = [
-                { id: 'selected', label: window.i18n.t('fileExplorer.batchDeleteSelected', { count: selected.length }) },
-                { id: 'path', label: window.i18n.t('fileExplorer.batchDeletePath') },
+                { id: 'selected', label: window.i18n.t('fileExplorer.deleteSelectedAction', { count: selected.length }) },
+                { id: 'path', label: window.i18n.t('fileExplorer.deletePathAction') },
                 { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' }
             ];
-            const choice = await dm.showActionDialog(window.i18n.t('fileExplorer.batchDelete'), window.i18n.t('fileExplorer.batchDeletePrompt'), actions);
+            const choice = await dm.showActionDialog(window.i18n.t('fileExplorer.batchDeleteTitle'), window.i18n.t('fileExplorer.batchDeletePrompt'), actions);
             if (choice === 'selected') {
                 await this.deleteFiles(selected);
             } else if (choice === 'path') {
@@ -2032,7 +2037,7 @@ class FileExplorer {
         let targetPath = '';
         if (window.electronAPI && typeof window.electronAPI.showOpenDialog === 'function') {
             const result = await window.electronAPI.showOpenDialog({
-                title: window.i18n.t('fileExplorer.selectClearDir'),
+                title: window.i18n.t('fileExplorer.selectDirToClear'),
                 properties: ['openDirectory']
             });
             if (!result || result.canceled || !result.filePaths || result.filePaths.length === 0) {
@@ -2040,15 +2045,15 @@ class FileExplorer {
             }
             targetPath = result.filePaths[0];
         } else if (typeof window.prompt === 'function') {
-            targetPath = window.prompt(window.i18n.t('fileExplorer.enterClearDirPath'));
+            targetPath = window.prompt(window.i18n.t('fileExplorer.enterDirPath'));
         }
 
         if (!targetPath || !String(targetPath).trim()) return;
         targetPath = String(targetPath).trim();
 
         const confirmed = await this.confirmOperation(
-            window.i18n.t('fileExplorer.batchDelete'),
-            window.i18n.t('fileExplorer.confirmClearDir', { path: targetPath })
+            window.i18n.t('fileExplorer.batchDeleteTitle'),
+            window.i18n.t('fileExplorer.clearDirConfirm', { path: targetPath })
         );
         if (!confirmed) return;
 
@@ -2068,10 +2073,10 @@ class FileExplorer {
                     logInfo(successMsg);
                 }
             } else {
-                this.showError(window.i18n.t('fileExplorer.batchDeleteEnvRequired'));
+                this.showError(window.i18n.t('fileExplorer.batchDeleteNeedApp'));
             }
         } catch (error) {
-            this.showError(window.i18n.t('fileExplorer.batchDeleteFail').replace('{error}', error?.message || error));
+            this.showError(window.i18n.t('fileExplorer.batchDeleteFail', { error: error?.message || error }));
         }
     }
 

@@ -206,14 +206,14 @@ class TitlebarManager {
         const tempFiles = Array.from(window.tabManager?.tabs?.values?.() || [])
             .filter((tab) => tab?.isTempFile && tab.viewType !== 'pdf');
         for (const tab of tempFiles) {
-            const fileName = this._escapeHtml(tab.fileName || '临时文件');
+            const fileName = this._escapeHtml(tab.fileName || window.i18n.t('titlebar.tempFileDefault'));
             const result = await window.dialogManager?.showActionDialog?.(
-                '确认丢弃临时文件',
-                `临时文件“${fileName}”未保存。<br><br>请选择如何处理临时文件。`,
+                window.i18n.t('titlebar.discardTempTitle'),
+                window.i18n.t('titlebar.discardTempMsg', { name: fileName }),
                 [
-                    { id: 'save', label: '保存', className: 'dialog-btn-confirm' },
-                    { id: 'discard', label: '丢弃', className: 'dialog-btn-cancel' },
-                    { id: 'cancel', label: '取消' }
+                    { id: 'save', label: window.i18n.t('titlebar.save'), className: 'dialog-btn-confirm' },
+                    { id: 'discard', label: window.i18n.t('titlebar.discard'), className: 'dialog-btn-cancel' },
+                    { id: 'cancel', label: window.i18n.t('dialog.cancel') }
                 ]
             );
             if (result === 'cancel' || !result) return false;
