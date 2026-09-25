@@ -924,6 +924,11 @@ class ClangdLspManager {
                 continue;
             }
             const length = parseInt(lengthMatch[1], 10);
+            if (!Number.isFinite(length) || length < 0) {
+                logWarn('[LSP] 收到非法的 Content-Length:', lengthMatch[1]);
+                this.buffer = Buffer.alloc(0);
+                return;
+            }
             const messageStart = headerEnd + 4;
             const messageEnd = messageStart + length;
             if (this.buffer.length < messageEnd) {
@@ -932,7 +937,12 @@ class ClangdLspManager {
             const body = this.buffer.slice(messageStart, messageEnd).toString('utf8');
             this.buffer = this.buffer.slice(messageEnd);
             let payload = null;
-            try { payload = JSON.parse(body); } catch (_) { continue; }
+            try {
+                payload = JSON.parse(body);
+            } catch (err) {
+                logWarn('[LSP] 无法解析 clangd JSON 消息:', err?.message || err);
+                continue;
+            }
             this._dispatchMessage(payload);
         }
     }
