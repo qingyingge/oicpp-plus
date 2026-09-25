@@ -247,7 +247,10 @@ class LspClientBridge {
                         dynamicRegistration: false
                     },
                     documentLink: {
-                        dynamicRegistration: false
+                        dynamicRegistration: false,
+                        resolveSupport: {
+                            properties: ['target', 'tooltip']
+                        }
                     },
                     codeAction: {
                         codeActionLiteralSupport: {
