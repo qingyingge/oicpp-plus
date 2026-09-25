@@ -39,6 +39,12 @@ class LspClientBridge {
             if (!payload || typeof payload.method !== 'string') {
                 return;
             }
+            if (payload.method === 'lsp/serverStopped') {
+                this._ready = false;
+                this._readyPromise = null;
+                this._serverCapabilities = null;
+                this._semanticTokensLegend = null;
+            }
             if (payload.method === 'textDocument/publishDiagnostics') {
                 const params = payload.params || {};
                 const uri = params.uri || '';

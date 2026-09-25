@@ -569,6 +569,11 @@ class MonacoEditorManager {
             const applied = await this.applyLspWorkspaceEdit(workspaceEdit);
             return { applied: applied.edits > 0, skipped: applied.skipped, conflicts: applied.conflicts };
         });
+        this.lspClient.onNotification((payload) => {
+            if (payload?.method === 'lsp/serverStopped') {
+                this.handleLspServerStopped(payload.params || {});
+            }
+        });
         this.lspClient.onReady(() => {
             this.registerCppSemanticHighlightingProviders();
             this.registerAllLspProviders();
@@ -6164,6 +6169,24 @@ class MonacoEditorManager {
         } catch (err) {
             logWarn('[LSP] 刷新语法检查失败:', err?.message || err);
         }
+    }
+
+    handleLspServerStopped(details = {}) {
+        this._lspReadyPromise = null;
+        this._lspDocuments.clear();
+        this._lspSemanticTokenCache = new WeakMap();
+        this._lspDiagnosticsByModel = new WeakMap();
+        this._lspCommandArguments.clear();
+        for (const timer of this._lspChangeTimers.values()) {
+            clearTimeout(timer);
+        }
+        this._lspChangeTimers.clear();
+        this._lspChangeInFlight.clear();
+        this._lspChangePromises.clear();
+        this._lspChangePending.clear();
+        this.clearAllLspDiagnostics();
+        this.resetLspProviders();
+        logWarn('[LSP] clangd 已停止，将在下次请求时自动恢复', details.code ?? details.signal ?? '');
     }
 
     resetLspProviders() {

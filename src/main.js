@@ -777,6 +777,14 @@ class ClangdLspManager {
                 try { entry.reject(err); } catch (_) {}
             });
             this.pending.clear();
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                try {
+                    mainWindow.webContents.send('lsp-notification', {
+                        method: 'lsp/serverStopped',
+                        params: { code: code ?? null, signal: signal || null }
+                    });
+                } catch (_) { }
+            }
         });
         proc.on('error', (err) => {
             logError('[LSP] clangd 进程启动失败:', err?.message || err);
