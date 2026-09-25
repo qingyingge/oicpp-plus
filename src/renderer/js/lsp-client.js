@@ -217,6 +217,9 @@ class LspClientBridge {
                     formatting: {
                         dynamicRegistration: false
                     },
+                    rangeFormatting: {
+                        dynamicRegistration: false
+                    },
                     inlayHint: {
                         dynamicRegistration: false,
                         resolveSupport: {

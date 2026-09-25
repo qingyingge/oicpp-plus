@@ -589,6 +589,7 @@ class MonacoEditorManager {
             if (supports('textDocument.referencesProvider')) this._registerLspReferencesProvider();
             if (supports('textDocument.renameProvider')) this._registerLspRenameProvider();
             if (supports('textDocument.documentFormattingProvider')) this._registerLspDocumentFormattingProvider();
+            if (supports('textDocument.documentRangeFormattingProvider')) this._registerLspDocumentRangeFormattingProvider();
             if (supports('textDocument.inlayHintProvider')) this._registerLspInlayHintProvider();
             if (supports('textDocument.selectionRangeProvider')) this._registerLspSelectionRangeProvider();
             if (supports('textDocument.codeActionProvider')) this._registerLspCodeActionProvider();
@@ -599,7 +600,7 @@ class MonacoEditorManager {
             if (supports('textDocument.codeLensProvider')) this._registerLspCodeLensProvider();
             if (supports('textDocument.foldingRangeProvider')) this._registerLspFoldingRangeProvider();
             this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围)');
+            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、格式化、范围格式化、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围)');
         } catch (err) {
             logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
         }
@@ -1800,6 +1801,53 @@ class MonacoEditorManager {
                             ),
                             text: edit.newText || ''
                         }));
+                    } catch (_) {
+                        return [];
+                    }
+                }
+            });
+            this._lspProviders.set(key, disposable);
+        }
+    }
+
+    _registerLspDocumentRangeFormattingProvider() {
+        const languages = ['cpp', 'c'];
+        for (const language of languages) {
+            const key = `${language}:rangeFormatting`;
+            if (this._lspProviders.has(key)) continue;
+            const disposable = monaco.languages.registerDocumentRangeFormattingEditProvider(language, {
+                displayName: 'clangd',
+                provideDocumentRangeFormattingEdits: async (model, range, options, token) => {
+                    try {
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return [];
+                        const lspReady = await this._ensureLspDocumentReady(model);
+                        if (!lspReady || !this.lspClient || token?.isCancellationRequested) return [];
+                        const uri = await this.getDocumentUriForModel(model);
+                        if (!uri || token?.isCancellationRequested) return [];
+                        const result = await this.lspClient.request('textDocument/rangeFormatting', {
+                            textDocument: { uri },
+                            range: {
+                                start: {
+                                    line: range.startLineNumber - 1,
+                                    character: range.startColumn - 1
+                                },
+                                end: {
+                                    line: range.endLineNumber - 1,
+                                    character: range.endColumn - 1
+                                }
+                            },
+                            options: {
+                                tabSize: options.tabSize || 4,
+                                insertSpaces: options.insertSpaces !== false
+                            }
+                        }, token);
+                        if (token?.isCancellationRequested || !Array.isArray(result)) return [];
+                        return result
+                            .map((edit) => ({
+                                range: this.lspRangeToMonaco(edit.range),
+                                text: typeof edit.newText === 'string' ? edit.newText : ''
+                            }))
+                            .filter((edit) => edit.range);
                     } catch (_) {
                         return [];
                     }
