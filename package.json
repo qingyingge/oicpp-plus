@@ -69,6 +69,7 @@
       "output": "dist"
     },
     "electronDist": "node_modules/electron/dist",
+    "compression": "maximum",
     "files": [
       "src/**/*",
       "src/lang/**/*",
