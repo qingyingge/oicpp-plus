@@ -30,7 +30,9 @@ Var OICPP_USER_PROFILE
 Var OICPP_ORIGINAL_PARAMETERS
 Var OICPP_NEEDS_ELEVATION
 
-SetCompressor lzma
+; solid LZMA：对 clangd 等大二进制整体压缩，显著提升压缩率（减少安装包体积）
+SetCompressor /SOLID lzma
+SetCompressorDictSize 64
 
 ; MUI Settings
 !define MUI_ABORTWARNING
@@ -184,6 +186,8 @@ Section "OICPP 主程序" SEC01
   File "dist\win-unpacked\libGLESv2.dll"
   File "dist\win-unpacked\LICENSE.electron.txt"
   File "dist\win-unpacked\LICENSES.chromium.html"
+  ; 项目自身的 GPL-3.0 协议文件，装进安装目录（安装向导仅展示，不会自动装入）
+  File "LICENSE"
   SetOutPath "$INSTDIR\locales"
   File "dist\win-unpacked\locales\af.pak"
   File "dist\win-unpacked\locales\am.pak"
@@ -425,6 +429,7 @@ Section Uninstall
   Delete "$INSTDIR\locales\af.pak"
   Delete "$INSTDIR\LICENSES.chromium.html"
   Delete "$INSTDIR\LICENSE.electron.txt"
+  Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\libGLESv2.dll"
   Delete "$INSTDIR\libEGL.dll"
   Delete "$INSTDIR\icudtl.dat"
