@@ -270,10 +270,16 @@ jobs:
           }
           '@ | node
 
-      - name: Build Unpacked App
+      - name: Build Windows app for NSIS
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build
+        run: |
+          npm run prebuild:buildinfo
+          npm run prebuild:icons
+          npm run prebuild:native
+          npm run prebuild:clangd
+          npm run prebuild:clang-format
+          npx electron-builder --win dir
 
       - name: Verify packaged node-pty in app.asar.unpacked
         shell: powershell
@@ -310,15 +316,7 @@ jobs:
         run: |
           $version = $env:VERSION
           Write-Host "Building version: $version"
-          $nsiPath = "installer.nsi"
-          $content = Get-Content $nsiPath -Raw
-
-          $content = $content -replace '!define PRODUCT_VERSION ".*"', "!define PRODUCT_VERSION ""$version"""
-          $content = $content -replace 'OutFile "OICPP-.*-Setup.exe"', "OutFile ""OICPP-$version-Setup.exe"""
-          $content | Set-Content $nsiPath -Encoding UTF8
-
-
-          makensis installer.nsi
+          makensis "/DPRODUCT_VERSION=$version" installer.nsi
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4

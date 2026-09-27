@@ -93,7 +93,7 @@
     ],
     "artifactName": "${productName}-${version}-Setup.${ext}",
     "win": {
-      "target": "nsis",
+      "target": "dir",
       "icon": "oicpp-plus.ico",
       "forceCodeSigning": false,
       "signExts": [

@@ -2,7 +2,10 @@
 
 ; HM NIS Edit Wizard helper defines
 !define PRODUCT_NAME "OICPP-Plus IDE"
-!define PRODUCT_VERSION "1.5.4"
+; 版本号默认取自 package.json；CI 用 makensis /DPRODUCT_VERSION=x.y.z 注入覆盖
+!ifndef PRODUCT_VERSION
+  !define PRODUCT_VERSION "1.5.4"
+!endif
 !define PRODUCT_PUBLISHER "qingyingge"
 !define PRODUCT_WEB_SITE "https://github.com/qingyingge/oicpp-plus"
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\OICPP-Plus IDE.exe"
