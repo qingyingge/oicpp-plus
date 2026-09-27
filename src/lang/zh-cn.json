@@ -1263,7 +1263,15 @@
     "openInExplorerUnavailable": "该文件尚未保存，无法在资源管理器中打开。",
     "closeThisTab": "关闭此文件",
     "closeOtherTabs": "关闭除此以外的所有",
-    "closeTabsToRight": "关闭右侧的所有标签页"
+    "closeTabsToRight": "关闭右侧的所有标签页",
+    "externalChangeTitle": "外部修改检测",
+    "externalChangeDeleted": "文件 “{file}” 已在外部被删除或移动。",
+    "externalChangeRenamed": "文件 “{file}” 在外部可能被重命名或替换。",
+    "externalChangeModified": "文件 “{file}” 已在外部被修改。",
+    "externalChangeCloseHint": "\n文件已不再可用，建议关闭该标签页并刷新文件管理器。",
+    "externalChangeCloseNoSave": "\n关闭时不会保存当前编辑内容。",
+    "externalChangeReloadOverwrite": "\n重新加载将覆盖未保存的修改，是否继续？",
+    "externalChangeReloadPrompt": "\n是否重新加载以获取最新内容？"
   },
   "cloudCompile": {
     "detectMacOS": "检测到 macOS 平台，已自动移除不兼容参数 -static",

@@ -1228,7 +1228,15 @@
     "openInExplorerUnavailable": "This file is not saved yet and cannot be opened in File Explorer.",
     "closeThisTab": "Close This File",
     "closeOtherTabs": "Close Other Tabs",
-    "closeTabsToRight": "Close Tabs to the Right"
+    "closeTabsToRight": "Close Tabs to the Right",
+    "externalChangeTitle": "External Modification Detected",
+    "externalChangeDeleted": "File \"{file}\" was deleted or moved externally.",
+    "externalChangeRenamed": "File \"{file}\" may have been renamed or replaced externally.",
+    "externalChangeModified": "File \"{file}\" was modified externally.",
+    "externalChangeCloseHint": "\nThe file is no longer available. It is recommended to close this tab and refresh the file manager.",
+    "externalChangeCloseNoSave": "\nClosing will not save the current edits.",
+    "externalChangeReloadOverwrite": "\nReloading will overwrite unsaved changes. Continue?",
+    "externalChangeReloadPrompt": "\nReload to load the latest content?"
   },
   "monaco": {
     "userSnippet": "User Snippet",

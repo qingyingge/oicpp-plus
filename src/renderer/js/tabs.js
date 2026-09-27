@@ -1811,33 +1811,33 @@ class TabManager {
         tabData.externalPromptInProgress = true;
 
         const changeType = tabData.externalChangeType || 'modified';
-        const fileDisplay = tabData.fileName || tabData.filePath || '当前文件';
+        const fileDisplay = tabData.fileName || tabData.filePath || window.i18n.t('panel.unknownFile');
         const hasLocalChanges = !!tabData.modified;
         const shouldSuggestClose = changeType === 'deleted' || changeType === 'renamed';
         let message = '';
 
         if (changeType === 'deleted') {
-            message = `文件 “${fileDisplay}” 已在外部被删除或移动。`;
+            message = window.i18n.t('tabs.externalChangeDeleted', { file: fileDisplay });
         } else if (changeType === 'renamed') {
-            message = `文件 “${fileDisplay}” 在外部可能被重命名或替换。`;
+            message = window.i18n.t('tabs.externalChangeRenamed', { file: fileDisplay });
         } else {
-            message = `文件 “${fileDisplay}” 已在外部被修改。`;
+            message = window.i18n.t('tabs.externalChangeModified', { file: fileDisplay });
         }
 
         if (shouldSuggestClose) {
-            message += '\n文件已不再可用，建议关闭该标签页并刷新文件管理器。';
-            message += '\n关闭时不会保存当前编辑内容。';
+            message += window.i18n.t('tabs.externalChangeCloseHint');
+            message += window.i18n.t('tabs.externalChangeCloseNoSave');
         } else if (hasLocalChanges) {
-            message += '\n重新加载将覆盖未保存的修改，是否继续？';
+            message += window.i18n.t('tabs.externalChangeReloadOverwrite');
         } else {
-            message += '\n是否重新加载以获取最新内容？';
+            message += window.i18n.t('tabs.externalChangeReloadPrompt');
         }
 
         let shouldReload = false;
         let shouldCloseTab = false;
         try {
             if (window.dialogManager?.showConfirmDialog) {
-                const result = await window.dialogManager.showConfirmDialog('外部修改检测', message);
+                const result = await window.dialogManager.showConfirmDialog(window.i18n.t('tabs.externalChangeTitle'), message);
                 if (shouldSuggestClose) {
                     shouldCloseTab = !!result;
                 } else {
