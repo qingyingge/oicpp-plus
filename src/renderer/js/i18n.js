@@ -218,7 +218,12 @@ class I18nManager {
             document.querySelectorAll('[data-i18n]').forEach(el => {
                 const key = el.getAttribute('data-i18n');
                 if (key) {
-                    el.textContent = this.t(key);
+                    let params;
+                    const argsAttr = el.getAttribute('data-i18n-args');
+                    if (argsAttr) {
+                        try { params = JSON.parse(argsAttr); } catch (_) { params = undefined; }
+                    }
+                    el.textContent = this.t(key, params);
                 }
             });
 

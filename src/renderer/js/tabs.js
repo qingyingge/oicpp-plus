@@ -4877,7 +4877,7 @@ class TabManager {
                 recentContainer.innerHTML = `
                     <div class="welcome-recent-item">
                         <span class="icon" data-ui-icon="file" aria-hidden="true"></span>
-                        <span>暂无最近文件</span>
+                        <span>${window.i18n.t('welcome.noRecentFiles')}</span>
                     </div>
                 `;
                 if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {

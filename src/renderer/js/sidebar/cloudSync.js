@@ -699,7 +699,7 @@ class CloudSyncPanel {
             }
             const rawFiles = Array.isArray(walkResult.files) ? walkResult.files : [];
             if (rawFiles.length === 0) {
-                this.showMessage(window.i18n.t('message.uploadFolderEmpty'), 'warning');
+                this.showMessage(window.i18n.t('dialog.uploadFolderEmpty'), 'warning');
                 return;
             }
 
@@ -716,7 +716,7 @@ class CloudSyncPanel {
             }
 
             if (entries.length === 0) {
-                this.showMessage(window.i18n.t('message.uploadFolderEmpty'), 'warning');
+                this.showMessage(window.i18n.t('dialog.uploadFolderEmpty'), 'warning');
                 return;
             }
 
@@ -780,9 +780,9 @@ class CloudSyncPanel {
             this.expandedFolders.add(cloudRoot);
             this.renderTree();
 
-            let message = window.i18n.t('message.uploadComplete', { uploaded });
+            let message = window.i18n.t('dialog.uploadComplete', { uploaded });
             if (skippedSize > 0) {
-                message += window.i18n.t('message.uploadSkipped', { count: skippedSize });
+                message += window.i18n.t('dialog.uploadSkipped', { count: skippedSize });
             }
             this.showUploadProgress(entries.length, entries.length, message);
             this.hideUploadProgress(2000);

@@ -353,6 +353,7 @@
     "gotoLine": "Go to Line",
     "gotoLinePlaceholder": "Enter line number",
     "newFileDialogTitle": "New File",
+    "newFileDialogErrorTitle": "New File - Error",
     "newFileDialogPlaceholder": "Enter file name",
     "newFileDialogError": "Error: {msg}\nPlease enter a file name (e.g. main.cpp, test.py, data.txt)",
     "newFolderDialogTitle": "New Folder",
@@ -412,7 +413,10 @@
     "compiling": "Compiling...",
     "running": "Running...",
     "debugging": "Debugging",
-    "saving": "Saving..."
+    "saving": "Saving...",
+    "cursorPosition": "Ln {line}, Col {col}",
+    "lspStatus": "Language Server Status",
+    "errorsAndWarnings": "Errors and Warnings"
   },
   "terminal": {
     "title": "Terminal",
@@ -775,6 +779,10 @@
     "breakpoints": "Breakpoints",
     "watch": "Watch",
     "addWatch": "Add Watch",
+    "debugStatus": "Debug Status",
+    "removeWatch": "Remove watch",
+    "typeArray": "Array",
+    "typeContainer": "Container",
     "noVariables": "No variables",
     "noCallStack": "No call stack",
     "noBreakpoints": "No breakpoints",
@@ -1170,6 +1178,7 @@
   },
   "pdfViewer": {
     "loading": "Loading PDF…",
+    "notFound": "PDF file not found",
     "cannotOpen": "Cannot open PDF file",
     "dragToOpen": "Drag a file here to open",
     "passwordProtected": "PDF Password Protected",
@@ -1239,7 +1248,9 @@
     "defaultTitle": "Built-in Browser",
     "startBrowse": "Enter a URL in the address bar above to start browsing",
     "shortcutHint": "Supports Ctrl+Shift+I to open quickly",
-    "splitHint": "Supports tab split-screen · Drag tabs to empty areas"
+    "splitHint": "Supports tab split-screen · Drag tabs to empty areas",
+    "reload": "Refresh",
+    "welcomeHint": "Enter a URL in the address bar to start browsing<br>Press Ctrl+Shift+I to open DevTools"
   },
   "cloudCompile": {
     "detectMacOS": "macOS detected, incompatible option -static has been automatically removed",
@@ -1323,5 +1334,30 @@
     "sampleCompile": "Sample Compile",
     "compileSuccessWithTime": "Compiled successfully ({time}s)",
     "formatBytes": "{bytes} bytes"
+  },
+  "welcome": {
+    "subtitle": "C++ development environment optimized for OI competitors",
+    "getStarted": "Get Started",
+    "openFolder": "Open Folder",
+    "recentFiles": "Recent Files",
+    "noRecentFiles": "No recent files",
+    "footer": "OICPP-Plus - Built for competitive programming",
+    "docs": "Documentation",
+    "shortcuts": "Shortcuts",
+    "about": "About"
+  },
+  "fileHistory": {
+    "title": "File History",
+    "totalFiles": "{count} file(s)",
+    "noHistory": "No file history yet",
+    "clearHistory": "Clear History",
+    "clearConfirm": "Are you sure you want to clear all file history?",
+    "unknownFile": "Unknown file"
+  },
+  "cloudPanel": {
+    "quotaHelp": "View cloud space quota",
+    "supportedFilesHint": "Supported: .ans .in .out .cpp .py .txt .md .h .hpp, max 50KB per file",
+    "prepareUpload": "Preparing upload...",
+    "dragToResize": "Drag to resize terminal"
   }
 }
