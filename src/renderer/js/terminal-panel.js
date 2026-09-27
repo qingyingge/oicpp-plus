@@ -141,11 +141,11 @@ class IntegratedTerminalPanel {
 
         try {
             const status = await window.electronAPI.getTerminalFeatureStatus();
-            this.status = status || { available: false, reason: ('panel.unknownError'), detail: '' };
+            this.status = status || { available: false, reason: window.i18n.t('panel.unknownError'), detail: '' };
         } catch (error) {
             this.status = {
                 available: false,
-                reason: ('panel.terminalStatusFailed'),
+                reason: window.i18n.t('panel.terminalStatusFailed'),
                 detail: error?.message || String(error)
             };
         }

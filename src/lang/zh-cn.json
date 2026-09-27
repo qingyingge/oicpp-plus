@@ -277,6 +277,7 @@
     "needLocalFile": "请先保存文件到本地磁盘后再使用{feature}功能",
     "openFolderElectronRequired": "打开文件夹功能需要在 Electron 环境中运行",
     "cloudCompileUnavailable": "云端编译不可用",
+    "browserUnavailable": "内置浏览器不可用",
     "cloudCompile": "云端编译"
   },
   "dialog": {

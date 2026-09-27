@@ -4309,7 +4309,7 @@ ${data.message || '程序已加载，等待开始执行'}
             window.tabManager.openBrowserTab({});
         } else {
             logError('TabManager 未就绪，无法打开浏览器');
-            this.showMessage?.(window.i18n?.t?.('browser.title') || '浏览器功能不可用', 'error');
+            this.showMessage?.(window.i18n?.t?.('message.browserUnavailable') || 'browserUnavailable', 'error');
         }
     }
 

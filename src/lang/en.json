@@ -294,6 +294,7 @@
     "needLocalFile": "Please save the file first before using {feature}",
     "openFolderElectronRequired": "The Open Folder feature requires the Electron environment",
     "cloudCompileUnavailable": "Cloud compilation is unavailable",
+    "browserUnavailable": "The built-in browser is unavailable",
     "cloudCompile": "Cloud Compile"
   },
   "dialog": {

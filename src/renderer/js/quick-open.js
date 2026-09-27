@@ -35,7 +35,7 @@
         if (list.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'quick-open-empty';
-            empty.textContent = ('panel.noMatch');
+            empty.textContent = window.i18n.t('panel.noMatch');
             results.appendChild(empty);
             return;
         }
