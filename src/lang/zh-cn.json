@@ -1262,7 +1262,8 @@
     "renamePrompt": "输入新的名称",
     "renameTo": "重命名为:",
     "openMarkdownPreview": "打开 Markdown 预览",
-    "filterFunction": "输入函数名过滤，回车跳转，Esc关闭"
+    "filterFunction": "输入函数名过滤，回车跳转，Esc关闭",
+    "returnType": "返回类型: {type}"
   },
   "browser": {
     "title": "内置浏览器",

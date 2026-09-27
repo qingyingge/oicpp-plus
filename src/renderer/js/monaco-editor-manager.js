@@ -437,23 +437,15 @@ class MonacoEditorManager {
         if (!model || this._lspGuardedModels.has(model)) return;
 
         const filePath = model.__oicppFilePath || this.getModelFilePath(model) || '';
-        const fileName = fileNameHint || filePath.split(/[\\/]/).pop() || '当前文件';
+        const fileName = fileNameHint || filePath.split(/[\\/]/).pop() || window.i18n.t('panel.unknownFile');
         const line = Number.isFinite(safety?.line) ? safety.line : null;
         const translationKey = 'lsp.largeArrayDisabled';
-        const fallback = `${fileName} 包含潜在超大静态数组${line ? `（第 ${line} 行）` : ''}，已禁用 clangd LSP 以保护内存。基础语法高亮仍可用。`;
-        let message = fallback;
-        try {
-            const translated = window.i18n?.t?.(translationKey, {
-                fileName,
-                line: line || '?'
-            });
-            if (translated && translated !== translationKey) message = translated;
-        } catch (_) {}
+        let message = window.i18n?.t?.(translationKey, { fileName, line: line || '?' }) || '';
 
         const details = {
             fileName,
             line,
-            reason: safety?.reason || '检测到潜在超大静态数组',
+            reason: safety?.reason || window.i18n.t('monaco.largeArrayDetected'),
             message
         };
         this._lspGuardedModels.add(model);
@@ -786,7 +778,7 @@ class MonacoEditorManager {
                 const line = scanSource.slice(0, arrayMatch.index).split(/\r?\n/).length;
                 const result = {
                     safe: false,
-                    reason: `检测到潜在超大静态数组（约 ${dimensionCount} 维，按 ${elementSize} 字节/元素估算占用超过 1 GiB）`,
+                    reason: window.i18n.t('monaco.largeArrayDetail', { dims: dimensionCount, bytes: elementSize }),
                     line,
                     elementSize,
                     estimatedBytes
@@ -1093,7 +1085,7 @@ class MonacoEditorManager {
                             suggestions.push({
                                 label,
                                 kind: monaco.languages.CompletionItemKind.Snippet,
-                                detail: sn.description || '用户代码片段',
+                                detail: sn.description || window.i18n.t('monaco.userSnippet'),
                                 insertText: content,
                                 insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
                                 range: wordRange,
@@ -6809,7 +6801,7 @@ class MonacoEditorManager {
                             if (window.dialogManager?.showInputDialog) {
                                 newName = await window.dialogManager.showInputDialog('重命名标识符', name, '输入新的名称');
                             } else {
-                                newName = window.prompt('重命名为:', name);
+                                newName = window.prompt(window.i18n.t('monaco.renameTo'), name);
                             }
                         } catch (_) {}
                         if (!newName || newName === name) return;
@@ -6840,7 +6832,7 @@ class MonacoEditorManager {
                     if (window.dialogManager?.showInputDialog) {
                         newName = await window.dialogManager.showInputDialog('重命名标识符', name, '输入新的名称');
                     } else {
-                        newName = window.prompt('重命名为:', name);
+                        newName = window.prompt(window.i18n.t('monaco.renameTo'), name);
                     }
                 } catch (_) {}
             }
@@ -8815,7 +8807,7 @@ class MonacoEditorManager {
                     name: name,
                     returnType: returnType,
                     params: params || 'void',
-                    description: `返回类型: ${returnType}`
+                    description: window.i18n.t('monaco.returnType', { type: returnType })
                 });
             }
         }
