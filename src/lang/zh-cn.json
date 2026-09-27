@@ -848,7 +848,9 @@
     "programLoadedWaiting": "程序已加载，等待开始执行",
     "promptAddWatch": "请输入要监视的变量名或表达式：\n例如：myVar, array[0], obj.member",
     "breakpointHit": "断点命中: {file}:{line} ({fn})",
-    "breakpointHitInfo": "断点命中！\n\n文件: {file}\n行号: {line}\n函数: {fn}\n\n程序已暂停，您可以：\n- 查看右侧变量面板中的当前变量值\n- 使用F6继续执行\n- 使用F7单步执行\n- 使用F8步入函数"
+    "breakpointHitInfo": "断点命中！\n\n文件: {file}\n行号: {line}\n函数: {fn}\n\n程序已暂停，您可以：\n- 查看右侧变量面板中的当前变量值\n- 使用F6继续执行\n- 使用F7单步执行\n- 使用F8步入函数",
+    "terminalCreateFailed": "内置终端创建失败：未获取到终端会话ID",
+    "debugTerminalInitFailed": "调试终端初始化失败：无法建立TTY绑定或输入桥接"
   },
   "cloud": {
     "title": "云空间",

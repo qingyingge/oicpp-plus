@@ -2588,7 +2588,7 @@ class OICPPApp {
                 const isUnixLike = this.isUnixLikePlatform();
 
                 if (!terminalId) {
-                    throw new Error('内置终端创建失败：未获取到终端会话ID');
+                    throw new Error(window.i18n.t('debug.terminalCreateFailed'));
                 }
 
                 if (this.isLinuxPlatform()) {
@@ -2609,7 +2609,7 @@ class OICPPApp {
                 }
 
                 if (!inferiorTTY && !useInputBridge) {
-                    throw new Error('调试终端初始化失败：无法建立TTY绑定或输入桥接');
+                    throw new Error(window.i18n.t('debug.debugTerminalInitFailed'));
                 }
 
                 if (isUnixLike) {
@@ -2656,7 +2656,7 @@ class OICPPApp {
                 throw error;
             }
         } else {
-            throw new Error('Electron环境不可用');
+            throw new Error(window.i18n.t('cloudCompile.electronUnavailable'));
         }
     }
 

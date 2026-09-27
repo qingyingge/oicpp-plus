@@ -865,7 +865,9 @@
     "programLoadedWaiting": "Program loaded, waiting to start execution",
     "promptAddWatch": "Enter a variable name or expression to watch:\ne.g. myVar, array[0], obj.member",
     "breakpointHit": "Breakpoint hit: {file}:{line} ({fn})",
-    "breakpointHitInfo": "Breakpoint hit!\n\nFile: {file}\nLine: {line}\nFunction: {fn}\n\nProgram is paused. You can:\n- View the current variable values in the variables panel on the right\n- Use F6 to continue execution\n- Use F7 to step\n- Use F8 to step into functions"
+    "breakpointHitInfo": "Breakpoint hit!\n\nFile: {file}\nLine: {line}\nFunction: {fn}\n\nProgram is paused. You can:\n- View the current variable values in the variables panel on the right\n- Use F6 to continue execution\n- Use F7 to step\n- Use F8 to step into functions",
+    "terminalCreateFailed": "Failed to create the built-in terminal: no terminal session ID was obtained",
+    "debugTerminalInitFailed": "Failed to initialize the debug terminal: could not establish a TTY binding or input bridge"
   },
   "cloud": {
     "title": "Cloud Space",
