@@ -456,7 +456,7 @@
           buffer = new Uint8Array(data.buffer);
         }
         if (!buffer) {
-          throw new Error("未收到有效的 PDF 数据");
+          throw new Error(window.i18n?.t('pdfViewer.noData'));
         }
         pending.resolve(buffer);
       } catch (error) {

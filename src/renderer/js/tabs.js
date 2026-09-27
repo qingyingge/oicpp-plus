@@ -3319,20 +3319,20 @@ class TabManager {
             if (tabData.pdfBase64) {
                 postResponse({ base64: tabData.pdfBase64, filePath: null });
             } else {
-                postResponse({ error: '无法确定 PDF 文件路径' });
+                postResponse({ error: window.i18n.t('pdfViewer.cannotDeterminePath') });
             }
             return;
         }
 
         if (!window.electronAPI?.readFileBuffer) {
-            postResponse({ error: '当前环境不支持读取二进制文件' });
+            postResponse({ error: window.i18n.t('pdfViewer.cannotReadBinary') });
             return;
         }
 
         try {
             const base64 = await window.electronAPI.readFileBuffer(filePath);
             if (!base64) {
-                postResponse({ error: '读取 PDF 文件失败：无数据' });
+                postResponse({ error: window.i18n.t('pdfViewer.noData') });
                 return;
             }
             postResponse({ base64, filePath });

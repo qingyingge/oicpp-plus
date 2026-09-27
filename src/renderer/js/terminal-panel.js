@@ -282,8 +282,8 @@ class IntegratedTerminalPanel {
         if (typeof window.Terminal !== 'function') {
             this.status = {
                 available: false,
-                reason: 'xterm 未加载',
-                detail: '请确认已安装 xterm 依赖'
+                reason: window.i18n.t('terminal.xtermNotLoaded'),
+                detail: window.i18n.t('terminal.xtermNotLoadedDetail')
             };
             this.renderStatus();
             this.renderEmptyState();
@@ -294,8 +294,8 @@ class IntegratedTerminalPanel {
         if (typeof fitAddonCtor !== 'function') {
             this.status = {
                 available: false,
-                reason: 'xterm Fit 插件未加载',
-                detail: '请确认已安装 @xterm/addon-fit'
+                reason: window.i18n.t('terminal.fitAddonMissing'),
+                detail: window.i18n.t('terminal.fitAddonMissingDetail')
             };
             this.renderStatus();
             this.renderEmptyState();
@@ -306,8 +306,8 @@ class IntegratedTerminalPanel {
         if (typeof unicode11AddonCtor !== 'function') {
             this.status = {
                 available: false,
-                reason: window.__ ? window.__('terminal.unicodeAddonMissing') : 'xterm Unicode11 插件未加载',
-                detail: window.__ ? window.__('terminal.unicodeAddonDetail') : '请确认已安装 @xterm/addon-unicode11'
+                reason: window.i18n.t('terminal.unicodeAddonMissing'),
+                detail: window.i18n.t('terminal.unicodeAddonDetail')
             };
             this.renderStatus();
             this.renderEmptyState();
@@ -387,7 +387,7 @@ class IntegratedTerminalPanel {
         try {
             created = await window.electronAPI.createTerminal(createPayload);
         } catch (error) {
-            terminal.writeln('\r\n[Error] 创建终端失败: ' + (error?.message || String(error)));
+            terminal.writeln(window.i18n.t('terminal.createFailed', { error: error?.message || String(error) }));
             tab.classList.remove('pending');
             this.renderEmptyState();
             return;
@@ -1059,9 +1059,9 @@ class IntegratedTerminalPanel {
         const code = payload?.exitCode;
         const signal = payload?.signal;
         const suffix = Number.isFinite(code)
-            ? `退出码 ${code}`
-            : (signal ? `信号 ${signal}` : '已退出');
-        session.terminal.writeln(`\r\n[终端已退出] ${suffix}`);
+            ? window.i18n.t('terminal.exitCode', { code })
+            : (signal ? window.i18n.t('terminal.exitSignal', { signal }) : window.i18n.t('terminal.exitedNoInfo'));
+        session.terminal.writeln(window.i18n.t('terminal.exited', { info: suffix }));
         session.tab.classList.add('exited');
     }
 

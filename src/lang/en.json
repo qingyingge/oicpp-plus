@@ -430,6 +430,10 @@
     "hideTerminal": "Hide Terminal",
     "unicodeAddonMissing": "xterm Unicode11 addon not loaded",
     "unicodeAddonDetail": "Please ensure @xterm/addon-unicode11 is installed",
+    "xtermNotLoaded": "xterm not loaded",
+    "xtermNotLoadedDetail": "Please ensure the xterm dependency is installed",
+    "fitAddonMissing": "xterm Fit addon not loaded",
+    "fitAddonMissingDetail": "Please ensure @xterm/addon-fit is installed",
     "nodePtyNotInstalled": "node-pty is not installed",
     "ptyLoadTargets": "Locations tried: {targets}",
     "ptyFallbackActive": "node-pty is unavailable; the compatibility terminal is enabled",
@@ -443,7 +447,12 @@
     "unknownError": "Unknown error",
     "ptyAttempts": "node-pty: {attempts}",
     "fallbackAttempts": "Compatibility terminal: {attempts}",
-    "shellSpawnFailed": "Failed to start shell: {error}. Candidates tried: {candidates}{ptyTrace}{fallbackTrace}"
+    "shellSpawnFailed": "Failed to start shell: {error}. Candidates tried: {candidates}{ptyTrace}{fallbackTrace}",
+    "createFailed": "Terminal creation failed: {error}",
+    "exited": "Terminal exited: {info}",
+    "exitCode": "exit code {code}",
+    "exitSignal": "signal {signal}",
+    "exitedNoInfo": "exited"
   },
   "compiler": {
     "settings": "Compiler Settings",
@@ -1201,7 +1210,9 @@
     "unknownError": "Unknown error",
     "noContext": "Cannot access application context",
     "dragReadFail": "Failed to read drag-and-drop file data",
-    "forceRefresh": "Force refresh to adapt to container size"
+    "forceRefresh": "Force refresh to adapt to container size",
+    "cannotDeterminePath": "Cannot determine the PDF file path",
+    "cannotReadBinary": "The current environment does not support reading binary files"
   },
   "lsp": {
     "restartFailUnknown": "clangd restart failed (unknown reason)",

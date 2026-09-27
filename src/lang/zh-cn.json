@@ -413,6 +413,10 @@
     "hideTerminal": "隐藏终端",
     "unicodeAddonMissing": "xterm Unicode11 插件未加载",
     "unicodeAddonDetail": "请确认已安装 @xterm/addon-unicode11",
+    "xtermNotLoaded": "xterm 未加载",
+    "xtermNotLoadedDetail": "请确认已安装 xterm 依赖",
+    "fitAddonMissing": "xterm Fit 插件未加载",
+    "fitAddonMissingDetail": "请确认已安装 @xterm/addon-fit",
     "nodePtyNotInstalled": "未安装 node-pty",
     "ptyLoadTargets": "尝试位置：{targets}",
     "ptyFallbackActive": "node-pty 不可用，已启用兼容终端",
@@ -426,7 +430,12 @@
     "unknownError": "未知错误",
     "ptyAttempts": "node-pty：{attempts}",
     "fallbackAttempts": "兼容终端：{attempts}",
-    "shellSpawnFailed": "启动 shell 失败：{error}。尝试候选：{candidates}{ptyTrace}{fallbackTrace}"
+    "shellSpawnFailed": "启动 shell 失败：{error}。尝试候选：{candidates}{ptyTrace}{fallbackTrace}",
+    "createFailed": "创建终端失败：{error}",
+    "exited": "[终端已退出] {info}",
+    "exitCode": "退出码 {code}",
+    "exitSignal": "信号 {signal}",
+    "exitedNoInfo": "已退出"
   },
   "compiler": {
     "settings": "编译器设置",
@@ -1201,7 +1210,9 @@
     "unknownError": "未知错误",
     "noContext": "无法访问应用上下文",
     "dragReadFail": "读取拖拽文件数据失败",
-    "forceRefresh": "强制刷新以适配最新容器尺寸"
+    "forceRefresh": "强制刷新以适配最新容器尺寸",
+    "cannotDeterminePath": "无法确定 PDF 文件路径",
+    "cannotReadBinary": "当前环境不支持读取二进制文件"
   },
   "lsp": {
     "restartFailUnknown": "clangd 重启失败（未知原因）",

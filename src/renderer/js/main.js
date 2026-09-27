@@ -1534,7 +1534,7 @@ class OICPPApp {
                 }
 
                 if (!pdfPath && !base64Data) {
-                    throw new Error('无法获取 PDF 文件数据');
+                    throw new Error(window.i18n.t('pdfViewer.noData'));
                 }
 
                 await tabManager.openFile(fileName, '', false, {
