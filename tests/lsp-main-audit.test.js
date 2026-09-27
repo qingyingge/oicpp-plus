@@ -25,6 +25,7 @@ function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
         setTimeout,
         clearTimeout,
         EventEmitter,
+        process,
         path: require('path'),
         fs: require('fs'),
         spawn: spawnImpl,
