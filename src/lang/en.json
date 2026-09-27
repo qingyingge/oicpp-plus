@@ -417,7 +417,8 @@
     "saving": "Saving...",
     "cursorPosition": "Ln {line}, Col {col}",
     "lspStatus": "Language Server Status",
-    "errorsAndWarnings": "Errors and Warnings"
+    "errorsAndWarnings": "Errors and Warnings",
+    "errorsWarningsSummary": "{errors} error(s), {warnings} warning(s)"
   },
   "terminal": {
     "title": "Terminal",
@@ -770,6 +771,8 @@
     "title": "Debug",
     "start": "Start Debug",
     "continue": "Continue(F6)",
+    "continueTitle": "Continue execution (F6)",
+    "clickToStartRun": "Click to start running the program (F6)",
     "stepOver": "Step Over(F7)",
     "stepInto": "Step Into(F8)",
     "stepOut": "Step Out(Shift+F8)",
@@ -1204,7 +1207,11 @@
     "restartFailUnknown": "clangd restart failed (unknown reason)",
     "startFailUnknown": "clangd start failed (unknown reason)",
     "largeArrayDisabled": "File {fileName} contains a potentially oversized static array (line {line}); clangd LSP has been disabled to protect memory. Basic syntax highlighting remains available.",
-    "disabledLabel": "LSP disabled"
+    "disabledLabel": "LSP disabled",
+    "statusReady": "clangd language server is ready",
+    "statusStarting": "clangd language server is starting...",
+    "statusUnavailable": "clangd language server unavailable",
+    "statusIdle": "clangd language server idle"
   },
   "tabs": {
     "readFileUnavailable": "File read interface unavailable",
@@ -1216,7 +1223,12 @@
     "closeOtherConfirm": "There are {count} unsaved files. Close the other tabs?",
     "closeRightConfirm": "There are {count} unsaved files. Close the right tabs?",
     "closeAllConfirm": "There are {count} unsaved files. Close all tabs?",
-    "fileUnsavedConfirm": "File \"{name}\" has unsaved changes."
+    "fileUnsavedConfirm": "File \"{name}\" has unsaved changes.",
+    "openInExplorer": "Open in File Explorer",
+    "openInExplorerUnavailable": "This file is not saved yet and cannot be opened in File Explorer.",
+    "closeThisTab": "Close This File",
+    "closeOtherTabs": "Close Other Tabs",
+    "closeTabsToRight": "Close Tabs to the Right"
   },
   "monaco": {
     "userSnippet": "User Snippet",

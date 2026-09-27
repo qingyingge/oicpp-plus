@@ -400,7 +400,8 @@
     "saving": "保存中...",
     "cursorPosition": "行 {line}, 列 {col}",
     "lspStatus": "语言服务器状态",
-    "errorsAndWarnings": "错误和警告"
+    "errorsAndWarnings": "错误和警告",
+    "errorsWarningsSummary": "{errors} 个错误, {warnings} 个警告"
   },
   "terminal": {
     "title": "终端",
@@ -753,6 +754,8 @@
     "title": "调试",
     "start": "开始调试",
     "continue": "继续(F6)",
+    "continueTitle": "继续执行 (F6)",
+    "clickToStartRun": "点击开始运行程序 (F6)",
     "stepOver": "步过(F7)",
     "stepInto": "步入(F8)",
     "stepOut": "步出(Shift+F8)",
@@ -1204,7 +1207,11 @@
     "restartFailUnknown": "clangd 重启失败（未知原因）",
     "startFailUnknown": "clangd 启动失败（未知原因）",
     "largeArrayDisabled": "文件 {fileName} 包含潜在超大静态数组（第 {line} 行），已禁用 clangd LSP 以保护内存。基础语法高亮仍可用。",
-    "disabledLabel": "LSP 已禁用"
+    "disabledLabel": "LSP 已禁用",
+    "statusReady": "clangd 语言服务器已就绪",
+    "statusStarting": "clangd 语言服务器正在启动...",
+    "statusUnavailable": "clangd 语言服务器不可用",
+    "statusIdle": "clangd 语言服务器空闲"
   },
   "monaco": {
     "userSnippet": "用户代码片段",
@@ -1251,7 +1258,12 @@
     "confirmCloseTab": "确认关闭标签页",
     "closeOtherConfirm": "有 {count} 个文件未保存，确定要关闭其他标签页吗？",
     "closeRightConfirm": "有 {count} 个文件未保存，确定要关闭右侧标签页吗？",
-    "closeAllConfirm": "有 {count} 个文件未保存，确定要关闭所有标签页吗？"
+    "closeAllConfirm": "有 {count} 个文件未保存，确定要关闭所有标签页吗？",
+    "openInExplorer": "在资源管理器中打开",
+    "openInExplorerUnavailable": "该文件尚未保存，无法在资源管理器中打开。",
+    "closeThisTab": "关闭此文件",
+    "closeOtherTabs": "关闭除此以外的所有",
+    "closeTabsToRight": "关闭右侧的所有标签页"
   },
   "cloudCompile": {
     "detectMacOS": "检测到 macOS 平台，已自动移除不兼容参数 -static",

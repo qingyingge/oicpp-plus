@@ -447,7 +447,7 @@ class OICPPApp {
             if (cloudMenuItem) {
                 cloudMenuItem.style.display = isWindows ? '' : 'none';
                 if (!isWindows) {
-                    cloudMenuItem.setAttribute('title', '云编译目前仅在 Windows 版本提供');
+                    cloudMenuItem.setAttribute('title', window.i18n.t('message.cloudCompileWindowsOnly'));
                 }
             }
         } catch (error) {
@@ -2924,7 +2924,7 @@ class OICPPApp {
             continueBtn.style.animation = '';
             continueBtn.style.background = '';
             continueBtn.style.transform = '';
-            continueBtn.title = '继续执行 (F6)';
+            continueBtn.title = window.i18n.t('debug.continueTitle');
         }
     }
 
@@ -2971,13 +2971,13 @@ ${data.message || '程序已加载，等待开始执行'}
             continueBtn.style.animation = 'debug-pulse 2s infinite';
             continueBtn.style.background = '#0078d4';
             continueBtn.style.transform = 'scale(1.05)';
-            continueBtn.title = '点击开始运行程序 (F6)';
+            continueBtn.title = window.i18n.t('debug.clickToStartRun');
             
             setTimeout(() => {
                 continueBtn.style.animation = '';
                 continueBtn.style.background = '';
                 continueBtn.style.transform = '';
-                continueBtn.title = '继续执行 (F6)';
+                continueBtn.title = window.i18n.t('debug.continueTitle');
             }, 5000);
         }
     }
@@ -3688,7 +3688,7 @@ ${data.message || '程序已加载，等待开始执行'}
                 }
             } catch (error) {
                 logError('[主进程] 打开GitHub Issues时出错:', error || {});
-                alert('无法打开外部链接。请访问：\n' + url);
+                alert(window.i18n.t('feedback.externalLinkFailed', { url }));
             }
             dialog.remove();
         });
@@ -4044,22 +4044,22 @@ ${data.message || '程序已加载，等待开始执行'}
                 case 'ready':
                     icon.textContent = '✓';
                     icon.style.color = '#4ec9b0';
-                    lspItem.title = 'clangd 语言服务器已就绪';
+                    lspItem.title = window.i18n.t('lsp.statusReady');
                     break;
                 case 'starting':
                     icon.textContent = '⟳';
                     icon.style.color = '#dcdcaa';
-                    lspItem.title = 'clangd 语言服务器正在启动...';
+                    lspItem.title = window.i18n.t('lsp.statusStarting');
                     break;
                 case 'unavailable':
                     icon.textContent = '✗';
                     icon.style.color = '#f44747';
-                    lspItem.title = 'clangd 语言服务器不可用';
+                    lspItem.title = window.i18n.t('lsp.statusUnavailable');
                     break;
                 default:
                     icon.textContent = '◌';
                     icon.style.color = '#808080';
-                    lspItem.title = 'clangd 语言服务器空闲';
+                    lspItem.title = window.i18n.t('lsp.statusIdle');
                     break;
             }
         } catch (_) {
@@ -4100,7 +4100,7 @@ ${data.message || '程序已加载，等待开始执行'}
                 warningsEl.style.display = 'none';
             }
 
-            summaryItem.title = `${counts.errors} 个错误, ${counts.warnings} 个警告`;
+            summaryItem.title = window.i18n.t('statusbar.errorsWarningsSummary', { errors: counts.errors, warnings: counts.warnings });
         } catch (_) {
             summaryItem.style.display = 'none';
         }

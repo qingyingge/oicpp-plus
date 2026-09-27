@@ -4310,7 +4310,7 @@ class MonacoEditorManager {
                 const previewContextExpr = monaco.ContextKeyExpr ? monaco.ContextKeyExpr.equals('oicppIsMarkdown', true) : 'oicppIsMarkdown';
                 editor.addAction({
                     id: 'markdown-preview-split',
-                    label: '打开 Markdown 预览',
+                    label: window.i18n.t('monaco.openMarkdownPreview'),
                     keybindings: markdownPreviewKey ? [markdownPreviewKey] : [],
                     precondition: previewContextExpr,
                     keybindingContext: null,

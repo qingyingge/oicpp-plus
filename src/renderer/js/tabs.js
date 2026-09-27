@@ -4188,10 +4188,10 @@ class TabManager {
         const filePath = this.getTabFilePath(tabData, uniqueKey);
         const menuItems = [
             {
-                label: '在资源管理器中打开',
+                label: window.i18n.t('tabs.openInExplorer'),
                 action: () => {
                     if (!filePath) {
-                        window.oicppApp?.showMessage?.('该文件尚未保存，无法在资源管理器中打开。', 'warning');
+                        window.oicppApp?.showMessage?.(window.i18n.t('tabs.openInExplorerUnavailable'), 'warning');
                         return;
                     }
                     this.openInSystemExplorer(filePath);
@@ -4199,15 +4199,15 @@ class TabManager {
             },
             { label: '---' },
             {
-                label: '关闭此文件',
+                label: window.i18n.t('tabs.closeThisTab'),
                 action: () => this.closeTabByUniqueKey(uniqueKey)
             },
             {
-                label: '关闭除此以外的所有',
+                label: window.i18n.t('tabs.closeOtherTabs'),
                 action: () => this.closeOtherTabsByUniqueKey(uniqueKey)
             },
             {
-                label: '关闭右侧的所有标签页',
+                label: window.i18n.t('tabs.closeTabsToRight'),
                 action: () => this.closeTabsToRightByUniqueKey(uniqueKey)
             }
         ];
