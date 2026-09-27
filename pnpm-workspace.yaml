@@ -1,5 +1,9 @@
 overrides:
   '@electron/get': 5.1.0
+  # @iktakahiro/markdown-it-katex pins katex ^0.12.0, whose renderToString emits
+  # pre-0.13 class names (base/strut/sizing) that katex.min.css >=0.13 no longer
+  # styles. Force a single katex so the shipped CSS matches the rendered HTML.
+  katex: ^0.18.9
 allowBuilds:
   electron: true
   node-pty: true
