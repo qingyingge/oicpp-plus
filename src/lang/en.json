@@ -1271,6 +1271,7 @@
     "shortcutHint": "Supports Ctrl+Shift+I to open quickly",
     "splitHint": "Supports tab split-screen · Drag tabs to empty areas",
     "reload": "Refresh",
+    "stop": "Stop",
     "welcomeHint": "Enter a URL in the address bar to start browsing<br>Press Ctrl+Shift+I to open DevTools"
   },
   "cloudCompile": {

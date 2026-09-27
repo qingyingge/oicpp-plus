@@ -230,7 +230,7 @@ class BrowserManager {
             '<path d="M7 7V5h2v2h2v2H9v2H7V9H5V7h2z" fill="currentColor"/>',
             '</svg>'
         ].join('');
-        openNewTabBtn.title = ('browser.openInNewTab');
+        openNewTabBtn.title = window.i18n.t('browser.openInNewTab');
         navBar.appendChild(openNewTabBtn);
 
         // 导航按钮事件
@@ -451,7 +451,7 @@ class BrowserManager {
                 '<rect x="6" y="6" width="12" height="12" rx="2"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = ('browser.stop');
+            reloadBtn.title = window.i18n.t('browser.stop');
             reloadBtn.dataset.action = 'stop';
         } else {
             reloadBtn.innerHTML = [
@@ -460,7 +460,7 @@ class BrowserManager {
                 '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
                 '</svg>'
             ].join('');
-            reloadBtn.title = ('browser.reload');
+            reloadBtn.title = window.i18n.t('browser.reload');
             reloadBtn.dataset.action = 'reload';
         }
     }

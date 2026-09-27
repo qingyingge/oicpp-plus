@@ -1246,6 +1246,7 @@
     "shortcutHint": "支持 Ctrl+Shift+I 快速打开",
     "splitHint": "支持标签页分屏 · 拖动标签到空白处即可",
     "reload": "刷新",
+    "stop": "停止",
     "welcomeHint": "在地址栏输入 URL 开始浏览<br>按 Ctrl+Shift+I 打开开发者工具"
   },
   "tabs": {

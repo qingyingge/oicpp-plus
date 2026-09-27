@@ -827,6 +827,228 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
   fail('electron version not found in devDependencies');
 }
 
+// ============================================================
+// I. i18n
+// ============================================================
+
+// Ratcheting baselines. Lower these whenever a migration batch lands.
+// Exceeding one means new regressions were introduced, not that the
+// remaining backlog grew — that is a FAIL.
+const I18N_HARDCODED_CJK_BASELINE = 156;
+const I18N_EN_PUNCT_BASELINE = 1;
+
+const langDir = path.join(root, 'src', 'lang');
+const flattenI18n = (obj, prefix = '', out = {}) => {
+  for (const [k, v] of Object.entries(obj || {})) {
+    const key = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) flattenI18n(v, key, out);
+    else out[key] = v;
+  }
+  return out;
+};
+const placeholdersOf = (value) => (String(value).match(/\{\w+\}/g) || []).sort();
+const summarize = (list, keep = 8) =>
+  `${list.slice(0, keep).join(', ')}${list.length > keep ? `, ... (+${list.length - keep})` : ''}`;
+
+// I1: Language pack integrity
+console.log(`\n${Y}[I1] Language pack integrity${R}`);
+const localeFiles = fileExists(langDir) ? fs.readdirSync(langDir).filter((f) => f.endsWith('.json')).sort() : [];
+const locales = {};
+if (localeFiles.length === 0) {
+  fail('no language pack found in src/lang/');
+} else {
+  for (const f of localeFiles) {
+    const code = path.basename(f, '.json');
+    const data = readJson(path.join(langDir, f));
+    if (!data) {
+      fail(`${f} is not valid JSON (one bad escape blanks the whole UI)`);
+      continue;
+    }
+    const flat = flattenI18n(data);
+    if (Object.keys(flat).length === 0) { fail(`${f} has no keys`); continue; }
+    if (data.meta && data.meta.code && data.meta.code !== code) {
+      fail(`${f} declares meta.code="${data.meta.code}" but the filename implies "${code}"`);
+    }
+    locales[code] = flat;
+  }
+  if (Object.keys(locales).length === localeFiles.length) {
+    const total = Object.values(locales)[0];
+    ok(`${localeFiles.length} pack(s) parse cleanly: ${Object.keys(locales).join(', ')} (${Object.keys(total).length} keys)`);
+  }
+  for (const required of ['zh-cn', 'en']) {
+    if (!locales[required]) fail(`required locale missing: ${required}.json`);
+  }
+}
+
+// I2: Locale key alignment
+console.log(`\n${Y}[I2] Locale key alignment${R}`);
+const localeCodes = Object.keys(locales);
+if (localeCodes.length >= 2) {
+  const base = localeCodes[0];
+  const baseKeys = Object.keys(locales[base]);
+  const baseSet = new Set(baseKeys);
+  let aligned = true;
+  for (const code of localeCodes.slice(1)) {
+    const other = Object.keys(locales[code]);
+    const otherSet = new Set(other);
+    const missing = baseKeys.filter((k) => !otherSet.has(k));
+    const extra = other.filter((k) => !baseSet.has(k));
+    if (missing.length > 0) { fail(`${code}.json missing ${missing.length} key(s) in ${base}.json: ${summarize(missing)}`); aligned = false; }
+    if (extra.length > 0) { fail(`${code}.json has ${extra.length} key(s) absent from ${base}.json: ${summarize(extra)}`); aligned = false; }
+  }
+  if (aligned) ok(`all ${localeCodes.length} locales share the same ${baseKeys.length} keys`);
+} else {
+  warn('fewer than 2 locales parsed — cannot cross-check key alignment');
+}
+
+// I3: Placeholder alignment
+console.log(`\n${Y}[I3] Placeholder alignment${R}`);
+if (localeCodes.length >= 2) {
+  const base = localeCodes[0];
+  const baseSet = new Set(Object.keys(locales[base]));
+  let phOk = true;
+  let phChecked = 0;
+  for (const code of localeCodes.slice(1)) {
+    for (const [key, value] of Object.entries(locales[code])) {
+      if (!baseSet.has(key)) continue;
+      phChecked++;
+      const mine = placeholdersOf(value);
+      const theirs = placeholdersOf(locales[base][key]);
+      if (mine.join('|') !== theirs.join('|') || mine.some((p) => !theirs.includes(p)) || theirs.some((p) => !mine.includes(p))) {
+        fail(`${code}.json "${key}" placeholders [${mine.join(', ')}] != ${base}.json [${theirs.join(', ')}]`);
+        phOk = false;
+      }
+    }
+  }
+  if (phOk) ok(`placeholder sets match across locales (${phChecked} keys checked)`);
+} else {
+  warn('fewer than 2 locales parsed — cannot cross-check placeholders');
+}
+
+// I4: English pack hygiene
+console.log(`\n${Y}[I4] English pack hygiene${R}`);
+if (locales.en) {
+  const enCjk = Object.entries(locales.en).filter(([, v]) => /[\u4e00-\u9fff]/.test(String(v)));
+  if (enCjk.length > 0) {
+    fail(`en.json has CJK text in ${enCjk.length} key(s): ${summarize(enCjk.map(([k]) => k))}`);
+  } else {
+    ok('en.json has no CJK ideographs');
+  }
+  // Fullwidth forms, ideographic comma and CJK brackets/quotes are unambiguous;
+  // U+2026 / U+2014 are legitimate English typography and must not be flagged.
+  const cnPunctRe = /[\uff0c\u3002\uff1b\uff1a\u3001\uff08\uff09\u300c\u300d\u3010\u3011\u201c\u201d\u2018\u2019]/;
+  const enPunct = Object.entries(locales.en).filter(([, v]) => cnPunctRe.test(String(v)));
+  if (enPunct.length > I18N_EN_PUNCT_BASELINE) {
+    fail(`en.json has CJK punctuation in ${enPunct.length} key(s) (baseline ${I18N_EN_PUNCT_BASELINE}): ${summarize(enPunct.map(([k]) => k))}`);
+  } else if (enPunct.length > 0) {
+    warn(`en.json has ${enPunct.length} key(s) still using CJK punctuation (baseline ${I18N_EN_PUNCT_BASELINE}): ${summarize(enPunct.map(([k]) => k))}`);
+  } else {
+    ok('en.json has no CJK punctuation');
+  }
+}
+
+// I5: No-op t() residue
+// A regex rewrite of `window.i18n ? window.i18n.t('key') : 'x'` can leave a bare
+// parenthesized string behind, which silently renders the key name to the user.
+// The lowercase dotted shape is what keeps this signal free of false positives;
+// `('key')` is a no-op regardless of whether the key exists in the packs.
+console.log(`\n${Y}[I5] No-op t() residue${R}`);
+{
+  const allKeys = new Set();
+  for (const flat of Object.values(locales)) for (const k of Object.keys(flat)) allKeys.add(k);
+  const residueRe = /(?<![=!<>+\-*/&|%?:])\s=\s*\(\s*['"]([a-z][\w]*(?:\.[a-zA-Z][\w]*)+)['"]\s*\)\s*;?\s*$/gm;
+  let residue = 0;
+  for (const f of [...jsFiles, ...htmlFiles]) {
+    const content = readFile(f);
+    if (!content) continue;
+    for (const m of content.matchAll(residueRe)) {
+      const line = content.slice(0, m.index).split('\n').length;
+      const unknown = allKeys.has(m[1]) ? '' : ' (and the key is not in any language pack)';
+      fail(`${path.relative(root, f)}:${line} assigns ('${m[1]}') instead of calling t() — renders the raw key${unknown}`);
+      residue++;
+    }
+  }
+  if (residue === 0) ok('no no-op t() residue');
+}
+
+// I6: Referenced key resolution
+console.log(`\n${Y}[I6] Referenced key resolution${R}`);
+{
+  const refKeys = new Set();
+  const scanFiles = [...jsFiles, ...htmlFiles].filter((f) => !f.startsWith(langDir));
+  const callRe = /\b(?:i18n|i18next|__|this)\s*\.\s*t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  const bareCallRe = /(?<![.\w])t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  const attrRe = /data-i18n(?:-[a-z]+)?\s*=\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  for (const f of scanFiles) {
+    const content = readFile(f);
+    if (!content) continue;
+    for (const re of [callRe, bareCallRe, attrRe]) {
+      for (const m of content.matchAll(re)) refKeys.add(m[1]);
+    }
+  }
+  if (refKeys.size === 0) {
+    warn('no statically referenced i18n keys found — key resolution check is inconclusive');
+  } else {
+    let refOk = true;
+    for (const [code, flat] of Object.entries(locales)) {
+      const missing = [...refKeys].filter((k) => flat[k] === undefined);
+      if (missing.length > 0) {
+        fail(`${code}.json is missing ${missing.length} referenced key(s): ${summarize(missing)}`);
+        refOk = false;
+      }
+    }
+    if (refOk) ok(`all ${refKeys.size} statically referenced keys resolve in ${localeCodes.join(', ')}`);
+  }
+}
+
+// I7: Unused keys (informational — keys may be referenced dynamically)
+console.log(`\n${Y}[I7] Unused keys${R}`);
+if (localeCodes.length >= 1) {
+  const base = locales[localeCodes[0]];
+  const refKeys = new Set();
+  const callRe = /\b(?:i18n|i18next|__|this)\s*\.\s*t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  const bareCallRe = /(?<![.\w])t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  const attrRe = /data-i18n(?:-[a-z]+)?\s*=\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  for (const f of [...jsFiles, ...htmlFiles].filter((x) => !x.startsWith(langDir))) {
+    const content = readFile(f);
+    if (!content) continue;
+    for (const re of [callRe, bareCallRe, attrRe]) for (const m of content.matchAll(re)) refKeys.add(m[1]);
+  }
+  const unused = Object.keys(base).filter((k) => !refKeys.has(k));
+  info(`${unused.length} of ${Object.keys(base).length} keys are not statically referenced (dynamic lookups are not detected)`);
+}
+
+// I8: Hardcoded CJK ratchet
+console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
+{
+  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|new Error\(|throw Error)/;
+  let count = 0;
+  const byFile = {};
+  for (const f of [...jsFiles, ...htmlFiles]) {
+    const content = readFile(f);
+    if (!content) continue;
+    for (const line of content.split('\n')) {
+      if (!/[\u4e00-\u9fff]/.test(line)) continue;
+      if (/log(Error|Warn|Info|Debug)/.test(line)) continue;      // logs are developer-facing
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;             // comments
+      if (!userVisibleRe.test(line)) continue;                  // not user-facing
+      count++;
+      const rel = path.relative(root, f);
+      byFile[rel] = (byFile[rel] || 0) + 1;
+    }
+  }
+  if (count > I18N_HARDCODED_CJK_BASELINE) {
+    fail(`${count} user-visible hardcoded CJK lines (baseline ${I18N_HARDCODED_CJK_BASELINE}, +${count - I18N_HARDCODED_CJK_BASELINE}) — migrate to t() or lower the baseline`);
+  } else if (count === 0) {
+    ok('no user-visible hardcoded CJK text');
+  } else {
+    ok(`${count} user-visible hardcoded CJK lines remain (baseline ${I18N_HARDCODED_CJK_BASELINE}${count < I18N_HARDCODED_CJK_BASELINE ? `, ${I18N_HARDCODED_CJK_BASELINE - count} cleared — lower the baseline` : ''})`);
+  }
+  if (verbose && count > 0) {
+    for (const [f, c] of Object.entries(byFile).sort((a, b) => b[1] - a[1])) info(`  ${c} ${f}`);
+  }
+}
+
 // T1: Regression tests (tests/*.test.js, auto-discovered by tests/run-tests.js)
 function runRegressionTests() {
   console.log(`\n${Y}[T1] Regression tests${R}`);
