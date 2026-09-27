@@ -278,6 +278,7 @@
     "openFolderElectronRequired": "打开文件夹功能需要在 Electron 环境中运行",
     "cloudCompileUnavailable": "云端编译不可用",
     "browserUnavailable": "内置浏览器不可用",
+    "openFileFailed": "无法打开 {name}\n{error}",
     "cloudCompile": "云端编译"
   },
   "dialog": {
@@ -823,7 +824,31 @@
     "breakpointSetFailed": "设置断点失败",
     "variableNotFound": "未找到变量 {name}",
     "variableValueError": "<错误>",
-    "programConsoleTitle": "程序控制台"
+    "programConsoleTitle": "程序控制台",
+    "startedReady": "调试器已启动，程序准备运行",
+    "sessionStartedInfo": "调试会话已启动\n\n程序已加载: {exe}\n状态: 等待运行或断点命中\n\n提示:\n- 点击行号设置断点\n- 使用F6继续执行\n- 使用F7单步执行\n- 查看右侧变量面板",
+    "programRunningStatus": "程序正在运行...",
+    "programRunningInfo": "程序正在运行，请等待程序执行或命中断点\n\n如果程序需要输入，请在控制台或弹出的终端窗口中输入",
+    "programExitedWithCode": "程序运行完成，退出码: {code}",
+    "programExitedInfo": "程序运行完成，退出码: {code}\n\n程序输出应该在终端窗口中显示。",
+    "programExitedStatus": "程序执行完成，退出码: {code}",
+    "debugStopped": "调试已停止",
+    "debugStoppedInfo": "调试已停止。",
+    "pausedAtBreakpoint": "断点处暂停",
+    "pausedAtStep": "单步结束已暂停",
+    "pausedAtSignal": "收到信号已暂停",
+    "pausedGeneric": "程序已暂停",
+    "pausedWhere": " 在 {file}:{line}",
+    "debugContinueHint": "\n\n您可以继续执行(F6)或步过(F7)/步入(F8)/步出(Shift+F8)。",
+    "waitingRunOrBreakpoint": "等待运行或断点命中",
+    "readyWaiting": "调试器已就绪，等待启动程序",
+    "readyWaitingInfo": "调试器已成功启动并准备就绪！\n\n{detail}\n\n操作提示:\n- 点击 \"继续执行\" 按钮 (▶️) 或按 F6 开始运行程序\n- 如果设置了断点，程序会在断点处停止\n- 如果没有断点，程序会正常运行到结束\n\n当前状态: {status}",
+    "hasBreakpoints": "已设置断点",
+    "noBreakpointsSet": "未设置断点",
+    "programLoadedWaiting": "程序已加载，等待开始执行",
+    "promptAddWatch": "请输入要监视的变量名或表达式：\n例如：myVar, array[0], obj.member",
+    "breakpointHit": "断点命中: {file}:{line} ({fn})",
+    "breakpointHitInfo": "断点命中！\n\n文件: {file}\n行号: {line}\n函数: {fn}\n\n程序已暂停，您可以：\n- 查看右侧变量面板中的当前变量值\n- 使用F6继续执行\n- 使用F7单步执行\n- 使用F8步入函数"
   },
   "cloud": {
     "title": "云空间",
@@ -1021,6 +1046,8 @@
     "clearDirSuccess": "已删除 {path} 下的 {count} 个顶层项目",
     "batchDeleteNeedApp": "批量删除功能需要在完整应用环境中运行",
     "batchDeleteFail": "批量删除失败: {error}",
+    "openWorkspaceFirst": "请先打开一个工作区文件夹",
+    "fileManagerUnavailable": "文件管理器不可用，无法创建新文件",
     "unknownError": "未知错误"
   },
   "backup": {

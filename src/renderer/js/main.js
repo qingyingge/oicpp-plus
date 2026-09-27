@@ -1418,8 +1418,8 @@ class OICPPApp {
             } catch (error) {
                 logError('打开拖拽文件失败:', error);
                 if (window.dialogManager?.showError) {
-                    const displayName = file?.name || '未知文件';
-                    window.dialogManager.showError(`无法打开 ${displayName}\n${error?.message || String(error)}`);
+                    const displayName = file?.name || window.i18n.t('panel.unknownFile');
+                    window.dialogManager.showError(window.i18n.t('message.openFileFailed', { name: displayName, error: error?.message || String(error) }));
                 }
             }
         }
@@ -1827,7 +1827,7 @@ class OICPPApp {
         if (!fileExplorer || !fileExplorer.hasWorkspace) {
             logWarn('没有打开的工作区，无法创建新文件');
             if (window.dialogManager) {
-                window.dialogManager.showError('请先打开一个工作区文件夹');
+                window.dialogManager.showError(window.i18n.t('fileExplorer.openWorkspaceFirst'));
             }
             return;
         }
@@ -1837,7 +1837,7 @@ class OICPPApp {
         } else {
             logError('文件管理器不可用，无法创建新文件');
             if (window.dialogManager) {
-                window.dialogManager.showError('文件管理器不可用，无法创建新文件');
+                window.dialogManager.showError(window.i18n.t('fileExplorer.fileManagerUnavailable'));
             }
         }
     }
@@ -2841,17 +2841,8 @@ class OICPPApp {
         
         this.updateAllDebugPanels(this.t('debug.sessionStarted', null, 'Debug session started; program loaded'));
         
-        this.updateDebugStatus('调试器已启动，程序准备运行');
-    this.showDebugInfo(`调试会话已启动
-        
-程序已加载: ${data.executable || data.sourceFile}
-状态: 等待运行或断点命中
-
-提示:
-- 点击行号设置断点
-- 使用F6继续执行
-- 使用F7单步执行
-- 查看右侧变量面板`);
+        this.updateDebugStatus(window.i18n.t('debug.startedReady'));
+    this.showDebugInfo(window.i18n.t('debug.sessionStartedInfo', { exe: data.executable || data.sourceFile }));
     }
 
     onDebugStopped(data) {
@@ -2865,8 +2856,8 @@ class OICPPApp {
             this._debugExited = true;
             this.unbindDebugTerminalBridge();
             this.updateDebugControlsState(false);
-            this.updateDebugStatus(`程序运行完成，退出码: ${data.exitCode ?? data.code ?? 0}`);
-            this.showDebugInfo(`程序运行完成，退出码: ${data.exitCode ?? data.code ?? 0}\n\n程序输出应该在终端窗口中显示。`);
+            this.updateDebugStatus(window.i18n.t('debug.programExitedWithCode', { code: data.exitCode ?? data.code ?? 0 }));
+            this.showDebugInfo(window.i18n.t('debug.programExitedInfo', { code: data.exitCode ?? data.code ?? 0 }));
             this.showWaitingMessages();
             try { window.monacoEditorManager?.clearAllExecHighlights?.(); } catch (_) {}
             return;
@@ -2877,8 +2868,8 @@ class OICPPApp {
             this._debugExited = true;
             this.unbindDebugTerminalBridge();
             this.updateDebugControlsState(false);
-            this.updateDebugStatus('调试已停止');
-            this.showDebugInfo('调试已停止。');
+            this.updateDebugStatus(window.i18n.t('debug.debugStopped'));
+            this.showDebugInfo(window.i18n.t('debug.debugStoppedInfo'));
             this.showWaitingMessages();
             try { window.monacoEditorManager?.clearAllExecHighlights?.(); } catch (_) {}
             return;
@@ -2895,15 +2886,15 @@ class OICPPApp {
         const file = data?.file || data?.frame?.file || '';
         const line = Number(data?.line || data?.frame?.line || '') || '';
         const fileName = file ? String(file).split(/[\\/]/).pop() : '';
-        const where = fileName && line ? ` 在 ${fileName}:${line}` : '';
+        const where = fileName && line ? window.i18n.t('debug.pausedWhere', { file: fileName, line }) : '';
 
-        const prettyReason = reason.includes('breakpoint') ? '断点处暂停'
-                             : reason.includes('end-stepping-range') ? '单步结束已暂停'
-                             : reason.includes('signal') ? '收到信号已暂停'
-                             : '程序已暂停';
+        const prettyReason = reason.includes('breakpoint') ? window.i18n.t('debug.pausedAtBreakpoint')
+                             : reason.includes('end-stepping-range') ? window.i18n.t('debug.pausedAtStep')
+                             : reason.includes('signal') ? window.i18n.t('debug.pausedAtSignal')
+                             : window.i18n.t('debug.pausedGeneric');
 
         this.updateDebugStatus(`${prettyReason}${where}`);
-        this.showDebugInfo(`${prettyReason}${where}\n\n您可以继续执行(F6)或步过(F7)/步入(F8)/步出(Shift+F8)。`);
+        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint')}`);
 
         if (file && line) {
             try { this.highlightCurrentLine(file, line); } catch (_) {}
@@ -2912,8 +2903,8 @@ class OICPPApp {
 
     onDebugRunning() {
         logInfo('[前端] 程序正在运行');
-        this.updateDebugStatus('程序正在运行...');
-        this.showDebugInfo('程序正在运行，请等待程序执行或命中断点\n\n如果程序需要输入，请在控制台或弹出的终端窗口中输入');
+        this.updateDebugStatus(window.i18n.t('debug.programRunningStatus'));
+        this.showDebugInfo(window.i18n.t('debug.programRunningInfo'));
         
         this.clearContinueButtonHighlight();
     }
@@ -2938,18 +2929,12 @@ class OICPPApp {
 
     onDebugReadyWaiting(data) {
         logInfo('[前端] 调试器就绪等待:', data);
-        this.updateDebugStatus('调试器已就绪，等待启动程序');
+        this.updateDebugStatus(window.i18n.t('debug.readyWaiting'));
         
-    const message = `调试器已成功启动并准备就绪！
-
-${data.message || '程序已加载，等待开始执行'}
-
-操作提示:
-- 点击 "继续执行" 按钮 (▶️) 或按 F6 开始运行程序
-- 如果设置了断点，程序会在断点处停止
-- 如果没有断点，程序会正常运行到结束
-
-当前状态: ${data.hasBreakpoints ? '已设置断点' : '未设置断点'}`;
+    const message = window.i18n.t('debug.readyWaitingInfo', {
+        detail: data.message || window.i18n.t('debug.programLoadedWaiting'),
+        status: data.hasBreakpoints ? window.i18n.t('debug.hasBreakpoints') : window.i18n.t('debug.noBreakpointsSet')
+    });
         
         this.showDebugInfo(message);
         
@@ -3023,7 +3008,7 @@ ${data.message || '程序已加载，等待开始执行'}
         const lower = msg.toLowerCase();
     if (/running|not\s*stopped|already\s*running|already\s*started|target\s+is\s+executing|debugger\s+not\s+running|调试器未运行/.test(lower)) {
             logInfo('收到良性调试提示:', msg);
-            this.updateDebugStatus('程序正在运行...');
+            this.updateDebugStatus(window.i18n.t('debug.programRunningStatus'));
             return;
         }
         this.unbindDebugTerminalBridge();
@@ -3067,20 +3052,14 @@ ${data.message || '程序已加载，等待开始执行'}
             });
         } catch (_) {}
 
-        const fileName = breakpoint.file ? breakpoint.file.split(/[\\/]/).pop() : '未知文件';
-        this.updateDebugStatus(`断点命中: ${fileName}:${breakpoint.line} (${breakpoint.function || '未知函数'})`);
+        const fileName = breakpoint.file ? breakpoint.file.split(/[\\/]/).pop() : window.i18n.t('panel.unknownFile');
+        this.updateDebugStatus(window.i18n.t('debug.breakpointHit', { file: fileName, line: breakpoint.line, fn: breakpoint.function || window.i18n.t('debug.unknownFunction') }));
         
-    const debugInfo = `断点命中！
-
-文件: ${fileName}
-行号: ${breakpoint.line}
-函数: ${breakpoint.function || '未知函数'}
-
-程序已暂停，您可以：
-- 查看右侧变量面板中的当前变量值
-- 使用F6继续执行
-- 使用F7单步执行
-- 使用F8步入函数`;
+    const debugInfo = window.i18n.t('debug.breakpointHitInfo', {
+        file: fileName,
+        line: breakpoint.line,
+        fn: breakpoint.function || window.i18n.t('debug.unknownFunction')
+    });
         
         this.showDebugInfo(debugInfo);
         
@@ -3257,10 +3236,10 @@ ${data.message || '程序已加载，等待开始执行'}
             frameElement.innerHTML = `
                 <div class="frame-info">
                     <span class="frame-index">#${index}</span>
-                    <span class="frame-function">${frame.function || '未知函数'}</span>
+                    <span class="frame-function">${frame.function || window.i18n.t('debug.unknownFunction')}</span>
                 </div>
                 <div class="frame-location">
-                    <span class="frame-file">${frame.file || '未知文件'}</span>
+                    <span class="frame-file">${frame.file || window.i18n.t('debug.unknownFile')}</span>
                     ${frame.line ? `<span class="frame-line">:${frame.line}</span>` : ''}
                 </div>
             `;
@@ -3344,7 +3323,7 @@ ${data.message || '程序已加载，等待开始执行'}
     }
 
     handleAddWatch() {
-        const variableName = prompt('请输入要监视的变量名或表达式：\n例如：myVar, array[0], obj.member');
+        const variableName = prompt(window.i18n.t('debug.promptAddWatch'));
         if (variableName && variableName.trim()) {
             if (typeof require !== 'undefined') {
                 const { ipcRenderer } = require('electron');

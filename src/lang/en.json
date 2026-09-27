@@ -295,6 +295,7 @@
     "openFolderElectronRequired": "The Open Folder feature requires the Electron environment",
     "cloudCompileUnavailable": "Cloud compilation is unavailable",
     "browserUnavailable": "The built-in browser is unavailable",
+    "openFileFailed": "Cannot open {name}\n{error}",
     "cloudCompile": "Cloud Compile"
   },
   "dialog": {
@@ -840,7 +841,31 @@
     "breakpointSetFailed": "Failed to set breakpoint",
     "variableNotFound": "Variable {name} not found",
     "variableValueError": "<error>",
-    "programConsoleTitle": "Program Console"
+    "programConsoleTitle": "Program Console",
+    "startedReady": "Debugger started, program ready to run",
+    "sessionStartedInfo": "Debug session started\n\nProgram loaded: {exe}\nStatus: waiting to run or hit a breakpoint\n\nHints:\n- Click a line number to set a breakpoint\n- Use F6 to continue execution\n- Use F7 to step\n- Check the variables panel on the right",
+    "programRunningStatus": "Program running...",
+    "programRunningInfo": "Program is running, waiting for it to finish or hit a breakpoint\n\nIf the program needs input, enter it in the console or the popped-up terminal window",
+    "programExitedWithCode": "Program finished, exit code: {code}",
+    "programExitedInfo": "Program finished, exit code: {code}\n\nProgram output should be displayed in the terminal window.",
+    "programExitedStatus": "Program exited, exit code: {code}",
+    "debugStopped": "Debugging stopped",
+    "debugStoppedInfo": "Debugging stopped.",
+    "pausedAtBreakpoint": "Paused at breakpoint",
+    "pausedAtStep": "Paused after single step",
+    "pausedAtSignal": "Paused after receiving a signal",
+    "pausedGeneric": "Program paused",
+    "pausedWhere": " at {file}:{line}",
+    "debugContinueHint": "\n\nYou can continue (F6), step over (F7), step into (F8), step out (Shift+F8).",
+    "waitingRunOrBreakpoint": "Waiting to run or hit a breakpoint",
+    "readyWaiting": "Debugger ready, waiting to start the program",
+    "readyWaitingInfo": "Debugger started successfully and is ready!\n\n{detail}\n\nTips:\n- Click the \"Continue\" button (▶️) or press F6 to start the program\n- If breakpoints are set, the program stops at them\n- Without breakpoints, the program runs to completion\n\nCurrent status: {status}",
+    "hasBreakpoints": "Breakpoints set",
+    "noBreakpointsSet": "No breakpoints set",
+    "programLoadedWaiting": "Program loaded, waiting to start execution",
+    "promptAddWatch": "Enter a variable name or expression to watch:\ne.g. myVar, array[0], obj.member",
+    "breakpointHit": "Breakpoint hit: {file}:{line} ({fn})",
+    "breakpointHitInfo": "Breakpoint hit!\n\nFile: {file}\nLine: {line}\nFunction: {fn}\n\nProgram is paused. You can:\n- View the current variable values in the variables panel on the right\n- Use F6 to continue execution\n- Use F7 to step\n- Use F8 to step into functions"
   },
   "cloud": {
     "title": "Cloud Space",
@@ -1038,6 +1063,8 @@
     "clearDirSuccess": "Deleted {count} top-level items under {path}",
     "batchDeleteNeedApp": "Batch delete requires a full application environment",
     "batchDeleteFail": "Batch delete failed: {error}",
+    "openWorkspaceFirst": "Please open a workspace folder first",
+    "fileManagerUnavailable": "File manager is unavailable; cannot create a new file",
     "unknownError": "Unknown error"
   },
   "festival": {
