@@ -413,7 +413,7 @@ class SidebarManager {
         this.updateCloudPanelLocks();
         if (this.isCloudFileActive() && ['debug', 'samples', 'compare'].includes(panelName)) {
             if (window.oicppApp?.showMessage) {
-                const msg = ('sidebar.cloudFileLocalOnly', { feature: panelName });
+                const msg = window.i18n.t('message.cloudFileLocalOnly', { feature: panelName });
                 window.oicppApp.showMessage(msg, 'warning');
             }
             return;
@@ -504,12 +504,12 @@ class SidebarManager {
             if (!icon) return;
             if (locked) {
                 icon.classList.add('disabled');
-                icon.setAttribute('title', ('sidebar.cloudFileLocalOnly', { feature: panel }));
+                icon.setAttribute('title', window.i18n.t('message.cloudFileLocalOnly', { feature: panel }));
             } else {
                 icon.classList.remove('disabled');
-                if (panel === 'debug') icon.setAttribute('title', ('sidebar.debug'));
-                if (panel === 'samples') icon.setAttribute('title', ('sidebar.sampleTester'));
-                if (panel === 'compare') icon.setAttribute('title', ('sidebar.codeComparer'));
+                if (panel === 'debug') icon.setAttribute('title', window.i18n.t('sidebar.debug'));
+                if (panel === 'samples') icon.setAttribute('title', window.i18n.t('sidebar.sampleTester'));
+                if (panel === 'compare') icon.setAttribute('title', window.i18n.t('sidebar.codeComparer'));
             }
         });
     }

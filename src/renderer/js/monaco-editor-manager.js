@@ -6643,7 +6643,7 @@ class MonacoEditorManager {
 
                 const input = document.createElement('input');
                 input.type = 'text';
-                input.placeholder = '输入函数名过滤，回车跳转，Esc关闭';
+                input.placeholder = window.i18n.t('monaco.filterFunction');
                 input.style.padding = '10px 12px';
                 input.style.fontSize = '14px';
                 input.style.border = 'none';

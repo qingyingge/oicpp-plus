@@ -293,6 +293,7 @@
     "envNotSupported": "Current environment does not support {feature}",
     "needLocalFile": "Please save the file first before using {feature}",
     "openFolderElectronRequired": "The Open Folder feature requires the Electron environment",
+    "cloudCompileUnavailable": "Cloud compilation is unavailable",
     "cloudCompile": "Cloud Compile"
   },
   "dialog": {

@@ -439,7 +439,7 @@ class DebugPanel {
         if (isRoot && scope === 'watch') {
             const rm = document.createElement('button');
             rm.className = 'remove-watch-btn';
-            rm.title = ('debug.remove');
+            rm.title = window.i18n.t('debug.remove');
             rm.textContent = '×';
             const watchExpression = (data && typeof data.expression === 'string' && data.expression)
                 ? String(data.expression)
@@ -656,7 +656,7 @@ class DebugPanel {
         if (list.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'no-debug-message';
-            empty.textContent = ('debug.noChildren');
+            empty.textContent = window.i18n.t('debug.noChildren');
             container.appendChild(empty);
             return;
         }
@@ -683,7 +683,7 @@ class DebugPanel {
                     const parentKey = this._makeNodeKey(scope, rootName, parentPath);
                     if (this.loadingMore.has(parentKey)) return;
                     this.loadingMore.add(parentKey);
-                    val.textContent = ('debug.loading');
+                    val.textContent = window.i18n.t('debug.loading');
                     const latestParent = this._getVariableNode(scope, rootName, parentPath) || parentData || {};
                     const nextIndex = Number.isFinite(child.nextIndex) ? child.nextIndex : loadedCount;
                     const count = Number.isFinite(child.chunkSize) && child.chunkSize > 0 ? child.chunkSize : 100;

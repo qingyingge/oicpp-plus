@@ -1879,7 +1879,7 @@ class CodeComparer {
         }
         button.style.display = 'inline-flex';
         button.textContent = expanded ? (window.i18n.t('compare.collapse')) : (window.i18n.t('compare.expand'));
-        button.title = expanded ? 'Collapse output' : 'Expand full output';
+        button.title = expanded ? window.i18n.t('compare.collapse') : window.i18n.t('compare.expand');
     }
 
     async toggleErrorOutputExpand(outputType) {

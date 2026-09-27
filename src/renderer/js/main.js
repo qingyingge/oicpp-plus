@@ -178,11 +178,11 @@ class OICPPApp {
                     const blockedAction = menuItem.dataset.action;
                     if (blockedAction === 'check-update') {
                         if (this.updateDownloadState.pendingInstall) {
-                            this.showMessage(('message.updatePendingInstall'), 'info');
+                            this.showMessage(window.i18n.t('message.updatePendingInstall'), 'info');
                             return;
                         }
                         if (this.updateDownloadState.autoChecking) {
-                            this.showMessage(('message.updateAutoChecking'), 'info');
+                            this.showMessage(window.i18n.t('message.updateAutoChecking'), 'info');
                         } else if (this.updateDownloadState.downloading) {
                             const versionSuffix = this.updateDownloadState.version ? ` (${this.updateDownloadState.version})` : '';
                             this.showMessage(window.i18n.t('message.updateDownloading', {version: versionSuffix, progress: this.updateDownloadState.progress}), 'info');
@@ -272,7 +272,7 @@ class OICPPApp {
                 await this.openIntegratedTerminal();
                 break;
             case 'cloud-compile':
-                this.showMessage(('message.cloudCompileUnavailable'), 'warning');
+                this.showMessage(window.i18n.t('message.cloudCompileUnavailable'), 'warning');
                 break;
             case 'find-replace':
                 this.showFindReplace();
