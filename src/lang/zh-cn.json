@@ -31,6 +31,7 @@
     "account": "账户",
     "login": "登录",
     "myAccount": "我的账户",
+    "accountWithName": "我的账户({username})",
     "logout": "退出登录",
     "aboutMenu": "关于",
     "feedback": "反馈",
@@ -274,6 +275,7 @@
     "exportFailed": "写入 .clang-format 失败：{msg}",
     "envNotSupported": "当前环境不支持{feature}",
     "needLocalFile": "请先保存文件到本地磁盘后再使用{feature}功能",
+    "openFolderElectronRequired": "打开文件夹功能需要在 Electron 环境中运行",
     "cloudCompile": "云端编译"
   },
   "dialog": {
@@ -1233,7 +1235,10 @@
     "tabUnsaved": "标签页 \"{name}\" 有未保存修改。<br><br>请选择如何处理这些修改。",
     "confirmDiscardTemp": "确认丢弃临时文件",
     "fileUnsavedConfirm": "文件 \"{name}\" 有未保存修改。",
-    "confirmCloseTab": "确认关闭标签页"
+    "confirmCloseTab": "确认关闭标签页",
+    "closeOtherConfirm": "有 {count} 个文件未保存，确定要关闭其他标签页吗？",
+    "closeRightConfirm": "有 {count} 个文件未保存，确定要关闭右侧标签页吗？",
+    "closeAllConfirm": "有 {count} 个文件未保存，确定要关闭所有标签页吗？"
   },
   "cloudCompile": {
     "detectMacOS": "检测到 macOS 平台，已自动移除不兼容参数 -static",

@@ -407,7 +407,7 @@ class IntegratedTerminalPanel {
 
         const labelNode = tab.querySelector('.terminal-tab-label');
         if (labelNode) {
-            labelNode.textContent = `终端 ${this.sessions.size}`;
+            labelNode.textContent = window.i18n.t('terminal.tabLabel', { counter: this.sessions.size });
         }
 
         tab.classList.remove('pending');
@@ -1116,7 +1116,7 @@ class IntegratedTerminalPanel {
 
         if (this.sessions.size === 0) {
             this.empty.style.display = 'flex';
-            this.empty.textContent = '点击“新建终端”开始使用内置终端';
+            this.empty.textContent = window.i18n.t('terminal.emptyHint');
             return;
         }
 

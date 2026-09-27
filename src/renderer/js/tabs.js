@@ -2284,10 +2284,10 @@ class TabManager {
                 }
             };
 
-            const safeName = escapeHtml(tabData.fileName || fileName || '当前文件');
+            const safeName = escapeHtml(tabData.fileName || fileName || window.i18n.t('panel.unknownFile'));
             const message = tabData.isTempFile
-                ? `临时文件 “${safeName}” 未保存。<br><br>请选择如何处理临时文件。`
-                : `标签页 “${safeName}” 有未保存修改。<br><br>请选择如何处理这些修改。`;
+                ? window.i18n.t('tabs.tempFileUnsaved', { name: safeName })
+                : window.i18n.t('tabs.tabUnsaved', { name: safeName });
 
             const proceedSave = async () => {
                 try {
@@ -2324,10 +2324,10 @@ class TabManager {
 
             try {
                 if (window.dialogManager?.showActionDialog) {
-                    window.dialogManager.showActionDialog(tabData.isTempFile ? '确认丢弃临时文件' : '确认关闭标签页', message, [
-                        { id: 'save', label: '保存', className: 'dialog-btn-confirm' },
-                        { id: 'discard', label: '丢弃', className: 'dialog-btn-cancel' },
-                        { id: 'cancel', label: '取消' }
+                    window.dialogManager.showActionDialog(tabData.isTempFile ? window.i18n.t('tabs.confirmDiscardTemp') : window.i18n.t('tabs.confirmCloseTab'), message, [
+                        { id: 'save', label: window.i18n.t('dialog.save'), className: 'dialog-btn-confirm' },
+                        { id: 'discard', label: window.i18n.t('dialog.discard'), className: 'dialog-btn-cancel' },
+                        { id: 'cancel', label: window.i18n.t('dialog.cancel') }
                     ])
                         .then((result) => {
                             if (result === 'save') {
@@ -2338,13 +2338,13 @@ class TabManager {
                         })
                         .catch((e) => logWarn('关闭标签页确认弹窗失败:', e));
                 } else if (window.dialogManager?.showConfirmDialog) {
-                    window.dialogManager.showConfirmDialog('确认关闭标签页', message)
+                    window.dialogManager.showConfirmDialog(window.i18n.t('tabs.confirmCloseTab'), message)
                         .then((result) => {
                             if (result) proceedSave();
                         })
                         .catch((e) => logWarn('关闭标签页确认弹窗失败:', e));
                 } else {
-                    const result = window.confirm(`文件 “${tabData.fileName || fileName}” 有未保存修改。\n关闭将自动保存这些修改并关闭标签页，是否继续？`);
+                    const result = window.confirm(window.i18n.t('tabs.fileUnsavedConfirm', { name: tabData.fileName || fileName }));
                     if (result) proceedSave();
                 }
             } catch (e) {
@@ -2852,7 +2852,7 @@ class TabManager {
         iframe.dataset.tabId = tabId;
         iframe.setAttribute('loading', 'lazy');
         iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-popups allow-downloads');
-        iframe.title = fileName ? `${fileName} (${_t('pdfViewer.loading')})` : _t('pdfViewer.loading');
+        iframe.title = fileName ? `${fileName} (${window.i18n.t('pdfViewer.loading')})` : window.i18n.t('pdfViewer.loading');
 
         const viewerSrc = this.buildPdfViewerSrc({ filePath, tabId, inline });
         if (viewerSrc) {
@@ -2917,7 +2917,7 @@ class TabManager {
             overlay.className = 'pdf-drop-overlay';
             const message = document.createElement('div');
             message.className = 'pdf-drop-message';
-            message.textContent = '拖拽文件到此处打开';
+            message.textContent = window.i18n.t('pdfViewer.dragToOpen');
             overlay.appendChild(message);
             viewerContainer.appendChild(overlay);
         }
@@ -4305,7 +4305,7 @@ class TabManager {
 
         const modifiedTabs = tabsToClose.filter(key => this.tabs.get(key)?.modified);
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭其他标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeOtherConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
@@ -4328,7 +4328,7 @@ class TabManager {
 
         const modifiedTabs = tabsToClose.filter(key => this.tabs.get(key)?.modified);
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭右侧标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeRightConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
@@ -4678,7 +4678,7 @@ class TabManager {
     closeAllTabs() {
         const modifiedTabs = this.getModifiedTabs();
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭所有标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeAllConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
@@ -4696,7 +4696,7 @@ class TabManager {
 
         const modifiedTabs = tabsToClose.filter(fileName => this.tabs.get(fileName).modified);
         if (modifiedTabs.length > 0) {
-            const result = confirm(`有 ${modifiedTabs.length} 个文件未保存，确定要关闭其他标签页吗？`);
+            const result = confirm(window.i18n.t('tabs.closeOtherConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 

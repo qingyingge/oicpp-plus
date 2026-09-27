@@ -384,14 +384,14 @@ class OICPPApp {
             accountItem.style.display = '';
             logoutItem.style.display = '';
             if (accountLabel) {
-                accountLabel.textContent = username ? `我的账户(${username})` : '我的账户';
+                accountLabel.textContent = username ? window.i18n.t('menu.accountWithName', { username }) : window.i18n.t('menu.myAccount');
             }
         } else {
             loginItem.style.display = '';
             accountItem.style.display = 'none';
             logoutItem.style.display = 'none';
             if (accountLabel) {
-                accountLabel.textContent = '我的账户';
+                accountLabel.textContent = window.i18n.t('menu.myAccount');
             }
         }
 
@@ -1940,7 +1940,7 @@ class OICPPApp {
             return;
         }
         if (window.electronAPI) return window.electronAPI.openFolder();
-        alert('打开文件夹功能需要在 Electron 环境中运行');
+        alert(window.i18n.t('message.openFolderElectronRequired'));
     }
 
     setWorkspace(path) {
@@ -2409,7 +2409,7 @@ class OICPPApp {
         
         const waitingMessages = document.querySelectorAll('.waiting-debug-message');
         waitingMessages.forEach(msg => {
-            msg.textContent = '调试器就绪，等待开始调试...';
+            msg.textContent = window.i18n.t('debug.waitingDebug');
         });
         
         this.setupDebugEventListeners();
@@ -3684,7 +3684,7 @@ ${data.message || '程序已加载，等待开始执行'}
                 } else if (typeof window.open === 'function') {
                     window.open(url, '_blank');
                 } else {
-                    alert('无法自动打开外部链接。请访问：\n' + url);
+                    alert(window.i18n.t('feedback.externalLinkFailed', { url }));
                 }
             } catch (error) {
                 logError('[主进程] 打开GitHub Issues时出错:', error || {});
@@ -4005,7 +4005,7 @@ ${data.message || '程序已加载，等待开始执行'}
                 const editor = this.editorManager.currentEditor;
                 const pos = editor.cursorPosition || { line: 1, column: 1 };
                 
-                if (cursor) cursor.textContent = `行 ${pos.line}, 列 ${pos.column}`;
+                if (cursor) cursor.textContent = `${window.i18n.t('cloudCompile.line', { line: pos.line })}, ${window.i18n.t('cloudCompile.column', { col: pos.column })}`;
                 if (encoding) encoding.textContent = 'UTF-8';
                 if (language) language.textContent = 'C++';
             }

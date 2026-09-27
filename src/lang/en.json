@@ -48,6 +48,7 @@
     "account": "Account",
     "login": "Login",
     "myAccount": "My Account",
+    "accountWithName": "My Account ({username})",
     "logout": "Logout",
     "aboutMenu": "About",
     "feedback": "Feedback",
@@ -291,6 +292,7 @@
     "exportFailed": "Failed to write .clang-format: {msg}",
     "envNotSupported": "Current environment does not support {feature}",
     "needLocalFile": "Please save the file first before using {feature}",
+    "openFolderElectronRequired": "The Open Folder feature requires the Electron environment",
     "cloudCompile": "Cloud Compile"
   },
   "dialog": {
@@ -1200,6 +1202,9 @@
     "tabUnsaved": "Tab \"{name}\" has unsaved changes.<br><br>How would you like to handle them?",
     "confirmDiscardTemp": "Confirm Discard Temp File",
     "confirmCloseTab": "Confirm Close Tab",
+    "closeOtherConfirm": "There are {count} unsaved files. Close the other tabs?",
+    "closeRightConfirm": "There are {count} unsaved files. Close the right tabs?",
+    "closeAllConfirm": "There are {count} unsaved files. Close all tabs?",
     "fileUnsavedConfirm": "File \"{name}\" has unsaved changes."
   },
   "monaco": {

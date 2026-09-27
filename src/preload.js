@@ -441,9 +441,9 @@ try {
             } else {
                 safeIpcRenderer.invoke('clipboard-write-text', text);
             }
-            showToast('已复制到剪贴板', 'success', 1200);
+            showToast(window.i18n.t('message.copySuccess'), 'success', 1200);
         } catch (err) {
-            showToast('复制失败', 'error', 1600);
+            showToast(window.i18n.t('message.copyFailed'), 'error', 1600);
             try { console.error('Copy code failed:', err); } catch (_) { }
         }
     }, true);
