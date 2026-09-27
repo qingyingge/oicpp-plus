@@ -147,5 +147,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-test-artifacts
-          path: OICPP-*-Setup.exe
+          path: dist/OICPP-*-Setup.exe
           if-no-files-found: error

@@ -322,7 +322,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: OICPP-*-Setup.exe
+          path: dist/OICPP-*-Setup.exe
           if-no-files-found: error
 
       - name: Upload Windows installer to remote
@@ -334,7 +334,7 @@ jobs:
         run: |
           VERSION=$VERSION
           echo "Looking for installer for version: $VERSION"
-          FILE=$(ls OICPP-*-Setup.exe 2>/dev/null | head -n 1)
+          FILE=$(ls dist/OICPP-*-Setup.exe 2>/dev/null | head -n 1)
           if [ -z "$FILE" ]; then echo "No installer found, aborting upload" >&2; exit 1; fi
           echo "Uploading $FILE to $UPLOAD_API"
           curl -fsS -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$FILE" -F "version=$VERSION" -F "platform=windows" "$UPLOAD_API"

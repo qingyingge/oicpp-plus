@@ -8,7 +8,7 @@
 !endif
 !define PRODUCT_PUBLISHER "qingyingge"
 !define PRODUCT_WEB_SITE "https://github.com/qingyingge/oicpp-plus"
-!define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\OICPP-Plus IDE.exe"
+!define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\OICPP-Plus.exe"
 !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCT_NAME}"
 !define PRODUCT_UNINST_ROOT_KEY "HKCU"
 
@@ -52,7 +52,7 @@ SetCompressorDictSize 64
 ; Instfiles page
 !insertmacro MUI_PAGE_INSTFILES
 ; Finish page
-!define MUI_FINISHPAGE_RUN "$INSTDIR\OICPP-Plus IDE.exe"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\OICPP-Plus.exe"
 ; Custom page to set file association for .cpp (shown before Finish page)
 Page custom MyCppAssocShow MyCppAssocLeave
 !insertmacro MUI_PAGE_FINISH
@@ -66,7 +66,7 @@ Page custom MyCppAssocShow MyCppAssocLeave
 ; MUI end ------
 
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
-OutFile "OICPP-${PRODUCT_VERSION}-Setup.exe"
+OutFile "dist\OICPP-Plus-${PRODUCT_VERSION}-Setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\OICPP-Plus IDE"
 InstallDirRegKey HKCU "${PRODUCT_DIR_REGKEY}" ""
 ShowInstDetails show
@@ -128,23 +128,23 @@ FunctionEnd
 Function IsProtectedInstallDirectory
   StrCpy $OICPP_NEEDS_ELEVATION "0"
 
-  StrCmp /I "$INSTDIR" "$PROGRAMFILES" protected
+  StrCmp "$INSTDIR" "$PROGRAMFILES" protected
   StrCpy $R0 "$PROGRAMFILES\"
   StrLen $R1 $R0
   StrCpy $R2 "$INSTDIR" $R1
-  StrCmp /I "$R2" "$R0" protected
+  StrCmp "$R2" "$R0" protected
 
-  StrCmp /I "$INSTDIR" "$PROGRAMFILES32" protected
+  StrCmp "$INSTDIR" "$PROGRAMFILES32" protected
   StrCpy $R0 "$PROGRAMFILES32\"
   StrLen $R1 $R0
   StrCpy $R2 "$INSTDIR" $R1
-  StrCmp /I "$R2" "$R0" protected
+  StrCmp "$R2" "$R0" protected
 
-  StrCmp /I "$INSTDIR" "$PROGRAMFILES64" protected
+  StrCmp "$INSTDIR" "$PROGRAMFILES64" protected
   StrCpy $R0 "$PROGRAMFILES64\"
   StrLen $R1 $R0
   StrCpy $R2 "$INSTDIR" $R1
-  StrCmp /I "$R2" "$R0" protected
+  StrCmp "$R2" "$R0" protected
   Goto done
 
 protected:
@@ -180,13 +180,13 @@ Section "OICPP 主程序" SEC01
   File "dist\win-unpacked\chrome_200_percent.pak"
 
   CreateDirectory "$SMPROGRAMS\OICPP-Plus IDE"
-  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
+  CreateShortCut "$SMPROGRAMS\OICPP-Plus IDE\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
 
   File "dist\win-unpacked\d3dcompiler_47.dll"
+  File "dist\win-unpacked\dxcompiler.dll"
+  File "dist\win-unpacked\dxil.dll"
   File "dist\win-unpacked\ffmpeg.dll"
   File "dist\win-unpacked\icudtl.dat"
-  File "dist\win-unpacked\libEGL.dll"
-  File "dist\win-unpacked\libGLESv2.dll"
   File "dist\win-unpacked\LICENSE.electron.txt"
   File "dist\win-unpacked\LICENSES.chromium.html"
   ; 项目自身的 GPL-3.0 协议文件，装进安装目录（安装向导仅展示，不会自动装入）
@@ -248,7 +248,7 @@ Section "OICPP 主程序" SEC01
   File "dist\win-unpacked\locales\zh-CN.pak"
   File "dist\win-unpacked\locales\zh-TW.pak"
   SetOutPath "$INSTDIR"
-  File "dist\win-unpacked\OICPP-Plus IDE.exe"
+  File "dist\win-unpacked\OICPP-Plus.exe"
   SetOutPath "$INSTDIR\resources"
   File "dist\win-unpacked\resources\app.asar"
   SetOutPath "$INSTDIR\resources\app.asar.unpacked"
@@ -274,7 +274,7 @@ SectionEnd
 
 Section -Post
   WriteUninstaller "$INSTDIR\uninst.exe"
-  WriteRegStr HKCU "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\OICPP-Plus IDE.exe"
+  WriteRegStr HKCU "${PRODUCT_DIR_REGKEY}" "" "$INSTDIR\OICPP-Plus.exe"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayName" "$(^Name)"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "UninstallString" "$INSTDIR\uninst.exe"
   WriteRegStr ${PRODUCT_UNINST_ROOT_KEY} "${PRODUCT_UNINST_KEY}" "DisplayIcon" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
@@ -317,27 +317,27 @@ Function MyCppAssocLeave
     ; Create progid and association under HKCR
     WriteRegStr HKCR ".cpp" "" "OICPPIDE.cpp"
     WriteRegStr HKCR "OICPPIDE.cpp" "" "OICPP-Plus IDE C++ 源文件"
-  WriteRegStr HKCR "OICPPIDE.cpp\\DefaultIcon" "" "$INSTDIR\\OICPP-Plus IDE.exe,0"
+  WriteRegStr HKCR "OICPPIDE.cpp\\DefaultIcon" "" "$INSTDIR\\OICPP-Plus.exe,0"
   ; build the quoted command into a temp variable to avoid parser splitting
-  StrCpy $R0 '"$INSTDIR\\OICPP-Plus IDE.exe" "%1"'
+  StrCpy $R0 '"$INSTDIR\\OICPP-Plus.exe" "%1"'
   WriteRegStr HKCR "OICPPIDE.cpp\\shell\\open\\command" "" $R0
 
   ${NSD_GetState} $CONTEXT_MENU_CHECKBOX $2
   StrCmp $2 1 0 +14
     ; File context menu
     WriteRegStr HKCR "*\\shell\\OICPP_OpenFile" "" "在 OICPP-Plus 中打开文件"
-    WriteRegStr HKCR "*\\shell\\OICPP_OpenFile" "Icon" "$INSTDIR\\OICPP-Plus IDE.exe,0"
-    StrCpy $R1 '"$INSTDIR\\OICPP-Plus IDE.exe" "%1"'
+    WriteRegStr HKCR "*\\shell\\OICPP_OpenFile" "Icon" "$INSTDIR\\OICPP-Plus.exe,0"
+    StrCpy $R1 '"$INSTDIR\\OICPP-Plus.exe" "%1"'
     WriteRegStr HKCR "*\\shell\\OICPP_OpenFile\\command" "" $R1
     ; Folder context menu
     WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder" "" "在 OICPP-Plus 中打开文件夹"
-    WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder" "Icon" "$INSTDIR\\OICPP-Plus IDE.exe,0"
-    StrCpy $R2 '"$INSTDIR\\OICPP-Plus IDE.exe" "%1"'
+    WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder" "Icon" "$INSTDIR\\OICPP-Plus.exe,0"
+    StrCpy $R2 '"$INSTDIR\\OICPP-Plus.exe" "%1"'
     WriteRegStr HKCR "Directory\\shell\\OICPP_OpenFolder\\command" "" $R2
     ; Background context menu
     WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder" "" "在 OICPP-Plus 中打开文件夹"
-    WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder" "Icon" "$INSTDIR\\OICPP-Plus IDE.exe,0"
-    StrCpy $R3 '"$INSTDIR\\OICPP-Plus IDE.exe" "%V"'
+    WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder" "Icon" "$INSTDIR\\OICPP-Plus.exe,0"
+    StrCpy $R3 '"$INSTDIR\\OICPP-Plus.exe" "%V"'
     WriteRegStr HKCR "Directory\\Background\\shell\\OICPP_OpenFolder\\command" "" $R3
 
   ${NSD_GetState} $DESKTOP_SHORTCUT_CHECKBOX $1
@@ -346,7 +346,7 @@ Function MyCppAssocLeave
 FunctionEnd
 
 Function CreateDesktopShortcut
-  CreateShortCut "$DESKTOP\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus IDE.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
+  CreateShortCut "$DESKTOP\OICPP-Plus IDE.lnk" "$INSTDIR\OICPP-Plus.exe" "" "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
 FunctionEnd
 
 Function un.onUninstSuccess
@@ -374,7 +374,7 @@ Section Uninstall
   Delete "$INSTDIR\snapshot_blob.bin"
   Delete "$INSTDIR\resources.pak"
   Delete "$INSTDIR\resources\app.asar"
-  Delete "$INSTDIR\OICPP-Plus IDE.exe"
+  Delete "$INSTDIR\OICPP-Plus.exe"
   Delete "$INSTDIR\locales\zh-TW.pak"
   Delete "$INSTDIR\locales\zh-CN.pak"
   Delete "$INSTDIR\locales\vi.pak"
@@ -433,10 +433,10 @@ Section Uninstall
   Delete "$INSTDIR\LICENSES.chromium.html"
   Delete "$INSTDIR\LICENSE.electron.txt"
   Delete "$INSTDIR\LICENSE"
-  Delete "$INSTDIR\libGLESv2.dll"
-  Delete "$INSTDIR\libEGL.dll"
   Delete "$INSTDIR\icudtl.dat"
   Delete "$INSTDIR\ffmpeg.dll"
+  Delete "$INSTDIR\dxil.dll"
+  Delete "$INSTDIR\dxcompiler.dll"
   Delete "$INSTDIR\d3dcompiler_47.dll"
   Delete "$INSTDIR\chrome_200_percent.pak"
   Delete "$INSTDIR\chrome_100_percent.pak"
