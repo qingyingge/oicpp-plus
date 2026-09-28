@@ -152,13 +152,21 @@ check('无 IPC send blocked 警告', !warns.some(w => w.includes('IPC send block
         `removed=[${removedChannels}] removeAll=${removeAllCalls}`);
 
     // markdown 本地图片 + 多次渲染输出一致
-    const out1 = exposed.markdownAPI.render('![img](img.png)', 'D:/docs/readme.md');
-    const out2 = exposed.markdownAPI.render('![img](img.png)', 'D:/docs/readme.md');
-    check('相对图片路径解析为 file://', out1.includes('file:///D:/docs/img.png'), out1.slice(0, 300));
+    // 夹具用平台原生绝对路径，断言按 file:// URL 归一化后在所有系统上都成立
+    const docDir = path.join(path.parse(process.cwd()).root, 'docs');
+    const docPath = path.join(docDir, 'readme.md');
+    const normPath = (p) => p.replace(/\\/g, '/');
+    const fileUrlToPath = (url) => normPath(decodeURIComponent(url.replace(/^file:\/\//, '').replace(/^\/([A-Za-z]:)/, '$1')));
+    const out1 = exposed.markdownAPI.render('![img](img.png)', docPath);
+    const out2 = exposed.markdownAPI.render('![img](img.png)', docPath);
+    const renderedSrc = (/<img src="([^"]+)"/.exec(out1) || [])[1] || '';
+    check('相对图片路径解析为 file://',
+        renderedSrc.startsWith('file://') && fileUrlToPath(renderedSrc) === normPath(path.join(docDir, 'img.png')),
+        renderedSrc || out1.slice(0, 300));
     check('重复渲染输出一致（规则未叠加）', out1 === out2);
     const out3 = exposed.markdownAPI.render('![img](img.png)');
     check('无 filePath 时保持原相对路径', out3.includes('img.png') && !out3.includes('file://'));
-    const traversal = exposed.markdownAPI.render('![x](../../etc/passwd)', 'D:/docs/readme.md');
+    const traversal = exposed.markdownAPI.render('![x](../../etc/passwd)', docPath);
     check('Markdown 图片路径禁止越过文档目录', !traversal.includes('file://') && !traversal.includes('passwd'));
 
     // H8: 事件通道白名单——renderer 字面量通道全部可注册，非法通道被拦截

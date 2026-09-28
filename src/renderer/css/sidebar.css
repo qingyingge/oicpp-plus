@@ -106,7 +106,6 @@ body.glass-effect-enabled .panel-header {
 
 .sidebar-panel {
     flex: 1;
-    min-width: 200px;
     background-color: var(--sidebar-bg, #252526);
     position: relative;
     overflow: hidden;

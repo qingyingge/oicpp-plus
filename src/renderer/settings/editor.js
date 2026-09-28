@@ -1218,7 +1218,7 @@ class EditorSettings {
         logInfo('字体大小输入框元素:', fontSizeInput);
         if (fontSizeInput) {
             fontSizeInput.addEventListener('input', (e) => {
-                const newFontSize = parseInt(e.target.value);
+                const newFontSize = parseInt(e.target.value, 10);
                 logInfo('字体大小输入变化:', { oldValue: this.settings.fontSize, newValue: newFontSize });
                 this.updatePreview();
                 this.updateSyntaxPreview();
@@ -1508,6 +1508,7 @@ class EditorSettings {
                     clangFormatRaw: this.generateClangFormatText(),
                     stickyScrollEnabled: true,
                     foldingEnabled: true,
+                    fontLigaturesEnabled: true,
                     enableAutoCompletion: true,
                     autoSave: true,
                     autoSaveInterval: 60000,
@@ -1539,6 +1540,7 @@ class EditorSettings {
                 clangFormatRaw: this.generateClangFormatText(),
                 stickyScrollEnabled: true,
                 foldingEnabled: true,
+                fontLigaturesEnabled: true,
                 enableAutoCompletion: true,
                 autoSave: true,
                 autoSaveInterval: 60000,
@@ -1653,8 +1655,8 @@ class EditorSettings {
 
         if (fontSelect) newSettings.font = fontSelect.value;
         if (themeSelect) newSettings.theme = themeSelect.value;
-        if (fontSizeInput) newSettings.fontSize = parseInt(fontSizeInput.value);
-        if (terminalFontSizeInput) newSettings.terminalFontSize = parseInt(terminalFontSizeInput.value);
+        if (fontSizeInput) newSettings.fontSize = parseInt(fontSizeInput.value, 10);
+        if (terminalFontSizeInput) newSettings.terminalFontSize = parseInt(terminalFontSizeInput.value, 10);
         const terminalStartupCommandInput = document.getElementById('editor-terminal-startup-command');
         if (terminalStartupCommandInput) newSettings.terminalStartupCommand = terminalStartupCommandInput.value.trim();
         if (lineHeightInput) {

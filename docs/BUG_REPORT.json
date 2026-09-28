@@ -194,10 +194,14 @@
     "id": "H14",
     "severity": "HIGH",
     "title": "editor.js parseInt 无 radix",
-    "status": "待确认",
-    "file": "src/renderer/settings/editor.js:1227,1640-1641",
+    "status": "已修复",
+    "file": "src/renderer/settings/editor.js:1221,1656-1657",
     "problem": "parseInt(e.target.value) 无第二个参数，空输入产生 NaN，传播到 Monaco 编辑器破坏渲染。",
-    "impact": "可能破坏编辑器渲染。"
+    "impact": "可能破坏编辑器渲染。",
+    "fix": {
+      "commit": "220d053",
+      "note": "editor.js 中所有对输入值的 parseInt 调用统一补上 radix 10（实时预览、collectSettings 的 fontSize/terminalFontSize），空输入按 NaN 处理不再产生歧义解析。"
+    }
   },
   {
     "id": "M1",
@@ -901,19 +905,27 @@
     "id": "L7",
     "severity": "LOW",
     "title": "sidebar.css 重复 min-width",
-    "status": "待修复",
-    "file": "src/renderer/css/sidebar.css:109,113",
+    "status": "已修复",
+    "file": "src/renderer/css/sidebar.css:109,112",
     "problem": "min-width: 200px 被 min-width: 0 覆盖，前者是死代码。",
-    "impact": "死代码。"
+    "impact": "死代码。",
+    "fix": {
+      "commit": "220d053",
+      "note": "删除 .sidebar-panel 中已被 min-width: 0 覆盖的死代码 min-width: 200px。"
+    }
   },
   {
     "id": "L8",
     "severity": "LOW",
     "title": "templates.html textarea 样式泄漏",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/renderer/settings/templates.html:60-69",
     "problem": ".message-toast.warning 含 textarea 属性（resize: vertical、monospace 字体）。",
-    "impact": "样式泄漏。"
+    "impact": "样式泄漏。",
+    "fix": {
+      "commit": "220d053",
+      "note": "从 .message-toast.warning 移除 textarea 专属样式（font-family/font-size/resize/box-sizing 等），toast 仅保留背景与文字颜色。"
+    }
   },
   {
     "id": "L9",
@@ -928,10 +940,14 @@
     "id": "L10",
     "severity": "LOW",
     "title": "英文翻译含中文",
-    "status": "待修复",
-    "file": "src/lang/en.json:789",
+    "status": "已修复",
+    "file": "src/lang/en.json:972",
     "problem": "compileOutput.analysisEmpty 值是中文而非英文。",
-    "impact": "翻译错误。"
+    "impact": "翻译错误。",
+    "fix": {
+      "commit": "220d053",
+      "note": "en.json 的 compileOutput.analysisEmpty 已补齐为英文文案。"
+    }
   },
   {
     "id": "L11",
@@ -1088,10 +1104,14 @@
     "id": "L25",
     "severity": "LOW",
     "title": "settings/editor.js catch 块缺少 fontLigaturesEnabled",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/renderer/settings/editor.js:1512-1539",
     "problem": "catch 默认设置缺少 fontLigaturesEnabled。",
-    "impact": "设置缺失。"
+    "impact": "设置缺失。",
+    "fix": {
+      "commit": "220d053",
+      "note": "editor.js 的 loadSettings 两处回退默认设置（主进程加载失败与 catch 分支）补齐 fontLigaturesEnabled: true，与主默认设置块一致。"
+    }
   },
   {
     "id": "L26",
