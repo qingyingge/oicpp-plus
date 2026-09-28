@@ -156,19 +156,27 @@
     "id": "H10",
     "severity": "HIGH",
     "title": "postMessage('*') 数据泄漏",
-    "status": "待确认",
-    "file": "src/renderer/pdf-viewer.html:369",
+    "status": "已修复",
+    "file": "src/renderer/js/tabs.js:3180-3187; src/renderer/pdf-viewer.html:364-371",
     "problem": "PDF viewer 用 postMessage(..., '*') 向父窗口发送数据，可被任意 origin 接收。",
-    "impact": "数据泄漏。"
+    "impact": "数据泄漏。",
+    "fix": {
+      "commit": "TBD",
+      "note": "tabs.js 的 PDF 消息处理新增 event.origin 校验，仅接受与应用自身同源的来源，拒绝任何跨源伪造 postMessage 注入。"
+    }
   },
   {
     "id": "H11",
     "severity": "HIGH",
     "title": "CSP frame-src *",
-    "status": "待确认",
+    "status": "已修复",
     "file": "src/renderer/index.html:7",
     "problem": "Content-Security-Policy 含 frame-src *，允许任意网站嵌入此 Electron 应用。",
-    "impact": "结合 postMessage('*') 构成数据泄漏向量。"
+    "impact": "结合 postMessage('*') 构成数据泄漏向量。",
+    "fix": {
+      "commit": "TBD",
+      "note": "frame-src 由通配符收窄为 'self' data:；内嵌 PDF viewer iframe 与应用同源，内部浏览器使用 webview（不受 frame-src 约束），功能不受影响。"
+    }
   },
   {
     "id": "H12",
@@ -318,10 +326,11 @@
     "id": "M10",
     "severity": "MEDIUM",
     "title": "外部文件队列丢弃并发请求",
-    "status": "待确认",
-    "file": "src/main.js:9030-9051",
+    "status": "无效",
+    "file": "src/main.js:9229-9254",
     "problem": "if (processingExternalOpenQueue) return 丢弃所有并发调用。",
-    "impact": "新项目入队但无人触发处理。"
+    "impact": "新项目入队但无人触发处理。",
+    "invalid_reason": "处理函数用 while 循环持续排空队列；并发期间入队的新项目会被进行中的循环在下一次迭代拾取，不存在被丢弃的窗口。"
   },
   {
     "id": "M11",
@@ -467,10 +476,14 @@
     "id": "M22",
     "severity": "MEDIUM",
     "title": "sampleTester.js setInterval 泄漏",
-    "status": "待确认",
-    "file": "src/renderer/js/sidebar/sampleTester.js:244",
+    "status": "已修复",
+    "file": "src/renderer/js/sidebar/sampleTester.js:173-191; src/renderer/js/sidebar.js:426-433",
     "problem": "setupEditorChangeListener 在构造函数调用，deactivate() 不清除 interval。",
-    "impact": "定时器泄漏。"
+    "impact": "定时器泄漏。",
+    "fix": {
+      "commit": "TBD",
+      "note": "SampleTester 新增 deactivate() 清除 editorChangeInterval，activate() 时重建；SidebarManager.showPanel 离开当前面板时调用 deactivate()，定时器仅在样例面板激活期间运行。"
+    }
   },
   {
     "id": "M23",
@@ -838,10 +851,14 @@
     "id": "L1",
     "severity": "LOW",
     "title": "死代码 — debugProcess/debugSession",
-    "status": "待修复",
-    "file": "src/main.js:1963-1964",
+    "status": "已修复",
+    "file": "src/main.js",
     "problem": "声明但从未使用。",
-    "impact": "死代码。"
+    "impact": "死代码。",
+    "fix": {
+      "commit": "TBD",
+      "note": "删除未使用的 debugProcess/debugSession 模块级变量声明。"
+    }
   },
   {
     "id": "L2",
@@ -931,10 +948,14 @@
     "id": "L9",
     "severity": "LOW",
     "title": "templates.html 死代码",
-    "status": "待修复",
-    "file": "src/renderer/settings/templates.html:310-321",
+    "status": "已修复",
+    "file": "src/renderer/settings/templates.html",
     "problem": "查询 .settings-tabs .tab-btn，但 HTML 用 .sidebar-item，永远无匹配。",
-    "impact": "死代码。"
+    "impact": "死代码。",
+    "fix": {
+      "commit": "TBD",
+      "note": "删除 templates.html 内联的死代码 tab 切换脚本；实际导航由 templates.js 的 setupSidebarNavigation 处理 .sidebar-item/data-target。"
+    }
   },
   {
     "id": "L10",
@@ -993,10 +1014,14 @@
     "id": "L15",
     "severity": "LOW",
     "title": "lang/index.js reload() 无效",
-    "status": "待修复",
-    "file": "src/lang/index.js:29-31",
+    "status": "已修复",
+    "file": "src/lang/index.js",
     "problem": "资源静态加载，reloadResources() 什么都不做。",
-    "impact": "功能无效。"
+    "impact": "功能无效。",
+    "fix": {
+      "commit": "TBD",
+      "note": "删除无效的 reload() 方法；语言包在 require 时静态加载，reloadResources 对内存中资源无效且该 API 无调用方。"
+    }
   },
   {
     "id": "L16",
@@ -1126,19 +1151,24 @@
     "id": "L27",
     "severity": "LOW",
     "title": "settings/compiler.js 递归 browseCompiler",
-    "status": "待修复",
-    "file": "src/renderer/settings/compiler.js:400-402",
+    "status": "无效",
+    "file": "src/renderer/settings/compiler.js:417",
     "problem": "取消时递归调用自身，应用循环替代。",
-    "impact": "递归风险。"
+    "impact": "递归风险。",
+    "invalid_reason": "递归在 await showConfirmDialog 之后发生，每次 await 都会解栈，深度受用户交互次数限制，不会造成栈溢出。"
   },
   {
     "id": "L28",
     "severity": "LOW",
     "title": "settings/compiler.js setTestlibPath 无空检查",
-    "status": "待修复",
-    "file": "src/renderer/settings/compiler.js:1365",
+    "status": "已修复",
+    "file": "src/renderer/settings/compiler.js:1161-1168,1460-1464",
     "problem": "document.getElementById('testlib-path').value 无空检查。",
-    "impact": "空引用风险。"
+    "impact": "空引用风险。",
+    "fix": {
+      "commit": "TBD",
+      "note": "testTestlib 与 setTestlibPath 均对 #testlib-path 元素加空值保护。"
+    }
   },
   {
     "id": "L29",
@@ -1157,10 +1187,14 @@
     "id": "L30",
     "severity": "LOW",
     "title": "cloudSync.js 混用硬编码中文和 i18n",
-    "status": "待修复",
-    "file": "src/renderer/js/sidebar/cloudSync.js:825,835,895,1054",
+    "status": "已修复",
+    "file": "src/renderer/js/sidebar/cloudSync.js",
     "problem": "部分消息硬编码中文，部分用 window.i18n.t()。",
-    "impact": "i18n 不一致。"
+    "impact": "i18n 不一致。",
+    "fix": {
+      "commit": "TBD",
+      "note": "cloudSync.js 用户可见消息已全部改用 window.i18n.t()；文件内仅存的 CJK 为校验正则（/已存在|exists/），非用户可见文案。"
+    }
   },
   {
     "id": "L31",

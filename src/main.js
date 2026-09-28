@@ -2322,8 +2322,6 @@ function resolveLinuxConsoleTerminalTemplate() {
     return 'xterm -T $TITLE -e';
 }
 
-let debugProcess = null;
-let debugSession = null;
 let breakpoints = new Map();
 let currentOpenFile = null;
 let isDebugging = false;

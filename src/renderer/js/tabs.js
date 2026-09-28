@@ -3181,6 +3181,12 @@ class TabManager {
         if (!event || !event.data) {
             return;
         }
+        // PDF viewer 是应用自身资源内嵌的同源 iframe；拒绝任何跨源来源，
+        // 防止任意第三方页面伪造 postMessage 数据注入 PDF 标签页状态。
+        if (typeof event.origin === 'string' && window.location?.origin
+            && event.origin !== window.location.origin) {
+            return;
+        }
         const { source, tabId, type, detail } = event.data;
         if (source !== 'oicpp-pdf-viewer' || !tabId) {
             return;

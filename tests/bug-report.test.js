@@ -102,6 +102,65 @@ if (report) {
         const allHaveLigatures = blocks.every((blk) => blk.includes('fontLigaturesEnabled'));
         check('L25 every editor.js settings block has fontLigaturesEnabled', blocks.length >= 3 && allHaveLigatures, `${blocks.length} blocks`);
     }
+
+    // --- 本轮安全/资源修复条目代码落点 -----------------------------------
+    const tabsSource = read('src/renderer/js/tabs.js');
+    const sidebarSource = read('src/renderer/js/sidebar.js');
+    const sampleTesterSource = read('src/renderer/js/sidebar/sampleTester.js');
+    const mainSource = read('src/main.js');
+    const langIndex = read('src/lang/index.js');
+    const compilerSource = read('src/renderer/settings/compiler.js');
+    const indexHtml = read('src/renderer/index.html');
+
+    // H10: PDF 消息处理校验 event.origin（拒绝跨源伪造）
+    const h10 = report.find((i) => i.id === 'H10');
+    if (h10) {
+        check('H10 PDF message handler validates event.origin',
+            tabsSource.includes('event.origin') && tabsSource.includes('window.location.origin'));
+    }
+
+    // H11: CSP frame-src 收窄为 self
+    const h11 = report.find((i) => i.id === 'H11');
+    if (h11) {
+        const csp = /Content-Security-Policy" content="([^"]+)/.exec(indexHtml);
+        const cspValue = csp ? csp[1] : '';
+        check('H11 CSP frame-src narrowed to self', cspValue.includes('frame-src') && !cspValue.includes('frame-src *'));
+    }
+
+    // M22: sampleTester 提供 deactivate 清理 interval，且面板切换时调用
+    const m22 = report.find((i) => i.id === 'M22');
+    if (m22) {
+        check('M22 SampleTester has deactivate clearing interval',
+            sampleTesterSource.includes('deactivate()') && sampleTesterSource.includes('clearInterval(this.editorChangeInterval)'));
+        check('M22 SidebarManager calls deactivate on panel switch', sidebarSource.includes('.deactivate()'));
+    }
+
+    // L1: 移除死代码 debugProcess/debugSession
+    const l1 = report.find((i) => i.id === 'L1');
+    if (l1) {
+        check('L1 debugProcess/debugSession removed', !/let debugProcess\b|let debugSession\b/.test(mainSource));
+    }
+
+    // L9: 移除 templates.html 死代码 tab 切换脚本
+    const l9 = report.find((i) => i.id === 'L9');
+    if (l9) {
+        check('L9 templates.html dead tab script removed', !templatesHtml.includes('.settings-tabs .tab-btn'));
+    }
+
+    // L15: 移除 lang/index.js 无效 reload()
+    const l15 = report.find((i) => i.id === 'L15');
+    if (l15) {
+        check('L15 lang/index.js dead reload removed', !langIndex.includes('reload:') && !langIndex.includes('reloadResources'));
+    }
+
+    // L28: compiler.js testlib-path 元素空值保护
+    const l28 = report.find((i) => i.id === 'L28');
+    if (l28) {
+        const testBlock = /async testTestlib\(\) \{[\s\S]*?\}/.exec(compilerSource);
+        const setBlock = /async setTestlibPath\(path\) \{[\s\S]*?\}/.exec(compilerSource);
+        check('L28 testTestlib null-checks #testlib-path', !!(testBlock && testBlock[0].includes('if (!testlibPathInput)')));
+        check('L28 setTestlibPath null-checks #testlib-path', !!(setBlock && setBlock[0].includes('if (testlibPathInput)')));
+    }
 }
 
 console.log(`bug-report regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);

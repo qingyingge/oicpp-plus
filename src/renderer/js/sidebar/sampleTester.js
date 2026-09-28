@@ -179,6 +179,15 @@ class SampleTester {
         setTimeout(() => {
             this.expandAllSamples();
         }, 100);
+        this.setupEditorChangeListener();
+    }
+
+    deactivate() {
+        if (this.editorChangeInterval) {
+            clearInterval(this.editorChangeInterval);
+            this.editorChangeInterval = null;
+            logInfo('[样例测试器] 面板停用，已清理编辑器变化监听定时器');
+        }
     }
 
     async refresh() {

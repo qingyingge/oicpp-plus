@@ -25,10 +25,7 @@ const instance = {
     getAvailableLanguages: () => [
         { code: 'zh-cn', name: '中文（简体）', nameEn: 'Chinese (Simplified)' },
         { code: 'en', name: 'English', nameEn: 'English' }
-    ],
-    reload: () => {
-        i18next.reloadResources(['zh-cn', 'en']);
-    }
+    ]
 };
 
 module.exports = instance;

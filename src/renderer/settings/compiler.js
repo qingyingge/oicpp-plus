@@ -1159,7 +1159,11 @@ class CompilerSettings {
     }
     
     async testTestlib() {
-        const testlibPath = document.getElementById('testlib-path').value;
+        const testlibPathInput = document.getElementById('testlib-path');
+        if (!testlibPathInput) {
+            return;
+        }
+        const testlibPath = testlibPathInput.value;
         const resultDiv = document.getElementById('testlib-test-result');
 
         const renderTestResult = (type, message) => {
@@ -1457,8 +1461,11 @@ class CompilerSettings {
     }
     
     async setTestlibPath(path) {
-        document.getElementById('testlib-path').value = path;
-        
+        const testlibPathInput = document.getElementById('testlib-path');
+        if (testlibPathInput) {
+            testlibPathInput.value = path;
+        }
+
         if (window.electronAPI && window.electronAPI.saveSetting) {
             await window.electronAPI.saveSetting('testlibPath', path);
         }

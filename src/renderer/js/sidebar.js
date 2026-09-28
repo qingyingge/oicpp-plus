@@ -427,6 +427,12 @@ class SidebarManager {
             return;
         }
 
+        // 离开当前面板时通知其 deactivate，释放定时器/监听器等资源。
+        if (this.currentPanel && this.panels[this.currentPanel]
+            && typeof this.panels[this.currentPanel].deactivate === 'function') {
+            this.panels[this.currentPanel].deactivate();
+        }
+
         const icons = document.querySelectorAll('.sidebar-icon');
         icons.forEach(icon => {
             icon.classList.remove('active');

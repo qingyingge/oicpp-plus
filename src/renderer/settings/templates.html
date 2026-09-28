@@ -300,20 +300,6 @@ int main()
         </div>
     </div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const tabs = document.querySelectorAll('.settings-tabs .tab-btn');
-            const contents = document.querySelectorAll('.tab-content');
-            tabs.forEach(btn => btn.addEventListener('click', () => {
-                tabs.forEach(b => b.classList.remove('active'));
-                contents.forEach(c => c.classList.remove('active'));
-                btn.classList.add('active');
-                const id = btn.dataset.tab;
-                const target = id === 'tpl' ? document.getElementById('tpl-tab') : document.getElementById('snippets-tab');
-                target && target.classList.add('active');
-            }));
-        });
-    </script>
     <script src="../js/electron-helper.js"></script>
     <script src="../js/i18n.js"></script>
     <script>
