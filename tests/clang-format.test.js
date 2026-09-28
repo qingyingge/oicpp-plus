@@ -122,6 +122,21 @@ class FakeChildProcess extends EventEmitter {
     const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
     check('main process exposes the standalone formatter IPC', mainSource.includes("ipcMain.handle('format-cpp-code'"));
     check('packaged app resolves a separately bundled clang-format', mainSource.includes("path.join(process.resourcesPath, 'clang-format')"));
+    check('clang-format resolution falls back to the user LSP dir and PATH', mainSource.includes('resolveClangFormatExecutable(getUserClangdRoot())') && mainSource.includes('findClangFormatExecutableOnPath()'));
+    check('missing clang-format error reports the searched paths instead of build instructions', mainSource.includes('describeClangFormatSearchPaths()') && !mainSource.includes('Run pnpm run prebuild:clang-format'));
+
+    const installerSource = fs.readFileSync(path.join(root, 'installer.nsi'), 'utf8');
+    check('installer ships clang-format into the resources dir the app resolves', installerSource.includes('File /r "dist\\win-unpacked\\resources\\clang-format\\*"') && installerSource.includes('SetOutPath "$INSTDIR\\resources\\clang-format"'));
+    check('installer removes clang-format on uninstall', /RMDir \/r "\$INSTDIR\\resources\\clang-format"/.test(installerSource));
+
+    const pauserSource = fs.readFileSync(path.join(root, 'src', 'utils', 'consolepauser-source.js'), 'utf8');
+    check('console pauser allocates its own console so the window can pause', pauserSource.includes('AllocConsole()') && pauserSource.includes('freopen("CONIN$", "r", stdin)'));
+    check('console pauser rebinds the standard handles after freopen clobbers them', pauserSource.indexOf('freopen("CONOUT$", "w", stdout)') < pauserSource.indexOf('SetStdHandle(STD_OUTPUT_HANDLE, output)'));
+    check('console output no longer depends on GetConsoleMode', pauserSource.includes('if (WriteConsoleW(outputHandle, line') && !pauserSource.includes('GetConsoleMode(outputHandle, &mode)'));
+    check('console pauser keeps the previous summary wording', pauserSource.includes('\\u8fdb\\u7a0b\\u5df2\\u7ed3\\u675f') && pauserSource.includes('\\u8fd0\\u884c\\u65f6\\u95f4') && pauserSource.includes('\\u8bf7\\u6309\\u4efb\\u610f\\u952e\\u7ee7\\u7eed'));
+    check('console pauser is built statically first so it needs no MinGW runtime DLLs', mainSource.includes("{ name: 'utf8-static', sourceMode: 'utf8', args: ['-static'] }"));
+    check('stale console pauser binaries are rebuilt from a source fingerprint', mainSource.includes('getConsolePauserSourceFingerprint()') && mainSource.includes('getConsolePauserFingerprintPath()'));
+    check('detached run failures are logged through the child exit code', mainSource.includes("logInfo('[运行] 子进程已退出:'"));
 
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     check('build downloads standalone clang-format', packageJson.scripts['prebuild:clang-format'] === 'node scripts/run-node-compat.js scripts/download-clang-format.js');

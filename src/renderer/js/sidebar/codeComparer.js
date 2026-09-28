@@ -689,8 +689,10 @@ class CodeComparer {
                 }
                 if (task.state.mode === 'running') {
                     task.state.mode = 'complete';
-                    logInfo(`对拍完成！共执行 ${result.completed} 组测试`);
+                } else {
+                    logInfo(`对拍已提前结束（状态: ${task.state.mode}），共完成 ${result.completed} 组测试`);
                 }
+                logInfo(`对拍完成！共执行 ${result.completed} 组测试`);
                 this.renderIfActive(task);
                 cleanupAllListeners();
                 this.finishCompareTask(task);

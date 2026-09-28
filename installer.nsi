@@ -174,6 +174,10 @@ Section "OICPP 主程序" SEC01
   SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
   SetOverwrite on
   File /r "dist\win-unpacked\resources\clangd\*"
+  ; clang-format 必须落到 $INSTDIR\resources\clang-format，主进程按 process.resourcesPath 解析
+  SetOutPath "$INSTDIR\resources\clang-format"
+  SetOverwrite on
+  File /r "dist\win-unpacked\resources\clang-format\*"
   SetOutPath "$INSTDIR"
   SetOverwrite try
   File "dist\win-unpacked\chrome_100_percent.pak"
@@ -452,6 +456,7 @@ Section Uninstall
 
   RMDir "$SMPROGRAMS\OICPP-Plus IDE"
   RMDir /r "$INSTDIR\resources\app.asar.unpacked"
+  RMDir /r "$INSTDIR\resources\clang-format"
   RMDir "$INSTDIR\resources"
   RMDir "$INSTDIR\locales"
   RMDir "$INSTDIR"

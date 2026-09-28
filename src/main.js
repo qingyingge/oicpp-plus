@@ -227,6 +227,38 @@ function resolveClangFormatExecutable(rootDir) {
     return fs.existsSync(candidate) ? candidate : null;
 }
 
+function findClangFormatExecutableOnPath() {
+    const exeName = getClangFormatExecutableName();
+    const entries = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    for (const entry of entries) {
+        const candidate = path.join(entry.replace(/^"|"$/g, ''), exeName);
+        try {
+            if (fs.statSync(candidate).isFile()) {
+                return candidate;
+            }
+        } catch (_) { }
+    }
+    return null;
+}
+
+// 打包目录 → 用户 LSP 目录（与 clangd 同级）→ 系统 PATH，逐级回退，避免单点缺失导致格式化完全不可用
+function resolveClangFormatExecutablePath() {
+    return resolveClangFormatExecutable(resolveClangFormatRootFromBundle())
+        || resolveClangFormatExecutable(getUserClangdRoot())
+        || findClangFormatExecutableOnPath();
+}
+
+function describeClangFormatSearchPaths() {
+    const bundled = app.isPackaged
+        ? path.join(process.resourcesPath, 'clang-format')
+        : path.join(__dirname, '..', 'build', 'clang-format', getClangdPlatformKey());
+    return [
+        path.join(bundled, 'bin', getClangFormatExecutableName()),
+        path.join(getUserClangdRoot(), 'bin', getClangFormatExecutableName()),
+        'PATH'
+    ].join(' | ');
+}
+
 function addSystemIncludeDir(flags, includeDir) {
     if (!Array.isArray(flags) || !includeDir) {
         return false;
@@ -2426,6 +2458,14 @@ function getConsolePauserTargetPath() {
     return path.join(os.homedir(), USER_DATA_DIR_NAME, 'consolepauser.exe');
 }
 
+function getConsolePauserFingerprintPath() {
+    return `${getConsolePauserTargetPath()}.src.sha256`;
+}
+
+function getConsolePauserSourceFingerprint() {
+    return crypto.createHash('sha256').update(CONSOLE_PAUSER_SOURCE, 'utf8').digest('hex');
+}
+
 function getCompilerRuntimeBinPaths(compilerPath) {
     if (!compilerPath || !fs.existsSync(compilerPath)) {
         return [];
@@ -2446,8 +2486,17 @@ async function ensureConsolePauserExecutable(compilerPath) {
     }
 
     const consolePauserPath = getConsolePauserTargetPath();
+    const fingerprint = getConsolePauserSourceFingerprint();
+    const fingerprintPath = getConsolePauserFingerprintPath();
     if (fs.existsSync(consolePauserPath)) {
-        return consolePauserPath;
+        let recorded = '';
+        try {
+            recorded = fs.readFileSync(fingerprintPath, 'utf8').trim();
+        } catch (_) { }
+        if (recorded === fingerprint) {
+            return consolePauserPath;
+        }
+        logInfo('[ConsolePauser] 源码指纹不匹配，重新构建:', consolePauserPath);
     }
 
     if (!compilerPath || !fs.existsSync(compilerPath)) {
@@ -2538,6 +2587,7 @@ async function ensureConsolePauserExecutable(compilerPath) {
     }
 
     const strategies = [
+        { name: 'utf8-static', sourceMode: 'utf8', args: ['-static'] },
         { name: 'utf8', sourceMode: 'utf8', args: [] },
         { name: 'gbk-finput-charset', sourceMode: 'gbk', args: ['-finput-charset=gbk'] },
         { name: 'gbk-default', sourceMode: 'gbk', args: [] }
@@ -2551,6 +2601,11 @@ async function ensureConsolePauserExecutable(compilerPath) {
         writeSource(strategy.sourceMode);
         const result = await compileOnce(strategy.args);
         if (result.code === 0 && fs.existsSync(consolePauserPath)) {
+            try {
+                fs.writeFileSync(fingerprintPath, fingerprint, 'utf8');
+            } catch (fingerprintError) {
+                logWarn('[ConsolePauser] 写入源码指纹失败:', fingerprintError?.message || fingerprintError);
+            }
             logInfo('[ConsolePauser] 自动构建成功:', { strategy: strategy.name, path: consolePauserPath });
             return consolePauserPath;
         }
@@ -3729,11 +3784,11 @@ function setupIPC() {
 
     ipcMain.handle('format-cpp-code', async (_event, request = {}) => {
         try {
-            const executablePath = resolveClangFormatExecutable(resolveClangFormatRootFromBundle());
+            const executablePath = resolveClangFormatExecutablePath();
             if (!executablePath) {
                 return {
                     ok: false,
-                    error: 'Bundled clang-format was not found. Run pnpm run prebuild:clang-format.'
+                    error: `clang-format not found. Searched: ${describeClangFormatSearchPaths()}. Reinstall the app, or place ${getClangFormatExecutableName()} into ${path.join(getUserClangdRoot(), 'bin')}.`
                 };
             }
             const result = await formatCodeWithClangFormat({
@@ -4484,23 +4539,30 @@ function setupIPC() {
         }
     });
 
+    // 允许删除的运行时目录：codeTemp 放临时文件，compare 放对拍器的 std_/test_/generator_ 产物
+    const TEMP_DELETE_ROOTS = [
+        path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp'),
+        path.join(os.homedir(), USER_DATA_DIR_NAME, 'compare')
+    ].map(dir => path.resolve(dir));
+
+    // 用 path.relative 判断包含关系：startsWith 会把 codeTempEvil 这类同前缀兄弟目录误判为合法
+    function isPathInsideTempRoots(targetPath) {
+        return TEMP_DELETE_ROOTS.some((root) => {
+            const rel = path.relative(root, targetPath);
+            return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+        });
+    }
+
     ipcMain.handle('delete-temp-file', async (event, filePath) => {
         try {
             if (!filePath || typeof filePath !== 'string') {
                 throw new Error('无效的文件路径');
             }
-            const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
-            let tempPath;
-            if (path.isAbsolute(filePath)) {
-                tempPath = path.resolve(filePath);
-                if (!tempPath.startsWith(codeTempDir)) {
-                    throw new Error('非法路径: 路径遍历攻击被阻止');
-                }
-            } else {
-                tempPath = path.resolve(codeTempDir, filePath);
-                if (!tempPath.startsWith(codeTempDir)) {
-                    throw new Error('非法路径: 路径遍历攻击被阻止');
-                }
+            const tempPath = path.isAbsolute(filePath)
+                ? path.resolve(filePath)
+                : path.resolve(TEMP_DELETE_ROOTS[0], filePath);
+            if (!isPathInsideTempRoots(tempPath)) {
+                throw new Error('非法路径: 路径遍历攻击被阻止');
             }
 
             if (fs.existsSync(tempPath)) {
@@ -8239,21 +8301,24 @@ async function compileFile(options) {
             reject(new Error('危险编译参数已被拦截: ' + rejectedUserArgs.join(' ')));
             return;
         }
-    const compileCacheVersion = 1;
-    const cacheMetadataPath = outputFile ? `${path.resolve(outputFile)}.oicpp-cache` : '';
+    const compileCacheVersion = 2;
+    // 缓存按 signature 命名并集中存放：outputFile 每次都带时间戳，元数据若绑在它旁边就永远命中不了
+    const compileCacheDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'compile-cache');
     let compileCacheRecord = null;
+    let cacheExePath = '';
+    let cacheMetadataPath = '';
 
     const createCompileCacheRecord = () => {
-        if (!inputFile || !outputFile || !compilerPath) return null;
+        if (!inputFile || !compilerPath) return null;
         const inputStats = fs.statSync(inputFile);
         const compilerAbsolutePath = path.resolve(compilerPath);
         const compilerStats = fs.statSync(compilerAbsolutePath);
+        // payload 只包含决定编译结果的因素，outputFile 这类每次变化的随机值一律不入签名
         const payload = {
             cacheVersion: compileCacheVersion,
             inputFile: path.resolve(inputFile),
             inputSize: inputStats.size,
             inputMtimeMs: inputStats.mtimeMs,
-            outputFile: path.resolve(outputFile),
             compilerPath: compilerAbsolutePath,
             compilerSize: compilerStats.size,
             compilerMtimeMs: compilerStats.mtimeMs,
@@ -8270,15 +8335,29 @@ async function compileFile(options) {
         if (inputFile && outputFile && compilerPath && fs.existsSync(inputFile)
             && fs.existsSync(compilerPath)) {
             compileCacheRecord = createCompileCacheRecord();
-            const outputStats = fs.existsSync(outputFile) ? fs.statSync(outputFile) : null;
-            if (compileCacheRecord && outputStats && outputStats.mtimeMs >= compileCacheRecord.inputMtimeMs
-                && fs.existsSync(cacheMetadataPath)) {
-                const cached = JSON.parse(fs.readFileSync(cacheMetadataPath, 'utf8'));
-                if (cached?.cacheVersion === compileCacheVersion
-                    && cached.signature === compileCacheRecord.signature) {
-                    logInfo('[编译缓存] 编译器、参数和源文件签名均未变化，跳过编译:', inputFile);
-                    resolve({ success: true, cached: true, exitCode: 0, stdout: '', stderr: '', warnings: [], errors: [], diagnostics: [] });
-                    return;
+            if (compileCacheRecord) {
+                const sig = compileCacheRecord.signature;
+                cacheExePath = path.join(compileCacheDir, `${sig}${path.extname(outputFile) || '.exe'}`);
+                cacheMetadataPath = path.join(compileCacheDir, `${sig}.oicpp-cache`);
+                const cacheStats = fs.existsSync(cacheExePath) ? fs.statSync(cacheExePath) : null;
+                if (cacheStats && cacheStats.mtimeMs >= compileCacheRecord.inputMtimeMs
+                    && fs.existsSync(cacheMetadataPath)) {
+                    const cached = JSON.parse(fs.readFileSync(cacheMetadataPath, 'utf8'));
+                    if (cached?.cacheVersion === compileCacheVersion && cached.signature === sig) {
+                        // 命中：把缓存产物复制到本次 outputFile，调用方拿到的路径一定存在
+                        const outputDir = path.dirname(outputFile);
+                        if (!fs.existsSync(outputDir)) {
+                            fs.mkdirSync(outputDir, { recursive: true });
+                        }
+                        fs.copyFileSync(cacheExePath, outputFile);
+                        if (process.platform !== 'win32') {
+                            // copyFileSync 不保留权限位，缓存产物在非 Windows 上需要补回可执行位
+                            try { fs.chmodSync(outputFile, 0o755); } catch (_) { }
+                        }
+                        logInfo('[编译缓存] 编译器、参数和源文件签名均未变化，复用缓存产物:', inputFile, '->', outputFile);
+                        resolve({ success: true, cached: true, exitCode: 0, stdout: '', stderr: '', warnings: [], errors: [], diagnostics: [] });
+                        return;
+                    }
                 }
             }
         }
@@ -8581,10 +8660,15 @@ async function compileFile(options) {
                 }
             }
 
-            if (result.success && outputExists && compileCacheRecord && cacheMetadataPath) {
+            if (result.success && outputExists && compileCacheRecord && cacheMetadataPath && cacheExePath) {
                 try {
                     const latestRecord = createCompileCacheRecord();
                     if (latestRecord?.signature === compileCacheRecord.signature) {
+                        // 先落 exe 再落元数据：中断时最多留下无元数据的孤儿 exe，不会被误判为有效缓存
+                        if (!fs.existsSync(compileCacheDir)) {
+                            fs.mkdirSync(compileCacheDir, { recursive: true });
+                        }
+                        fs.copyFileSync(outputFile, cacheExePath);
                         fs.writeFileSync(cacheMetadataPath, JSON.stringify(latestRecord), 'utf8');
                     } else {
                         logWarn('[编译缓存] 编译期间源文件或编译环境发生变化，跳过写入签名');
@@ -8796,7 +8880,11 @@ async function runExecutable(options) {
         try {
             const child = spawn(command, args, spawnOptions);
             detachedRunProcesses.add(child);
-            child.once('close', () => detachedRunProcesses.delete(child));
+            child.once('close', (code, signal) => {
+                detachedRunProcesses.delete(child);
+                // 运行目标是 detached 子进程，退出码是唯一失败信号（缺失 DLL 时为 0xC0000135）
+                logInfo('[运行] 子进程已退出:', { command, code, signal });
+            });
             child.once('error', () => detachedRunProcesses.delete(child));
 
             child.unref(); // 允许父进程退出而不等待子进程
