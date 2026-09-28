@@ -161,7 +161,7 @@
     "problem": "PDF viewer 用 postMessage(..., '*') 向父窗口发送数据，可被任意 origin 接收。",
     "impact": "数据泄漏。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "tabs.js 的 PDF 消息处理新增 event.origin 校验，仅接受与应用自身同源的来源，拒绝任何跨源伪造 postMessage 注入。"
     }
   },
@@ -174,7 +174,7 @@
     "problem": "Content-Security-Policy 含 frame-src *，允许任意网站嵌入此 Electron 应用。",
     "impact": "结合 postMessage('*') 构成数据泄漏向量。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "frame-src 由通配符收窄为 'self' data:；内嵌 PDF viewer iframe 与应用同源，内部浏览器使用 webview（不受 frame-src 约束），功能不受影响。"
     }
   },
@@ -481,7 +481,7 @@
     "problem": "setupEditorChangeListener 在构造函数调用，deactivate() 不清除 interval。",
     "impact": "定时器泄漏。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "SampleTester 新增 deactivate() 清除 editorChangeInterval，activate() 时重建；SidebarManager.showPanel 离开当前面板时调用 deactivate()，定时器仅在样例面板激活期间运行。"
     }
   },
@@ -856,7 +856,7 @@
     "problem": "声明但从未使用。",
     "impact": "死代码。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "删除未使用的 debugProcess/debugSession 模块级变量声明。"
     }
   },
@@ -953,7 +953,7 @@
     "problem": "查询 .settings-tabs .tab-btn，但 HTML 用 .sidebar-item，永远无匹配。",
     "impact": "死代码。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "删除 templates.html 内联的死代码 tab 切换脚本；实际导航由 templates.js 的 setupSidebarNavigation 处理 .sidebar-item/data-target。"
     }
   },
@@ -1019,7 +1019,7 @@
     "problem": "资源静态加载，reloadResources() 什么都不做。",
     "impact": "功能无效。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "删除无效的 reload() 方法；语言包在 require 时静态加载，reloadResources 对内存中资源无效且该 API 无调用方。"
     }
   },
@@ -1166,7 +1166,7 @@
     "problem": "document.getElementById('testlib-path').value 无空检查。",
     "impact": "空引用风险。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "testTestlib 与 setTestlibPath 均对 #testlib-path 元素加空值保护。"
     }
   },
@@ -1192,7 +1192,7 @@
     "problem": "部分消息硬编码中文，部分用 window.i18n.t()。",
     "impact": "i18n 不一致。",
     "fix": {
-      "commit": "TBD",
+      "commit": "08669de",
       "note": "cloudSync.js 用户可见消息已全部改用 window.i18n.t()；文件内仅存的 CJK 为校验正则（/已存在|exists/），非用户可见文案。"
     }
   },
