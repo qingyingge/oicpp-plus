@@ -93,6 +93,31 @@ for (const ch of sendChannels) {
 check('renderer 所有 send 通道通过白名单', blockedSends.length === 0, blockedSends.join(','));
 check('无 IPC send blocked 警告', !warns.some(w => w.includes('IPC send blocked')), warns.join(' | '));
 
+// preload 自身封装的通道同样必须命中白名单：renderer 侧扫描不到字面量，
+// 一旦漏收录（如 save-all-complete）功能会静默失效，关闭流程只能等超时兜底
+const preloadSource = fs.readFileSync(PRELOAD, 'utf8');
+const internalSends = new Set();
+const internalInvokes = new Set();
+for (const m of preloadSource.matchAll(/safeIpcRenderer\.send\(\s*['"]([^'"]+)['"]/g)) internalSends.add(m[1]);
+for (const m of preloadSource.matchAll(/safeIpcRenderer\.invoke\(\s*['"]([^'"]+)['"]/g)) internalInvokes.add(m[1]);
+
+const blockedInternalSends = [];
+for (const ch of internalSends) {
+    const before = sent.length;
+    exposed.electronIPC.send(ch, 'x');
+    if (sent.length === before) blockedInternalSends.push(ch);
+}
+check('preload 内部 send 通道全部通过白名单', blockedInternalSends.length === 0, blockedInternalSends.join(','));
+
+const blockedInternalInvokes = [];
+for (const ch of internalInvokes) {
+    const before = invoked.length;
+    const ret = exposed.electronIPC.invoke(ch, 'x');
+    if (ret && typeof ret.catch === 'function') ret.catch(() => { });
+    if (invoked.length === before) blockedInternalInvokes.push(ch);
+}
+check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvokes.length === 0, blockedInternalInvokes.join(','));
+
 (async () => {
     invoked.length = 0;
     await exposed.electronAPI.formatCppCode({ content: 'int main(){}', style: { IndentWidth: 4 } });

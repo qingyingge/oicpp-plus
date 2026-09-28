@@ -915,7 +915,9 @@ class ClangdLspManager {
             };
             proc.once('exit', onExit);
             try {
-                terminateProcessTree(proc);
+                // clangd 为直接 spawn、无子进程树，Windows 下再走 taskkill 会同步阻塞主进程约 250ms
+                if (process.platform === 'win32') proc.kill();
+                else terminateProcessTree(proc);
             } catch (_) {
                 clearTimeout(timeout);
                 finish();
@@ -3488,11 +3490,29 @@ app.on('before-quit', (event) => {
 
     allowQuitForPendingUpdateInstall = false;
     pendingUpdateQuitPromptInProgress = false;
+    runQuitCleanup();
+});
 
+// 退出清理：心跳、文件监听、子进程、终端、LSP、临时目录、本地服务
+function runQuitCleanup() {
+    stopHeartbeatService();
+    disposeAllFileWatchers();
+    for (const child of detachedRunProcesses) {
+        terminateProcessTree(child);
+    }
+    detachedRunProcesses.clear();
+    try { terminalManager.disposeAll(); } catch (_) { }
+    try { clangdLspManager.stop(); } catch (_) { }
     try { if (sampleTesterServer) { sampleTesterServer.close(); sampleTesterServer = null; } } catch (_) { }
     try { if (competitiveCompanionServer) { competitiveCompanionServer.close(); competitiveCompanionServer = null; } } catch (_) { }
-    try { terminalManager.disposeAll(); } catch (_) { }
-});
+    try {
+        const tempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        logInfo('[退出] 已清理临时目录及编译产物:', tempDir);
+    } catch (error) {
+        logWarn('[退出] 清理临时目录失败:', error?.message || error);
+    }
+}
 
 function setupWindowControls() {
     ipcMain.on('window-minimize', () => {
@@ -8954,32 +8974,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
     stopHeartbeatService();
     app.quit();
-});
-
-app.on('before-quit', () => {
-    const shouldPromptForInstallQuit = process.platform === 'win32'
-        && hasPendingUpdateToInstall()
-        && settings?.pendingUpdate?.autoInstallOnQuit === true;
-
-    if (shouldPromptForInstallQuit && !allowQuitForPendingUpdateInstall) {
-        return;
-    }
-
-    stopHeartbeatService();
-    disposeAllFileWatchers();
-    for (const child of detachedRunProcesses) {
-        terminateProcessTree(child);
-    }
-    detachedRunProcesses.clear();
-    try { terminalManager.disposeAll(); } catch (_) { }
-    try { clangdLspManager.stop(); } catch (_) { }
-    try {
-        const tempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
-        fs.rmSync(tempDir, { recursive: true, force: true });
-        logInfo('[退出] 已清理临时目录及编译产物:', tempDir);
-    } catch (error) {
-        logWarn('[退出] 清理临时目录失败:', error?.message || error);
-    }
 });
 
 app.on('web-contents-created', (event, contents) => {
