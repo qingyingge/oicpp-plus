@@ -1428,5 +1428,18 @@
     "problem": "format-cpp-code handler（main.js:3859）每次都调 resolveClangFormatExecutablePath()（main.js:248），打包路径缺失时 findClangFormatExecutableOnPath（main.js:233）遍历整个 PATH 逐项 statSync；随后每次格式化都 spawn 一个新 clang-format 进程（clang-format-service.js:136），无常驻进程、无结果缓存、无 in-flight 合并。styleRaw 或 range 时还要 mkdtempSync + 写临时 .clang-format/source + rmSync（clang-format-service.js:109,205）。",
     "impact": "开发态或未执行 prebuild:clang-format 时，每次格式化多一次全 PATH 扫描；正常态每次格式化多一次进程启动开销（Windows 量级 30~150ms）；长按格式化快捷键会连续 spawn。临时 --style=file:<临时目录> 还会阻断项目 .clang-format 的向上发现（clang-format-service.js:52），未保存模型 filePath 为空时 cwd 退化为 process.cwd()，可能套用无关工程的样式。",
     "related": "P5（同类合并/去重思路）"
+  },
+  {
+    "id": "H16",
+    "severity": "HIGH",
+    "title": "cmd /c start 的引号被 libuv 转义，Windows 运行程序必然失败",
+    "status": "待修复",
+    "file": "src/main.js:8611-8652; tests/clang-format.test.js:133",
+    "problem": "02823f9 将 Windows 运行改为 command='cmd'、args=['/c', `start \"Program Running\" \"<pauser>\" \"<exe>\"`]（main.js:8626），spawnOptions 仍为 shell:false。Node 在 shell:false 下由 libuv 的 quote_cmd_arg 组装命令行：参数含空格即整体加一对引号，参数内的每个双引号按 MSVCRT 规则前置换为反斜杠。cmd.exe 不认反斜杠转义，剥掉首尾引号后交给 start 的第一个 token 是字面量 \"Program Running，而不再是引号包裹的窗口标题，start 于是把它当成要执行的程序名去查找。",
+    "impact": "runMode=popup 下点运行必定弹出「Windows 找不到文件」，被编译的程序从未真正启动；隐藏的 cmd 进程被模态错误框卡住，直到用户点掉才退出（日志中一次卡了约 4 分钟）。runExecutable 在 spawn 后立即 resolve，UI 仍提示「程序已在新窗口启动」，属假成功，掩盖了失败。路径本身含空格时（main.js:8620-8621 拼出的绝对路径）还会被空格切成多个 token，同样无法启动。",
+    "evidence": "抓取实际命令行确认转义：node spawn 出的子进程命令行是 cmd.exe /c 后跟一个被引号包裹的参数，该参数内 start 之后是「反斜杠+引号」+ Program Running +「反斜杠+引号」，而非原始引号。行为对照（临时脚本验证，未改动仓库）：A 当前写法 shell:false → exit=1、目标程序未启动、stderr 为「拒绝访问。」；B 仅额外加 windowsVerbatimArguments:true → exit=0、目标程序正常启动。仓库日志亦可对照：改动前的 2026-09-29_19-40-36.log 记录「执行命令: C:\\Users\\admin\\.oicpp-plus\\consolepauser.exe」（直接 spawn，可正常运行），改动后的 2026-09-29_21-58-21.log:8210 起变为 cmd /c start，随后出现 [运行] 子进程已退出 code 1。",
+    "introduced_by": "02823f9",
+    "fix_plan": "回退到直接 spawn consolepauser.exe（command=absoluteConsolePauserPath、args=[absoluteExePath]），即 92f7bd0 与 02823f9 之前的行为；若坚持保留 cmd start 方式，则必须给 spawnOptions 加 windowsVerbatimArguments:true 并自行拼整条命令行。tests/clang-format.test.js:133 目前断言了 start \"Program Running\" 的存在，把该坏写法固化进回归测试，需同步改回，否则 pnpm run ci:tests 会红。",
+    "related": "C2（同类 cmd /c 相关问题）"
   }
 ]
