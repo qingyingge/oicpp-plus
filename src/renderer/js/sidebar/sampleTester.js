@@ -25,6 +25,8 @@ class SampleTester {
         this.isOperating = false;
         this.editorChangeInterval = null;
         this.samplesDirCache = new Map();
+        this.pendingSampleSaves = new Map();
+        this.sampleSaveInFlight = null;
         this.statusFilter = null;
         this.globalSettings = {
             useTestlib: false,
@@ -761,20 +763,42 @@ class SampleTester {
         return this.samplesFilePath === samplesFilePath && this.currentFile === currentFile;
     }
 
+    // P5: 同一路径的整份落盘合并。样例测试的多个分支和快速编辑会连续触发写回，
+    // 每次都是 6~16ms 的 save-file 往返；写进行中到达的请求只保留最新一份，
+    // 写完补一次即可，既不会并发写同一文件，也不会丢掉最后状态。
     async saveSamplesToPath(samplesFilePath, samples = this.samples, globalSettings = this.globalSettings) {
         if (!samplesFilePath) return;
-
-        try {
-            const data = {
-                samples: this.serializeSamplesForSave(samples),
-                globalSettings
-            };
-            await window.electronAPI.saveFile(samplesFilePath, JSON.stringify(data, null, 2));
-        } catch (error) {
-            // 目录可能被外部删除/清理，丢弃缓存让下次重新 ensureDirectory
-            this.samplesDirCache.clear();
-            logError('保存样例失败:', error);
+        this.pendingSampleSaves.set(samplesFilePath, { samples, globalSettings });
+        if (!this.sampleSaveInFlight) {
+            this.sampleSaveInFlight = this.drainSampleSaves()
+                .finally(() => { this.sampleSaveInFlight = null; });
         }
+        return this.sampleSaveInFlight;
+    }
+
+    async drainSampleSaves() {
+        while (this.pendingSampleSaves.size > 0) {
+            const entry = this.pendingSampleSaves.entries().next().value;
+            const [samplesFilePath, job] = entry;
+            this.pendingSampleSaves.delete(samplesFilePath);
+            try {
+                const data = {
+                    samples: this.serializeSamplesForSave(job.samples),
+                    globalSettings: job.globalSettings
+                };
+                await window.electronAPI.saveFile(samplesFilePath, JSON.stringify(data, null, 2));
+            } catch (error) {
+                // 目录可能被外部删除/清理，丢弃缓存让下次重新 ensureDirectory
+                this.samplesDirCache.clear();
+                logError('保存样例失败:', error);
+            }
+        }
+    }
+
+    // 样例运行结果落盘：各分支共用同一份落点，避免重复整份写回
+    async persistRunResults(samplesFilePath, currentFile, runSamples) {
+        const samplesToPersist = this.isCurrentSamplesContext(samplesFilePath, currentFile) ? this.samples : runSamples;
+        await this.saveSamplesToPath(samplesFilePath, samplesToPersist, this.globalSettings);
     }
 
     async saveSamples() {
@@ -1997,8 +2021,7 @@ class SampleTester {
                 }
             });
             sample.result = result;
-            const samplesToPersist = this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile) ? this.samples : runSamples;
-            await this.saveSamplesToPath(runSamplesFilePath, samplesToPersist, this.globalSettings);
+            await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
             if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
                 this.updateSampleResult(id, result, sample);
             }
@@ -2009,8 +2032,7 @@ class SampleTester {
                 output: error.message,
                 time: 0
             };
-            const samplesToPersist = this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile) ? this.samples : runSamples;
-            await this.saveSamplesToPath(runSamplesFilePath, samplesToPersist, this.globalSettings);
+            await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
             if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
                 this.updateSampleResult(id, sample.result);
             }
@@ -2074,8 +2096,7 @@ class SampleTester {
                         this.updateSampleResult(sample.id, sample.result, sample);
                     }
                 }
-                const samplesToPersist = this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile) ? this.samples : runSamples;
-                await this.saveSamplesToPath(runSamplesFilePath, samplesToPersist, this.globalSettings);
+                await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
                 return;
             }
 
@@ -2103,8 +2124,7 @@ class SampleTester {
                             this.updateSampleResult(sample.id, sample.result, sample);
                         }
                     }
-                    const samplesToPersist = this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile) ? this.samples : runSamples;
-                    await this.saveSamplesToPath(runSamplesFilePath, samplesToPersist, this.globalSettings);
+                    await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
                     return;
                 }
 
@@ -2120,8 +2140,7 @@ class SampleTester {
                             this.updateSampleResult(sample.id, sample.result, sample);
                         }
                     }
-                    const samplesToPersist = this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile) ? this.samples : runSamples;
-                    await this.saveSamplesToPath(runSamplesFilePath, samplesToPersist, this.globalSettings);
+                    await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
                     return;
                 }
 
@@ -2148,8 +2167,7 @@ class SampleTester {
                             this.updateSampleResult(sample.id, sample.result, sample);
                         }
                     }
-                    const samplesToPersist = this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile) ? this.samples : runSamples;
-                    await this.saveSamplesToPath(runSamplesFilePath, samplesToPersist, this.globalSettings);
+                    await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
                     return;
                 }
 
@@ -2208,8 +2226,7 @@ class SampleTester {
             const workers = Array.from({ length: workerCount }, worker);
             await Promise.all(workers);
 
-            const samplesToPersist = this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile) ? this.samples : runSamples;
-            await this.saveSamplesToPath(runSamplesFilePath, samplesToPersist, this.globalSettings);
+            await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
 
         } finally {
             this.deferSpjTempCleanup = false;
