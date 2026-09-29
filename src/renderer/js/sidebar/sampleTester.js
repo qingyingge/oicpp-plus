@@ -24,6 +24,7 @@ class SampleTester {
         this.deferSpjTempCleanup = false;
         this.isOperating = false;
         this.editorChangeInterval = null;
+        this.samplesDirCache = new Map();
         this.statusFilter = null;
         this.globalSettings = {
             useTestlib: false,
@@ -515,6 +516,20 @@ class SampleTester {
         }
     }
 
+    // 样例配置目录每个工作区只需建一次，重命名/删除等操作反复调用时不再重复
+    // 走 ensureDirectory 往返（P4）
+    async ensureSampleTesterDir(workspaceRoot) {
+        if (!workspaceRoot) return null;
+        const cached = this.samplesDirCache.get(workspaceRoot);
+        if (cached) return cached;
+        const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus');
+        const sampleTesterDir = await window.electronAPI.pathJoin(oicppDir, 'sampleTester');
+        await window.electronAPI.ensureDirectory(oicppDir);
+        await window.electronAPI.ensureDirectory(sampleTesterDir);
+        this.samplesDirCache.set(workspaceRoot, sampleTesterDir);
+        return sampleTesterDir;
+    }
+
     async updateSamplesFilePath() {
         if (!this.currentFile) {
             this.samplesFilePath = null;
@@ -541,11 +556,11 @@ class SampleTester {
                 relativePath = this.currentFile.replace(/[:\\]/g, '_');
             }
 
-            const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus');
-            const sampleTesterDir = await window.electronAPI.pathJoin(oicppDir, 'sampleTester');
-
-            await window.electronAPI.ensureDirectory(oicppDir);
-            await window.electronAPI.ensureDirectory(sampleTesterDir);
+            const sampleTesterDir = await this.ensureSampleTesterDir(workspaceRoot);
+            if (!sampleTesterDir) {
+                this.samplesFilePath = null;
+                return;
+            }
 
             const safeRelativePath = relativePath.replace(/[\\\/]/g, '_').replace(/[<>:"|?*]/g, '_');
             this.samplesFilePath = await window.electronAPI.pathJoin(sampleTesterDir, `${safeRelativePath}.json`);
@@ -575,11 +590,8 @@ class SampleTester {
             relativePath = filePath.replace(/[:\\]/g, '_');
         }
 
-        const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus');
-        const sampleTesterDir = await window.electronAPI.pathJoin(oicppDir, 'sampleTester');
-
-        await window.electronAPI.ensureDirectory(oicppDir);
-        await window.electronAPI.ensureDirectory(sampleTesterDir);
+        const sampleTesterDir = await this.ensureSampleTesterDir(workspaceRoot);
+        if (!sampleTesterDir) return null;
 
         const safeRelativePath = relativePath.replace(/[\\\/]/g, '_').replace(/[<>:"|?*]/g, '_');
         return await window.electronAPI.pathJoin(sampleTesterDir, `${safeRelativePath}.json`);
@@ -759,6 +771,8 @@ class SampleTester {
             };
             await window.electronAPI.saveFile(samplesFilePath, JSON.stringify(data, null, 2));
         } catch (error) {
+            // 目录可能被外部删除/清理，丢弃缓存让下次重新 ensureDirectory
+            this.samplesDirCache.clear();
             logError('保存样例失败:', error);
         }
     }

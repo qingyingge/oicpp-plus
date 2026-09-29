@@ -1,5 +1,22 @@
 const { contextBridge, ipcRenderer, shell, clipboard } = require('electron');
 const path = require('path');
+const os = require('os');
+
+// P4: path.join / path.dirname / 路径拆解 / os.homedir 都是同步纯函数，
+// 原先逐个搬上 IPC（path-join、path-dirname、get-path-info、get-home-dir），
+// 一次路径计算就要串行多次跨进程往返。preload 里直接本地计算，仍返回 Promise
+// 以保持原调用方 await / .then 的契约，参数非法时同样以 rejection 表达。
+const localPathJoin = (...paths) => Promise.resolve().then(() => path.join(...paths));
+const localPathDirname = (filePath) => Promise.resolve().then(() => path.dirname(filePath));
+const localGetPathInfo = (filePath) => Promise.resolve().then(() => {
+    const extname = path.extname(filePath);
+    return {
+        dirname: path.dirname(filePath),
+        basename: path.basename(filePath),
+        extname,
+        basenameWithoutExt: path.basename(filePath, extname)
+    };
+});
 
 const htmlToPlainText = (html) => {
     const source = String(html || '');
@@ -488,7 +505,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
     'compile-file', 'run-program', 'run-interactive', 'run-executable', 'check-file-exists', 'format-cpp-code',
-    'get-settings', 'reset-settings', 'export-settings', 'import-settings', 'save-setting', 'get-platform', 'get-user-home', 'get-user-icon-path', 'get-build-info', 'get-downloaded-compilers', 'download-compiler', 'select-compiler', 'get-downloaded-testlibs', 'download-testlib', 'select-testlib', 'test-testlib', 'compare-start', 'compare-stop', 'read-directory', 'rename-file-invoke', 'delete-file-invoke', 'clear-directory-contents', 'write-file', 'create-file', 'create-folder', 'get-path-info', 'ensure-directory', 'watch-file', 'unwatch-file', 'path-join', 'path-dirname', 'get-home-dir', 'ensure-dir', 'terminal-feature-status', 'terminal-create', 'terminal-write', 'terminal-resize', 'terminal-kill', 'terminal-list', 'terminal-get-tty', 'get-update-download-status', 'consume-startup-workspace-to-open', 'get-cpu-threads', 'list-client-logs', 'upload-client-log', 'get-device-info', 'get-encoded-token', 'open-external', 'get-language', 'get-available-languages', 'ide-login-start', 'ide-login-status', 'ide-logout', 'cloud-sync-request', 'backup-settings-to-cloud', 'get-settings-backup-info', 'sync-settings-from-cloud', 'get-recent-files', 'open-recent-file', 'get-file-history', 'add-to-file-history', 'open-file-from-history', 'clear-file-history', 'save-last-open-tabs', 'get-last-open-tabs', 'relaunch-app', 'clipboard-write-text', 'clipboard-read-text', 'walk-directory', 'lsp-start', 'lsp-stop', 'lsp-restart', 'lsp-request', 'lsp-cancel', 'lsp-apply-edit-result', 'lsp-notify', 'browser-resolve-url', 'browser-get-page-title',
+    'get-settings', 'reset-settings', 'export-settings', 'import-settings', 'save-setting', 'get-platform', 'get-user-home', 'get-user-icon-path', 'get-build-info', 'get-downloaded-compilers', 'download-compiler', 'select-compiler', 'get-downloaded-testlibs', 'download-testlib', 'select-testlib', 'test-testlib', 'compare-start', 'compare-stop', 'read-directory', 'rename-file-invoke', 'delete-file-invoke', 'clear-directory-contents', 'write-file', 'create-file', 'create-folder', 'ensure-directory', 'watch-file', 'unwatch-file', 'ensure-dir', 'terminal-feature-status', 'terminal-create', 'terminal-write', 'terminal-resize', 'terminal-kill', 'terminal-list', 'terminal-get-tty', 'get-update-download-status', 'consume-startup-workspace-to-open', 'get-cpu-threads', 'list-client-logs', 'upload-client-log', 'get-device-info', 'get-encoded-token', 'open-external', 'get-language', 'get-available-languages', 'ide-login-start', 'ide-login-status', 'ide-logout', 'cloud-sync-request', 'backup-settings-to-cloud', 'get-settings-backup-info', 'sync-settings-from-cloud', 'get-recent-files', 'open-recent-file', 'get-file-history', 'add-to-file-history', 'open-file-from-history', 'clear-file-history', 'save-last-open-tabs', 'get-last-open-tabs', 'relaunch-app', 'clipboard-write-text', 'clipboard-read-text', 'walk-directory', 'lsp-start', 'lsp-stop', 'lsp-restart', 'lsp-request', 'lsp-cancel', 'lsp-apply-edit-result', 'lsp-notify', 'browser-resolve-url', 'browser-get-page-title',
 ]);
 
 // 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
@@ -681,14 +698,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     createFile: (filePath, content) => safeIpcRenderer.invoke('create-file', filePath, content),
     createFolder: (folderPath) => safeIpcRenderer.invoke('create-folder', folderPath),
     checkFileExists: (filePath) => safeIpcRenderer.invoke('check-file-exists', filePath),
-    getPathInfo: (filePath) => safeIpcRenderer.invoke('get-path-info', filePath),
+    getPathInfo: (filePath) => localGetPathInfo(filePath),
     ensureDirectory: (dirPath) => safeIpcRenderer.invoke('ensure-directory', dirPath),
     watchFile: (filePath) => safeIpcRenderer.invoke('watch-file', filePath),
     unwatchFile: (filePath) => safeIpcRenderer.invoke('unwatch-file', filePath),
 
-    pathJoin: (...paths) => safeIpcRenderer.invoke('path-join', ...paths),
-    pathDirname: (filePath) => safeIpcRenderer.invoke('path-dirname', filePath),
-    getHomeDir: () => safeIpcRenderer.invoke('get-home-dir'),
+    pathJoin: (...paths) => localPathJoin(...paths),
+    pathDirname: (filePath) => localPathDirname(filePath),
+    getHomeDir: () => Promise.resolve(os.homedir()),
     ensureDir: (dirPath) => safeIpcRenderer.invoke('ensure-dir', dirPath),
 
     getTerminalFeatureStatus: () => safeIpcRenderer.invoke('terminal-feature-status'),

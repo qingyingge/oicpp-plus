@@ -270,6 +270,31 @@ check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvoke
         invoked.filter(i => i.ch === 'get-all-settings').length === 1,
         `${invoked.filter(i => i.ch === 'get-all-settings').length} invoke(s)`);
 
+    // P4: 纯路径函数在 preload 本地计算，不再走 IPC
+    invoked.length = 0;
+    const joined = await exposed.electronAPI.pathJoin('a', 'b', 'c.cpp');
+    const dirnamed = await exposed.electronAPI.pathDirname('a/b/c.cpp');
+    const pathInfo = await exposed.electronAPI.getPathInfo('a/b/c.cpp');
+    const homeDir = await exposed.electronAPI.getHomeDir();
+    const nodePath = require('path');
+    check('P4 pathJoin/pathDirname 本地计算且不跨进程',
+        invoked.length === 0 && joined === nodePath.join('a', 'b', 'c.cpp') && dirnamed === nodePath.dirname('a/b/c.cpp'),
+        `invokes=${invoked.length} joined=${joined} dirnamed=${dirnamed}`);
+    check('P4 getPathInfo 本地计算且字段一致',
+        pathInfo.dirname === nodePath.dirname('a/b/c.cpp') &&
+        pathInfo.basename === 'c.cpp' &&
+        pathInfo.extname === '.cpp' &&
+        pathInfo.basenameWithoutExt === 'c',
+        JSON.stringify(pathInfo));
+    check('P4 getHomeDir 返回用户主目录', typeof homeDir === 'string' && homeDir.length > 0, homeDir);
+    let pathJoinRejected = false;
+    try {
+        await exposed.electronAPI.pathJoin(42);
+    } catch (_) {
+        pathJoinRejected = true;
+    }
+    check('P4 非法参数仍以 rejection 表达', pathJoinRejected);
+
     console.log(failures === 0 ? '\nPRELOAD TESTS: ALL PASSED' : `\nPRELOAD TESTS: ${failures} FAILED`);
     process.exit(failures === 0 ? 0 : 1);
 })();

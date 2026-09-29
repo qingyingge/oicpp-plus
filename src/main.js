@@ -5993,18 +5993,6 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('path-join', async (event, ...paths) => {
-        return path.join(...paths);
-    });
-
-    ipcMain.handle('path-dirname', async (event, filePath) => {
-        return path.dirname(filePath);
-    });
-
-    ipcMain.handle('get-home-dir', async (event) => {
-        return os.homedir();
-    });
-
     ipcMain.handle('ensure-dir', async (event, dirPath) => {
         try {
             assertSafeIoPath(dirPath);
@@ -6076,19 +6064,6 @@ function setupIPC() {
             restoreFileWatchStates(previousWatchStates);
             logError(`[主进程] 清空目录失败: ${dirPath}`, error);
             return { success: false, error: error.message };
-        }
-    });
-
-    ipcMain.handle('get-path-info', async (event, filePath) => {
-        try {
-            return {
-                dirname: path.dirname(filePath),
-                basename: path.basename(filePath),
-                extname: path.extname(filePath),
-                basenameWithoutExt: path.basename(filePath, path.extname(filePath))
-            };
-        } catch (error) {
-            throw error;
         }
     });
 
