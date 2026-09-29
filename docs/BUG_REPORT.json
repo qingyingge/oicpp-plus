@@ -1233,63 +1233,91 @@
     "id": "P1",
     "severity": "HIGH",
     "title": "logger-log IPC 火线：渲染进程日志每一条都跨进程",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/preload.js:809-830; src/renderer/js/**（886 处 logInfo/logWarn/logError）",
     "problem": "渲染进程有 886 处 logInfo/logWarn/logError 调用，每次经 safeIpcRenderer.send('logger-log', ...) 跨进程到主进程，主进程再拼时间戳、序列化、写日志文件。实测：仅纯启动就发出 65~107 条 logger-log；一个编辑会话可达 157 条以上。preload 对 warn/error 级还附加完整 stack（内部 throw new Error 抓栈），进一步放大序列化成本。",
-    "impact": "每条渲染进程动作都放大成一次或多次 IPC 往返，成为常态性延迟与主进程日志写入压力来源；日志量随交互线性增长。"
+    "impact": "每条渲染进程动作都放大成一次或多次 IPC 往返，成为常态性延迟与主进程日志写入压力来源；日志量随交互线性增长。",
+    "fix": {
+      "commit": "6b98181",
+      "note": "preload 侧日志入队，按 150ms 时间窗 / 200 条上限合并为单次 logger-log-batch（队列上限 2000 条，beforeunload 冲刷），主进程按批遍历写入；移除 warn/error 附加的 stack——它由 preload 内部 throw 抓取，栈帧永远指向 safeSendLog 而非真实调用点。tests/preload.test.js 有覆盖。"
+    }
   },
   {
     "id": "P2",
     "severity": "MEDIUM",
     "title": "get-all-settings 整包重复序列化且无去重缓存",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/renderer/js/compile-manager.js:246-262; src/renderer/js/monaco-editor-manager.js:3860,3956,4121,5894; src/renderer/js/init.js",
     "problem": "启动与每次开文件时 get-all-settings 被连调 5~12 次（compile-manager、monaco 的 keybindings/snippets/font、init 等多处各拉一次，彼此没有共享缓存）。实测单次 8~113ms，虽对象约 3.3KB 不算大，但每次都是整对象跨进程结构化克隆，且调用互相独立、无去重。",
-    "impact": "重复的整包序列化 + IPC 往返，累积到启动关键路径，拖慢窗口/文档初始化。"
+    "impact": "重复的整包序列化 + IPC 往返，累积到启动关键路径，拖慢窗口/文档初始化。",
+    "fix": {
+      "commit": "b17a5bb",
+      "note": "preload 侧收口 get-all-settings：1 秒 TTL 缓存 + 在途请求去重，并发调用只发生一次 invoke；返回值按调用者克隆，互不污染。写设置通道（update-settings/update-top-level-settings/save-setting/reset-settings/import-settings/settings-preview）与主进程广播（settings-changed/settings-reset/settings-imported）立即让缓存失效。tests/preload.test.js 有覆盖。"
+    }
   },
   {
     "id": "P3",
     "severity": "MEDIUM",
     "title": "lsp-start 重复触发 + lsp-notification 诊断流未节流",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/renderer/js/monaco-editor-manager.js; src/main.js:854,1186-1199; src/renderer/js/lsp-client.js:38-59",
     "problem": "启动+开文件过程 lsp-start 被连调 4~7 次（每次 27~58ms），虽内部有 _readyPromise 去重，但重复调用本身仍是多余 IPC 往返。clangd 每次文档改动回发 textDocument/publishDiagnostics，主进程未节流直接 webContents.send('lsp-notification', {method, params})，params 可能很大（诊断全量），是实时编辑时的持续延迟源。",
-    "impact": "重复的 lsp-start 增加初始化延迟；未节流的诊断推送在持续输入时造成高频 IPC 单向大流。"
+    "impact": "重复的 lsp-start 增加初始化延迟；未节流的诊断推送在持续输入时造成高频 IPC 单向大流。",
+    "fix": {
+      "commit": "674be4e",
+      "note": "渲染进程侧 lsp-start 失败后进入 3 秒冷却，冷却期内复用上次失败结果不再发 IPC（成功/显式重启/服务端停止时清除）；主进程 publishDiagnostics 按 uri 合并，60ms 窗口内只下发最新一份，空诊断且上一份也是空时丢弃，stop() 前补发待发诊断。tests/lsp-main-audit.test.js 有覆盖。"
+    }
   },
   {
     "id": "P4",
     "severity": "MEDIUM",
     "title": "纯路径函数被逐一搬上 IPC：pathJoin/pathDirname/get-path-info/ensure-dir",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/preload.js:639-642; src/main.js:5861-5875,5947-5958; src/renderer/js/sidebar/sampleTester.js:544-585",
     "problem": "path.join/path.dirname 这类同步纯函数也走 invoke IPC（path-join、path-dirname、get-path-info 主进程 handler 只是同步 path.join/dirname），本可在 preload 本地同步完成。样例测试器的 computeSamplesFilePathForFile 一次就串行 pathJoin×2 + ensureDirectory×2 + pathJoin×1（5 次往返），重命名/删除时又被反复调用（handleFileRenamed/handleFileDeleted 各再算一遍）。",
-    "impact": "大量本可本地化的纯路径计算变成串行 IPC 往返，样例测试/文件管理路径显著变慢。"
+    "impact": "大量本可本地化的纯路径计算变成串行 IPC 往返，样例测试/文件管理路径显著变慢。",
+    "fix": {
+      "commit": "8df46f3",
+      "note": "path-join/path-dirname/get-path-info/get-home-dir 四个纯通道删除，主进程 handler 与白名单条目一并移除，preload 用 node path/os 本地计算并仍返回 Promise（非法参数仍以 rejection 表达）；ensure-directory/ensure-dir 保留 IPC。样例测试器新增 samplesDirCache，每工作区只 ensure 一次 .oicpp-plus/sampleTester，保存失败时清空。tests/preload.test.js、tests/sample-tester-save.test.js 有覆盖。"
+    }
   },
   {
     "id": "P5",
     "severity": "MEDIUM",
     "title": "样例测试运行期重复保存样例配置 JSON",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/renderer/js/sidebar/sampleTester.js:752-768,1987-2198",
     "problem": "runAllSamples 的每个分支（主程序编译成功/失败、SPJ/grader、交互等）都会调用 saveSamplesToPath 整份写回样例配置 JSON（save-file invoke）。实测一次 runAll 就新增 path-join×3、ensure-directory×2、save-file×2。样例配置本可在运行前后各写一次，却在多个分支重复全量落盘。",
-    "impact": "重复全量样例 JSON 落盘（save-file 每次 6~16ms）叠加路径往返，拖慢测试整体耗时。"
+    "impact": "重复全量样例 JSON 落盘（save-file 每次 6~16ms）叠加路径往返，拖慢测试整体耗时。",
+    "fix": {
+      "commit": "867feee",
+      "note": "saveSamplesToPath 改为按路径排队合并：写进行中到达的请求只保留最新一份，drainSampleSaves 串行落盘并循环排空，不同路径互不影响，失败仍只记日志；runAllSamples/runSample 中 8 处重复落盘收敛为 persistRunResults。tests/sample-tester-save.test.js 有覆盖。"
+    }
   },
   {
     "id": "P6",
     "severity": "LOW",
     "title": "read-directory 双 handler 并存 + 目录刷新无防抖",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/main.js:4573-4589; src/renderer/js/sidebar/fileExplorer.js:372-445,622-633,1888-1892",
     "problem": "read-directory 同时存在 ipcMain.on（fire-and-forget）与 ipcMain.handle（invoke）两套 handler，渲染层也有两套调用路径，属冗余维护。工作区加载与每次 refresh()/refreshFolder() 都调 read-directory（实测 6~33ms），多处文件操作后 refresh() 未做防抖合并，同一秒可能并发多次整目录重读。",
-    "impact": "目录重读无合并放大 IPC 与主进程 fs 扫描开销，大目录下文件管理器刷新明显卡顿。"
+    "impact": "目录重读无合并放大 IPC 与主进程 fs 扫描开销，大目录下文件管理器刷新明显卡顿。",
+    "fix": {
+      "commit": "5e10dbe",
+      "note": "删除 ipcMain.on('read-directory') 与渲染层 send + directory-read 事件回传回退分支，directory-read/directory-read-error 通道及相关白名单条目一并移除，_readDirectory 只走 invoke（同路径并发仍复用 in-flight 请求）；refresh() 改为 120ms 窗口内合并成一次目录重读。tests/file-explorer.test.js 有覆盖。"
+    }
   },
   {
     "id": "P7",
     "severity": "LOW",
     "title": "get-cpu-threads 启动路径一次 135ms",
-    "status": "待修复",
+    "status": "已修复",
     "file": "src/main.js（get-cpu-threads handler）",
     "problem": "启动时 get-cpu-threads 被调一次，实测 135ms（主进程做系统探测/子进程探测）。虽仅一次，但落在启动关键路径上。",
-    "impact": "启动耗时多出上百毫秒。"
+    "impact": "启动耗时多出上百毫秒。",
+    "fix": {
+      "commit": "4b4881e",
+      "note": "新增 src/utils/cpu-threads.js：os.cpus() 探测结果一次性缓存，主进程在 createWindow 之后用 unref 定时器于空闲时段预热，使 get-cpu-threads 在关键路径上基本变成缓存命中；返回值语义（>=1，失败回退 2）不变。tests/cpu-threads.test.js 有覆盖。"
+    }
   }
 ]
