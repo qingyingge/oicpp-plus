@@ -478,7 +478,7 @@ const ALLOWED_SEND_CHANNELS = new Set([
     'theme-changed', 'settings-changed',
     'settings-preview', 'workspace-path-report',
     'file-renamed', 'file-deleted', 'file-created',
-    'save-file', 'read-directory',
+    'save-file',
     'rename-file', 'delete-file', 'create-file', 'create-folder',
     'paste-file', 'move-file',
     'debug-send-input', 'start-debug', 'stop-debug',
@@ -523,7 +523,6 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     // 文件系统
     'file-saved', 'file-renamed', 'file-created', 'folder-created',
     'file-deleted', 'file-pasted', 'file-moved', 'file-move-error',
-    'directory-read', 'directory-read-error',
     // 窗口/应用
     'window-maximized', 'window-unmaximized', 'app-close-requested',
     'lsp-apply-edit',

@@ -4705,15 +4705,8 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('read-directory', async (event, dirPath) => {
-        try {
-            const items = await readDirectory(dirPath);
-            event.reply('directory-read', dirPath, items);
-        } catch (error) {
-            logError('读取目录失败 (event):', error);
-            event.reply('directory-read-error', dirPath, error.message);
-        }
-    });
+    // read-directory 只有 invoke 一条路径：渲染进程统一用 await 拿结果，
+    // 早期那套 send + directory-read 事件回传已无调用方，双份 handler 属冗余维护
     ipcMain.handle('read-directory', async (event, dirPath) => {
         try {
             return await readDirectory(dirPath);

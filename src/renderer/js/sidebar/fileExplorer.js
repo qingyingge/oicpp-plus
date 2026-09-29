@@ -1,3 +1,6 @@
+// 连续文件操作后的目录重读合并窗口
+const FILE_EXPLORER_REFRESH_DEBOUNCE_MS = 120;
+
 class FileExplorer {
     constructor() {
         this.currentPath = '';
@@ -8,6 +11,7 @@ class FileExplorer {
         this.clipboard = null;
         this.expandedFolders = new Set();
         this._directoryReadRequests = new Map();
+        this._refreshTimer = null;
         this._treeItemsByPath = new Map();
         this._draggingItems = new Set();
         this._dragOverItem = null;
@@ -374,41 +378,10 @@ class FileExplorer {
         const existing = this._directoryReadRequests.get(dirPath);
         if (existing) return existing;
 
-        let request;
-        if (window.electronAPI?.readDirectory) {
-            request = Promise.resolve().then(() => window.electronAPI.readDirectory(dirPath));
-        } else if (window.electronIPC) {
-            request = new Promise((resolve, reject) => {
-                let settled = false;
-                const cleanup = () => {
-                    window.electronIPC.ipcRenderer?.removeListener?.('directory-read', onRead);
-                    window.electronIPC.ipcRenderer?.removeListener?.('directory-read-error', onError);
-                };
-                const onRead = (_event, returnedPath, files) => {
-                    if (settled || returnedPath !== dirPath) return;
-                    settled = true;
-                    cleanup();
-                    resolve(Array.isArray(files) ? files : []);
-                };
-                const onError = (_event, returnedPath, error) => {
-                    if (settled || returnedPath !== dirPath) return;
-                    settled = true;
-                    cleanup();
-                    reject(new Error(error || '读取目录失败'));
-                };
-                window.electronIPC.on('directory-read', onRead);
-                window.electronIPC.on('directory-read-error', onError);
-                try {
-                    window.electronIPC.send('read-directory', dirPath);
-                } catch (error) {
-                    settled = true;
-                    cleanup();
-                    reject(error);
-                }
-            });
-        } else {
-            request = Promise.reject(new Error('Electron IPC 不可用'));
+        if (!window.electronAPI?.readDirectory) {
+            return Promise.reject(new Error('Electron IPC 不可用'));
         }
+        const request = Promise.resolve().then(() => window.electronAPI.readDirectory(dirPath));
 
         const tracked = Promise.resolve(request)
             .then(files => Array.isArray(files) ? files : [])
@@ -1885,9 +1858,16 @@ class FileExplorer {
         }
     }
 
+    // 目录重读合并：一次批量文件操作（新建/重命名/删除/粘贴）会连续触发多次
+    // refresh()，每次都是整目录 read-directory（6~33ms）+ 全量重渲染，
+    // 大目录下明显卡顿。改为短窗口内合并成一次（P6）。
     refresh() {
-        logInfo('刷新文件管理器');
-        this.loadFiles();
+        if (this._refreshTimer) clearTimeout(this._refreshTimer);
+        this._refreshTimer = setTimeout(() => {
+            this._refreshTimer = null;
+            logInfo('刷新文件管理器');
+            this.loadFiles();
+        }, FILE_EXPLORER_REFRESH_DEBOUNCE_MS);
     }
 
     async checkFileExists(filePath) {
