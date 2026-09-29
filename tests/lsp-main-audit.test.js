@@ -31,6 +31,7 @@ function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
         spawn: spawnImpl,
         LSP_REQUEST_TIMEOUT_MS: 30000,
         LSP_MAX_MESSAGE_BYTES: 16 * 1024 * 1024,
+        LSP_DIAGNOSTICS_THROTTLE_MS: 60,
         terminateProcessTree: (proc) => { try { proc?.kill?.(); } catch (_) {} },
         mainWindow,
         logInfo: () => {},
@@ -195,6 +196,57 @@ class FakeProc extends EventEmitter {
     }
     await stopped;
     check('audit: stop clears process and pending state', stopManager.proc === null && stopManager.pending.size === 0 && stopProc.killed);
+
+    // P3: publishDiagnostics 按 uri 合并节流，空诊断不重复下发
+    const diagnosticsSends = [];
+    const DiagnosticsManager = loadManagerClass(undefined, {
+        isDestroyed: () => false,
+        webContents: {
+            send: (channel, payload) => {
+                if (channel === 'lsp-notification') diagnosticsSends.push(payload);
+            }
+        }
+    });
+    const diagnosticsManager = new DiagnosticsManager();
+    const uri = 'file:///workspace/main.cpp';
+    for (let i = 1; i <= 5; i++) {
+        diagnosticsManager._dispatchMessage({
+            method: 'textDocument/publishDiagnostics',
+            params: { uri, diagnostics: new Array(i).fill({ message: `e${i}` }) }
+        });
+    }
+    check('P3: diagnostics are throttled before the window fires', diagnosticsSends.length === 0);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    check('P3: burst of diagnostics collapses into one send',
+        diagnosticsSends.length === 1 && diagnosticsSends[0].params.diagnostics.length === 5,
+        `sends=${diagnosticsSends.length} count=${diagnosticsSends[0]?.params?.diagnostics?.length}`);
+
+    diagnosticsManager._dispatchMessage({ method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: [] } });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    check('P3: clearing diagnostics is still delivered',
+        diagnosticsSends.length === 2 && diagnosticsSends[1].params.diagnostics.length === 0);
+
+    diagnosticsManager._dispatchMessage({ method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: [] } });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    check('P3: repeated empty diagnostics are dropped', diagnosticsSends.length === 2, `sends=${diagnosticsSends.length}`);
+
+    diagnosticsManager._dispatchMessage({ method: 'textDocument/publishDiagnostics', params: { uri, diagnostics: [{ message: 'again' }] } });
+    diagnosticsManager._dispatchMessage({ method: 'window/logMessage', params: { message: 'hi' } });
+    await diagnosticsManager.stop();
+    check('P3: stop flushes the pending diagnostics and drops the timer',
+        diagnosticsSends.length === 4 &&
+        diagnosticsSends.filter((s) => s.method === 'textDocument/publishDiagnostics' && s.params.diagnostics.length === 1).length === 1 &&
+        diagnosticsSends.filter((s) => s.method === 'window/logMessage').length === 1 &&
+        diagnosticsManager.diagnosticTimers.size === 0,
+        `sends=${diagnosticsSends.map((s) => s.method).join(',')}`);
+
+    // P3: 渲染进程侧 lsp-start 失败冷却，避免每个特性请求重复发起启动 IPC
+    const managerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'js', 'monaco-editor-manager.js'), 'utf8');
+    const ensureLspReadyBlock = /async ensureLspReady\(\) \{[\s\S]*?\n    \}/.exec(managerSource);
+    check('P3: ensureLspReady reuses the last start failure during cooldown',
+        !!ensureLspReadyBlock &&
+        ensureLspReadyBlock[0].includes('_lspStartFailure') &&
+        ensureLspReadyBlock[0].includes('LSP_START_RETRY_COOLDOWN_MS'));
 
     console.log(`[INFO] lsp-main-audit completed: ${failures ? failures + ' failure(s)' : 'all executable contracts passed'}`);
     process.exitCode = failures ? 1 : 0;

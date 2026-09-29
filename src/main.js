@@ -30,6 +30,8 @@ const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
 const LSP_REQUEST_TIMEOUT_MS = 30000;
 const LSP_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
+// 诊断推送节流窗口：同一 uri 的 publishDiagnostics 在窗口内只下发最新一份
+const LSP_DIAGNOSTICS_THROTTLE_MS = 60;
 const EXTERNAL_OPEN_DEDUP_WINDOW_MS = 800;
 const recentExternalOpens = new Map();
 // Compiler probing starts child processes and filesystem scans. Results depend
@@ -669,6 +671,51 @@ class ClangdLspManager {
         this.procGeneration = 0;
         this.initialized = false;
         this.serverCapabilities = null;
+        // 诊断推送节流：clangd 每次文档改动都回发 publishDiagnostics，
+        // 主进程原样透传会在持续输入时形成高频单向大流。按 uri 合并，
+        // 只保留最新一份诊断并在一个节流窗口内下发一次。
+        this.diagnosticTimers = new Map();
+        this.pendingDiagnostics = new Map();
+        this.lastSentDiagnostics = new Map();
+    }
+
+    _sendLspNotification(method, params) {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        try {
+            mainWindow.webContents.send('lsp-notification', { method, params: params || null });
+        } catch (_) { }
+    }
+
+    _queueDiagnostics(uri, params) {
+        const key = uri || '';
+        const count = Array.isArray(params?.diagnostics) ? params.diagnostics.length : 0;
+        // 空诊断且上一份下发的也是空：状态没变，不必再走一趟 IPC
+        if (count === 0 && this.lastSentDiagnostics.get(key) === 0) {
+            this.pendingDiagnostics.delete(key);
+            return;
+        }
+        this.pendingDiagnostics.set(key, params);
+        if (this.diagnosticTimers.has(key)) return;
+        const timer = setTimeout(() => {
+            this.diagnosticTimers.delete(key);
+            const latest = this.pendingDiagnostics.get(key);
+            this.pendingDiagnostics.delete(key);
+            if (!latest) return;
+            this.lastSentDiagnostics.set(key, Array.isArray(latest.diagnostics) ? latest.diagnostics.length : 0);
+            this._sendLspNotification('textDocument/publishDiagnostics', latest);
+        }, LSP_DIAGNOSTICS_THROTTLE_MS);
+        if (typeof timer.unref === 'function') timer.unref();
+        this.diagnosticTimers.set(key, timer);
+    }
+
+    _flushDiagnostics() {
+        for (const timer of this.diagnosticTimers.values()) clearTimeout(timer);
+        this.diagnosticTimers.clear();
+        for (const [key, params] of this.pendingDiagnostics) {
+            this.lastSentDiagnostics.set(key, Array.isArray(params?.diagnostics) ? params.diagnostics.length : 0);
+            this._sendLspNotification('textDocument/publishDiagnostics', params);
+        }
+        this.pendingDiagnostics.clear();
     }
 
     isRunning() {
@@ -877,6 +924,9 @@ class ClangdLspManager {
     }
 
     async stop() {
+        // 停止前把节流窗口内待发的诊断补发出去，避免最后一次诊断丢失
+        this._flushDiagnostics();
+        this.lastSentDiagnostics.clear();
         const proc = this.proc;
         if (!proc) {
             return { ok: true };
@@ -1192,13 +1242,10 @@ class ClangdLspManager {
                     const uri = (message.params?.uri || '').replace(/^file:\/\//, '').split('/').pop();
                     logInfo('[LSP] 收到诊断: ' + diagCount + ' 条, 文件: ' + uri);
                 }
+                this._queueDiagnostics(message.params?.uri || '', message.params || null);
+                return;
             }
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('lsp-notification', {
-                    method: message.method,
-                    params: message.params || null
-                });
-            }
+            this._sendLspNotification(message.method, message.params || null);
         }
     }
 }

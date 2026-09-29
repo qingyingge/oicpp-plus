@@ -1,3 +1,6 @@
+// lsp-start 失败后的重试冷却期：避免每个 LSP 特性请求都重新发起一次启动 IPC
+const LSP_START_RETRY_COOLDOWN_MS = 3000;
+
 class MonacoEditorManager {
     constructor() {
         this.currentEditor = null;
@@ -45,6 +48,7 @@ class MonacoEditorManager {
         this._lspChangePromises = new Map();
         this._lspChangePending = new Set();
         this._lspReadyPromise = null;
+        this._lspStartFailure = null;
         this._lspCompletionEnabled = true;
         this._syntaxCheckEnabled = true;
         this._lspCompilerPath = undefined;
@@ -371,6 +375,7 @@ class MonacoEditorManager {
             this._lspChangePromises.clear();
             this._lspChangePending.clear();
 
+            this._lspStartFailure = null;
             this._lspCompilerPath = newCompilerPath;
 
             const workspaceRoot = this.getWorkspaceRootPath();
@@ -503,6 +508,13 @@ class MonacoEditorManager {
         if (this._lspReadyPromise) {
             return this._lspReadyPromise;
         }
+        // clangd 不可用时启动会失败，而 _ensureLspDocumentReady 被每个 LSP 特性请求
+        // 调用，若每次都重试就会在启动/开文件关键路径上重复发 lsp-start（每次数十毫秒）。
+        // 冷却期内直接复用上次的失败结果，不再产生多余 IPC。
+        if (this._lspStartFailure && (Date.now() - this._lspStartFailure.at) < LSP_START_RETRY_COOLDOWN_MS) {
+            logInfo('[LSP] 处于启动失败冷却期，跳过重复的 lsp-start 调用');
+            throw this._lspStartFailure.error;
+        }
         this._lspReadyPromise = (async () => {
             let fallbackFlags = [];
             let compilerPath = '';
@@ -541,10 +553,12 @@ class MonacoEditorManager {
                 });
             } catch (startErr) {
                 logError('[LSP] LSP 启动失败:', startErr?.message || startErr);
-                this._lspReadyPromise = null;  // 允许重试
+                this._lspStartFailure = { at: Date.now(), error: startErr };
+                this._lspReadyPromise = null;  // 冷却期后允许重试
                 throw startErr;
             }
 
+            this._lspStartFailure = null;
             logInfo('[LSP] LSP 就绪，注册语义高亮提供器');
             this.registerCppSemanticHighlightingProviders();
             this.registerAllLspProviders();
@@ -6217,6 +6231,7 @@ class MonacoEditorManager {
 
     handleLspServerStopped(details = {}) {
         this._lspReadyPromise = null;
+        this._lspStartFailure = null;
         this._lspDocuments.clear();
         this._lspSemanticTokenCache = new WeakMap();
         this._lspDiagnosticsByModel = new WeakMap();
