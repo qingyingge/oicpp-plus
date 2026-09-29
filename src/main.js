@@ -24,6 +24,7 @@ const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/proce
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
+const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
 
 const APP_VERSION = '1.5.4';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
@@ -8981,6 +8982,10 @@ app.whenReady().then(() => {
     } catch (_) { }
     createWindow();
 
+    // 启动后的空闲时段预热 CPU 核心数，避免对拍器初始化等关键路径上的
+    // get-cpu-threads 付出 os.cpus() 的全部同步开销
+    scheduleCpuThreadsWarmUp();
+
     handleCommandLineArgs();
 
     // startHeartbeatService();  // OICPP-Plus: 已禁用云服务（认证/云同步/心跳），避免依赖原作者服务器
@@ -10123,13 +10128,7 @@ ipcMain.handle('list-client-logs', () => {
 });
 
 ipcMain.handle('get-cpu-threads', () => {
-    try {
-        const cpus = os.cpus();
-        const count = Array.isArray(cpus) && cpus.length > 0 ? cpus.length : 2;
-        return Math.max(1, count);
-    } catch (_) {
-        return 2;
-    }
+    return getCpuThreads();
 });
 
 ipcMain.handle('get-recent-files', () => {
