@@ -8841,14 +8841,19 @@ async function runExecutable(options) {
                 reject(new Error('未找到consolepauser.exe，无法启动程序。请确保%userprofile%/.oicpp-plus/consolepauser.exe已正确生成。'));
                 return;
             }
-            command = 'cmd';
+            // 直接 spawn consolepauser.exe（它自己会 CreateProcess 并弹出窗口）。
+            // 不能写成 cmd /c start "标题" "..."：shell:false 下 Node 由 libuv 的
+            // quote_cmd_arg 组装命令行，参数内每个 " 都按 MSVCRT 规则前置反斜杠，
+            // cmd.exe 不认这种转义，start 会把字面量 "Program Running 当成待执行
+            // 程序名去查找，runMode=popup 下运行必然失败。
             const absoluteExePath = path.resolve(executablePath);
             const absoluteConsolePauserPath = path.resolve(consolePauserPath);
 
             logInfo('绝对路径 - ConsolePauser:', absoluteConsolePauserPath);
             logInfo('绝对路径 - 可执行文件:', absoluteExePath);
 
-            args = ['/c', `start "Program Running" "${absoluteConsolePauserPath}" "${absoluteExePath}"`];
+            command = absoluteConsolePauserPath;
+            args = [absoluteExePath];
 
             let runEnv = { ...process.env };
             const compilerPath = settings && settings.compilerPath;
