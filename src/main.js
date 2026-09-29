@@ -430,6 +430,8 @@ class ClangdLspManager {
     constructor() {
         this.proc = null;
         this.buffer = Buffer.alloc(0);
+        this.bufferChunks = [];
+        this.bufferedBytes = 0;
         this.pending = new Map();
         this.canceledIds = new Set();
         this.nextId = 1;
@@ -437,6 +439,9 @@ class ClangdLspManager {
         this.nextApplyEditId = 1;
         this.workspaceFolders = [];
         this.procGeneration = 0;
+        // 启动进行中的去重句柄：ensureClangdUserBundle 与编译器探测都是 await，
+        // 期间重复的 lsp-start/lsp-restart 复用同一个 promise，避免产生孤儿 clangd
+        this._startPromise = null;
         this.initialized = false;
         this.serverCapabilities = null;
         // 诊断推送节流：clangd 每次文档改动都回发 publishDiagnostics，
@@ -638,7 +643,7 @@ class ClangdLspManager {
             this.proc = null;
             this.initialized = false;
             this.serverCapabilities = null;
-            this.buffer = Buffer.alloc(0);
+            this._resetBuffer();
             const err = new Error(`clangd exited (${code || '0'})${signal ? ` signal=${signal}` : ''}`);
             this.pending.forEach((entry) => {
                 clearTimeout(entry.timer);
@@ -664,7 +669,7 @@ class ClangdLspManager {
             this.proc = null;
             this.initialized = false;
             this.serverCapabilities = null;
-            this.buffer = Buffer.alloc(0);
+            this._resetBuffer();
             this.pending.forEach((entry) => {
                 clearTimeout(entry.timer);
                 try { entry.reject(err); } catch (_) {}
@@ -672,10 +677,19 @@ class ClangdLspManager {
             this.pending.clear();
         });
         logInfo('[LSP] clangd 已启动, PID:', proc.pid);
-        return { ok: true, clangdPath, args, fallbackFlags };
+        return { ok: true, clangdPath, args };
     }
 
     async stop() {
+        // 若启动流程还在进行（准备 clangd 包/探测编译器），先等它落地，
+        // 否则 stop() 会看到 this.proc === null 直接返回，随后启动流程又把
+        // clangd 拉起来，stop 形同虚设。
+        const inFlightStart = this._startPromise;
+        if (inFlightStart) {
+            try {
+                await inFlightStart;
+            } catch (_) { }
+        }
         // 停止前把节流窗口内待发的诊断补发出去，避免最后一次诊断丢失
         this._flushDiagnostics();
         this.lastSentDiagnostics.clear();
@@ -689,7 +703,7 @@ class ClangdLspManager {
         this.initialized = false;
         this.serverCapabilities = null;
         this.canceledIds.clear();
-        this.buffer = Buffer.alloc(0);
+        this._resetBuffer();
         this.pending.forEach((entry) => {
             clearTimeout(entry.timer);
             try { entry.reject(new Error('clangd stopped')); } catch (_) {}
@@ -829,17 +843,51 @@ class ClangdLspManager {
         this.proc.stdin.write(header + json, 'utf8');
     }
 
+    _resetBuffer() {
+        this.buffer = Buffer.alloc(0);
+        this.bufferChunks = [];
+        this.bufferedBytes = 0;
+    }
+
+    _hasFraming() {
+        // 逐 chunk 拼接是 O(n²) 的内存拷贝（semanticTokens 之类的大消息会明显放大），
+        // 这里先在 chunk 列表上找一次帧头，找不到就直接返回，不产生任何拼接。
+        let tail = '';
+        for (const chunk of this.bufferChunks) {
+            const text = tail + chunk.toString('latin1');
+            if (text.includes('\r\n\r\n')) return true;
+            tail = text.slice(-3);
+        }
+        return false;
+    }
+
     _handleData(chunk) {
-        this.buffer = Buffer.concat([this.buffer, chunk]);
-        if (this.buffer.length > LSP_MAX_MESSAGE_BYTES + 8192) {
+        const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf8');
+        if (this.bufferChunks.length === 0 && this.buffer.length > 0) {
+            this.bufferChunks.push(this.buffer);
+            this.bufferedBytes = this.buffer.length;
+        }
+        this.bufferChunks.push(piece);
+        this.bufferedBytes += piece.length;
+
+        if (this.bufferedBytes > LSP_MAX_MESSAGE_BYTES + 8192) {
             logWarn('[LSP] 消息超过大小上限，丢弃缓冲区');
-            this.buffer = Buffer.alloc(0);
+            this._resetBuffer();
             this._failPending(new Error('LSP message exceeds size limit'));
             return;
         }
+
+        if (!this._hasFraming()) {
+            return;
+        }
+
+        this.buffer = this.bufferChunks.length === 1 ? this.bufferChunks[0] : Buffer.concat(this.bufferChunks, this.bufferedBytes);
+        this.bufferChunks = [];
+        this.bufferedBytes = 0;
+
         while (true) {
             const headerEnd = this.buffer.indexOf('\r\n\r\n');
-            if (headerEnd === -1) return;
+            if (headerEnd === -1) break;
             const headerText = this.buffer.slice(0, headerEnd).toString('utf8');
             const lengthMatch = headerText.match(/content-length:\s*(\d+)/i);
             if (!lengthMatch) {
@@ -849,14 +897,14 @@ class ClangdLspManager {
             const length = parseInt(lengthMatch[1], 10);
             if (!Number.isFinite(length) || length < 0 || length > LSP_MAX_MESSAGE_BYTES) {
                 logWarn('[LSP] 收到非法的 Content-Length:', lengthMatch[1]);
-                this.buffer = Buffer.alloc(0);
+                this._resetBuffer();
                 this._failPending(new Error('Invalid LSP Content-Length'));
                 return;
             }
             const messageStart = headerEnd + 4;
             const messageEnd = messageStart + length;
             if (this.buffer.length < messageEnd) {
-                return;
+                break;
             }
             const body = this.buffer.slice(messageStart, messageEnd).toString('utf8');
             this.buffer = this.buffer.slice(messageEnd);
@@ -869,6 +917,15 @@ class ClangdLspManager {
                 continue;
             }
             this._dispatchMessage(payload);
+        }
+
+        // 剩余的半条消息回到 chunk 列表，下一个 chunk 直接续上，不再从头拼接
+        if (this.buffer.length > 0) {
+            this.bufferChunks = [this.buffer];
+            this.bufferedBytes = this.buffer.length;
+        } else {
+            this.bufferChunks = [];
+            this.bufferedBytes = 0;
         }
     }
 
@@ -8734,14 +8791,13 @@ async function runExecutable(options) {
 app.whenReady().then(() => {
     ensureLegacyDataMigration();
     app.commandLine.appendSwitch('charset', 'utf-8');
-    try {
-        const clangdStatus = ensureClangdUserBundle();
+    ensureClangdUserBundle().then((clangdStatus) => {
         if (clangdStatus.ok) {
             logInfo('[LSP] 启动时 clangd 就绪:', clangdStatus.root);
         } else {
             logWarn('[LSP] 启动时 clangd 未就绪:', clangdStatus.error || 'unknown');
         }
-    } catch (_) { }
+    }).catch(() => { });
     createWindow();
 
     // 启动后的空闲时段预热 CPU 核心数，避免对拍器初始化等关键路径上的

@@ -39,16 +39,13 @@ function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
         logError: () => {},
         // These are only needed if a future test exercises start(); keeping the
         // harness small makes it safe to use the class without booting Electron.
-        ensureClangdUserBundle: () => ({ ok: true, root: '/fake/clangd' }),
+        ensureClangdUserBundle: async () => ({ ok: true, root: '/fake/clangd' }),
         resolveClangdExecutable: () => '/fake/clangd/bin/clangd',
         getUserClangdRoot: () => '/fake/clangd',
         getCompilerRuntimeBinPaths: () => [],
-        queryCompilerInfo: async () => ({}),
-        queryCompilerHeaderIncludeDir: async () => null,
-        collectStdCxxIncludeDirs: () => [],
-        searchCompilerTreeForStdCxxIncludeDir: () => [],
-        addSystemIncludeDir: () => {},
-        addStdCxxIncludeBundle: () => {}
+        queryCompilerInfo: async () => ({ includePaths: [], target: '' }),
+        compilerInfoCache: new Map(),
+        clangdCompileFlags: require(path.join(__dirname, '..', 'src', 'utils', 'clangd-compile-flags.js'))
     };
     vm.runInNewContext(`${classSource}\nthis.__ClangdLspManager = ClangdLspManager;`, context);
     return context.__ClangdLspManager;
@@ -240,6 +237,69 @@ class FakeProc extends EventEmitter {
         diagnosticsManager.diagnosticTimers.size === 0,
         `sends=${diagnosticsSends.map((s) => s.method).join(',')}`);
 
+    // L34: stdout 缓冲改为 chunk 列表，大消息不再逐 chunk O(n²) 拼接
+    const chunkedManager = new Manager();
+    chunkedManager.proc = new FakeProc();
+    const chunkedRequest = chunkedManager.request('textDocument/hover', {}, 'chunked-1');
+    const chunkedFrame = protocolFrame({ id: 'chunked-1', result: { chunked: true } });
+    chunkedManager._handleData(Buffer.from(chunkedFrame.slice(0, 5), 'utf8'));
+    check('L34: partial header without framing does not concatenate',
+        chunkedManager.bufferChunks.length === 1 && chunkedManager.bufferedBytes === 5);
+    for (let i = 5; i < chunkedFrame.length; i += 7) {
+        chunkedManager._handleData(Buffer.from(chunkedFrame.slice(i, i + 7), 'utf8'));
+    }
+    check('L34: reassembled frame resolves the request', (await chunkedRequest)?.chunked === true);
+    check('L34: buffer is drained after the last frame',
+        chunkedManager.bufferedBytes === 0 && chunkedManager.bufferChunks.length === 0);
+
+    // L34: 帧头跨 chunk 边界时仍能正确拼接（\r\n\r\n 被拆到两个 chunk）
+    const boundaryManager = new Manager();
+    boundaryManager.proc = new FakeProc();
+    const boundaryRequest = boundaryManager.request('textDocument/hover', {}, 'boundary-1');
+    const boundaryFrame = protocolFrame({ id: 'boundary-1', result: { boundary: true } });
+    const splitAt = boundaryFrame.indexOf('\r\n\r\n') + 2;
+    boundaryManager._handleData(Buffer.from(boundaryFrame.slice(0, splitAt), 'utf8'));
+    boundaryManager._handleData(Buffer.from(boundaryFrame.slice(splitAt), 'utf8'));
+    check('L34: header split across chunks is reassembled', (await boundaryRequest)?.boundary === true);
+
+    // M54: start() 主进程侧去重，并发 lsp-start 只 spawn 一个 clangd
+    let spawnCount = 0;
+    const concurrentProcs = [];
+    const ConcurrentManager = loadManagerClass(() => {
+        spawnCount++;
+        const proc = new FakeProc();
+        concurrentProcs.push(proc);
+        return proc;
+    });
+    const concurrentManager = new ConcurrentManager();
+    const [firstStart, secondStart] = await Promise.all([
+        concurrentManager.start({}),
+        concurrentManager.start({})
+    ]);
+    check('M54: concurrent start calls share one clangd spawn',
+        spawnCount === 1 && concurrentProcs.length === 1 && firstStart.ok === true && secondStart.ok === true,
+        `spawns=${spawnCount}`);
+    check('M54: concurrent start callers observe the same process',
+        concurrentManager.proc === concurrentProcs[0]);
+    await concurrentManager.stop();
+
+    // M55: clangd 包准备走异步拷贝，不再 cpSync 阻塞主进程
+    const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+    const bundleFn = /function ensureClangdUserBundle\(\)[\s\S]*?\n\}/.exec(mainSource);
+    check('M55: ensureClangdUserBundle copies the bundle asynchronously',
+        !!bundleFn && bundleFn[0].includes('fs.promises.cp') && !bundleFn[0].includes('cpSync'));
+    check('M55: ensureClangdUserBundle de-duplicates concurrent calls',
+        !!bundleFn && bundleFn[0].includes('clangdBundlePromise'));
+
+    // M52: fallbackFlags 死链路已删除，编译参数改由 compile_flags.txt 承载
+    check('M52: fallbackFlags no longer leaves the main process',
+        !/return \{ ok: true, clangdPath, args, fallbackFlags \}/.test(mainSource) &&
+        !mainSource.includes('addStdCxxIncludeBundle') &&
+        !mainSource.includes('collectStdCxxIncludeDirs'));
+    check('M52: compile flags are written into the private LSP dir',
+        mainSource.includes('clangdCompileFlags.writeCompileFlagsFile') &&
+        mainSource.includes('--compile-commands-dir=${compileCommandsDir}'));
+
     // P3: 渲染进程侧 lsp-start 失败冷却，避免每个特性请求重复发起启动 IPC
     const managerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'js', 'monaco-editor-manager.js'), 'utf8');
     const ensureLspReadyBlock = /async ensureLspReady\(\) \{[\s\S]*?\n    \}/.exec(managerSource);
@@ -248,8 +308,38 @@ class FakeProc extends EventEmitter {
         ensureLspReadyBlock[0].includes('_lspStartFailure') &&
         ensureLspReadyBlock[0].includes('LSP_START_RETRY_COOLDOWN_MS'));
 
-    console.log(`[INFO] lsp-main-audit completed: ${failures ? failures + ' failure(s)' : 'all executable contracts passed'}`);
-    process.exitCode = failures ? 1 : 0;
+    // L35: 每轮 didChange 只算一次文档安全性，且不再保留必然失配的单槽缓存
+    const safetyResult = 'safe-result';
+    check('L35: didChange flush passes its safety result down',
+        managerSource.includes('this.sendLspDidChange(model, safety)') &&
+        managerSource.includes('sendLspDidChange(model, safetyResult = null)') &&
+        managerSource.includes('_sendLspDidChange(model, safetyResult)'));
+    check('L35: the never-matching single-slot safety cache is gone',
+        !managerSource.includes('_lspSafetyCache'));
+
+    // M56: 范围格式化只回写差异行，不再以整模型范围替换
+    const rangeProvider = /provideDocumentRangeFormattingEdits[\s\S]*?\n {20}\}/.exec(managerSource);
+    check('M56: range formatting emits minimal edits',
+        !!rangeProvider && rangeProvider[0].includes('buildMinimalFormatEdits') &&
+        !rangeProvider[0].includes('getFullModelRange'));
+    check('M56: minimal edit builder compares common prefix/suffix lines',
+        managerSource.includes('buildMinimalFormatEdits') &&
+        managerSource.includes('let prefix = 0;') &&
+        managerSource.includes('let suffix = 0;'));
+
+    // L36: clang-format 可执行路径只解析一次，同参数请求合并/命中缓存
+    const formatPathFn = /function resolveClangFormatExecutablePath\(\) \{[\s\S]*?\n\}/.exec(mainSource);
+    check('L36: clang-format executable path resolution is cached',
+        !!formatPathFn &&
+        formatPathFn[0].includes('clangFormatExecutablePathResolved') &&
+        formatPathFn[0].includes('findClangFormatExecutableOnPath()') &&
+        !formatPathFn[0].includes('const exeName'),
+        formatPathFn ? formatPathFn[0].split('\n').length + ' lines' : 'not found');
+    check('L36: identical format requests are merged and cached',
+        mainSource.includes('clangFormatInFlight') && mainSource.includes('clangFormatResultCache') &&
+        mainSource.includes('cacheClangFormatResult'));
+
+    console.log(`[INFO] lsp-main-audit completed: ${failures ? failures + ' failure(s)' : 'all executable contracts passed'}`);    process.exitCode = failures ? 1 : 0;
 })().catch((error) => {
     console.log(`[FAIL] lsp-main-audit unexpected error | ${error?.stack || error?.message || error}`);
     process.exitCode = 1;
