@@ -97,17 +97,14 @@ void PrintConsoleLine(const wchar_t* line)
 {
     if (!line) return;
 
-    // 不依赖 GetConsoleMode：freopen 打开的 CONOUT$ 只有写权限，会让该判断失败
     HANDLE outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (outputHandle != NULL && outputHandle != INVALID_HANDLE_VALUE)
+    DWORD mode = 0;
+    if (outputHandle != INVALID_HANDLE_VALUE && GetConsoleMode(outputHandle, &mode))
     {
         DWORD written = 0;
-        if (WriteConsoleW(outputHandle, line, static_cast<DWORD>(wcslen(line)), &written, NULL))
-        {
-            DWORD newline = 0;
-            WriteConsoleW(outputHandle, L"\r\n", 2, &newline, NULL);
-            return;
-        }
+        WriteConsoleW(outputHandle, line, static_cast<DWORD>(wcslen(line)), &written, NULL);
+        WriteConsoleW(outputHandle, L"\r\n", 2, &written, NULL);
+        return;
     }
 
     // Fallback for redirected output streams.
@@ -127,44 +124,13 @@ void PrintConsoleFormat(const wchar_t* fmt, ...)
     PrintConsoleLine(buffer);
 }
 
-// The IDE spawns this helper detached with NUL stdio, so no console is attached.
-// Allocate one on demand and rebind the streams, otherwise _getch() returns
-// immediately and the window disappears the moment the program exits.
-bool EnsureConsole()
-{
-    if (GetConsoleWindow() == NULL && !AllocConsole())
-    {
-        return false;
-    }
-
-    // 先重绑 CRT 流：freopen 打开 CONIN$/CONOUT$ 会顺带改写进程标准句柄，
-    // 因此 SetStdHandle 必须放在其后，才能拿到带 GENERIC_READ 的控制台句柄。
-    freopen("CONIN$", "r", stdin);
-    freopen("CONOUT$", "w", stdout);
-    freopen("CONOUT$", "w", stderr);
-
-    HANDLE input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-    if (input != INVALID_HANDLE_VALUE) SetStdHandle(STD_INPUT_HANDLE, input);
-
-    HANDLE output = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-    if (output != INVALID_HANDLE_VALUE)
-    {
-        SetStdHandle(STD_OUTPUT_HANDLE, output);
-        SetStdHandle(STD_ERROR_HANDLE, output);
-    }
-
-    return true;
-}
-
 }
 
 int main(int argc, char** argv)
 {
-    EnsureConsole();
-
     if (argc < 2)
     {
-        PrintConsoleLine(L"\u7528\u6cd5: consolePauser <\u7a0b\u5e8f> [\u53c2\u6570...]");
+        PrintConsoleFormat(L"\u7528\u6cd5\uff1a%s <\u6587\u4ef6\u540d> <\u53c2\u6570>", argv[0]);
         return 1;
     }
 
@@ -200,8 +166,9 @@ int main(int argc, char** argv)
     if (!created)
     {
         DWORD err = GetLastError();
-        PrintConsoleFormat(L"\u542f\u52a8\u7a0b\u5e8f\u5931\u8d25\uff0cWin32\u9519\u8bef\u7801=%lu", static_cast<unsigned long>(err));
-        PrintConsoleLine(L"\u8bf7\u6309\u4efb\u610f\u952e\u7ee7\u7eed\u3002");
+        PrintConsoleFormat(L"\u65e0\u6cd5\u542f\u52a8\u8fdb\u7a0b\uff1a%s", argv[1]);
+        PrintConsoleFormat(L"\u9519\u8bef\u4ee3\u7801: %d", static_cast<int>(err));
+        PrintConsoleLine(L"\u8bf7\u6309\u4efb\u610f\u952e\u7ee7\u7eed...");
         _getch();
         return static_cast<int>(err);
     }
@@ -220,19 +187,23 @@ int main(int argc, char** argv)
     CloseHandle(processInfo.hThread);
     CloseHandle(processInfo.hProcess);
 
-    PrintConsoleLine(L"");
-    PrintConsoleFormat(L"\u8fdb\u7a0b\u5df2\u7ed3\u675f\uff0c\u8fd4\u56de\u503c %lu (0x%lX)", static_cast<unsigned long>(exitCode), static_cast<unsigned long>(exitCode));
-    PrintConsoleFormat(L"\u8fd0\u884c\u65f6\u95f4: %llu ms", elapsedMs);
+    PrintConsoleLine(L"-----------------------------------------------");
+    PrintConsoleFormat(L"\u6267\u884c\u65f6\u95f4\uff1a%llu.%03llu ms",
+        static_cast<unsigned long long>(elapsedMs / 1000),
+        static_cast<unsigned long long>(elapsedMs % 1000));
     if (hasPeakMemory)
     {
         const unsigned long long peakMemoryKb = static_cast<unsigned long long>((peakMemoryBytes + 1023) / 1024);
-        PrintConsoleFormat(L"\u5cf0\u503c\u5185\u5b58: %llu KB", peakMemoryKb);
+        PrintConsoleFormat(L"\u5cf0\u503c\u5185\u5b58\u4f7f\u7528\uff1a%llu KB", peakMemoryKb);
     }
     else
     {
-        PrintConsoleLine(L"\u5cf0\u503c\u5185\u5b58: \u65e0\u6cd5\u83b7\u53d6");
+        PrintConsoleLine(L"\u5cf0\u503c\u5185\u5b58\u4f7f\u7528\uff1a\u65e0\u6cd5\u83b7\u53d6");
     }
-    PrintConsoleLine(L"\u8bf7\u6309\u4efb\u610f\u952e\u7ee7\u7eed\u3002");
+    PrintConsoleFormat(L"\u7a0b\u5e8f\u8fd4\u56de\u503c\uff1a%llu (0x%llX)",
+        static_cast<unsigned long long>(exitCode),
+        static_cast<unsigned long long>(exitCode));
+    PrintConsoleLine(L"\u8bf7\u6309\u4efb\u610f\u952e\u7ee7\u7eed...");
     _getch();
 
     return static_cast<int>(exitCode);

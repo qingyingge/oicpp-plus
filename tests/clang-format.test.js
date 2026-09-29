@@ -130,10 +130,10 @@ class FakeChildProcess extends EventEmitter {
     check('installer removes clang-format on uninstall', /RMDir \/r "\$INSTDIR\\resources\\clang-format"/.test(installerSource));
 
     const pauserSource = fs.readFileSync(path.join(root, 'src', 'utils', 'consolepauser-source.js'), 'utf8');
-    check('console pauser allocates its own console so the window can pause', pauserSource.includes('AllocConsole()') && pauserSource.includes('freopen("CONIN$", "r", stdin)'));
-    check('console pauser rebinds the standard handles after freopen clobbers them', pauserSource.indexOf('freopen("CONOUT$", "w", stdout)') < pauserSource.indexOf('SetStdHandle(STD_OUTPUT_HANDLE, output)'));
-    check('console output no longer depends on GetConsoleMode', pauserSource.includes('if (WriteConsoleW(outputHandle, line') && !pauserSource.includes('GetConsoleMode(outputHandle, &mode)'));
-    check('console pauser keeps the previous summary wording', pauserSource.includes('\\u8fdb\\u7a0b\\u5df2\\u7ed3\\u675f') && pauserSource.includes('\\u8fd0\\u884c\\u65f6\\u95f4') && pauserSource.includes('\\u8bf7\\u6309\\u4efb\\u610f\\u952e\\u7ee7\\u7eed'));
+    check('the pauser is launched through cmd start so it inherits a real console', mainSource.includes("command = 'cmd';") && mainSource.includes('start "Program Running"'));
+    check('console pauser no longer allocates its own console', !pauserSource.includes('AllocConsole()') && !pauserSource.includes('freopen("CONIN$", "r", stdin)'));
+    check('console output is gated on GetConsoleMode again', pauserSource.includes('GetConsoleMode(outputHandle, &mode)') && !pauserSource.includes('if (WriteConsoleW(outputHandle, line'));
+    check('console pauser keeps the legacy summary wording', pauserSource.includes('-----------------------------------------------') && pauserSource.includes('\\u6267\\u884c\\u65f6\\u95f4') && pauserSource.includes('\\u5cf0\\u503c\\u5185\\u5b58\\u4f7f\\u7528') && pauserSource.includes('\\u7a0b\\u5e8f\\u8fd4\\u56de\\u503c') && pauserSource.includes('\\u8bf7\\u6309\\u4efb\\u610f\\u952e\\u7ee7\\u7eed...'));
     check('console pauser is built statically first so it needs no MinGW runtime DLLs', mainSource.includes("{ name: 'utf8-static', sourceMode: 'utf8', args: ['-static'] }"));
     check('stale console pauser binaries are rebuilt from a source fingerprint', mainSource.includes('getConsolePauserSourceFingerprint()') && mainSource.includes('getConsolePauserFingerprintPath()'));
     check('detached run failures are logged through the child exit code', mainSource.includes("logInfo('[运行] 子进程已退出:'"));
