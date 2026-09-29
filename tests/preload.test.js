@@ -226,6 +226,21 @@ check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvoke
     // H9: Markdown 转义内联 HTML
     check('markdown 转义内联 HTML', !exposed.markdownAPI.render('a <b>b</b>').includes('<b>'));
 
+    // P1: 渲染进程日志合并成批发送，不再每条一次 IPC
+    const logSendsBefore = sent.length;
+    for (let i = 0; i < 5; i++) exposed.logInfo(`[P1] 第 ${i} 条日志`);
+    exposed.logWarn('[P1] 告警', new Error('boom'));
+    check('P1 日志调用不再立即逐条跨进程',
+        sent.length === logSendsBefore, `${sent.length - logSendsBefore} immediate send(s)`);
+    await new Promise(r => setTimeout(r, 400));
+    const logSends = sent.slice(logSendsBefore).filter(s => s.ch === 'logger-log-batch');
+    check('P1 日志合并为单次 logger-log-batch',
+        logSends.length === 1 && Array.isArray(logSends[0].args[0]) && logSends[0].args[0].length === 6,
+        `batches=${logSends.length} entries=${(logSends[0] && logSends[0].args[0] || []).length}`);
+    check('P1 warn 日志保留 meta 且不再抓取 preload 内部 stack',
+        !!logSends[0] && Array.isArray(logSends[0].args[0]) &&
+        logSends[0].args[0].filter(e => e.level === 'warn').every(e => e.meta && e.meta.source === 'renderer' && !e.meta.stack));
+
     console.log(failures === 0 ? '\nPRELOAD TESTS: ALL PASSED' : `\nPRELOAD TESTS: ${failures} FAILED`);
     process.exit(failures === 0 ? 0 : 1);
 })();

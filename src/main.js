@@ -3635,24 +3635,30 @@ function setupIPC() {
             : null;
     });
 
-    ipcMain.on('logger-log', (event, payload) => {
-        try {
-            const { level = 'info', args = [], meta } = payload || {};
-            if (meta) {
-                const wrapped = [
-                    '[renderer]',
-                    ...args,
-                    { __meta: meta }
-                ];
-                if (level === 'error') logger.logerror(...wrapped);
-                else if (level === 'warn') logger.logwarn(...wrapped);
-                else logger.logInfo(...wrapped);
-            } else {
-                if (level === 'error') logger.logerror(...args);
-                else if (level === 'warn') logger.logwarn(...args);
-                else logger.logInfo(...args);
+    // 渲染进程日志由 preload 合并成批送来（logger-log-batch），一次 IPC 承载
+    // 多条日志，避免每次渲染进程动作都产生一次跨进程往返。
+    ipcMain.on('logger-log-batch', (event, batch) => {
+        if (!Array.isArray(batch)) return;
+        for (const entry of batch) {
+            try {
+                const { level = 'info', args = [], meta } = entry || {};
+                const list = Array.isArray(args) ? args : [args];
+                if (meta) {
+                    const wrapped = [
+                        '[renderer]',
+                        ...list,
+                        { __meta: meta }
+                    ];
+                    if (level === 'error') logger.logerror(...wrapped);
+                    else if (level === 'warn') logger.logwarn(...wrapped);
+                    else logger.logInfo(...wrapped);
+                } else {
+                    if (level === 'error') logger.logerror(...list);
+                    else if (level === 'warn') logger.logwarn(...list);
+                    else logger.logInfo(...list);
+                }
+            } catch (e) {
             }
-        } catch (e) {
         }
     });
 

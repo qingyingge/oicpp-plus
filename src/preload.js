@@ -467,7 +467,7 @@ const ALLOWED_SEND_CHANNELS = new Set([
     'debug-send-input', 'start-debug', 'stop-debug',
     'debug-continue', 'debug-step-over', 'debug-step-into', 'debug-step-out',
     'debug-add-watch', 'debug-request-variables',
-    'open-template-settings', 'check-updates-manual', 'logger-log'
+    'open-template-settings', 'check-updates-manual', 'logger-log-batch'
 ]);
 
 const ALLOWED_INVOKE_CHANNELS = new Set([
@@ -807,18 +807,46 @@ contextBridge.exposeInMainWorld('process', {
     }
 });
 
+// 渲染进程日志合并发送：原先每条 logInfo/logWarn/logError 都会跨进程一次
+// （warn/error 还附带 preload 内部抓取的、无调用点意义的 stack），启动即产生
+// 上百次 IPC 往返。现改为在 preload 侧排队，按时间窗/条数批量发往主进程。
+const LOG_FLUSH_DELAY_MS = 150;
+const LOG_BATCH_MAX = 200;
+const LOG_QUEUE_MAX = 2000;
+const logQueue = [];
+let logFlushTimer = null;
+
+const flushLogQueue = () => {
+    if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = null; }
+    if (logQueue.length === 0) return;
+    const batch = logQueue.splice(0, LOG_BATCH_MAX);
+    safeIpcRenderer.send('logger-log-batch', batch);
+    if (logQueue.length > 0) scheduleLogFlush();
+};
+
+function scheduleLogFlush() {
+    if (logFlushTimer) return;
+    logFlushTimer = setTimeout(flushLogQueue, LOG_FLUSH_DELAY_MS);
+}
+
+if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('beforeunload', flushLogQueue);
+}
+
 const safeSendLog = (level, args) => {
     try {
-        let meta = undefined;
+        let meta;
         if (level === 'warn' || level === 'error') {
             meta = {
                 source: 'renderer',
                 ts: Date.now(),
                 userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
-                stack: (() => { try { throw new Error('__trace__'); } catch (e) { return e.stack; } })(),
             };
         }
-        safeIpcRenderer.send('logger-log', { level, args, meta });
+        if (logQueue.length >= LOG_QUEUE_MAX) logQueue.splice(0, logQueue.length - LOG_QUEUE_MAX + 1);
+        logQueue.push({ level, args, meta });
+        if (logQueue.length >= LOG_BATCH_MAX) flushLogQueue();
+        else scheduleLogFlush();
     } catch (_) { }
     // 仅在开发模式或显式开启时输出到控制台
     if (process.env.NODE_ENV === 'development' || process.env.OICPP_CONSOLE_LOG === '1') {
