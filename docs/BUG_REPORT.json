@@ -1319,5 +1319,114 @@
       "commit": "4b4881e",
       "note": "新增 src/utils/cpu-threads.js：os.cpus() 探测结果一次性缓存，主进程在 createWindow 之后用 unref 定时器于空闲时段预热，使 get-cpu-threads 在关键路径上基本变成缓存命中；返回值语义（>=1，失败回退 2）不变。tests/cpu-threads.test.js 有覆盖。"
     }
+  },
+  {
+    "id": "H15",
+    "severity": "HIGH",
+    "title": "clangd 静默改用 MSVC 工具链，用户配置的 MinGW 编译参数完全不生效",
+    "status": "待修复",
+    "file": "src/main.js:763,867-924; src/renderer/js/lsp-client.js:324-326",
+    "problem": "设置里 compilerPath 指向 MinGW g++，start() 据此拼 --query-driver 并 spawn clangd，但 clangd 23.1.0 自带 Visual Studio 工具链自动探测，优先级高于 --query-driver 与 compile_commands.json。实测从 clangd 日志抽出的 cc1 参数：8 个 -internal-isystem 全部指向 Visual Studio 18 Community（MSVC 14.51.36231）与 Windows SDK 10.0.26100，-triple x86_64-pc-windows-msvc19.51.36256，无任何 MinGW 路径；传入有效的 compile_commands.json（arguments 就是该 g++ + -std=c++14）后结果相同，clangd 虽打印 Compile command from CDB is: ...g++.exe 但仍注入 MSVC 系统头。--help 的 28 个选项中没有任何关闭该探测的开关。",
+    "impact": "典型竞赛代码 #include <bits/stdc++.h> 报 [pp_file_not_found]：实测一份 g++ -std=c++14 -fsyntax-only 能通过（exit=0）的文件，在 clangd 侧产生 5 个错误。诊断、补全、语义高亮全部按 MSVC 语义给出，与用户实际编译/提交的工具链不一致，误导判题与调试。",
+    "evidence": "本机实测（clangd 23.1.0 / MinGW-Builds g++ 16.1.0 / VS 18 Community 14.51.36231 / Win SDK 10.0.26100）：query-driver=MinGW、compile_commands.json、两者都无，三种配置的 cc1 参数完全一致，均无 MinGW 路径。"
+  },
+  {
+    "id": "M52",
+    "severity": "MEDIUM",
+    "title": "fallbackFlags 死链路：探测出的 include/target 永远送不到 clangd",
+    "status": "待修复",
+    "file": "src/main.js:722-842,924; src/renderer/js/lsp-client.js:93,144,324-326",
+    "problem": "start() 花费最多 18 秒（两个子进程各 10s/8s 超时 + 两次同步目录遍历）探测出的编译器 include 路径、target triple、stdc++ 头目录，只放进 start() 的返回值（main.js:924）；渲染进程取回后塞进 initialize 的 initializationOptions（lsp-client.js:324-326）。clangd 不消费 initializationOptions，代码里也没有任何地方把这些 flag 转成命令行参数——渲染侧传给主进程的 clangdArgs 恒为空数组（lsp-client.js:93,144），主进程原样透传（main.js:845-847）。实测 clangd 23.1.0 根本没有 --fallback-flags 选项：传入即报 Unknown command line argument '--fallback-flags=-std=c++14'（clangd 提示的是 clang-format 的 --fallback-style）。",
+    "impact": "唯一用于纠正 H15 工具链错配的通道是断的，探测链退化为纯开销（其成本见 M53/M55）。此外 main.js:819-820 无条件追加的 -Wno-system-headers 同样从未生效，所谓『抑制系统头噪音』并未实现。",
+    "related": "H15"
+  },
+  {
+    "id": "M53",
+    "severity": "MEDIUM",
+    "title": "两个 stdc++ 头目录探测 BFS 对新版 MinGW 布局恒返回空",
+    "status": "待修复",
+    "file": "src/main.js:317-388,390-449,451-515",
+    "problem": "collectStdCxxIncludeDirs 的候选根只列到 lib/gcc（main.js:325），且对非 include/c++ 结尾的根用深度 3 扫描（main.js:384）；searchCompilerTreeForStdCxxIncludeDir 从编译器根只扫 5 层（main.js:511）。实测 MinGW-Builds 16.1.0 的标准头真实路径是 lib/gcc/x86_64-w64-mingw32/16.1.0/include/c++，距编译器根 6 层，两个函数都够不到；且新版 libstdc++ 布局已无 bits/stdc++.h（该目录 191 个文件中只有 bits/std.compat.cc），g++ -print-file-name=bits/stdc++.h 返回裸名（未找到），故 queryCompilerHeaderIncludeDir（main.js:390）也会提前返回空。用逐行复刻的脚本实测：两函数返回值均为 []，耗时 2.7ms / 89.5ms。",
+    "impact": "对 GCC 15+ 的 MinGW 布局这两个探测必然产出为空，叠加 g++ 两次 spawn（实测 203ms 冷 / 169ms 热，以及 73ms），每次启动确定性浪费约 368ms 且没有任何产出；同时 collectStdCxxIncludeDirs 与 searchCompilerTreeForStdCxxIncludeDir 的分支（main.js:813-835）永远走不到 addStdCxxIncludeBundle。",
+    "related": "M52"
+  },
+  {
+    "id": "M54",
+    "severity": "MEDIUM",
+    "title": "ClangdLspManager.start() 主进程侧无 in-flight 去重，并发可产生孤儿 clangd 进程",
+    "status": "待修复",
+    "file": "src/main.js:726-873",
+    "problem": "start() 开头只检查 this.proc（main.js:727），而 this.proc 直到 main.js:873 才赋值，其间要执行 ensureClangdUserBundle（可能同步拷贝，见 M55）并 await 整段编译器探测（M52/M53）。该窗口内若再来一次 lsp-start/lsp-restart（main.js:3891,3907），两次调用都会跑完整探测并各自 spawn clangd，后一次覆盖 this.proc，先前进程成为孤儿。渲染侧 LspClientBridge.start 的 _readyPromise 去重（lsp-client.js:63-72）只在渲染进程内生效，restart()（lsp-client.js:74-82）与进行中的 start 之间无互斥，ensureLspReady 的 _lspReadyPromise（monaco-editor-manager.js:503-505）同理。",
+    "impact": "孤儿 clangd 常驻但无人回收：其 exit 回调先做 procGeneration 比对（main.js:881-884），generation 不匹配即 return，不会触发清理，进程继续占用 CPU/内存（可执行文件实测 51.9MB）。",
+    "related": "P3（仅治渲染侧重复触发，不覆盖主进程并发窗口）"
+  },
+  {
+    "id": "M55",
+    "severity": "MEDIUM",
+    "title": "ensureClangdUserBundle 同步复制 96MB 阻塞主进程约 1 秒",
+    "status": "待修复",
+    "file": "src/main.js:517-542",
+    "problem": "fs.cpSync(bundledRoot, userRoot, { recursive: true })（main.js:534）在 IPC handler 内同步执行。实测 clangd 包为 354 文件 / 96.3MB，同盘复制耗时 999ms；同目录全量遍历仅 13ms，说明瓶颈是数据搬运而非扫描。",
+    "impact": "首次运行期间 Electron 主进程事件循环完全阻塞：终端、编译、文件读写、clangd stdin 全部无响应，用户看到界面无响应。同一份数据在构建期（download-clangd.js cpSync 到 build/ → electron-builder 复制到 resources/）与运行期共被拷贝三份。clangd 运行时只写工作区 .cache，并不依赖用户目录这份副本，复制在功能上非必需。",
+    "evidence": "本机实测 999ms / 354 文件 / 96.3MB；资源目录同路径枚举 13ms。"
+  },
+  {
+    "id": "M56",
+    "severity": "MEDIUM",
+    "title": "范围格式化做全量输入并以全模型替换回写",
+    "status": "待修复",
+    "file": "src/clang-format-service.js:108-121; src/renderer/js/monaco-editor-manager.js:2057-2069",
+    "problem": "有 range 时把整个文档 writeFileSync 写入临时文件（clang-format-service.js:118-119），clang-format 仍需整文件解析才能产出 --lines 范围内的结果；返回后又以 model.getFullModelRange() 整体替换（monaco-editor-manager.js:2065），而不是只回写受影响的行区间。",
+    "impact": "范围格式化耗时与全文格式化相当（性能收益为零），同时产生巨型 undo 记录、光标/选区跳变，并触发 Monaco 重排整个文档。"
+  },
+  {
+    "id": "P8",
+    "severity": "MEDIUM",
+    "title": "（已排除）didOpen 紧跟 didSave 导致 clangd 解析量翻倍",
+    "status": "无效",
+    "file": "src/renderer/js/monaco-editor-manager.js:2567",
+    "problem": "openLspDocument 在 didOpen 之后立刻发 didSave（为触发完整诊断），怀疑因此让 clangd 把整个 TU 的诊断管线跑两遍，使打开文件到首屏诊断的时间翻倍。",
+    "impact": "若成立，打开文件到首屏诊断的时间将翻倍（约 2.4s → 4.8s 量级）。",
+    "invalid_reason": "实测不成立。229KB / 3009 行 / 9 个标准头的文件，didOpen 后 2.4s 出首份诊断；紧随其后的 didSave 在 12s 内未产生任何新的 publishDiagnostics 事件——clangd 忽略不带 text 的 didSave，不触发重新诊断。该 didSave 不产生额外解析开销。"
+  },
+  {
+    "id": "P9",
+    "severity": "MEDIUM",
+    "title": "（已排除）全量 didChange 是输入延迟主因，增量同步可显著降延迟",
+    "status": "无效",
+    "file": "src/renderer/js/monaco-editor-manager.js:2659; src/renderer/js/lsp-client.js:203",
+    "problem": "contentChanges: [{ text }] 每次都发送全文（客户端能力声明 change: 1），怀疑大文件下这是输入延迟的主要来源，改为增量同步（change: 2）可显著降低延迟。",
+    "impact": "若成立，229KB 文件的输入延迟可从秒级降到与编辑量相关的几十毫秒。",
+    "invalid_reason": "端到端实测同一逻辑编辑，229KB 全量 → 新诊断 1405ms，69B 增量 → 1395ms，差异 10ms。传输量不是瓶颈，clangd 重新诊断本身约 1.4s（该成本与文档大小/标准头数量相关，与传输量无关）。增量同步仍有主进程内存与 IPC 压力上的价值，但不能作为延迟优化项。另测：三种编译命令来源（--query-driver / compile_commands.json / 两者都无）的 initialize、didOpen→诊断、semanticTokens、didChange→诊断耗时均无统计差异。"
+  },
+  {
+    "id": "L34",
+    "severity": "LOW",
+    "title": "clangd stdout 逐 chunk Buffer.concat，缓冲区拼接为 O(n²)",
+    "status": "待修复",
+    "file": "src/main.js:1081-1083",
+    "problem": "_handleData 对每个 stdout chunk 都执行 Buffer.concat([this.buffer, chunk])，消息上限 16MB（main.js:33），大消息会产生平方级内存拷贝。",
+    "impact": "主进程单线程上的额外拷贝开销。",
+    "evidence": "微基准 4MB / 64 chunk：逐 chunk concat 52ms，chunk 列表一次性 concat 1ms（52 倍差距成立）。但实际消息规模小：诊断 2KB、285000 ints 的 semanticTokens 约 1.1MB（16 次 concat，约 10~15ms）。可修，不是当前延迟痛点。"
+  },
+  {
+    "id": "L35",
+    "severity": "LOW",
+    "title": "assessLspDocumentSafety 每轮计算两次且缓存键几乎必然失配",
+    "status": "待修复",
+    "file": "src/renderer/js/monaco-editor-manager.js:630-633,2595,2635",
+    "problem": "每轮 didChange flush 先在 monaco-editor-manager.js:2595 算一次，_sendLspDidChange 内（monaco-editor-manager.js:2635）再算一次；单槽缓存键是 长度:首字符码:尾字符码（monaco-editor-manager.js:632），编辑过程中几乎必然失配，等于没有缓存。函数内另有 3 次全文正则替换（回调内 ' '.repeat(match.length)）与 arrayPattern 循环中的 lastIndexOf。",
+    "impact": "渲染主线程上每轮额外开销。",
+    "evidence": "实测 100KB / 4001 行文档：3 次 masking 共 4ms，arrayPattern+lastIndexOf 循环 ×5 约 0ms，即每轮约 8ms。量级不大，仅 MB 级文件才明显。属可优化项而非当前卡顿主因。"
+  },
+  {
+    "id": "L36",
+    "severity": "LOW",
+    "title": "clang-format 每次请求重解析可执行路径并新建进程",
+    "status": "待修复",
+    "file": "src/main.js:233-249,3859; src/clang-format-service.js:109,136,205",
+    "problem": "format-cpp-code handler（main.js:3859）每次都调 resolveClangFormatExecutablePath()（main.js:248），打包路径缺失时 findClangFormatExecutableOnPath（main.js:233）遍历整个 PATH 逐项 statSync；随后每次格式化都 spawn 一个新 clang-format 进程（clang-format-service.js:136），无常驻进程、无结果缓存、无 in-flight 合并。styleRaw 或 range 时还要 mkdtempSync + 写临时 .clang-format/source + rmSync（clang-format-service.js:109,205）。",
+    "impact": "开发态或未执行 prebuild:clang-format 时，每次格式化多一次全 PATH 扫描；正常态每次格式化多一次进程启动开销（Windows 量级 30~150ms）；长按格式化快捷键会连续 spawn。临时 --style=file:<临时目录> 还会阻断项目 .clang-format 的向上发现（clang-format-service.js:52），未保存模型 filePath 为空时 cwd 退化为 process.cwd()，可能套用无关工程的样式。",
+    "related": "P5（同类合并/去重思路）"
   }
 ]
