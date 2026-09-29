@@ -135,14 +135,19 @@ check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvoke
     check('renderer 所有 invoke 通道通过白名单', blockedInvokes.length === 0, blockedInvokes.join(','));
 
     // 事件解包：三个修复通道拿到 payload，未修通道保持原签名
+    // preload 自身也会订阅部分通道（如 P2 设置缓存失效），故取最后注册的监听器
+    const apiListener = (ch) => {
+        const arr = listeners.get(ch) || [];
+        return arr[arr.length - 1];
+    };
     let got = null;
     exposed.electronAPI.onSettingsReset(v => { got = v; });
-    (listeners.get('settings-reset') || [])[0]?.({ sender: 'fake' }, { theme: 'dark' });
+    apiListener('settings-reset')?.({ sender: 'fake' }, { theme: 'dark' });
     check('settings-reset 解包出 payload', got && got.theme === 'dark', JSON.stringify(got));
 
     got = null;
     exposed.electronAPI.onSettingsImported(v => { got = v; });
-    (listeners.get('settings-imported') || [])[0]?.({ sender: 'fake' }, { editor: { fontSize: 14 } });
+    apiListener('settings-imported')?.({ sender: 'fake' }, { editor: { fontSize: 14 } });
     check('settings-imported 解包出 payload', got && got.editor.fontSize === 14);
 
     got = null;
@@ -153,7 +158,7 @@ check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvoke
     let args = null;
     exposed.electronAPI.onSettingsChanged((...a) => { args = a; });
     const ev = { sender: 'fake' };
-    (listeners.get('settings-changed') || [])[0]?.(ev, 'editor', { x: 1 });
+    apiListener('settings-changed')?.(ev, 'editor', { x: 1 });
     check('settings-changed 保持 (event,type,settings) 签名', args && args[0] === ev && args[1] === 'editor' && args[2].x === 1);
 
     // LSP 事件桥接：先验证 payload 解包；listener cleanup 作为审计项单独报告。
@@ -240,6 +245,30 @@ check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvoke
     check('P1 warn 日志保留 meta 且不再抓取 preload 内部 stack',
         !!logSends[0] && Array.isArray(logSends[0].args[0]) &&
         logSends[0].args[0].filter(e => e.level === 'warn').every(e => e.meta && e.meta.source === 'renderer' && !e.meta.stack));
+
+    // P2: get-all-settings 短 TTL 缓存 + 在途去重
+    invoked.length = 0;
+    const s1 = await exposed.electronAPI.getAllSettings();
+    const s2 = await exposed.electronAPI.getAllSettings();
+    check('P2 连续 getAllSettings 只跨进程一次',
+        invoked.filter(i => i.ch === 'get-all-settings').length === 1,
+        `${invoked.filter(i => i.ch === 'get-all-settings').length} invoke(s)`);
+    check('P2 缓存返回的是独立副本', s1 !== s2 && JSON.stringify(s1) === JSON.stringify(s2));
+    s1.ok = 'mutated';
+    const s3 = await exposed.electronAPI.getAllSettings();
+    check('P2 缓存副本互不污染', s3.ok !== 'mutated', String(s3.ok));
+    invoked.length = 0;
+    await exposed.electronAPI.updateSettings({ editor: { fontSize: 15 } });
+    await exposed.electronAPI.getAllSettings();
+    check('P2 写设置后缓存失效',
+        invoked.filter(i => i.ch === 'get-all-settings').length === 1,
+        `${invoked.filter(i => i.ch === 'get-all-settings').length} invoke(s)`);
+    invoked.length = 0;
+    (listeners.get('settings-changed') || []).forEach(l => l({ sender: 'fake' }, 'editor', {}));
+    await exposed.electronAPI.getAllSettings();
+    check('P2 收到 settings-changed 广播后缓存失效',
+        invoked.filter(i => i.ch === 'get-all-settings').length === 1,
+        `${invoked.filter(i => i.ch === 'get-all-settings').length} invoke(s)`);
 
     console.log(failures === 0 ? '\nPRELOAD TESTS: ALL PASSED' : `\nPRELOAD TESTS: ${failures} FAILED`);
     process.exit(failures === 0 ? 0 : 1);

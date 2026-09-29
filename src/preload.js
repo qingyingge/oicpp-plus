@@ -513,14 +513,63 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     'compare-progress', 'compare-error', 'compare-complete', 'menu-save-file', 'apply-settings-preview', 'settings-applied', 'menu-format-code', 'menu-find-replace', 'menu-compile', 'menu-compile-run', 'menu-debug', 'menu-new-temp-file', 'menu-open-file', 'menu-open-folder', 'menu-save-as', 'menu-open-terminal', 'menu-open-browser', 'menu-new-browser-tab', 'menu-about', 'menu-settings', 'menu-check-updates', 'update-download-status', 'app-toast', 'show-debug-developing-message', 'file-opened', 'folder-opened', 'file-opened-from-args', 'external-file-changed', 'sample-tester-create-problem', 'terminal-data', 'terminal-exit', 'ide-login-updated', 'ide-login-error', 'menu-open-file-history', 'lsp-notification', 'request-save-all', 'browser-open-new-tab',
 ]);
 
+// P2: get-all-settings 在启动/开文件关键路径上被多处（compile-manager、monaco、
+// init、settings-init 等）连调 5~12 次，每次都是整对象跨进程 + 主进程序列化。
+// preload 侧做短 TTL 缓存 + 在途去重，写设置或收到 settings-changed 时失效。
+const SETTINGS_CACHE_TTL_MS = 1000;
+const SETTINGS_MUTATING_CHANNELS = new Set([
+    'update-settings', 'update-top-level-settings', 'save-setting',
+    'reset-settings', 'import-settings',
+    'settings-changed', 'settings-preview', 'apply-settings-preview'
+]);
+let settingsCache = null;
+let settingsCacheTime = 0;
+let settingsCacheInflight = null;
+
+function invalidateSettingsCache() {
+    settingsCache = null;
+    settingsCacheTime = 0;
+}
+
+// 主进程广播的设置变更同样让本窗口缓存失效（含其他设置窗口的写入）
+for (const ch of ['settings-changed', 'settings-reset', 'settings-imported']) {
+    ipcRenderer.on(ch, invalidateSettingsCache);
+}
+
+const cloneSettings = (value) => {
+    if (typeof structuredClone === 'function') {
+        try { return structuredClone(value); } catch (_) { }
+    }
+    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
+};
+
+function getAllSettings() {
+    const now = Date.now();
+    if (settingsCache && (now - settingsCacheTime) < SETTINGS_CACHE_TTL_MS) {
+        return Promise.resolve(cloneSettings(settingsCache));
+    }
+    if (!settingsCacheInflight) {
+        settingsCacheInflight = safeIpcRenderer.invoke('get-all-settings')
+            .then((value) => {
+                settingsCache = value;
+                settingsCacheTime = Date.now();
+                return value;
+            })
+            .finally(() => { settingsCacheInflight = null; });
+    }
+    return settingsCacheInflight.then((value) => cloneSettings(value));
+}
+
 const safeIpcRenderer = {
     send: (channel, ...args) => {
+        if (SETTINGS_MUTATING_CHANNELS.has(channel)) invalidateSettingsCache();
         if (ALLOWED_SEND_CHANNELS.has(channel)) {
             return ipcRenderer.send(channel, ...args);
         }
         console.warn(`IPC send blocked: ${channel}`);
     },
     invoke: (channel, ...args) => {
+        if (SETTINGS_MUTATING_CHANNELS.has(channel)) invalidateSettingsCache();
         if (ALLOWED_INVOKE_CHANNELS.has(channel)) {
             return ipcRenderer.invoke(channel, ...args);
         }
@@ -582,7 +631,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     loadTempFile: (filePath) => safeIpcRenderer.invoke('load-temp-file', filePath),
     deleteTempFile: (filePath) => safeIpcRenderer.invoke('delete-temp-file', filePath),
 
-    getAllSettings: () => safeIpcRenderer.invoke('get-all-settings'),
+    getAllSettings: () => getAllSettings(),
     getSettings: () => safeIpcRenderer.invoke('get-settings'),
     sendSettingsPreview: (settings) => safeIpcRenderer.send('settings-preview', settings),
     updateSettings: (newSettings) => safeIpcRenderer.invoke('update-settings', newSettings),
