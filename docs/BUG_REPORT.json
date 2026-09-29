@@ -1228,5 +1228,68 @@
     "problem": "contextIsolation 下 process 全局不可用。",
     "impact": "报告称 ReferenceError。",
     "invalid_reason": "与 H12 重复；process 已由 contextBridge 暴露，不会抛 ReferenceError。"
+  },
+  {
+    "id": "P1",
+    "severity": "HIGH",
+    "title": "logger-log IPC 火线：渲染进程日志每一条都跨进程",
+    "status": "待修复",
+    "file": "src/preload.js:809-830; src/renderer/js/**（886 处 logInfo/logWarn/logError）",
+    "problem": "渲染进程有 886 处 logInfo/logWarn/logError 调用，每次经 safeIpcRenderer.send('logger-log', ...) 跨进程到主进程，主进程再拼时间戳、序列化、写日志文件。实测：仅纯启动就发出 65~107 条 logger-log；一个编辑会话可达 157 条以上。preload 对 warn/error 级还附加完整 stack（内部 throw new Error 抓栈），进一步放大序列化成本。",
+    "impact": "每条渲染进程动作都放大成一次或多次 IPC 往返，成为常态性延迟与主进程日志写入压力来源；日志量随交互线性增长。"
+  },
+  {
+    "id": "P2",
+    "severity": "MEDIUM",
+    "title": "get-all-settings 整包重复序列化且无去重缓存",
+    "status": "待修复",
+    "file": "src/renderer/js/compile-manager.js:246-262; src/renderer/js/monaco-editor-manager.js:3860,3956,4121,5894; src/renderer/js/init.js",
+    "problem": "启动与每次开文件时 get-all-settings 被连调 5~12 次（compile-manager、monaco 的 keybindings/snippets/font、init 等多处各拉一次，彼此没有共享缓存）。实测单次 8~113ms，虽对象约 3.3KB 不算大，但每次都是整对象跨进程结构化克隆，且调用互相独立、无去重。",
+    "impact": "重复的整包序列化 + IPC 往返，累积到启动关键路径，拖慢窗口/文档初始化。"
+  },
+  {
+    "id": "P3",
+    "severity": "MEDIUM",
+    "title": "lsp-start 重复触发 + lsp-notification 诊断流未节流",
+    "status": "待修复",
+    "file": "src/renderer/js/monaco-editor-manager.js; src/main.js:854,1186-1199; src/renderer/js/lsp-client.js:38-59",
+    "problem": "启动+开文件过程 lsp-start 被连调 4~7 次（每次 27~58ms），虽内部有 _readyPromise 去重，但重复调用本身仍是多余 IPC 往返。clangd 每次文档改动回发 textDocument/publishDiagnostics，主进程未节流直接 webContents.send('lsp-notification', {method, params})，params 可能很大（诊断全量），是实时编辑时的持续延迟源。",
+    "impact": "重复的 lsp-start 增加初始化延迟；未节流的诊断推送在持续输入时造成高频 IPC 单向大流。"
+  },
+  {
+    "id": "P4",
+    "severity": "MEDIUM",
+    "title": "纯路径函数被逐一搬上 IPC：pathJoin/pathDirname/get-path-info/ensure-dir",
+    "status": "待修复",
+    "file": "src/preload.js:639-642; src/main.js:5861-5875,5947-5958; src/renderer/js/sidebar/sampleTester.js:544-585",
+    "problem": "path.join/path.dirname 这类同步纯函数也走 invoke IPC（path-join、path-dirname、get-path-info 主进程 handler 只是同步 path.join/dirname），本可在 preload 本地同步完成。样例测试器的 computeSamplesFilePathForFile 一次就串行 pathJoin×2 + ensureDirectory×2 + pathJoin×1（5 次往返），重命名/删除时又被反复调用（handleFileRenamed/handleFileDeleted 各再算一遍）。",
+    "impact": "大量本可本地化的纯路径计算变成串行 IPC 往返，样例测试/文件管理路径显著变慢。"
+  },
+  {
+    "id": "P5",
+    "severity": "MEDIUM",
+    "title": "样例测试运行期重复保存样例配置 JSON",
+    "status": "待修复",
+    "file": "src/renderer/js/sidebar/sampleTester.js:752-768,1987-2198",
+    "problem": "runAllSamples 的每个分支（主程序编译成功/失败、SPJ/grader、交互等）都会调用 saveSamplesToPath 整份写回样例配置 JSON（save-file invoke）。实测一次 runAll 就新增 path-join×3、ensure-directory×2、save-file×2。样例配置本可在运行前后各写一次，却在多个分支重复全量落盘。",
+    "impact": "重复全量样例 JSON 落盘（save-file 每次 6~16ms）叠加路径往返，拖慢测试整体耗时。"
+  },
+  {
+    "id": "P6",
+    "severity": "LOW",
+    "title": "read-directory 双 handler 并存 + 目录刷新无防抖",
+    "status": "待修复",
+    "file": "src/main.js:4573-4589; src/renderer/js/sidebar/fileExplorer.js:372-445,622-633,1888-1892",
+    "problem": "read-directory 同时存在 ipcMain.on（fire-and-forget）与 ipcMain.handle（invoke）两套 handler，渲染层也有两套调用路径，属冗余维护。工作区加载与每次 refresh()/refreshFolder() 都调 read-directory（实测 6~33ms），多处文件操作后 refresh() 未做防抖合并，同一秒可能并发多次整目录重读。",
+    "impact": "目录重读无合并放大 IPC 与主进程 fs 扫描开销，大目录下文件管理器刷新明显卡顿。"
+  },
+  {
+    "id": "P7",
+    "severity": "LOW",
+    "title": "get-cpu-threads 启动路径一次 135ms",
+    "status": "待修复",
+    "file": "src/main.js（get-cpu-threads handler）",
+    "problem": "启动时 get-cpu-threads 被调一次，实测 135ms（主进程做系统探测/子进程探测）。虽仅一次，但落在启动关键路径上。",
+    "impact": "启动耗时多出上百毫秒。"
   }
 ]
