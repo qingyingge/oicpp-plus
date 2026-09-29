@@ -58,7 +58,6 @@ class MonacoEditorManager {
         this._lspProvidersReady = false;
         this._lspGuardedModels = new WeakSet();
         this._lspGuardDetails = new WeakMap();
-        this._lspSafetyCache = null;
         this.lspClient = window.lspClient || null;
         this.setupLspIntegration();
         this._onMonacoContextMenuPasteCapture = this.handleMonacoContextMenuPasteCapture.bind(this);
@@ -384,16 +383,12 @@ class MonacoEditorManager {
                 : '';
             const workspaceName = workspaceRoot ? this.getFileNameFromPath(workspaceRoot) : 'workspace';
             const { compilerPath, compilerArgs } = await this.getCompilerSettingsSnapshot();
-            const fallbackFlags = this.tokenizeCompilerArgs(compilerArgs || '');
-            if (!fallbackFlags.some(f => f.startsWith('-std='))) {
-                fallbackFlags.unshift('-std=c++17');
-            }
 
             this._lspReadyPromise = this.lspClient.restart({
                 workspaceRoot,
                 rootUri,
                 workspaceName,
-                fallbackFlags,
+                compileFlags: this.buildRequestedCompileFlags(compilerArgs),
                 compilerPath: compilerPath || newCompilerPath
             });
 
@@ -516,21 +511,19 @@ class MonacoEditorManager {
             throw this._lspStartFailure.error;
         }
         this._lspReadyPromise = (async () => {
-            let fallbackFlags = [];
             let compilerPath = '';
+            let compilerArgs = '';
             try {
                 if (window.electronAPI?.getAllSettings) {
                     const settings = await window.electronAPI.getAllSettings();
-                    fallbackFlags = this.tokenizeCompilerArgs(settings?.compilerArgs || '');
+                    compilerArgs = settings?.compilerArgs || '';
                     compilerPath = settings?.compilerPath || '';
                 }
             } catch (_) {
-                fallbackFlags = [];
+                compilerArgs = '';
             }
-            if (!fallbackFlags.some(f => f.startsWith('-std='))) {
-                fallbackFlags.unshift('-std=c++17');
-            }
-            logInfo('[LSP] 回退编译参数:', fallbackFlags.length ? fallbackFlags.join(' ') : '(无)');
+            const compileFlags = this.buildRequestedCompileFlags(compilerArgs);
+            logInfo('[LSP] 请求的编译参数:', compileFlags.length ? compileFlags.join(' ') : '(无)');
             if (compilerPath) {
                 logInfo('[LSP] 编译器路径:', compilerPath);
             }
@@ -548,7 +541,7 @@ class MonacoEditorManager {
                     workspaceRoot,
                     rootUri,
                     workspaceName,
-                    fallbackFlags,
+                    compileFlags,
                     compilerPath
                 });
             } catch (startErr) {
@@ -8365,6 +8358,15 @@ class MonacoEditorManager {
         const matches = argString.match(/"[^"]+"|\S+/g);
         if (!Array.isArray(matches)) return [];
         return matches.map(token => token.trim()).filter(Boolean);
+    }
+
+    // 用户自定义的编译参数里，只有 -std= 真正影响 clangd 的语义（诊断/补全按 C++ 标准
+    // 区分），其余（-O2、-lxxx 等）clangd 用不上也不需要；include/target 由主进程探测编译器
+    // 后写进 compile_flags.txt，这里不再重复也不走那条早已失效的 fallbackFlags 通道。
+    buildRequestedCompileFlags(compilerArgs) {
+        const tokens = this.tokenizeCompilerArgs(compilerArgs);
+        const stdFlags = tokens.filter(token => /^-std=[A-Za-z0-9+]+$/.test(token));
+        return stdFlags.length > 0 ? stdFlags : ['-std=c++17'];
     }
 
     stripQuotes(value) {

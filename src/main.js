@@ -22,6 +22,7 @@ const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
+const clangdCompileFlags = require('./utils/clangd-compile-flags');
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
@@ -263,283 +264,48 @@ function describeClangFormatSearchPaths() {
     ].join(' | ');
 }
 
-function addSystemIncludeDir(flags, includeDir) {
-    if (!Array.isArray(flags) || !includeDir) {
-        return false;
-    }
-
-    const normalizedIncludeDir = path.resolve(includeDir);
-    if (!fs.existsSync(normalizedIncludeDir)) {
-        return false;
-    }
-
-    const alreadyAdded = flags.some((flag, index) => {
-        if (flag !== '-isystem') {
-            return false;
-        }
-        const currentDir = flags[index + 1];
-        return currentDir && path.resolve(currentDir) === normalizedIncludeDir;
-    });
-
-    if (alreadyAdded) {
-        return false;
-    }
-
-    flags.push('-isystem', normalizedIncludeDir);
-    return true;
-}
-
-function addStdCxxIncludeBundle(flags, includeDir) {
-    if (!addSystemIncludeDir(flags, includeDir)) {
-        return false;
-    }
-
-    let currentDir = path.dirname(path.resolve(includeDir));
-    let safetyDepth = 0;
-    while (currentDir && safetyDepth < 6) {
-        const cassertPath = path.join(currentDir, 'cassert');
-        if (fs.existsSync(cassertPath)) {
-            addSystemIncludeDir(flags, currentDir);
-            break;
-        }
-
-        const parentDir = path.dirname(currentDir);
-        if (!parentDir || parentDir === currentDir) {
-            break;
-        }
-
-        currentDir = parentDir;
-        safetyDepth += 1;
-    }
-
-    return true;
-}
-
-function collectStdCxxIncludeDirs(compilerPath) {
-    const candidateRoots = [];
-
-    if (compilerPath && fs.existsSync(compilerPath)) {
-        const compilerDir = path.dirname(compilerPath);
-        const compilerRoot = path.dirname(compilerDir);
-        candidateRoots.push(
-            path.join(compilerRoot, 'include', 'c++'),
-            path.join(compilerRoot, 'lib', 'gcc'),
-            path.join(compilerRoot, 'lib64', 'gcc'),
-            path.join(compilerRoot, 'mingw64', 'include', 'c++'),
-            path.join(compilerRoot, 'mingw32', 'include', 'c++')
-        );
-    }
-
-    const result = []; 
-    const seen = new Set();
-
-    const pushIfValid = (dir) => {
-        if (!dir) return;
-        const headerPath = path.join(dir, 'bits', 'stdc++.h');
-        if (!fs.existsSync(headerPath)) {
-            return;
-        }
-        const normalized = path.resolve(dir);
-        if (seen.has(normalized)) {
-            return;
-        }
-        seen.add(normalized);
-        result.push(normalized);
-    };
-
-    const scanDirTree = (rootDir, maxDepth) => {
-        if (!rootDir || !fs.existsSync(rootDir)) {
-            return;
-        }
-        const queue = [{ dir: rootDir, depth: 0 }];
-        while (queue.length > 0) {
-            const current = queue.shift();
-            if (!current) continue;
-            pushIfValid(current.dir);
-            if (current.depth >= maxDepth) {
-                continue;
-            }
-            let entries = [];
-            try {
-                entries = fs.readdirSync(current.dir, { withFileTypes: true });
-            } catch (_) {
-                continue;
-            }
-            for (const entry of entries) {
-                if (!entry.isDirectory() || entry.name.startsWith('.')) {
-                    continue;
-                }
-                queue.push({
-                    dir: path.join(current.dir, entry.name),
-                    depth: current.depth + 1
-                });
-            }
-        }
-    };
-
-    for (const rootDir of candidateRoots) {
-        if (!fs.existsSync(rootDir)) {
-            continue;
-        }
-        const depth = rootDir.endsWith(path.join('include', 'c++')) ? 4 : 3;
-        scanDirTree(rootDir, depth);
-    }
-
-    return result;
-}
-
-function queryCompilerHeaderIncludeDir(compilerPath, headerName = 'bits/stdc++.h') {
-    return new Promise((resolve) => {
-        if (!compilerPath || !fs.existsSync(compilerPath)) {
-            resolve('');
-            return;
-        }
-
-        const args = ['-print-file-name=' + headerName];
-        logInfo('[LSP] 正在查询编译器头文件位置:', compilerPath, args.join(' '));
-
-        let stdout = '';
-        let stderr = '';
-
-        const proc = spawn(compilerPath, args, {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            windowsHide: true
-        });
-
-        const timer = setTimeout(() => {
-            try { proc.kill(); } catch (_) {}
-        }, 8000);
-
-        proc.stdout.on('data', (data) => {
-            stdout += data.toString('utf8');
-        });
-
-        proc.stderr.on('data', (data) => {
-            stderr += data.toString('utf8');
-        });
-
-        proc.on('close', () => {
-            clearTimeout(timer);
-
-            const rawOutput = (stdout || stderr).trim().split(/\r?\n/).filter(Boolean).pop() || '';
-            if (!rawOutput || rawOutput === headerName) {
-                resolve('');
-                return;
-            }
-
-            const normalizedHeaderPath = path.resolve(rawOutput.trim());
-            if (!fs.existsSync(normalizedHeaderPath)) {
-                resolve('');
-                return;
-            }
-
-            const includeDir = path.dirname(path.dirname(normalizedHeaderPath));
-            if (fs.existsSync(includeDir)) {
-                resolve(includeDir);
-                return;
-            }
-
-            resolve('');
-        });
-
-        proc.on('error', () => {
-            clearTimeout(timer);
-            resolve('');
-        });
-    });
-}
-
-function searchCompilerTreeForStdCxxIncludeDir(compilerPath, headerName = 'bits/stdc++.h') {
-    const result = [];
-    const seen = new Set();
-
-    if (!compilerPath || !fs.existsSync(compilerPath)) {
-        return result;
-    }
-
-    const compilerDir = path.dirname(compilerPath);
-    const compilerRoot = path.dirname(compilerDir);
-    const searchRoots = [compilerRoot, compilerDir].filter((root, index, array) => root && array.indexOf(root) === index);
-
-    const pushIfValid = (dir) => {
-        if (!dir) return;
-        const headerPath = path.join(dir, headerName);
-        if (!fs.existsSync(headerPath)) {
-            return;
-        }
-        const normalized = path.resolve(dir);
-        if (seen.has(normalized)) {
-            return;
-        }
-        seen.add(normalized);
-        result.push(normalized);
-    };
-
-    const scanDirTree = (rootDir, maxDepth) => {
-        if (!rootDir || !fs.existsSync(rootDir)) {
-            return;
-        }
-
-        const queue = [{ dir: rootDir, depth: 0 }];
-        while (queue.length > 0) {
-            const current = queue.shift();
-            if (!current) continue;
-            pushIfValid(current.dir);
-            if (current.depth >= maxDepth) {
-                continue;
-            }
-
-            let entries = [];
-            try {
-                entries = fs.readdirSync(current.dir, { withFileTypes: true });
-            } catch (_) {
-                continue;
-            }
-
-            for (const entry of entries) {
-                if (!entry.isDirectory() || entry.name.startsWith('.')) {
-                    continue;
-                }
-                queue.push({
-                    dir: path.join(current.dir, entry.name),
-                    depth: current.depth + 1
-                });
-            }
-        }
-    };
-
-    for (const rootDir of searchRoots) {
-        scanDirTree(rootDir, 5);
-    }
-
-    return result;
-}
+// clangd 包约 354 文件 / 96MB，cpSync 会在 IPC handler 里同步阻塞主进程近 1 秒，
+// 期间终端、编译、文件读写、clangd stdin 全部无响应。改为异步拷贝并做在途去重。
+let clangdBundlePromise = null;
 
 function ensureClangdUserBundle() {
-    try {
-        const userRoot = getUserClangdRoot();
-        const userExe = resolveClangdExecutable(userRoot);
-        if (userExe) {
-            logInfo('[LSP] clangd 已存在于用户目录:', userExe);
-            return { ok: true, root: userRoot };
-        }
-
-        const bundledRoot = resolveClangdRootFromBundle();
-        if (!bundledRoot) {
-            logWarn('[LSP] 未找到打包的 clangd，用户可能不会获得 LSP 支持');
-            return { ok: false, error: 'clangd bundle not found' };
-        }
-
-        logInfo('[LSP] 从安装包复制 clangd 到用户目录:', bundledRoot, '->', userRoot);
-        fs.mkdirSync(userRoot, { recursive: true });
-        fs.cpSync(bundledRoot, userRoot, { recursive: true });
-        const copiedExe = resolveClangdExecutable(userRoot);
-        logInfo('[LSP] clangd 已复制到用户目录:', copiedExe || userRoot);
-        return { ok: true, root: userRoot };
-    } catch (error) {
-        logWarn('[LSP] 无法复制 clangd 到用户目录:', error?.message || error);
-        return { ok: false, error: error?.message || String(error) };
+    if (clangdBundlePromise) {
+        return clangdBundlePromise;
     }
+
+    const promise = (async () => {
+        try {
+            const userRoot = getUserClangdRoot();
+            const userExe = resolveClangdExecutable(userRoot);
+            if (userExe) {
+                logInfo('[LSP] clangd 已存在于用户目录:', userExe);
+                return { ok: true, root: userRoot };
+            }
+
+            const bundledRoot = resolveClangdRootFromBundle();
+            if (!bundledRoot) {
+                logWarn('[LSP] 未找到打包的 clangd，用户可能不会获得 LSP 支持');
+                return { ok: false, error: 'clangd bundle not found' };
+            }
+
+            logInfo('[LSP] 从安装包复制 clangd 到用户目录:', bundledRoot, '->', userRoot);
+            await fs.promises.mkdir(userRoot, { recursive: true });
+            await fs.promises.cp(bundledRoot, userRoot, { recursive: true });
+            const copiedExe = resolveClangdExecutable(userRoot);
+            logInfo('[LSP] clangd 已复制到用户目录:', copiedExe || userRoot);
+            return { ok: true, root: userRoot };
+        } catch (error) {
+            logWarn('[LSP] 无法复制 clangd 到用户目录:', error?.message || error);
+            return { ok: false, error: error?.message || String(error) };
+        }
+    })();
+
+    clangdBundlePromise = promise;
+    return promise.finally(() => {
+        if (clangdBundlePromise === promise) {
+            clangdBundlePromise = null;
+        }
+    });
 }
 
 /**
@@ -735,7 +501,28 @@ class ClangdLspManager {
             };
         }
 
-        const ensured = ensureClangdUserBundle();
+        // this.proc 要到 _startClangdInternal 末尾才赋值，其间包含 clangd 包准备与
+        // 编译器探测（await）。这段时间内再来一次 lsp-start/lsp-restart 会各自跑一遍
+        // 探测并各 spawn 一个 clangd，后一个覆盖 this.proc，前一个成为无人回收的孤儿
+        // （exit 回调因 generation 不匹配直接 return，连清理都不会走）。
+        if (this._startPromise) {
+            logInfo('[LSP] clangd 启动进行中，复用在途启动请求');
+            return await this._startPromise;
+        }
+
+        const startPromise = this._startClangdInternal(options);
+        this._startPromise = startPromise;
+        try {
+            return await startPromise;
+        } finally {
+            if (this._startPromise === startPromise) {
+                this._startPromise = null;
+            }
+        }
+    }
+
+    async _startClangdInternal(options = {}) {
+        const ensured = await ensureClangdUserBundle();
         if (!ensured.ok) {
             logError('[LSP] 启动 clangd 失败:', ensured.error || 'clangd bundle missing');
             return { ok: false, error: ensured.error || 'clangd missing' };
@@ -767,87 +554,50 @@ class ClangdLspManager {
             logWarn('[LSP] 编译器路径不存在，跳过 --query-driver:', compilerPath);
         }
 
-        // 回退编译参数
-        let fallbackFlags = Array.isArray(options.fallbackFlags) ? options.fallbackFlags.filter(Boolean) : [];
+        const workspaceRoot = typeof options.workspaceRoot === 'string' && options.workspaceRoot ? options.workspaceRoot : '';
 
-        // 如果提供了编译器路径，运行编译器获取真实的 include 路径和 target
+        // 探测用户真实编译器的 include 搜索列表与 target triple，落成 compile_flags.txt。
+        // 这是唯一能压过 clangd 自带 MSVC 自动探测的通道（--fallback-flags 不存在）。
+        let compileCommandsDir = workspaceRoot;
+        const requestedCompileFlags = Array.isArray(options.compileFlags)
+            ? options.compileFlags.filter((flag) => typeof flag === 'string')
+            : [];
         if (compilerPath && fs.existsSync(compilerPath)) {
             try {
                 const compilerCacheKey = path.resolve(compilerPath);
                 let compilerInfo = compilerInfoCache.get(compilerCacheKey);
                 if (!compilerInfo) {
-                    compilerInfo = await queryCompilerInfo(compilerPath, fallbackFlags);
+                    compilerInfo = await queryCompilerInfo(compilerPath, requestedCompileFlags);
                     compilerInfoCache.set(compilerCacheKey, compilerInfo);
                 }
 
-                if (compilerInfo.target && compilerInfo.target !== 'x86_64-pc-windows-msvc') {
-                    const hasTarget = fallbackFlags.some(f => f.startsWith('--target='));
-                    if (!hasTarget) {
-                        fallbackFlags.unshift('--target=' + compilerInfo.target);
-                        logInfo('[LSP] 设置 target triple:', compilerInfo.target);
-                    }
-                }
-
-                // 将 include 路径添加为 -isystem 参数
-                if (compilerInfo.includePaths.length > 0) {
-                    for (const incPath of compilerInfo.includePaths) {
-                        addSystemIncludeDir(fallbackFlags, incPath);
-                    }
-                    logInfo('[LSP] 已将 ' + compilerInfo.includePaths.length + ' 个编译器 include 路径添加到回退参数');
-                }
-
-                let compilerIncludes = compilerIncludeCache.get(compilerCacheKey);
-                if (!compilerIncludes) {
-                    const probedStdCxxIncludeDir = await queryCompilerHeaderIncludeDir(compilerPath, 'bits/stdc++.h');
-                    const stdCxxIncludeDirs = collectStdCxxIncludeDirs(compilerPath);
-                    const searchedStdCxxIncludeDirs = stdCxxIncludeDirs.length > 0
-                        ? []
-                        : searchCompilerTreeForStdCxxIncludeDir(compilerPath, 'bits/stdc++.h');
-                    compilerIncludes = {
-                        probedStdCxxIncludeDir,
-                        stdCxxIncludeDirs,
-                        searchedStdCxxIncludeDirs
-                    };
-                    compilerIncludeCache.set(compilerCacheKey, compilerIncludes);
-                }
-
-                const { probedStdCxxIncludeDir, stdCxxIncludeDirs, searchedStdCxxIncludeDirs } = compilerIncludes;
-                if (probedStdCxxIncludeDir) {
-                    addStdCxxIncludeBundle(fallbackFlags, probedStdCxxIncludeDir);
-                    logInfo('[LSP] 通过编译器直接探测到标准 C++ 头文件路径:', probedStdCxxIncludeDir);
-                }
-
-                if (!fallbackFlags.includes('-Wno-system-headers')) {
-                    fallbackFlags.push('-Wno-system-headers');
-                }
-
-                if (stdCxxIncludeDirs.length > 0) {
-                    for (const includeDir of stdCxxIncludeDirs) {
-                        addStdCxxIncludeBundle(fallbackFlags, includeDir);
-                    }
-                    logInfo('[LSP] 已补充标准 C++ 头文件路径:', stdCxxIncludeDirs.join('; '));
+                const flagsResult = clangdCompileFlags.writeCompileFlagsFile({
+                    workspaceRoot,
+                    includePaths: compilerInfo.includePaths,
+                    target: compilerInfo.target,
+                    compileFlags: requestedCompileFlags
+                });
+                if (flagsResult.ok) {
+                    compileCommandsDir = flagsResult.dir;
+                    logInfo('[LSP] 已写入 clangd 编译标志:', flagsResult.filePath,
+                        '(' + compilerInfo.includePaths.length + ' 个 include, target=' + (compilerInfo.target || 'n/a') + ')',
+                        flagsResult.written ? '' : '(内容未变化)');
+                } else if (flagsResult.reason === 'user-compilation-database') {
+                    logInfo('[LSP] 工作区已有 compile_commands.json，保持用户编译配置');
+                } else if (flagsResult.reason !== 'no-flags') {
+                    logWarn('[LSP] 写入 compile_flags.txt 失败:', flagsResult.reason);
                 } else {
-                    if (searchedStdCxxIncludeDirs.length > 0) {
-                        for (const includeDir of searchedStdCxxIncludeDirs) {
-                            addStdCxxIncludeBundle(fallbackFlags, includeDir);
-                        }
-                        logInfo('[LSP] 已从编译器目录递归搜索到标准 C++ 头文件路径:', searchedStdCxxIncludeDirs.join('; '));
-                    }
+                    logWarn('[LSP] 未能从编译器探测到 include 路径，clangd 将使用默认工具链');
                 }
             } catch (err) {
                 logWarn('[LSP] 查询编译器信息时出错:', err?.message || err);
             }
         }
 
-        if (fallbackFlags.length > 0) {
-            logInfo('[LSP] 回退编译参数:', fallbackFlags.join(' '));
-        }
-
         if (Array.isArray(options.clangdArgs)) {
             args.push(...options.clangdArgs.filter(Boolean));
         }
 
-        const workspaceRoot = typeof options.workspaceRoot === 'string' && options.workspaceRoot ? options.workspaceRoot : '';
         this.workspaceFolders = workspaceRoot && options.rootUri
             ? [{ uri: options.rootUri, name: path.basename(workspaceRoot) || workspaceRoot }]
             : [];
@@ -855,8 +605,8 @@ class ClangdLspManager {
         if (workspaceRoot && fs.existsSync(workspaceRoot)) {
             try {
                 if (fs.statSync(workspaceRoot).isDirectory()) {
-                    args.push(`--compile-commands-dir=${workspaceRoot}`);
-                    logInfo('[LSP] 配置 compile-commands-dir:', workspaceRoot);
+                    args.push(`--compile-commands-dir=${compileCommandsDir}`);
+                    logInfo('[LSP] 配置 compile-commands-dir:', compileCommandsDir);
                     spawnCwd = workspaceRoot;
                 }
             } catch (err) {

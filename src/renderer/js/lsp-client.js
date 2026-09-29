@@ -91,7 +91,7 @@ class LspClientBridge {
             const startResult = await api.lspRestart({
                 workspaceRoot: options.workspaceRoot || '',
                 clangdArgs: Array.isArray(options.clangdArgs) ? options.clangdArgs : [],
-                fallbackFlags: Array.isArray(options.fallbackFlags) ? options.fallbackFlags : [],
+                compileFlags: Array.isArray(options.compileFlags) ? options.compileFlags : [],
                 compilerPath: options.compilerPath || '',
                 rootUri: options.rootUri || ''
             });
@@ -132,9 +132,6 @@ class LspClientBridge {
         logInfo('[LSP] 正在启动 clangd LSP 客户端...');
         logInfo('[LSP] 工作区根目录:', options.workspaceRoot || '(无)');
         logInfo('[LSP] rootUri:', rootUri || '(无)');
-        if (Array.isArray(options.fallbackFlags) && options.fallbackFlags.length > 0) {
-            logInfo('[LSP] 回退编译参数:', options.fallbackFlags.join(' '));
-        }
         if (options.compilerPath) {
             logInfo('[LSP] 编译器路径:', options.compilerPath);
         }
@@ -142,7 +139,7 @@ class LspClientBridge {
         const startResult = await api.lspStart({
             workspaceRoot: options.workspaceRoot || '',
             clangdArgs: Array.isArray(options.clangdArgs) ? options.clangdArgs : [],
-            fallbackFlags: Array.isArray(options.fallbackFlags) ? options.fallbackFlags : [],
+            compileFlags: Array.isArray(options.compileFlags) ? options.compileFlags : [],
             compilerPath: options.compilerPath || '',
             rootUri
         });
@@ -160,15 +157,10 @@ class LspClientBridge {
             logInfo('[LSP] clangd 进程已启动:', startResult.clangdPath || '');
         }
 
-        // 使用主进程返回的 fallbackFlags（已包含编译器 include 路径）
-        const effectiveFallbackFlags = Array.isArray(startResult.fallbackFlags)
-            ? startResult.fallbackFlags
-            : (Array.isArray(options.fallbackFlags) ? options.fallbackFlags : []);
-
-        return await this._finishStartup(startResult, options, api, effectiveFallbackFlags);
+        return await this._finishStartup(startResult, options, api);
     }
 
-    async _finishStartup(startResult, options = {}, api = window.electronAPI, effectiveFallbackFlags = null) {
+    async _finishStartup(startResult, options = {}, api = window.electronAPI) {
         const rootUri = options.rootUri || '';
         const workspaceFolders = rootUri
             ? [{ uri: rootUri, name: options.workspaceName || 'workspace' }]
@@ -183,12 +175,6 @@ class LspClientBridge {
             });
             return { capabilities: this._serverCapabilities, reused: true };
         }
-
-        const fallbackFlags = Array.isArray(effectiveFallbackFlags)
-            ? effectiveFallbackFlags
-            : (Array.isArray(startResult?.fallbackFlags)
-                ? startResult.fallbackFlags
-                : (Array.isArray(options.fallbackFlags) ? options.fallbackFlags : []));
 
         logInfo('[LSP] 发送 initialize 请求...');
 
@@ -321,9 +307,9 @@ class LspClientBridge {
                     }
                 }
             },
-            initializationOptions: {
-                fallbackFlags
-            }
+            // clangd 不消费 initializationOptions，编译参数只经由主进程写出的
+            // .oicpp-plus/lsp/compile_flags.txt 生效，这里不再传无用的 fallbackFlags。
+            initializationOptions: {}
         };
 
         const initResult = await api.lspRequest('initialize', initializeParams);
