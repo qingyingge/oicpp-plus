@@ -1148,7 +1148,7 @@
     "problem": "await new Promise(resolve => setTimeout(resolve, 100)) 导致可见闪烁。",
     "impact": "UI 闪烁。",
     "fix": {
-      "commit": "d526c28",
+      "commit": "b1c7bf7",
       "note": "删除该 sleep。DOMContentLoaded 回调本身已是 DOM 就绪后的最早时机，其后的 i18n.init() 与 getAllSettings() 都是异步的，定时等待既不保证任何资源就绪、也不参与任何时序逻辑，只是把设置生效整体推迟 100ms。tests/clangd-compile-flags.test.js 断言该 sleep 不再存在。"
     }
   },
@@ -1335,7 +1335,7 @@
     "impact": "典型竞赛代码 #include <bits/stdc++.h> 报 [pp_file_not_found]：实测一份 g++ -std=c++14 -fsyntax-only 能通过（exit=0）的文件，在 clangd 侧产生 5 个错误。诊断、补全、语义高亮全部按 MSVC 语义给出，与用户实际编译/提交的工具链不一致，误导判题与调试。",
     "evidence": "本机实测（clangd 23.1.0 / MinGW-Builds g++ 16.1.0 / VS 18 Community 14.51.36231 / Win SDK 10.0.26100）：query-driver=MinGW、compile_commands.json、两者都无，三种配置的 cc1 参数完全一致，均无 MinGW 路径。",
     "fix": {
-      "commit": "be70a29",
+      "commit": "4b99dfe",
       "note": "新增 src/utils/clangd-compile-flags.js：把 queryCompilerInfo 探测到的真实 include 搜索列表与 target triple 写成 <workspace>/.oicpp-plus/lsp/compile_flags.txt，并把 --compile-commands-dir 指向该私有目录。这是唯一能压过 clangd MSVC 自动探测的通道（其 -internal-isystem 排在我们显式 -isystem 之后），且只在 per-file 编译数据库缺失时才被读取——工作区（含向上 8 层）已有用户自己的 compile_commands.json 时完全让路，不接管构建配置。内容未变时不重写文件。实测：修复前 bits/stdc++.h 报 [pp_file_not_found] 共 2 个错误，修复后同一文件 0 错误，cc1 triple 由 x86_64-pc-windows-msvc19.51 变为 x86_64-pc-windows-gnu。tests/clangd-compile-flags.test.js 有覆盖。"
     }
   },
@@ -1349,7 +1349,7 @@
     "impact": "唯一用于纠正 H15 工具链错配的通道是断的，探测链退化为纯开销（其成本见 M53/M55）。此外 main.js:819-820 无条件追加的 -Wno-system-headers 同样从未生效，所谓『抑制系统头噪音』并未实现。",
     "related": "H15",
     "fix": {
-      "commit": "be70a29",
+      "commit": "4b99dfe",
       "note": "整条 fallbackFlags 通道删除，不再假装它能生效：start() 的真实实现拆到 _startClangdInternal 并在返回里去掉 fallbackFlags；渲染侧 lsp-client 不再向 lsp-start/lsp-restart 传 fallbackFlags、不再接收主进程返回的 fallbackFlags，initialize 的 initializationOptions 置空。clangd 23.1.0 根本没有 --fallback-flags（传入即报 Unknown command line argument），也无从屏蔽 system headers，故 -Wno-system-headers 一并删除。探测产出的 include/target 改由 H15 的 compile_flags.txt 承载，-std= 由渲染侧 buildRequestedCompileFlags 从用户 compilerArgs 提取后随 lsp-start 上行。tests/lsp-main-audit.test.js、tests/clangd-compile-flags.test.js 有覆盖。"
     }
   },
@@ -1363,7 +1363,7 @@
     "impact": "对 GCC 15+ 的 MinGW 布局这两个探测必然产出为空，叠加 g++ 两次 spawn（实测 203ms 冷 / 169ms 热，以及 73ms），每次启动确定性浪费约 368ms 且没有任何产出；同时 collectStdCxxIncludeDirs 与 searchCompilerTreeForStdCxxIncludeDir 的分支（main.js:813-835）永远走不到 addStdCxxIncludeBundle。",
     "related": "M52",
     "fix": {
-      "commit": "be70a29",
+      "commit": "4b99dfe",
       "note": "不再修 BFS 深度，而是删除这三个纯开销探测：collectStdCxxIncludeDirs、searchCompilerTreeForStdCxxIncludeDir、queryCompilerHeaderIncludeDir 以及配套的 compilerIncludeCache 整体移除，共约 250 行。它们的产出（stdc++ 头目录）在 MinGW-Builds 16.1.0 上恒为空，且即便非空也只是喂给已失效的 fallbackFlags。真正可靠的来源是既有的 queryCompilerInfo（跑编译器 -E -v 解析 include 搜索列表），它对同一工具链稳定返回 6 个 include 目录与 target，并已直接写入 compile_flags.txt。每次启动省掉两次 g++ spawn 与两次目录遍历。"
     }
   },
@@ -1377,7 +1377,7 @@
     "impact": "孤儿 clangd 常驻但无人回收：其 exit 回调先做 procGeneration 比对（main.js:881-884），generation 不匹配即 return，不会触发清理，进程继续占用 CPU/内存（可执行文件实测 51.9MB）。",
     "related": "P3（仅治渲染侧重复触发，不覆盖主进程并发窗口）",
     "fix": {
-      "commit": "fdcbdf6",
+      "commit": "a469769",
       "note": "start() 拆成薄壳 + _startClangdInternal：薄壳在 this.proc 为空时检查 _startPromise，命中则直接 await 同一个在途 promise；否则起一次启动并把 promise 记入 _startPromise，finally 中按引用比对清理。并发 lsp-start/lsp-restart 因此只跑一遍探测、只 spawn 一个 clangd，调用方拿到同一个结果对象。同时 stop() 开头先 await 在途启动，避免 stop 看到 this.proc 仍为 null 直接返回、随后启动流程又把 clangd 拉起。tests/lsp-main-audit.test.js 用计数 spawnImpl 断言并发启动只产生一个进程。"
     }
   },
@@ -1391,7 +1391,7 @@
     "impact": "首次运行期间 Electron 主进程事件循环完全阻塞：终端、编译、文件读写、clangd stdin 全部无响应，用户看到界面无响应。同一份数据在构建期（download-clangd.js cpSync 到 build/ → electron-builder 复制到 resources/）与运行期共被拷贝三份。clangd 运行时只写工作区 .cache，并不依赖用户目录这份副本，复制在功能上非必需。",
     "evidence": "本机实测 999ms / 354 文件 / 96.3MB；资源目录同路径枚举 13ms。",
     "fix": {
-      "commit": "fdcbdf6",
+      "commit": "a469769",
       "note": "ensureClangdUserBundle 改为返回 promise，拷贝走 fs.promises.mkdir + fs.promises.cp，事件循环不再被 96MB 数据搬运阻塞；app.whenReady 处的调用改为 .then().catch()，start() 处 await。同一函数加模块级 clangdBundlePromise 在途去重，start()/stop()/whenReady 三处并发调用只拷贝一次，返回值语义（{ok, root} / {ok:false, error}）保持不变。tests/lsp-main-audit.test.js 断言不再出现 cpSync 且存在在途去重。"
     }
   },
@@ -1404,7 +1404,7 @@
     "problem": "有 range 时把整个文档 writeFileSync 写入临时文件（clang-format-service.js:118-119），clang-format 仍需整文件解析才能产出 --lines 范围内的结果；返回后又以 model.getFullModelRange() 整体替换（monaco-editor-manager.js:2065），而不是只回写受影响的行区间。",
     "impact": "范围格式化耗时与全文格式化相当（性能收益为零），同时产生巨型 undo 记录、光标/选区跳变，并触发 Monaco 重排整个文档。",
     "fix": {
-      "commit": "b388810",
+      "commit": "a1b7cda",
       "note": "provideDocumentRangeFormattingEdits 不再返回 getFullModelRange() 整体替换，改为新增 buildMinimalFormatEdits(model, original, formatted)：按行求格式化结果与原文的共同前缀行与共同后缀行，只回写中间的差异段（差异段为空时退化为一个行首插入点）。范围格式化不再产生覆盖整文档的 undo 记录，也不会让 Monaco 重排整个文档。clang-format 侧仍需整文件输入才能产出 --lines 范围内的结果（属 clang-format 自身限制，未改动）。tests/lsp-main-audit.test.js 有覆盖。"
     }
   },
@@ -1438,7 +1438,7 @@
     "impact": "主进程单线程上的额外拷贝开销。",
     "evidence": "微基准 4MB / 64 chunk：逐 chunk concat 52ms，chunk 列表一次性 concat 1ms（52 倍差距成立）。但实际消息规模小：诊断 2KB、285000 ints 的 semanticTokens 约 1.1MB（16 次 concat，约 10~15ms）。可修，不是当前延迟痛点。",
     "fix": {
-      "commit": "fdcbdf6",
+      "commit": "a469769",
       "note": "stdout 缓冲改为 chunk 列表（bufferChunks + bufferedBytes）加一次惰性合并：_handleData 先入队并按总字节判上限，再用 _hasFraming() 在 chunk 列表上跨边界扫描 \\r\\n\\r\\n（含跨 chunk 边界），只有确实存在帧头时才做一次 Buffer.concat 并进入解析循环；循环退出后剩余的半条消息以单个 chunk 形式回列表。原先每个 chunk 一次全量重拷贝的 O(n²) 消失，未成帧的数据完全不再拼接。exit/error/stop 与超限路径统一走 _resetBuffer() 同步清理两个缓冲。tests/lsp-main-audit.test.js 覆盖跨 chunk 拆帧、帧头跨边界与解析后缓冲区排空。"
     }
   },
@@ -1452,7 +1452,7 @@
     "impact": "渲染主线程上每轮额外开销。",
     "evidence": "实测 100KB / 4001 行文档：3 次 masking 共 4ms，arrayPattern+lastIndexOf 循环 ×5 约 0ms，即每轮约 8ms。量级不大，仅 MB 级文件才明显。属可优化项而非当前卡顿主因。",
     "fix": {
-      "commit": "b388810",
+      "commit": "a1b7cda",
       "note": "两处改动。其一，去掉几乎必然失配的单槽缓存（_lspSafetyCache 及其 长度:首字符码:尾字符码 键整体删除），assessLspDocumentSafety 回到无状态纯函数——保留它只会让读者误以为有缓存，真实开销在函数内部的 3 次全文 masking 与 arrayPattern 扫描。其二，sendLspDidChange/_sendLspDidChange 增加可选 safetyResult 形参，queueLspDidChange 的 flush 定时器把自己刚算出的 safety 传下去，每轮只算一次。其余调用方（openLspDocument、_ensureLspDocumentReady 等）本就只有单次调用，行为不变。tests/lsp-main-audit.test.js 有覆盖。"
     }
   },
@@ -1466,7 +1466,7 @@
     "impact": "开发态或未执行 prebuild:clang-format 时，每次格式化多一次全 PATH 扫描；正常态每次格式化多一次进程启动开销（Windows 量级 30~150ms）；长按格式化快捷键会连续 spawn。临时 --style=file:<临时目录> 还会阻断项目 .clang-format 的向上发现（clang-format-service.js:52），未保存模型 filePath 为空时 cwd 退化为 process.cwd()，可能套用无关工程的样式。",
     "related": "P5（同类合并/去重思路）",
     "fix": {
-      "commit": "b7de4ba",
+      "commit": "e666a25",
       "note": "两处缓存。其一，resolveClangFormatExecutablePath 的三级回退结果（打包目录 → 用户 LSP 目录 → PATH）与进程生命周期无关，用 clangFormatExecutablePathResolved/cachedClangFormatExecutablePath 缓存一次，开发态不再每次遍历整个 PATH 逐项 statSync。其二，format-cpp-code handler 以 (可执行路径, content, filePath, style, styleRaw, fallbackStyle, startLine, endLine) 为键做 in-flight 合并 + 结果 LRU（clangFormatInFlight / clangFormatResultCache，上限 16）：并发或重复的相同请求共用一次 spawn，命中缓存时完全不启动进程（长按格式化快捷键不再连续 spawn）。clang-format 侧的临时目录与 --style=file: 行为未改动。tests/lsp-main-audit.test.js 有覆盖。"
     }
   },
@@ -1483,7 +1483,7 @@
     "fix_plan": "回退到直接 spawn consolepauser.exe（command=absoluteConsolePauserPath、args=[absoluteExePath]），即 92f7bd0 与 02823f9 之前的行为；若坚持保留 cmd start 方式，则必须给 spawnOptions 加 windowsVerbatimArguments:true 并自行拼整条命令行。tests/clang-format.test.js:133 目前断言了 start \"Program Running\" 的存在，把该坏写法固化进回归测试，需同步改回，否则 pnpm run ci:tests 会红。",
     "related": "C2（同类 cmd /c 相关问题）",
     "fix": {
-      "commit": "64d950a",
+      "commit": "54c4f49",
       "note": "回退到直接 spawn：command = absoluteConsolePauserPath、args = [absoluteExePath]，去掉 cmd /c start 中转并注释说明 libuv quote_cmd_arg 转义问题（consolepauser 自己会 CreateProcess 并弹窗，不需要 start 提供的控制台）。本机复核实测（目标程序路径含空格）：A 旧写法 cmd /c start → cmd-exit 1、目标程序未启动；B 直接 spawn → cmd-exit 0、目标程序正常运行。tests/clang-format.test.js:133 原先断言 start \"Program Running\" 的回归项已同步改回直接 spawn 的断言。"
     }
   }
