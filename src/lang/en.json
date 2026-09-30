@@ -1078,7 +1078,9 @@
     "batchDeleteFail": "Batch delete failed: {error}",
     "openWorkspaceFirst": "Please open a workspace folder first",
     "fileManagerUnavailable": "File manager is unavailable; cannot create a new file",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "invalidDotName": "The name cannot be . or ..",
+    "electronIpcUnavailable": "Electron IPC is unavailable"
   },
   "festival": {
     "newYearTitle": "Happy New Year",
@@ -1287,7 +1289,10 @@
     "externalChangeCloseHint": "\nThe file is no longer available. It is recommended to close this tab and refresh the file manager.",
     "externalChangeCloseNoSave": "\nClosing will not save the current edits.",
     "externalChangeReloadOverwrite": "\nReloading will overwrite unsaved changes. Continue?",
-    "externalChangeReloadPrompt": "\nReload to load the latest content?"
+    "externalChangeReloadPrompt": "\nReload to load the latest content?",
+    "previewSuffix": "{name} (Preview)",
+    "originalFile": "Original",
+    "newFile": "New"
   },
   "monaco": {
     "userSnippet": "User Snippet",

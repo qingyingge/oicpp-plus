@@ -132,8 +132,8 @@ class IntegratedTerminalPanel {
         if (!window.electronAPI?.getTerminalFeatureStatus) {
             this.status = {
                 available: false,
-                reason: '终端接口不可用',
-                detail: '预加载层未暴露终端接口'
+                reason: window.i18n.t('panel.terminalUnavailable'),
+                detail: window.i18n.t('panel.terminalPreloadNotExposed')
             };
             this.renderStatus();
             return this.status;
@@ -892,7 +892,7 @@ class IntegratedTerminalPanel {
         await this.refreshFeatureStatus();
         this.setVisible(true);
         if (!this.status.available) {
-            throw new Error(this.status.reason || '终端功能不可用');
+            throw new Error(this.status.reason || window.i18n.t('panel.terminalFeatureUnavailable'));
         }
 
         const cwd = options.workingDirectory || await this.getPreferredCwd();
@@ -1124,7 +1124,7 @@ class IntegratedTerminalPanel {
     }
 
     formatUnavailableStatusText() {
-        const reason = String(this.status?.reason || '终端功能不可用').trim();
+        const reason = String(this.status?.reason || window.i18n.t('panel.terminalFeatureUnavailable')).trim();
         const detailRaw = this.status?.detail == null ? '' : String(this.status.detail).trim();
 
         if (!detailRaw) {

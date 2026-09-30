@@ -1898,7 +1898,7 @@ class TabManager {
         }
         try {
             if (!window.electronAPI?.readFileContent) {
-                throw new Error('读文件接口不可用');
+                throw new Error(window.i18n.t('tabs.readFileUnavailable'));
             }
             const content = await window.electronAPI.readFileContent(tabData.filePath);
             const editorManager = this.monacoEditorManager || window.monacoEditorManager || window.editorManager;
@@ -1938,7 +1938,7 @@ class TabManager {
         } catch (error) {
             logError('重新加载文件失败:', error);
             if (window.dialogManager?.showError) {
-                window.dialogManager.showError(`重新加载文件失败：\n${error?.message || String(error)}`);
+                window.dialogManager.showError(window.i18n.t('tabs.reloadFailed', { error: error?.message || String(error) }));
             }
             return false;
         }
@@ -3230,7 +3230,7 @@ class TabManager {
                     break;
                 }
                 case 'error': {
-                    const message = detail?.message || '未知错误';
+                    const message = detail?.message || window.i18n.t('panel.unknownError');
                     targetTab.pdfViewerError = message;
                     const loader = targetTab.viewerContainer?.querySelector('.pdf-viewer-loading');
                     if (loader) {
@@ -3699,7 +3699,7 @@ class TabManager {
         if (!newGroup) return;
 
         const previewUniqueKey = `${sourceTabData.uniqueKey}::preview`;
-        const previewFileName = `${sourceTabData.fileName} (预览)`;
+        const previewFileName = window.i18n.t('tabs.previewSuffix', { name: sourceTabData.fileName });
         const previewTabId = `preview-${sourceTabData.tabId}`;
 
         let content = sourceTabData.content || '';
@@ -3992,7 +3992,7 @@ class TabManager {
         this._openingKeys.add(uniqueKey);
 
         try {
-            const label = `${original.name || '原文件'} vs ${modified.name || '新文件'}`;
+            const label = `${original.name || window.i18n.t('tabs.originalFile')} vs ${modified.name || window.i18n.t('tabs.newFile')}`;
             let targetGroupId = this.activeGroupId || this.groupOrder[0] || 'group-1';
             let targetGroup = this.groups.get(targetGroupId);
             if (!targetGroup) {
@@ -5423,7 +5423,7 @@ void hello() {
         logError('TabManager: 文件管理器不可用，无法创建新文件');
         if (window.dialogManager) {
             try { logError('[DialogError]', { message: '请先打开一个工作区文件夹', from: 'TabManager.createNewCppFile' }); } catch (_) { }
-            window.dialogManager.showError('请先打开一个工作区文件夹');
+            window.dialogManager.showError(window.i18n.t('fileExplorer.openWorkspaceFirst'));
         }
     }
 

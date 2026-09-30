@@ -39,7 +39,7 @@ class FileExplorer {
             return { valid: false, error: window.i18n.t('fileExplorer.nameRequired')};
         }
         if (trimmedName === '.' || trimmedName === '..') {
-            return { valid: false, error: '名称不能为 . 或 ..' };
+            return { valid: false, error: window.i18n.t('fileExplorer.invalidDotName') };
         }
 
         // Check for illegal characters
@@ -379,7 +379,7 @@ class FileExplorer {
         if (existing) return existing;
 
         if (!window.electronAPI?.readDirectory) {
-            return Promise.reject(new Error('Electron IPC 不可用'));
+            return Promise.reject(new Error(window.i18n.t('fileExplorer.electronIpcUnavailable')));
         }
         const request = Promise.resolve().then(() => window.electronAPI.readDirectory(dirPath));
 

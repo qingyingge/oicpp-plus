@@ -130,7 +130,7 @@ function setupDefaultContent() {
 }
 
 function showErrorMessage(message) {
-    const safeMessage = String(message ?? '').split(/\r?\n/)[0].trim() || '发生错误，请稍后重试';
+    const safeMessage = String(message ?? '').split(/\r?\n/)[0].trim() || window.i18n.t('app.errorRetry');
     try {
         logWarn('[RendererErrorToastSuppressed]', safeMessage);
     } catch (_) {}

@@ -1057,7 +1057,9 @@
     "batchDeleteFail": "批量删除失败: {error}",
     "openWorkspaceFirst": "请先打开一个工作区文件夹",
     "fileManagerUnavailable": "文件管理器不可用，无法创建新文件",
-    "unknownError": "未知错误"
+    "unknownError": "未知错误",
+    "invalidDotName": "名称不能为 . 或 ..",
+    "electronIpcUnavailable": "Electron IPC 不可用"
   },
   "backup": {
     "autoBackup": "启用自动备份设置到云空间",
@@ -1327,7 +1329,10 @@
     "externalChangeCloseHint": "\n文件已不再可用，建议关闭该标签页并刷新文件管理器。",
     "externalChangeCloseNoSave": "\n关闭时不会保存当前编辑内容。",
     "externalChangeReloadOverwrite": "\n重新加载将覆盖未保存的修改，是否继续？",
-    "externalChangeReloadPrompt": "\n是否重新加载以获取最新内容？"
+    "externalChangeReloadPrompt": "\n是否重新加载以获取最新内容？",
+    "previewSuffix": "{name} (预览)",
+    "originalFile": "原文件",
+    "newFile": "新文件"
   },
   "cloudCompile": {
     "detectMacOS": "检测到 macOS 平台，已自动移除不兼容参数 -static",
