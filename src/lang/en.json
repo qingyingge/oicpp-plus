@@ -20,7 +20,11 @@
     "newYear": "Happy New Year!",
     "springFestival": "Happy Spring Festival!",
     "appInitFailed": "Application initialization failed: {msg}",
-    "errorRetry": "An error occurred. Please try again later."
+    "errorRetry": "An error occurred. Please try again later.",
+    "justNow": "just now",
+    "minutesAgo": "{n} minutes ago",
+    "hoursAgo": "{n} hours ago",
+    "daysAgo": "{n} days ago"
   },
   "menu": {
     "file": "File",
@@ -296,7 +300,10 @@
     "cloudCompileUnavailable": "Cloud compilation is unavailable",
     "browserUnavailable": "The built-in browser is unavailable",
     "openFileFailed": "Cannot open {name}\n{error}",
-    "cloudCompile": "Cloud Compile"
+    "cloudCompile": "Cloud Compile",
+    "readFileFailed": "Failed to read file",
+    "noTempFilePath": "The main process did not return a temp file path",
+    "defaultFeature": "this feature"
   },
   "dialog": {
     "confirm": "Confirm",
@@ -867,7 +874,11 @@
     "breakpointHit": "Breakpoint hit: {file}:{line} ({fn})",
     "breakpointHitInfo": "Breakpoint hit!\n\nFile: {file}\nLine: {line}\nFunction: {fn}\n\nProgram is paused. You can:\n- View the current variable values in the variables panel on the right\n- Use F6 to continue execution\n- Use F7 to step\n- Use F8 to step into functions",
     "terminalCreateFailed": "Failed to create the built-in terminal: no terminal session ID was obtained",
-    "debugTerminalInitFailed": "Failed to initialize the debug terminal: could not establish a TTY binding or input bridge"
+    "debugTerminalInitFailed": "Failed to initialize the debug terminal: could not establish a TTY binding or input bridge",
+    "compileFailed": "Compilation failed",
+    "compileTimedOut": "Compilation timed out",
+    "debugErrorTitle": "Debug error",
+    "debugErrorHint": "Please check whether the debugger (Windows/Linux: GDB) is available and whether the code has been compiled (with the -g option). macOS does not support debugging yet."
   },
   "cloud": {
     "title": "Cloud Space",
@@ -1290,7 +1301,10 @@
     "renameTo": "Rename to:",
     "openMarkdownPreview": "Open Markdown Preview",
     "filterFunction": "Filter function names, press Enter to jump, Esc to close",
-    "returnType": "Return type: {type}"
+    "returnType": "Return type: {type}",
+    "currentFile": "Current file",
+    "classDefinition": "Class definition",
+    "structDefinition": "Struct definition"
   },
   "browser": {
     "title": "Built-in Browser",

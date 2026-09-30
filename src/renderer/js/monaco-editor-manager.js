@@ -908,8 +908,8 @@ class MonacoEditorManager {
                             sortText: `${exact ? '00' : (startsWith ? '01' : '02')}${String(9999 - Math.min(count, 9999)).padStart(4, '0')}_${normalized}`
                         });
                     };
-                    this._getLocalCompletionCandidates(model).forEach(({ label, count }) => add(label, '当前文件', count));
-                    commonCppItems.forEach((label) => add(label, 'C++ 常用', 0, monaco.languages.CompletionItemKind.Keyword));
+                    this._getLocalCompletionCandidates(model).forEach(({ label, count }) => add(label, window.i18n.t('monaco.currentFile'), count));
+                    commonCppItems.forEach((label) => add(label, window.i18n.t('monaco.commonItems'), 0, monaco.languages.CompletionItemKind.Keyword));
                     return { suggestions };
                 }
             });
@@ -2534,7 +2534,7 @@ class MonacoEditorManager {
 
             const { compilerPath } = await this.getCompilerSettingsSnapshot();
             if (!compilerPath) {
-                const notice = '编译器路径未设置，语法检查将找不到头文件，请先设置编译器路径。';
+                const notice = window.i18n.t('monaco.compilerPathNotSet');
                 if (window.oicppApp?.showMessage) {
                     window.oicppApp.showMessage(notice, 'warning');
                 } else {
@@ -6814,7 +6814,7 @@ class MonacoEditorManager {
 
                         try {
                             if (window.dialogManager?.showInputDialog) {
-                                newName = await window.dialogManager.showInputDialog('重命名标识符', name, '输入新的名称');
+                                newName = await window.dialogManager.showInputDialog(window.i18n.t('monaco.renameSymbol'), name, window.i18n.t('monaco.renamePrompt'));
                             } else {
                                 newName = window.prompt(window.i18n.t('monaco.renameTo'), name);
                             }
@@ -6845,7 +6845,7 @@ class MonacoEditorManager {
             if (!newName) {
                 try {
                     if (window.dialogManager?.showInputDialog) {
-                        newName = await window.dialogManager.showInputDialog('重命名标识符', name, '输入新的名称');
+                        newName = await window.dialogManager.showInputDialog(window.i18n.t('monaco.renameSymbol'), name, window.i18n.t('monaco.renamePrompt'));
                     } else {
                         newName = window.prompt(window.i18n.t('monaco.renameTo'), name);
                     }
@@ -8855,7 +8855,7 @@ class MonacoEditorManager {
                 type: type,
                 name: name,
                 members: members.slice(0, 5), // 只显示前5个成员
-                description: `${type === 'class' ? '类' : '结构体'}定义`
+                description: `${type === 'class' ? window.i18n.t('monaco.classDefinition') : window.i18n.t('monaco.structDefinition')}`
             });
         }
         

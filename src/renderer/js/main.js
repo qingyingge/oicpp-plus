@@ -1768,7 +1768,7 @@ class OICPPApp {
                 return await new Promise((resolve, reject) => {
                     const reader = new FileReader();
                     reader.onload = () => resolve(reader.result);
-                    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+                    reader.onerror = () => reject(reader.error || new Error(window.i18n.t('message.readFileFailed')));
                     reader.readAsArrayBuffer(file);
                 });
             } catch (error) {
@@ -1805,7 +1805,7 @@ class OICPPApp {
                             resolve('');
                         }
                     };
-                    reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+                    reader.onerror = () => reject(reader.error || new Error(window.i18n.t('message.readFileFailed')));
                     reader.readAsDataURL(file);
                 });
             } catch (error) {
@@ -1870,7 +1870,7 @@ class OICPPApp {
             const fileName = this.generateTempCppFileName();
             const tempPath = await window.electronAPI.saveTempFile(fileName, content);
             if (!tempPath || typeof tempPath !== 'string') {
-                throw new Error('主进程未返回临时文件路径');
+                throw new Error(window.i18n.t('message.noTempFilePath'));
             }
 
             if (window.tabManager && typeof window.tabManager.openFile === 'function') {
@@ -1978,7 +1978,7 @@ class OICPPApp {
         return /^cloud:/i.test(filePath);
     }
 
-    ensureLocalFileForFeature(featureLabel = '该功能') {
+    ensureLocalFileForFeature(featureLabel = window.i18n.t('message.defaultFeature')) {
         const filePath = this.getActiveFilePath();
         if (this.isCloudFilePath(filePath)) {
             this.showMessage(this.t('message.cloudFileLocalOnly', { feature: featureLabel }, `Cloud files support only basic editing and manual saving. Download the file locally before using ${featureLabel}.`), 'warning');
@@ -2000,7 +2000,7 @@ class OICPPApp {
 
     async openIntegratedTerminalAndRunExecutable(executablePath, options = {}) {
         if (!this.terminalPanel) {
-            throw new Error('内置终端组件未初始化');
+            throw new Error(window.i18n.t('message.terminalUninitialized'));
         }
         return this.terminalPanel.runExecutableInNewTerminal(executablePath, options);
     }
@@ -2676,7 +2676,7 @@ class OICPPApp {
             logInfo('开始为调试编译代码...');
             
             if (!this.compilerManager) {
-                reject(new Error('编译器未初始化'));
+                reject(new Error(window.i18n.t('debug.compilerUnavailable')));
                 return;
             }
             
@@ -2702,7 +2702,7 @@ class OICPPApp {
                 if (!this.settings.compilerPath) {
                     this.showMessage(this.t('message.setCompilerFirst', null, 'Please configure the compiler first'), 'warning');
                     try { require('electron').ipcRenderer.invoke('open-compiler-settings'); } catch(_) {}
-                    reject(new Error('请先设置编译器路径'));
+                    reject(new Error(window.i18n.t('message.setCompilerFirst')));
                     return;
                 }
             }
@@ -2722,7 +2722,7 @@ class OICPPApp {
                 } else {
                     const msg = this.stringifyError(error);
                     logInfo('编译失败，无法启动调试:');
-                    reject(new Error(msg || '编译失败'));
+                    reject(new Error(msg || window.i18n.t('debug.compileFailed')));
                 }
             };
             
@@ -2749,7 +2749,7 @@ class OICPPApp {
             
             setTimeout(() => {
                 if (!resolved) {
-                    handleCompileResult(false, '编译超时');
+                    handleCompileResult(false, window.i18n.t('debug.compileTimedOut'));
                 }
             }, 30000); // 30秒超时
         });
@@ -2921,8 +2921,9 @@ class OICPPApp {
 
     onProgramExited(data) {
         logInfo('[前端] 程序已退出:', data);
-        this.updateDebugStatus(`程序执行完成，退出码: ${data.exitCode}`);
-        this.showDebugInfo(`程序执行完成，退出码: ${data.exitCode}`);
+        const exitMsg = window.i18n.t('debug.programExitedStatus', { code: data.exitCode });
+        this.updateDebugStatus(exitMsg);
+        this.showDebugInfo(exitMsg);
     this.unbindDebugTerminalBridge();
     this.isDebugging = false;
     }
@@ -3253,10 +3254,10 @@ class OICPPApp {
         if (container) {
             container.innerHTML = `
                 <div class="debug-error-message" style="padding: 16px; color: #f44747;">
-                    <p><strong>调试功能错误</strong></p>
+                    <p><strong>${window.i18n.t('debug.debugErrorTitle')}</strong></p>
                     <p>${message}</p>
                     <p style="margin-top: 8px; font-size: 11px; color: #cccccc;">
-                        请检查调试器（Windows/Linux: GDB）是否可用，代码是否已编译（使用-g选项）。macOS 暂不支持调试功能。
+                        ${window.i18n.t('debug.debugErrorHint')}
                     </p>
                 </div>
             `;
@@ -4439,10 +4440,10 @@ class OICPPApp {
             const diffHour = Math.floor(diffMs / 3600000);
             const diffDay = Math.floor(diffMs / 86400000);
 
-            if (diffMin < 1) return '刚刚';
-            if (diffMin < 60) return `${diffMin} 分钟前`;
-            if (diffHour < 24) return `${diffHour} 小时前`;
-            if (diffDay < 7) return `${diffDay} 天前`;
+            if (diffMin < 1) return window.i18n.t('app.justNow');
+            if (diffMin < 60) return window.i18n.t('app.minutesAgo', { n: diffMin });
+            if (diffHour < 24) return window.i18n.t('app.hoursAgo', { n: diffHour });
+            if (diffDay < 7) return window.i18n.t('app.daysAgo', { n: diffDay });
 
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
