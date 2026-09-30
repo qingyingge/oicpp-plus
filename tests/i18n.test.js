@@ -248,6 +248,8 @@ if (packs['zh-cn'] && packs.en) {
         .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
     const mentioned = new Set();
     for (const m of corpus.matchAll(/['"]([a-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)['"]/g)) mentioned.add(m[1]);
+    // 属性访问同样算引用（main.js:3617 用 content.meta.code 读语言列表）
+    for (const m of corpus.matchAll(/\.([a-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)/g)) mentioned.add(m[1]);
 
     const zhFlat2 = packs['zh-cn'];
     const orphans = Object.keys(zhFlat2).filter((k) => !mentioned.has(k));

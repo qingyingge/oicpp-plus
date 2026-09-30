@@ -89,7 +89,7 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 **坑：**
 
 - 取消/失败这类**要被代码识别**的状态，不要拿文案匹配。改用错误码：下载器已改为 `error.code = 'DOWNLOAD_CANCELLED'` + 导出的 `isCancelledError`（`utils/multi-thread-downloader.js`），别退回 `error.message.includes(...)`。
-- I8 拦硬编码 CJK（baseline 0）；I7 拦孤儿键（baseline 209，`scripts/ci-check.js:843`）—— 语言包里有、源码里查不到引用的键，存量 209 暂不清理，只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上。
+- I8 拦硬编码 CJK（baseline 0）；I7 拦孤儿键（baseline 205，`scripts/ci-check.js:843`）—— 语言包里有、源码里查不到引用的键，存量 205 暂不清理，只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上。判定口径同时认字符串字面量和**属性访问**（`main.js:3617` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
 - I7 自己报的「未静态引用 266」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
 - 改语言包时 `zh-cn.json` 与 `en.json` 键集必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
