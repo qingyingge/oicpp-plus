@@ -144,6 +144,59 @@ if (packs['zh-cn'] && packs.en) {
     }
 }
 
+// --- window.i18n.t() / window.__ 只接受两个参数 -------------------------------
+// i18n.js:103 的 t(key, params) 和 i18n.js:318 的 window.__ 都没有第三个形参，
+// 而 renderer/main.js:52 与 compile-manager.js:3 自己包的 t(key, params, fallback)
+// 有。照着 this.t 的习惯给 window.i18n.t 多传一个兜底文案，不会报错、也不会生效，
+// 只是让"i18n 不可用时显示中文"这个保险静默失效。历史上已经犯过一次。
+{
+    const getAllJs = (dir, out = []) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) getAllJs(full, out);
+            else if (entry.name.endsWith('.js')) out.push(full);
+        }
+        return out;
+    };
+    const scanFiles = getAllJs(path.join(root, 'src')).filter((f) => !f.startsWith(langDir));
+
+    // 数出一次调用的顶层实参个数
+    const countArgs = (args) => {
+        let depth = 0, count = 1, inStr = null;
+        for (let i = 0; i < args.length; i++) {
+            const c = args[i];
+            if (inStr) { if (c === '\\') { i++; continue; } if (c === inStr) inStr = null; continue; }
+            if (c === '"' || c === "'" || c === '`') { inStr = c; continue; }
+            if ('([{'.includes(c)) depth++;
+            else if (')]}'.includes(c)) { if (depth === 0) return count; depth--; }
+            else if (c === ',' && depth === 0) count++;
+        }
+        return count;
+    };
+
+    const twoParamCallRe = /\bwindow\s*\.\s*(?:i18n\s*\.\s*t|__)\s*\(/g;
+    const overlong = [];
+    for (const f of scanFiles) {
+        fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+            if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+            for (const m of line.matchAll(twoParamCallRe)) {
+                if (countArgs(line.slice(m.index + m[0].length)) > 2) {
+                    overlong.push(`${path.relative(root, f)}:${i + 1} -> ${line.trim().slice(0, 90)}`);
+                }
+            }
+        });
+    }
+    check('no window.i18n.t()/window.__() call passes a third argument', overlong.length === 0,
+        overlong.slice(0, 5).join(' | '));
+
+    // 反向锁定前提：这两个入口确实只有两个形参，而 this.t 确实有三个
+    const i18nSource2 = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'i18n.js'), 'utf8');
+    check('premise: I18nManager.t takes exactly (key, params)', /^\s{4}t\(key, params\) \{/m.test(i18nSource2));
+    const appMain = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'main.js'), 'utf8');
+    check('premise: OICPPApp.t takes (key, params, fallback)', /^\s{4}t\(key, params, fallback\) \{/m.test(appMain));
+}
+
 // --- 所有静态引用的 key 都能解析 ---------------------------------------------
 {
     const walk = (dir, out = []) => {
