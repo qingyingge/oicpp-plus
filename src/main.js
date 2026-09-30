@@ -1055,8 +1055,15 @@ class ClangdLspManager {
             clearTimeout(entry.timer);
             this.pending.delete(message.id);
             if (message.error) {
-                logWarn('[LSP] 请求失败, id=' + message.id + ', 方法=' + (entry.method || '?'), message.error?.message || JSON.stringify(message.error));
-                entry.reject(new Error(message.error.message || 'clangd error'));
+                const errorText = message.error?.message || JSON.stringify(message.error);
+                // 取消属于预期结果（文档被修改 / 客户端主动 cancel），降到 INFO 避免刷屏
+                const cancelled = message.error?.code === -32800
+                    || /cancel+ed/i.test(String(errorText));
+                const logLine = '[LSP] 请求失败, id=' + message.id + ', 方法=' + (entry.method || '?') + ', ' + errorText;
+                if (cancelled) logInfo(logLine); else logWarn(logLine);
+                const error = new Error(errorText || 'clangd error');
+                error.lspCode = message.error?.code;
+                entry.reject(error);
             } else {
                 if (entry.method === 'initialize') {
                     this.initialized = true;
@@ -3314,6 +3321,15 @@ function startSampleTesterServer() {
                 logger.logInfo('[SampleTesterAPI] 请求:', req.method, requestPath, '来自', req.socket?.remoteAddress || 'unknown');
             } catch (_) { }
         });
+        sampleTesterServer.on('error', (err) => {
+            // server.listen() 的 EADDRINUSE 是异步 'error' 事件，外层 try/catch 抓不到。
+            // 不挂监听会冒泡成 uncaughtException；这里降级为警告，样例测试器不可用但主功能不受影响。
+            if (err && err.code === 'EADDRINUSE') {
+                try { logWarn(`[SampleTesterAPI] 端口 ${PORT} 被占用，样例测试器导入功能不可用。可关闭占用进程后重启应用。`); } catch (_) { }
+                return;
+            }
+            try { logger.logerror('[SampleTesterAPI] 服务出错', err); } catch (_) { }
+        });
         sampleTesterServer.listen(PORT, '127.0.0.1', () => {
             logger.logInfo(`[SampleTesterAPI] 服务已启动 http://127.0.0.1:${PORT}`);
         });
@@ -3794,7 +3810,14 @@ function setupIPC() {
             }
             return result;
         } catch (err) {
-            logError('[LSP] 请求 ' + method + ' 失败:', err?.message || err);
+            // clangd 在文档被修改时会正常取消进行中的 semanticTokens 等请求（LSP -32800），
+            // 连续输入时每秒可触发数次；按预期结果记 INFO，真正的失败才记 ERROR
+            const cancelled = err?.lspCode === -32800 || /cancel+ed/i.test(String(err?.message || ''));
+            if (cancelled) {
+                logInfo('[LSP] 请求已取消 (' + method + '):', err?.message || err);
+            } else {
+                logError('[LSP] 请求 ' + method + ' 失败:', err?.message || err);
+            }
             throw err;
         }
     });
