@@ -30,7 +30,16 @@ const workflows = ['build.yml', 'build-windows-test.yml', 'build-dmg-test.yml']
     .join('\n');
 
 check('cloud compilation endpoint is no longer allowlisted', !mainSource.includes("'/api/cloudCompilation'") && !mainSource.includes("'/api/getCloudCompilationResult'"));
-check('cloud compiler method is disabled before reading source', read('src/renderer/js/compile-manager.js').includes("this.t('cloudCompile.disabled')"));
+// 云编译入口在读取源码前就被禁用。断言只认语义（方法体仅提示禁用），
+// 不锁死 t() 的调用语法——调用形式已按 AGENTS.md 规范统一为 window.i18n.t，
+// 锁死字面量会在无安全影响的纯重构上误报。
+{
+    const compileManagerSource = read('src/renderer/js/compile-manager.js');
+    const method = /async cloudCompileCurrentFile\(\)\s*\{([\s\S]*?)\n    \}/.exec(compileManagerSource);
+    const body = method ? method[1] : '';
+    check('cloud compiler method is disabled before reading source',
+        /cloudCompile\.disabled/.test(body) && !/getActiveFile|readFile|currentContent|electronAPI/.test(body));
+}
 check('run-program rejects shell command strings', !mainSource.includes("executablePath.startsWith('cmd /c ')") && mainSource.includes('Shell command strings are disabled'));
 check('run-program is routed through the invoke whitelist', preloadSource.includes("'run-program'") && preloadSource.includes("safeIpcRenderer.invoke('run-program'"));
 check('GDB breakpoint snapshot API exists', gdbSource.includes('getBreakpoints()'));

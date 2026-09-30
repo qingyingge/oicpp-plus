@@ -128,12 +128,20 @@ if (packs['zh-cn'] && packs.en) {
             ["y = t('message.newFile', null, '新文件');"],
             ["z = this.t('message.cloudFileLocalOnly', { feature: f }, '请先下载 {feature}');"],
             ["if (label) label.textContent = this.t('lsp.disabledLabel');"],
+            // 可选链形式（存量收敛后 this.t 展开成的写法）
+            ["label.textContent = window.i18n?.t?.('lsp.disabledLabel', null) || 'LSP 已禁用';"],
+            ["loader.innerHTML = '<div>' + (window.i18n?.t?.('pdfViewer.loading') || 'PDF 加载中…') + '</div>';"],
+            ["x = i18n?.t?.('a.b');"],
+            ["this.showMessage(window.i18n?.t?.('k', null) || '兜底', 'info');"],
         ];
         const stillCounted = [
             ["el.textContent = '编译成功';"],
             ["throw new Error('无效的路径');"],
             ["el.textContent = '编译中'; el.title = this.t('k', null, '兜底');"],
             ["this.showMessage(this.t('k', null, '兜底') + '附加中文');"],
+            // 可选链之外仍有中文时必须照计
+            ["el.title = window.i18n?.t?.('a.b') + '后缀中文';"],
+            ["this.showMessage(window.i18n?.t?.('k', null) || '兜底', '硬编码提示');"],
         ];
         const badExempt = exempt.filter(([line]) => stillHasCjk(line));
         check('I8 exempts a Chinese literal that only lives in a t() fallback',
@@ -190,11 +198,34 @@ if (packs['zh-cn'] && packs.en) {
     check('no window.i18n.t()/window.__() call passes a third argument', overlong.length === 0,
         overlong.slice(0, 5).join(' | '));
 
-    // 反向锁定前提：这两个入口确实只有两个形参，而 this.t 确实有三个
+    // 反向锁定前提：window.i18n.t 确实只有两个形参。
+    // 另锁定本轮收敛的成果：类上不再提供三参的 this.t，渲染层也不再调 this.t / window.__。
     const i18nSource2 = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'i18n.js'), 'utf8');
     check('premise: I18nManager.t takes exactly (key, params)', /^\s{4}t\(key, params\) \{/m.test(i18nSource2));
-    const appMain = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'main.js'), 'utf8');
-    check('premise: OICPPApp.t takes (key, params, fallback)', /^\s{4}t\(key, params, fallback\) \{/m.test(appMain));
+
+    const legacyThisT = [];
+    for (const f of scanFiles) {
+        fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+            if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+            if (/\bthis\s*\.\s*t\s*\(/.test(line) && !f.endsWith(path.join('renderer', 'js', 'i18n.js'))) {
+                legacyThisT.push(`${path.relative(root, f)}:${i + 1}`);
+            }
+            if (/\bwindow\s*\.\s*__\s*\(/.test(line)) legacyThisT.push(`${path.relative(root, f)}:${i + 1} (window.__)`);
+        });
+    }
+    check('no this.t() / window.__() call sites remain in the renderer', legacyThisT.length === 0,
+        legacyThisT.slice(0, 5).join(' | '));
+
+    // 局部 const t 别名是允许的（模板字符串里写全路径太啰嗦），但必须包 window.i18n
+    const badAlias = [];
+    for (const f of scanFiles) {
+        fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+            const m = /^\s*const t = (.+);$/.exec(line);
+            if (!m) return;
+            if (!/window\.i18n\?\.t\?\./.test(m[1])) badAlias.push(`${path.relative(root, f)}:${i + 1} -> ${m[1].slice(0, 60)}`);
+        });
+    }
+    check('every local "const t =" alias wraps window.i18n.t', badAlias.length === 0, badAlias.slice(0, 4).join(' | '));
 }
 
 // --- 孤儿键 ratchet ------------------------------------------------------------

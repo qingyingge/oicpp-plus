@@ -321,8 +321,8 @@ class IntegratedTerminalPanel {
         tab.type = 'button';
         tab.className = 'integrated-terminal-tab pending';
         tab.dataset.terminalId = tabId;
-        const tabLabel = window.__ ? window.__('terminal.tabLabel', { counter: this.counter }) : `终端 ${this.counter}`;
-        const closeLabel = window.__ ? window.__('terminal.closeTerminal') : '关闭终端';
+        const tabLabel = window.i18n?.t?.('terminal.tabLabel', { counter: this.counter }) || `终端 ${this.counter}`;
+        const closeLabel = window.i18n?.t?.('terminal.closeTerminal') || '关闭终端';
         tab.innerHTML = `<span class="terminal-tab-label">${tabLabel}</span><span class="terminal-tab-close" aria-label="${closeLabel}">×</span>`;
 
         const pane = document.createElement('div');

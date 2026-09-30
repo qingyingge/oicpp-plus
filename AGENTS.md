@@ -52,30 +52,38 @@ pnpm exec electron-builder --win dir     # 产出 dist\win-unpacked
 - 压缩是 solid LZMA + 64MB 字典，打包耗时数分钟到十几分钟属正常，耐心等，不要中途打断重试。
 
 ### 改界面文案 / 加翻译（i18n）
-**渲染层今后一律写 `window.i18n.t('key')`。** 不要再新增 `this.t`、裸 `t`、`window.__` 的调用；存量的正逐步清理，清理到哪算哪，看到顺手改掉，不必专门排期。
+**渲染层一律写 `window.i18n.t('key')`。** 不要新增 `this.t` 或 `window.__` 的调用（类上的 `this.t` 包装已随存量清理删除）。模板字符串里重复调用时允许保留局部别名，但**必须包 `window.i18n`**：
 
-主进程没有 `window`，走 `main.js:20` 的 `const { t } = require('./lang')`（i18next），`utils/` 下的模块用 `require('../lang')`。这条不受「统一 window.i18n.t」约束。
+```js
+// 允许：别包 window.i18n 更可读
+const t = (key, params) => window.i18n?.t?.(key, params) || key;
+// 需要兜底文案时
+const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+```
 
-**为什么强调统一：历史上混用出过两次静默错误**，因为几套 `t()` 形参个数不一样，混用不报错、CI 全绿：
+主进程没有 `window`，走 `src/main.js:20` 的 `const { t } = require('./lang')`（i18next），`utils/` 下的模块用 `require('../lang')`。这条不受「统一 window.i18n.t」约束。
 
-| 入口 | 定义 | 形参 | 状态 |
-|------|------|------|------|
-| `window.i18n.t(key, params)` | `renderer/js/i18n.js:103` | **2** | **今后唯一推荐** |
-| `window.__(key, params)` | `renderer/js/i18n.js:318`（`i18n.t.bind(i18n)`） | **2** | 存量，逐步清理 |
-| `this.t(key, params, fallback)` | `renderer/js/main.js:52`（OICPPApp）、`compile-manager.js:3`（CompilerManager） | **3** | 存量，逐步清理 |
-| `t(key, params)` | `main.js:20` `require('./lang')` | 2 | 主进程，长期保留 |
+**形参个数是最容易翻车的地方**：给两参的入口传三个参数只会**静默丢弃** —— 不报错、界面照常显示、CI 全绿，只有 i18n 未就绪时才暴露成裸 key 名。
 
-HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` / `data-i18n-aria-label`，由 `i18n.js:215 _applyToDOM` 统一覆盖。**行内中文只是 JS 加载前的默认值，保留即可**，I8 不计入这类行。
+| 入口 | 形参 | 说明 |
+|------|------|------|
+| `window.i18n.t(key, params)`（`src/renderer/js/i18n.js:103`） | **2** | **唯一入口** |
+| 局部 `const t = ...` 别名 | 按自己定义 | 允许，但形参数必须与调用处一致 |
+| `t(key, params)`（`src/main.js:20`） | 2 | 主进程，长期保留 |
 
-主进程语言切换：启动时 `main.js:2663` 加载、设置变更时 `main.js:7891` `setLanguage`，无状态，`t()` 直接调即可。
+`window.__`（`i18n.js:318`，`i18n.t.bind(i18n)`）与 `this.t` 已全部清理完毕，不要再用。
+注意 `src/main.js`（主进程）和 `src/renderer/js/main.js`（渲染层）是两个同名文件，行号别看串。
+
+HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` / `data-i18n-aria-label`，由 `src/renderer/js/i18n.js:215 _applyToDOM` 统一覆盖。**行内中文只是 JS 加载前的默认值，保留即可**，I8 不计入这类行。
+
+主进程语言切换：启动时 `src/main.js:2663` 加载、设置变更时 `src/main.js:7891` `setLanguage`，无状态，`t()` 直接调即可。
 
 改完必须跑 `pnpm run ci`（I1~I8 + 回归测试）。
 
 **反模式：**
 
-- ❌ 给 `window.i18n.t` 传第三个参数：`window.i18n.t('key', null, '中文兜底')`。它只有两个形参，第三参数被**静默丢弃** —— 不报错，界面照常显示，只是 i18n 未就绪时回退成**裸 key 名**而不是兜底文案。`tests/i18n.test.js` 有守卫拦这个（"no window.i18n.t()/window.__() call passes a third argument"），但别依赖守卫兜底。
-- ❌ 清理 `this.t` 时把第三参数当死代码删掉。它是**活**的兜底参数（`this.t` 内部 `window.i18n?.t?.(key, params) || fallback || key`），i18n 不可用时就会显示。正确做法是整处换成 `window.i18n.t(key)`；若要保留兜底，**必须带上可选链**写成 `window.i18n?.t?.(key) || '兜底文案'`。注意两点：漏了 `?.` 的话 i18n 未加载时直接抛 `TypeError`（那正是兜底要救的场景）；而 `||` 兜的是「i18n 未就绪」不是「键不存在」——`i18n.js:103` 找不到 key 时返回 key 本身（真值），`||` 不会触发。
-- ❌ 看到 `t(` 就以为形参个数一样。`renderer/js/main.js` 里 5 处裸 `t(...)`（`renderer/js/main.js:3378,3441,3541,3640,3741`）合法是因为前面有 `const t = this.t.bind(this)`（三参）；`renderer/js/tabs.js:4760,5182` 的 `const t = window.__ || ((k) => k)` 绑的却是**两参**版本。判断依据是那个绑定语句，不是调用处写法。注意 `src/main.js`（主进程）和 `src/renderer/js/main.js`（渲染层）是两个文件，别看串。
+- ❌ 给 `window.i18n.t` 传第三个参数：`window.i18n.t('key', null, '中文兜底')`。第三参数被**静默丢弃**，i18n 未就绪时回退成**裸 key 名**。要兜底就写 `window.i18n?.t?.('key') || '兜底文案'`（`?.` 不能省，见坑）。`tests/i18n.test.js` 有守卫拦这个，但别依赖守卫兜底。
+- ❌ 改局部别名的形参个数却不同步调用处。把 `const t = (key, params, fallback) => ...` 缩成两参、而调用处还传第三个，兜底就没了 —— 不会有任何报错。本轮收敛时就踩过：把 5 处三参别名改成两参，30 处调用静默丢了兜底文案。改完务必用形参扫描确认一遍。
 - ❌ 用已翻译文案反推语义状态，如 `status.includes(t('compileOutput.successSimple'))` 决定指示灯颜色。耦合方向反了，改一次译文就静默失配。已登记为 M57（`docs/BUG_REPORT.json`），正解是显式传 `setStatus(status, type)`。
 
 **坑：**

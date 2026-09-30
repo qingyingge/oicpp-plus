@@ -49,10 +49,6 @@ class OICPPApp {
         this._isMacPlatform = undefined;
     }
 
-    t(key, params, fallback) {
-        return window.i18n?.t?.(key, params) || fallback || key;
-    }
-
     async init() {
         try {
             logInfo('开始初始化 OICPP-Plus App...');
@@ -399,7 +395,7 @@ class OICPPApp {
 
     async startIdeLogin() {
         if (!window.electronAPI || typeof window.electronAPI.startIdeLogin !== 'function') {
-            this.showMessage(this.t('message.loginUnavailable', null, 'Login is unavailable'), 'error');
+            this.showMessage(window.i18n?.t?.('message.loginUnavailable', null) || 'Login is unavailable', 'error');
             return;
         }
         try {
@@ -407,30 +403,30 @@ class OICPPApp {
             if (result && result.ok === false && result.message) {
                 this.showMessage(result.message, 'warning');
             } else {
-                this.showMessage(this.t('message.browserOpenedForLogin', null, 'Browser opened. Please complete sign-in.'), 'info');
+                this.showMessage(window.i18n?.t?.('message.browserOpenedForLogin', null) || 'Browser opened. Please complete sign-in.', 'info');
             }
         } catch (error) {
-            this.showMessage(this.t('message.loginStartFailed', { error: error?.message || error }, `Failed to start login: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.loginStartFailed', { error: error?.message || error }) || `Failed to start login: ${error?.message || error}`, 'error');
         }
     }
 
     openIdeAccount() {
         // OICPP-Plus: 云服务已禁用（登录不可用），不跳转原版账户中心
-        this.showMessage(this.t('message.loginRequired', null, 'Please log in first'), 'warning');
+        this.showMessage(window.i18n?.t?.('message.loginRequired', null) || 'Please log in first', 'warning');
     }
 
     async logoutIdeAccount() {
         if (!window.electronAPI || typeof window.electronAPI.logoutIdeAccount !== 'function') {
-            this.showMessage(this.t('message.logoutUnavailable', null, 'Logout is unavailable'), 'error');
+            this.showMessage(window.i18n?.t?.('message.logoutUnavailable', null) || 'Logout is unavailable', 'error');
             return;
         }
         try {
             const result = await window.electronAPI.logoutIdeAccount();
             if (result && result.ok) {
-                this.showMessage(this.t('message.logoutSuccess', null, 'Logged out'), 'success');
+                this.showMessage(window.i18n?.t?.('message.logoutSuccess', null) || 'Logged out', 'success');
             }
         } catch (error) {
-            this.showMessage(this.t('message.logoutFailed', { error: error?.message || error }, `Failed to log out: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.logoutFailed', { error: error?.message || error }) || `Failed to log out: ${error?.message || error}`, 'error');
         } finally {
             // OICPP-Plus: 云服务已禁用（无独立认证服务），不跳转原版退出页
         }
@@ -473,24 +469,24 @@ class OICPPApp {
         const version = state?.version ? ` (${state.version})` : '';
 
         if (pendingInstall) {
-            labelNode.textContent = this.t('menu.updatePendingInstall', null, 'Update ready to install');
+            labelNode.textContent = window.i18n?.t?.('menu.updatePendingInstall', null) || 'Update ready to install';
         } else if (autoChecking) {
-            labelNode.textContent = this.t('menu.updateAutoChecking', null, 'Checking for updates...');
+            labelNode.textContent = window.i18n?.t?.('menu.updateAutoChecking', null) || 'Checking for updates...';
         } else {
             labelNode.textContent = downloading
-                ? this.t('menu.updateDownloading', { progress }, `Downloading update ${progress}%`)
-                : this.t('menu.checkUpdate', null, 'Check for Updates');
+                ? window.i18n?.t?.('menu.updateDownloading', { progress }) || `Downloading update ${progress}%`
+                : window.i18n?.t?.('menu.checkUpdate', null) || 'Check for Updates';
         }
 
         if (autoChecking || downloading || pendingInstall) {
             menuItem.classList.add('disabled');
             menuItem.setAttribute('aria-disabled', 'true');
             if (pendingInstall) {
-                menuItem.setAttribute('title', this.t('message.updatePendingInstall', null, 'An update is ready to install. Quit OICPP-Plus to finish installation.'));
+                menuItem.setAttribute('title', window.i18n?.t?.('message.updatePendingInstall', null) || 'An update is ready to install. Quit OICPP-Plus to finish installation.');
             } else if (autoChecking) {
-                menuItem.setAttribute('title', this.t('message.updateAutoChecking', null, 'The startup update check is in progress.'));
+                menuItem.setAttribute('title', window.i18n?.t?.('message.updateAutoChecking', null) || 'The startup update check is in progress.');
             } else {
-                menuItem.setAttribute('title', this.t('message.updateDownloading', { version, progress }, `Downloading update${version}, ${progress}%`));
+                menuItem.setAttribute('title', window.i18n?.t?.('message.updateDownloading', { version, progress }) || `Downloading update${version}, ${progress}%`);
             }
         } else {
             menuItem.classList.remove('disabled');
@@ -626,7 +622,7 @@ class OICPPApp {
             window.electronAPI.onFileSaved((filePath, error) => {
                 try { logInfo('[渲染进程] 收到 file-saved:', { filePath, error }); } catch (_) {}
                 if (error) {
-                    this.showMessage(this.t('message.saveFailed', { error }, `Save failed: ${error}`), 'error');
+                    this.showMessage(window.i18n?.t?.('message.saveFailed', { error }) || `Save failed: ${error}`, 'error');
                 }
                 this.onFileSaved(filePath);
             });
@@ -1852,7 +1848,7 @@ class OICPPApp {
 
     async createNewTempFile() {
         if (!window.electronAPI?.saveTempFile) {
-            this.showMessage(this.t('message.tempFileUnavailable', null, 'Temporary files are unavailable'), 'error');
+            this.showMessage(window.i18n?.t?.('message.tempFileUnavailable', null) || 'Temporary files are unavailable', 'error');
             return;
         }
 
@@ -1882,10 +1878,10 @@ class OICPPApp {
                 this.editorManager.openFile(fileName, content);
             }
 
-            this.showMessage(this.t('message.tempFileCreated', null, 'Temporary file created. It will be deleted when the IDE exits.'), 'success');
+            this.showMessage(window.i18n?.t?.('message.tempFileCreated', null) || 'Temporary file created. It will be deleted when the IDE exits.', 'success');
         } catch (error) {
             logError('新建临时文件失败:', error);
-            this.showMessage(this.t('message.tempFileCreateFailed', { error: error?.message || error }, `Failed to create temporary file: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.tempFileCreateFailed', { error: error?.message || error }) || `Failed to create temporary file: ${error?.message || error}`, 'error');
         }
     }
 
@@ -1981,7 +1977,7 @@ class OICPPApp {
     ensureLocalFileForFeature(featureLabel = window.i18n.t('message.defaultFeature')) {
         const filePath = this.getActiveFilePath();
         if (this.isCloudFilePath(filePath)) {
-            this.showMessage(this.t('message.cloudFileLocalOnly', { feature: featureLabel }, `Cloud files support only basic editing and manual saving. Download the file locally before using ${featureLabel}.`), 'warning');
+            this.showMessage(window.i18n?.t?.('message.cloudFileLocalOnly', { feature: featureLabel }) || `Cloud files support only basic editing and manual saving. Download the file locally before using ${featureLabel}.`, 'warning');
             return false;
         }
         return true;
@@ -1989,7 +1985,7 @@ class OICPPApp {
 
     async openIntegratedTerminal(options = {}) {
         if (!this.terminalPanel) {
-            this.showMessage(this.t('message.terminalUninitialized', null, 'The integrated terminal is not initialized'), 'error');
+            this.showMessage(window.i18n?.t?.('message.terminalUninitialized', null) || 'The integrated terminal is not initialized', 'error');
             return;
         }
         return await this.terminalPanel.open({
@@ -2327,17 +2323,17 @@ class OICPPApp {
         try {
             const cloudPanel = window.sidebarManager?.getPanelManager?.('cloud') || window.cloudSyncPanel;
             if (!cloudPanel || typeof cloudPanel.saveCloudFile !== 'function') {
-                this.showMessage(this.t('message.cloudSyncNotReady', null, 'Cloud sync panel is not ready'), 'error');
+                this.showMessage(window.i18n?.t?.('message.cloudSyncNotReady', null) || 'Cloud sync panel is not ready', 'error');
                 return false;
             }
             const cloudPath = String(filePath).replace(/^cloud:\/\//, '/').replace(/^cloud:/i, '/');
             const ok = await cloudPanel.saveCloudFile(cloudPath, content || '');
             if (ok) {
-                this.showMessage(this.t('message.cloudSaveSuccess', null, 'Saved to cloud'), 'success');
+                this.showMessage(window.i18n?.t?.('message.cloudSaveSuccess', null) || 'Saved to cloud', 'success');
             }
             return ok;
         } catch (error) {
-            this.showMessage(this.t('message.cloudSaveFailed', { error: error?.message || error }, `Failed to save to cloud: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('message.cloudSaveFailed', { error: error?.message || error }) || `Failed to save to cloud: ${error?.message || error}`, 'error');
             return false;
         }
     }
@@ -2370,7 +2366,7 @@ class OICPPApp {
         return '';
     }
     startDebug() {
-        if (!this.ensureLocalFileForFeature(this.t('message.featureDebug', null, '调试'))) {
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureDebug', null) || '调试')) {
             return;
         }
         logInfo('开始调试');
@@ -2533,7 +2529,7 @@ class OICPPApp {
         logInfo('开始调试会话');
         
         try {
-            this.showMessage(this.t('debug.checkingEnvironment', null, 'Checking debug environment...'), 'info');
+            this.showMessage(window.i18n?.t?.('debug.checkingEnvironment', null) || 'Checking debug environment...', 'info');
             const gdbStatus = await this.checkGDBAvailability();
             
             if (!gdbStatus.available) {
@@ -2545,7 +2541,7 @@ class OICPPApp {
             logInfo('调试环境检查通过:', gdbStatus.message);
         } catch (error) {
             logError('调试环境检查失败:', error);
-            this.showMessage(this.t('debug.environmentCheckFailed', null, 'Unable to check the debug environment. Make sure the debugger is installed correctly.'), 'error');
+            this.showMessage(window.i18n?.t?.('debug.environmentCheckFailed', null) || 'Unable to check the debug environment. Make sure the debugger is installed correctly.', 'error');
             return;
         }
         
@@ -2553,20 +2549,20 @@ class OICPPApp {
         logInfo('当前文件路径:', currentFile);
         
         if (!currentFile) {
-            this.showMessage(this.t('debug.noDebugFile', null, 'No file is open for debugging. Open a C++ source file first.'), 'warning');
+            this.showMessage(window.i18n?.t?.('debug.noDebugFile', null) || 'No file is open for debugging. Open a C++ source file first.', 'warning');
             return;
         }
 
         if (!currentFile.match(/\.(cpp|cc|cxx|c)$/i)) {
-            this.showMessage(this.t('debug.debugCppOnly', null, 'Open a C++ source file to debug. The current file is not a C++ source file.'), 'warning');
+            this.showMessage(window.i18n?.t?.('debug.debugCppOnly', null) || 'Open a C++ source file to debug. The current file is not a C++ source file.', 'warning');
             return;
         }
 
-        this.showMessage(this.t('debug.compilingForDebug', null, 'Compiling code for debugging...'), 'info');
+        this.showMessage(window.i18n?.t?.('debug.compilingForDebug', null) || 'Compiling code for debugging...', 'info');
         
         try {
             if (!this.compilerManager) {
-                this.showMessage(this.t('debug.compilerUnavailable', null, 'The compiler is not initialized and cannot be used for debugging'), 'error');
+                this.showMessage(window.i18n?.t?.('debug.compilerUnavailable', null) || 'The compiler is not initialized and cannot be used for debugging', 'error');
                 return;
             }
 
@@ -2642,7 +2638,7 @@ class OICPPApp {
         } catch (error) {
             this.unbindDebugTerminalBridge();
             logError('启动调试准备失败:', error);
-            this.showMessage(`${this.t('debug.startFailed', null, 'Failed to start debugging')}: ${this.stringifyError(error)}`, 'warning');
+            this.showMessage(`${window.i18n?.t?.('debug.startFailed', null) || 'Failed to start debugging'}: ${this.stringifyError(error)}`, 'warning');
         }
     }
 
@@ -2700,7 +2696,7 @@ class OICPPApp {
                     } catch (_) {}
                 }
                 if (!this.settings.compilerPath) {
-                    this.showMessage(this.t('message.setCompilerFirst', null, 'Please configure the compiler first'), 'warning');
+                    this.showMessage(window.i18n?.t?.('message.setCompilerFirst', null) || 'Please configure the compiler first', 'warning');
                     try { require('electron').ipcRenderer.invoke('open-compiler-settings'); } catch(_) {}
                     reject(new Error(window.i18n.t('message.setCompilerFirst')));
                     return;
@@ -2779,16 +2775,16 @@ class OICPPApp {
                 });
                 
                 this.updateDebugControlsState(true);
-                const startingMessage = this.t('debug.startingSession', null, 'Starting debug session...');
+                const startingMessage = window.i18n?.t?.('debug.startingSession', null) || 'Starting debug session...';
                 this.showMessage(startingMessage, 'info');
                 this.updateDebugStatus(startingMessage);
             } catch (error) {
                 logError('启动调试失败:', error);
-                this.showMessage(`${this.t('debug.startFailed', null, 'Failed to start debugging')}: ${this.stringifyError(error)}`, 'error');
+                this.showMessage(`${window.i18n?.t?.('debug.startFailed', null) || 'Failed to start debugging'}: ${this.stringifyError(error)}`, 'error');
             }
         } else {
             logError('require函数不可用，无法调用IPC');
-            this.showMessage(this.t('debug.apiUnavailable', null, 'Debugging could not be initialized because the system API is unavailable'), 'error');
+            this.showMessage(window.i18n?.t?.('debug.apiUnavailable', null) || 'Debugging could not be initialized because the system API is unavailable', 'error');
         }
     }
 
@@ -2839,7 +2835,7 @@ class OICPPApp {
     this._debugSessionId++;
     this._debugExited = false;
         
-        this.updateAllDebugPanels(this.t('debug.sessionStarted', null, 'Debug session started; program loaded'));
+        this.updateAllDebugPanels(window.i18n?.t?.('debug.sessionStarted', null) || 'Debug session started; program loaded');
         
         this.updateDebugStatus(window.i18n.t('debug.startedReady'));
     this.showDebugInfo(window.i18n.t('debug.sessionStartedInfo', { exe: data.executable || data.sourceFile }));
@@ -3014,7 +3010,7 @@ class OICPPApp {
         }
         this.unbindDebugTerminalBridge();
         logError('调试错误:', error);
-        this.showMessage(this.t('debug.error', { error: msg }, `Debug error: ${msg}`), 'error');
+        this.showMessage(window.i18n?.t?.('debug.error', { error: msg }) || `Debug error: ${msg}`, 'error');
         this.updateDebugControlsState(false);
     }
 
@@ -3103,7 +3099,7 @@ class OICPPApp {
         containers.forEach(id => {
             const container = document.getElementById(id);
             if (container) {
-                container.innerHTML = `<div class="waiting-debug-message">${this.t('debug.waitingDebug')}</div>`;
+                container.innerHTML = `<div class="waiting-debug-message">${window.i18n?.t?.('debug.waitingDebug')}</div>`;
             }
         });
     }
@@ -3138,7 +3134,7 @@ class OICPPApp {
             }
             
             infoElement.innerHTML = `
-                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">${this.t('debug.debugStatus')}</h4>
+                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">${window.i18n?.t?.('debug.debugStatus')}</h4>
                 <p style="margin: 0; white-space: pre-line;">${message}</p>
             `;
         }
@@ -3171,7 +3167,7 @@ class OICPPApp {
         container.innerHTML = '';
         
         if (Object.keys(variables).length === 0) {
-            container.innerHTML = `<div class="no-debug-message">${this.t('debug.noVariables')}</div>`;
+            container.innerHTML = `<div class="no-debug-message">${window.i18n?.t?.('debug.noVariables')}</div>`;
             return;
         }
 
@@ -3192,7 +3188,7 @@ class OICPPApp {
                 ${hasChildren ? '<span class="expand-toggle">▶</span>' : '<span class="expand-spacer"></span>'}
                 <span class="variable-name" title="${data.type || 'unknown'}">${name}</span>
                 <span class="variable-value" title="${data.value || ''}">${this.formatVariableValue(data)}</span>
-                ${scope === 'watch' ? `<button class="remove-watch-btn" title="${this.t('debug.removeWatch')}">×</button>` : ''}
+                ${scope === 'watch' ? `<button class="remove-watch-btn" title="${window.i18n?.t?.('debug.removeWatch')}">×</button>` : ''}
             </div>
         `;
         
@@ -3206,7 +3202,7 @@ class OICPPApp {
         
         if (data.isContainer || data.isArray) {
             const count = data.elementCount !== null ? data.elementCount : '?';
-            const type = data.isArray ? this.t('debug.typeArray') : this.t('debug.typeContainer');
+            const type = data.isArray ? window.i18n?.t?.('debug.typeArray') : window.i18n?.t?.('debug.typeContainer');
             displayValue = `${type}[${count}] ${displayValue}`;
         }
         
@@ -3225,7 +3221,7 @@ class OICPPApp {
         if (!container) return;
 
         if (!callStack || callStack.length === 0) {
-            container.innerHTML = `<div class="no-debug-message">${this.t('debug.noCallStack')}</div>`;
+            container.innerHTML = `<div class="no-debug-message">${window.i18n?.t?.('debug.noCallStack')}</div>`;
             return;
         }
 
@@ -3266,7 +3262,7 @@ class OICPPApp {
 
     stringifyError(err) {
         try {
-            if (!err) return this.t('message.unknownError', null, '未知错误');
+            if (!err) return window.i18n?.t?.('message.unknownError', null) || '未知错误';
             if (typeof err === 'string') return err;
             if (err instanceof Error) return err.message || err.toString();
             if (err.detail) return this.stringifyError(err.detail);
@@ -3282,7 +3278,7 @@ class OICPPApp {
             if (typeof err.message === 'string') return err.message;
             return JSON.stringify(err);
         } catch (_) {
-            try { return String(err); } catch { return this.t('message.unknownError', null, '未知错误'); }
+            try { return String(err); } catch { return window.i18n?.t?.('message.unknownError', null) || '未知错误'; }
         }
     }
 
@@ -3329,7 +3325,7 @@ class OICPPApp {
             if (typeof require !== 'undefined') {
                 const { ipcRenderer } = require('electron');
                 ipcRenderer.send('debug-add-watch', variableName.trim());
-                this.showMessage(this.t('debug.watchAdded', { name: variableName.trim() }, `Watch added: ${variableName.trim()}`), 'info');
+                this.showMessage(window.i18n?.t?.('debug.watchAdded', { name: variableName.trim() }) || `Watch added: ${variableName.trim()}`, 'info');
             }
         }
     }
@@ -3357,7 +3353,7 @@ class OICPPApp {
     }
 
     compileCode() {
-        if (!this.ensureLocalFileForFeature(this.t('message.featureCompile', null, '编译'))) {
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureCompile', null) || '编译')) {
             return;
         }
         if (this.compilerManager) {
@@ -3366,7 +3362,7 @@ class OICPPApp {
     }
 
     runCode() {
-        if (!this.ensureLocalFileForFeature(this.t('message.featureRun', null, '运行'))) {
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureRun', null) || '运行')) {
             return;
         }
         if (this.compilerManager) {
@@ -3375,7 +3371,7 @@ class OICPPApp {
     }
 
     showFeedback() {
-        const t = this.t.bind(this);
+        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
         dialog.innerHTML = `
@@ -3408,37 +3404,37 @@ class OICPPApp {
 
     async uploadClientLogFromMenu() {
         if (!window.electronAPI) {
-            this.showMessage(this.t('feedback.logUnavailable', null, 'Log upload is unavailable'), 'error');
+            this.showMessage(window.i18n?.t?.('feedback.logUnavailable', null) || 'Log upload is unavailable', 'error');
             return;
         }
 
         if (typeof window.electronAPI.listClientLogs !== 'function' || typeof window.electronAPI.uploadClientLog !== 'function') {
-            this.showMessage(this.t('feedback.logUnsupported', null, 'This version does not support log upload'), 'error');
+            this.showMessage(window.i18n?.t?.('feedback.logUnsupported', null) || 'This version does not support log upload', 'error');
             return;
         }
 
         try {
             const listResult = await window.electronAPI.listClientLogs();
             if (!listResult || listResult.success !== true) {
-                this.showMessage(listResult?.message || this.t('feedback.logListFailed', null, 'Failed to read the log list'), 'error');
+                this.showMessage(listResult?.message || window.i18n?.t?.('feedback.logListFailed', null) || 'Failed to read the log list', 'error');
                 return;
             }
 
             const logs = Array.isArray(listResult.logs) ? listResult.logs : [];
             if (logs.length === 0) {
-                this.showMessage(this.t('feedback.noLogs', null, 'There are no log files to upload'), 'info');
+                this.showMessage(window.i18n?.t?.('feedback.noLogs', null) || 'There are no log files to upload', 'info');
                 return;
             }
 
             this.showUploadLogPickerDialog(logs);
         } catch (error) {
             logError('上传日志失败:', error);
-            this.showMessage(this.t('feedback.logUploadFailed', { error: error?.message || error }, `Log upload failed: ${error?.message || error}`), 'error');
+            this.showMessage(window.i18n?.t?.('feedback.logUploadFailed', { error: error?.message || error }) || `Log upload failed: ${error?.message || error}`, 'error');
         }
     }
 
     showUploadLogPickerDialog(logs) {
-        const t = this.t.bind(this);
+        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
 
@@ -3538,7 +3534,7 @@ class OICPPApp {
     }
 
     showTraceCodeDialog(traceCode, uploadedAt) {
-        const t = this.t.bind(this);
+        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
 
@@ -3637,7 +3633,7 @@ class OICPPApp {
     }
 
     setupFeedbackDialogListeners(dialog) {
-        const t = this.t.bind(this);
+        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
         const closeBtn = dialog.querySelector('#feedback-close-btn');
         closeBtn.addEventListener('click', () => {
             dialog.remove();
@@ -3677,7 +3673,7 @@ class OICPPApp {
 
 
     async showAbout() {
-        const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: this.t('message.unknown', null, '未知'), author: 'mywwzh (修改: qingyingge)' };
+        const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: window.i18n?.t?.('message.unknown', null) || '未知', author: 'mywwzh (修改: qingyingge)' };
         let buildInfo = { ...fallbackBuildInfo };
         try {
             const buildInfoData = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
@@ -3713,19 +3709,19 @@ class OICPPApp {
                     <div class="about-logo">
                         <img id="about-dialog-icon" src="" width="48" height="48" alt="OICPP-Plus">
                     </div>
-                    <h2>${this.t('app.about', null, 'About OICPP-Plus')}</h2>
+                    <h2>${window.i18n?.t?.('app.about', null) || 'About OICPP-Plus'}</h2>
                 </div>
                 <div class="about-content">
                     <div class="about-info">
-                        <p><strong>${this.t('app.version', null, 'Version')}:</strong> ${versionLabel}</p>
-                        <p><strong>${this.t('app.buildTime', null, 'Build Time')}:</strong> ${buildInfo.buildTime}</p>
-                        <p><strong>${this.t('app.developer', null, 'Developer')}:</strong> ${buildInfo.author}</p>
-                        <p><strong>${this.t('app.description', null, 'Description')}:</strong> ${this.t('app.descriptionText', null, 'C++ development environment optimized for OI competitors')}</p>
-                        <p><strong>${this.t('app.website', null, 'Website')}:</strong> https://github.com/qingyingge/oicpp-plus</p>
+                        <p><strong>${window.i18n?.t?.('app.version', null) || 'Version'}:</strong> ${versionLabel}</p>
+                        <p><strong>${window.i18n?.t?.('app.buildTime', null) || 'Build Time'}:</strong> ${buildInfo.buildTime}</p>
+                        <p><strong>${window.i18n?.t?.('app.developer', null) || 'Developer'}:</strong> ${buildInfo.author}</p>
+                        <p><strong>${window.i18n?.t?.('app.description', null) || 'Description'}:</strong> ${window.i18n?.t?.('app.descriptionText', null) || 'C++ development environment optimized for OI competitors'}</p>
+                        <p><strong>${window.i18n?.t?.('app.website', null) || 'Website'}:</strong> https://github.com/qingyingge/oicpp-plus</p>
                     </div>
                 </div>
                 <div  class="about-footer">
-                    <button id="about-close-btn">${this.t('dialog.close', null, 'Close')}</button>
+                    <button id="about-close-btn">${window.i18n?.t?.('dialog.close', null) || 'Close'}</button>
                 </div>
             </div>
         `;
@@ -3738,7 +3734,7 @@ class OICPPApp {
     }
 
     showOpenSourceLicenses() {
-        const t = this.t.bind(this);
+        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
         const openSourceLibs = [
             { name: 'Electron', license: 'MIT', url: 'https://github.com/electron/electron' },
             { name: 'Monaco Editor', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },
@@ -3873,13 +3869,13 @@ class OICPPApp {
 
     checkForUpdates() {
         if (this.updateDownloadState.autoChecking) {
-            this.showMessage(this.t('message.updateAutoChecking', null, 'Auto check in progress.'), 'info');
+            this.showMessage(window.i18n?.t?.('message.updateAutoChecking', null) || 'Auto check in progress.', 'info');
             return;
         }
 
         if (this.updateDownloadState.downloading) {
             const versionSuffix = this.updateDownloadState.version ? ` (${this.updateDownloadState.version})` : '';
-            this.showMessage(this.t('message.updateDownloading', { version: versionSuffix, progress: this.updateDownloadState.progress }, `Downloading update${versionSuffix}, ${this.updateDownloadState.progress}%`), 'info');
+            this.showMessage(window.i18n?.t?.('message.updateDownloading', { version: versionSuffix, progress: this.updateDownloadState.progress }) || `Downloading update${versionSuffix}, ${this.updateDownloadState.progress}%`, 'info');
             return;
         }
 
@@ -3893,11 +3889,11 @@ class OICPPApp {
                 this.showUpdateCheckingDialog();
             } catch (error) {
                 logError('[渲染进程] 检查更新失败:', error);
-                alert(this.t('message.updateUnavailable', null, 'Update checking is temporarily unavailable'));
+                alert(window.i18n?.t?.('message.updateUnavailable', null) || 'Update checking is temporarily unavailable');
             }
         } else {
             logWarn('[渲染进程] Electron环境不可用，无法检查更新');
-            alert(this.t('message.updateElectronOnly', null, 'Update checking is available only in the Electron application'));
+            alert(window.i18n?.t?.('message.updateElectronOnly', null) || 'Update checking is available only in the Electron application');
         }
     }
 
@@ -3908,14 +3904,14 @@ class OICPPApp {
         dialog.innerHTML = `
             <div class="update-dialog">
                 <div class="update-header">
-                    <h3>${this.t('menu.checkUpdate', null, 'Check for Updates')}</h3>
+                    <h3>${window.i18n?.t?.('menu.checkUpdate', null) || 'Check for Updates'}</h3>
                 </div>
                 <div class="update-content">
                     <div class="update-spinner"></div>
-                    <p>${this.t('message.updateChecking', null, 'Checking for updates, please wait...')}</p>
+                    <p>${window.i18n?.t?.('message.updateChecking', null) || 'Checking for updates, please wait...'}</p>
                 </div>
                 <div class="update-footer">
-                    <button onclick="this.parentElement.parentElement.parentElement.remove()">${this.t('dialog.cancel', null, 'Cancel')}</button>
+                    <button onclick="this.parentElement.parentElement.parentElement.remove()">${window.i18n?.t?.('dialog.cancel', null) || 'Cancel'}</button>
                 </div>
             </div>
         `;
@@ -4012,9 +4008,9 @@ class OICPPApp {
             if (guardedInfo) {
                 icon.textContent = '⊘';
                 icon.style.color = '#111';
-                if (label) label.textContent = this.t('lsp.disabledLabel', null, 'LSP 已禁用');
+                if (label) label.textContent = window.i18n?.t?.('lsp.disabledLabel', null) || 'LSP 已禁用';
                 lspItem.classList.add('warning');
-                lspItem.title = guardedInfo.message || this.t('lsp.largeArrayDisabled', null, '当前文件包含潜在超大静态数组，已禁用 clangd LSP。');
+                lspItem.title = guardedInfo.message || window.i18n?.t?.('lsp.largeArrayDisabled', null) || '当前文件包含潜在超大静态数组，已禁用 clangd LSP。';
                 return;
             }
 
@@ -4174,7 +4170,7 @@ class OICPPApp {
     }
 
     async formatCode() {
-        if (!this.ensureLocalFileForFeature(this.t('message.featureFormat', null, '格式化'))) {
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureFormat', null) || '格式化')) {
             return;
         }
         if (this.editorManager && this.editorManager.formatCode) {
@@ -4200,7 +4196,7 @@ class OICPPApp {
     }
 
     compileAndRun() {
-        if (!this.ensureLocalFileForFeature(this.t('message.featureCompileAndRun', null, '编译并运行'))) {
+        if (!this.ensureLocalFileForFeature(window.i18n?.t?.('message.featureCompileAndRun', null) || '编译并运行')) {
             return;
         }
         if (this.compilerManager) {
@@ -4295,7 +4291,7 @@ class OICPPApp {
 
     async openFileHistory() {
         if (!window.electronAPI || typeof window.electronAPI.getFileHistory !== 'function') {
-            this.showMessage(this.t('message.fileHistoryUnavailable', null, 'File history is unavailable'), 'error');
+            this.showMessage(window.i18n?.t?.('message.fileHistoryUnavailable', null) || 'File history is unavailable', 'error');
             return;
         }
         try {
@@ -4303,7 +4299,7 @@ class OICPPApp {
             this.showFileHistoryDialog(Array.isArray(history) ? history : []);
         } catch (error) {
             logError('获取文件历史失败:', error);
-            this.showMessage(this.t('message.fileHistoryLoadFailed', null, 'Failed to load file history'), 'error');
+            this.showMessage(window.i18n?.t?.('message.fileHistoryLoadFailed', null) || 'Failed to load file history', 'error');
         }
     }
 
@@ -4322,12 +4318,12 @@ class OICPPApp {
         // 标题栏
         const titleBar = document.createElement('div');
         titleBar.className = 'file-history-titlebar';
-        titleBar.innerHTML = `<span class="file-history-title">${this.t('fileHistory.title')}</span>`;
+        titleBar.innerHTML = `<span class="file-history-title">${window.i18n?.t?.('fileHistory.title')}</span>`;
 
         const closeBtn = document.createElement('button');
         closeBtn.className = 'file-history-close-btn';
         closeBtn.innerHTML = '&times;';
-        closeBtn.setAttribute('aria-label', this.t('dialog.cancel'));
+        closeBtn.setAttribute('aria-label', window.i18n?.t?.('dialog.cancel'));
         closeBtn.addEventListener('click', () => overlay.remove());
         titleBar.appendChild(closeBtn);
         dialog.appendChild(titleBar);
@@ -4336,7 +4332,7 @@ class OICPPApp {
         if (history.length > 0) {
             const stats = document.createElement('div');
             stats.className = 'file-history-stats';
-            stats.textContent = this.t('fileHistory.totalFiles', { count: history.length });
+            stats.textContent = window.i18n?.t?.('fileHistory.totalFiles', { count: history.length });
             dialog.appendChild(stats);
         }
 
@@ -4347,7 +4343,7 @@ class OICPPApp {
         if (history.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'file-history-empty';
-            empty.textContent = this.t('fileHistory.noHistory');
+            empty.textContent = window.i18n?.t?.('fileHistory.noHistory');
             listContainer.appendChild(empty);
         } else {
             for (const item of history) {
@@ -4364,7 +4360,7 @@ class OICPPApp {
 
                 const name = document.createElement('div');
                 name.className = 'file-history-name';
-                name.textContent = item.name || this.t('fileHistory.unknownFile');
+                name.textContent = item.name || window.i18n?.t?.('fileHistory.unknownFile');
                 name.title = item.name || '';
 
                 const pathEl = document.createElement('div');
@@ -4406,17 +4402,17 @@ class OICPPApp {
 
             const clearBtn = document.createElement('button');
             clearBtn.className = 'file-history-clear-btn';
-            clearBtn.textContent = this.t('fileHistory.clearHistory');
+            clearBtn.textContent = window.i18n?.t?.('fileHistory.clearHistory');
             clearBtn.addEventListener('click', async () => {
                 if (!window.dialogManager || typeof window.dialogManager.showConfirm !== 'function') {
-                    if (!confirm(this.t('fileHistory.clearConfirm'))) return;
+                    if (!confirm(window.i18n?.t?.('fileHistory.clearConfirm'))) return;
                 } else {
-                    const confirmed = await window.dialogManager.showConfirm(this.t('fileHistory.clearConfirm'));
+                    const confirmed = await window.dialogManager.showConfirm(window.i18n?.t?.('fileHistory.clearConfirm'));
                     if (!confirmed) return;
                 }
                 await window.electronAPI.clearFileHistory();
                 overlay.remove();
-                this.showMessage(this.t('message.fileHistoryCleared', null, 'File history cleared'), 'success');
+                this.showMessage(window.i18n?.t?.('message.fileHistoryCleared', null) || 'File history cleared', 'success');
             });
 
             footer.appendChild(clearBtn);

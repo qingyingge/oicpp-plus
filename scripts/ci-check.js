@@ -1058,7 +1058,7 @@ console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
   // look at the line with those call arguments removed, otherwise every migrated call
   // site with a Chinese fallback reads as a fresh regression.
   const stripTFallback = (line) => line
-    .replace(/\b(?:i18n|i18next|__|this)\s*\.\s*t\s*\((?:[^()]|\([^()]*\))*\)/g, 't()')
+    .replace(/\b(?:window\s*\.\s*)?(?:i18n|i18next|__|this)\s*(?:\?\.|\.)\s*t\s*(?:\?\.|\.)?\s*\((?:[^()]|\([^()]*\))*\)(?:\s*\|\|\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\([^()]*\)|[A-Za-z_$][\w.$]*))?/g, 't()')
     .replace(/(?<![.\w])t\s*\((?:[^()]|\([^()]*\))*\)/g, 't()');
   let count = 0;
   const byFile = {};

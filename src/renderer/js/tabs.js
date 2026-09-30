@@ -2845,7 +2845,7 @@ class TabManager {
 
         const loader = document.createElement('div');
         loader.className = 'pdf-viewer-loading';
-        loader.innerHTML = '<div class="spinner"></div><div>' + (window.__ ? window.__('pdfViewer.loading') : 'pdfViewer.loading') + '</div>';
+        loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.loading') || 'PDF 加载中…') + '</div>';
 
         const iframe = document.createElement('iframe');
         iframe.className = 'pdf-viewer-frame';
@@ -2858,7 +2858,7 @@ class TabManager {
         if (viewerSrc) {
             iframe.src = viewerSrc;
         } else {
-            loader.innerHTML = '<div class="spinner"></div><div>' + (window.__ ? window.__('pdfViewer.notFound') : 'pdfViewer.notFound') + '</div>';
+            loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.notFound') || '未找到 PDF 文件') + '</div>';
         }
 
         iframe.addEventListener('load', () => {
@@ -4757,7 +4757,7 @@ class TabManager {
     }
 
     getWelcomePageContent() {
-        const t = window.__ || ((k) => k);
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         return `
             <div class="welcome-page">
                 <div class="welcome-header">
@@ -5179,7 +5179,7 @@ void hello() {
     }
 
     getWelcomePageContent() {
-        const t = window.__ || ((k) => k);
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         return `
             <div class="welcome-page">
                 <div class="welcome-header">
