@@ -929,6 +929,13 @@ class MonacoEditorManager {
         const rawLabel = String(item?.label || '').trim();
         if (!rawLabel) return null;
 
+        // clangd attaches post-insert commands to completion items (e.g. adding
+        // an #include after an auto-import). Register them so accepting the
+        // suggestion actually runs the command instead of dropping it.
+        if (item?.command) {
+            this.registerLspCommand(item.command);
+        }
+
         const kindMap = options.kindMap || {};
         const textEdit = item.textEdit || null;
         const rangeSource = textEdit?.range || textEdit?.replace || textEdit?.insert;
