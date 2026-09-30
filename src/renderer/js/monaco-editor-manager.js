@@ -587,37 +587,84 @@ class MonacoEditorManager {
         if (this._lspProvidersReady) {
             return;
         }
-        try {
-            if (typeof monaco === 'undefined' || !monaco.languages) return;
-            const supports = (path, fallback = false) => (
-                typeof this.lspClient?.supportsCapability === 'function'
-                    ? this.lspClient.supportsCapability(path, fallback)
-                    : fallback
-            );
-            this._registerLocalCompletionProvider();
-            if (supports('textDocument.completionProvider')) this._registerLspCompletionProvider();
-            if (supports('textDocument.signatureHelpProvider')) this._registerLspSignatureHelpProvider();
-            if (supports('textDocument.hoverProvider')) this._registerLspHoverProvider();
-            if (supports('textDocument.definitionProvider')) this._registerLspDefinitionProvider();
-            if (supports('textDocument.documentSymbolProvider')) this._registerLspDocumentSymbolProvider();
-            if (supports('textDocument.declarationProvider')) this._registerLspLocationProviders();
-            if (supports('textDocument.referencesProvider')) this._registerLspReferencesProvider();
-            if (supports('textDocument.renameProvider')) this._registerLspRenameProvider();
-            if (supports('textDocument.inlayHintProvider')) this._registerLspInlayHintProvider();
-            if (supports('textDocument.selectionRangeProvider')) this._registerLspSelectionRangeProvider();
-            if (supports('textDocument.documentLinkProvider')) this._registerLspDocumentLinkProvider();
-            if (supports('textDocument.codeActionProvider')) this._registerLspCodeActionProvider();
-            if (supports('textDocument.typeDefinitionProvider')) this._registerLspTypeDefinitionProvider();
-            if (supports('textDocument.implementationProvider')) this._registerLspImplementationProvider();
-            if (supports('textDocument.documentHighlightProvider')) this._registerLspDocumentHighlightProvider();
-            if (supports('workspace.symbolProvider')) this._registerLspWorkspaceSymbolProvider();
-            if (supports('textDocument.codeLensProvider')) this._registerLspCodeLensProvider();
-            if (supports('textDocument.foldingRangeProvider')) this._registerLspFoldingRangeProvider();
-            this._lspProvidersReady = true;
-            logInfo('[LSP] 所有 LSP 提供器已注册 (补全、签名帮助、悬停、定义、声明、符号、引用、重命名、代码操作、类型定义、实现、高亮、工作区符号、代码透镜、折叠、Inlay Hint、选择范围、文档链接)');
-        } catch (err) {
-            logWarn('[LSP] 注册 LSP 提供器失败:', err?.message || err);
+        if (typeof monaco === 'undefined' || !monaco.languages) return;
+        // 服务端能力还没返回时直接等待。此时 supports() 会把每项都判成 false，
+        // 若继续往下走就会一个 provider 都不注册，还会把 _lspProvidersReady 置位，
+        // 导致后续所有调用都被早退挡住、永远不再重试。
+        if (this.lspClient && typeof this.lspClient.getServerCapabilities === 'function'
+            && !this.lspClient.getServerCapabilities()) {
+            logInfo('[LSP] 等待服务端能力返回后再注册提供器');
+            return;
         }
+        const registered = [];
+        const failed = [];
+        const supports = (path, fallback = false) => (
+            typeof this.lspClient?.supportsCapability === 'function'
+                ? this.lspClient.supportsCapability(path, fallback)
+                : fallback
+        );
+        // 逐个 provider 隔离异常：单项失败不再连坐后续所有能力
+        const register = (name, capability, fn) => {
+            if (!supports(capability)) return;
+            try {
+                fn();
+                registered.push(name);
+            } catch (err) {
+                failed.push(name);
+                logWarn('[LSP] 注册提供器失败 (' + name + '):', err?.message || err);
+            }
+        };
+        this._registerLocalCompletionProvider();
+        register('补全', 'textDocument.completionProvider', () => this._registerLspCompletionProvider());
+        register('签名帮助', 'textDocument.signatureHelpProvider', () => this._registerLspSignatureHelpProvider());
+        register('悬停', 'textDocument.hoverProvider', () => this._registerLspHoverProvider());
+        register('定义', 'textDocument.definitionProvider', () => this._registerLspDefinitionProvider());
+        register('文档符号', 'textDocument.documentSymbolProvider', () => this._registerLspDocumentSymbolProvider());
+        register('声明', 'textDocument.declarationProvider', () => this._registerLspLocationProviders());
+        register('引用', 'textDocument.referencesProvider', () => this._registerLspReferencesProvider());
+        register('重命名', 'textDocument.renameProvider', () => this._registerLspRenameProvider());
+        register('Inlay Hint', 'textDocument.inlayHintProvider', () => this._registerLspInlayHintProvider());
+        register('选择范围', 'textDocument.selectionRangeProvider', () => this._registerLspSelectionRangeProvider());
+        register('文档链接', 'textDocument.documentLinkProvider', () => this._registerLspDocumentLinkProvider());
+        register('代码操作', 'textDocument.codeActionProvider', () => this._registerLspCodeActionProvider());
+        register('类型定义', 'textDocument.typeDefinitionProvider', () => this._registerLspTypeDefinitionProvider());
+        register('实现', 'textDocument.implementationProvider', () => this._registerLspImplementationProvider());
+        register('文档高亮', 'textDocument.documentHighlightProvider', () => this._registerLspDocumentHighlightProvider());
+        register('工作区符号', 'workspace.symbolProvider', () => this._registerLspWorkspaceSymbolProvider());
+        register('代码透镜', 'textDocument.codeLensProvider', () => this._registerLspCodeLensProvider());
+        register('折叠', 'textDocument.foldingRangeProvider', () => this._registerLspFoldingRangeProvider());
+        this._lspProvidersReady = true;
+        logInfo('[LSP] LSP 提供器注册完成，已注册: ' + (registered.length ? registered.join('、') : '(无)')
+            + (failed.length ? '；失败: ' + failed.join('、') : '')
+            + (failed.length ? '' : '；未注册: ' + this.describeUnsupportedLspCapabilities()));
+    }
+
+    // 把「服务端没宣告」的能力显式列出来，避免日志只报成功、实际静默缺功能
+    describeUnsupportedLspCapabilities() {
+        const checked = [
+            ['补全', 'textDocument.completionProvider'],
+            ['签名帮助', 'textDocument.signatureHelpProvider'],
+            ['悬停', 'textDocument.hoverProvider'],
+            ['定义', 'textDocument.definitionProvider'],
+            ['文档符号', 'textDocument.documentSymbolProvider'],
+            ['声明', 'textDocument.declarationProvider'],
+            ['引用', 'textDocument.referencesProvider'],
+            ['重命名', 'textDocument.renameProvider'],
+            ['Inlay Hint', 'textDocument.inlayHintProvider'],
+            ['选择范围', 'textDocument.selectionRangeProvider'],
+            ['文档链接', 'textDocument.documentLinkProvider'],
+            ['代码操作', 'textDocument.codeActionProvider'],
+            ['类型定义', 'textDocument.typeDefinitionProvider'],
+            ['实现', 'textDocument.implementationProvider'],
+            ['文档高亮', 'textDocument.documentHighlightProvider'],
+            ['工作区符号', 'workspace.symbolProvider'],
+            ['代码透镜', 'textDocument.codeLensProvider'],
+            ['折叠', 'textDocument.foldingRangeProvider']
+        ];
+        return checked
+            .filter(([, capability]) => !this.lspClient?.supportsCapability?.(capability, false))
+            .map(([name]) => name)
+            .join('、') || '(无)';
     }
 
     // 单槽缓存的键是 长度:首字符码:尾字符码，编辑过程中几乎必然失配，等于没有缓存；
