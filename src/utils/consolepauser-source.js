@@ -124,10 +124,41 @@ void PrintConsoleFormat(const wchar_t* fmt, ...)
     PrintConsoleLine(buffer);
 }
 
+// The IDE spawns this helper detached with NUL stdio, so no console is attached.
+// Allocate one on demand and rebind the streams, otherwise _getch() returns
+// immediately and the window disappears the moment the program exits.
+bool EnsureConsole()
+{
+    if (GetConsoleWindow() == NULL && !AllocConsole())
+    {
+        return false;
+    }
+
+    // 先重绑 CRT 流：freopen 打开 CONIN$/CONOUT$ 会顺带改写进程标准句柄，
+    // 因此 SetStdHandle 必须放在其后，才能拿到带 GENERIC_READ 的控制台句柄。
+    freopen("CONIN$", "r", stdin);
+    freopen("CONOUT$", "w", stdout);
+    freopen("CONOUT$", "w", stderr);
+
+    HANDLE input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (input != INVALID_HANDLE_VALUE) SetStdHandle(STD_INPUT_HANDLE, input);
+
+    HANDLE output = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (output != INVALID_HANDLE_VALUE)
+    {
+        SetStdHandle(STD_OUTPUT_HANDLE, output);
+        SetStdHandle(STD_ERROR_HANDLE, output);
+    }
+
+    return true;
+}
+
 }
 
 int main(int argc, char** argv)
 {
+    EnsureConsole();
+
     if (argc < 2)
     {
         PrintConsoleFormat(L"\u7528\u6cd5\uff1a%s <\u6587\u4ef6\u540d> <\u53c2\u6570>", argv[0]);

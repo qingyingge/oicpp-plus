@@ -137,7 +137,13 @@ class FakeChildProcess extends EventEmitter {
         mainSource.includes('args = [absoluteExePath];') &&
         !mainSource.includes('start "Program Running"') &&
         !mainSource.includes("command = 'cmd';"));
-    check('console pauser no longer allocates its own console', !pauserSource.includes('AllocConsole()') && !pauserSource.includes('freopen("CONIN$", "r", stdin)'));
+    // IDE 以 detached + stdio:'ignore' 启动 pauser，不附加控制台；此时 _getch() 无 stdin 可读，
+    // 立即返回 EOF，控制台窗口在程序退出的瞬间消失。必须由 pauser 自行 AllocConsole 并重绑句柄。
+    check('console pauser allocates its own console so the pause prompt survives',
+        pauserSource.includes('bool EnsureConsole()') &&
+        pauserSource.includes('GetConsoleWindow() == NULL && !AllocConsole()') &&
+        pauserSource.includes('freopen("CONIN$", "r", stdin)') &&
+        /int main\(int argc, char\*\* argv\)\s*\{\s*EnsureConsole\(\);/.test(pauserSource));
     check('console output is gated on GetConsoleMode again', pauserSource.includes('GetConsoleMode(outputHandle, &mode)') && !pauserSource.includes('if (WriteConsoleW(outputHandle, line'));
     check('console pauser keeps the legacy summary wording', pauserSource.includes('-----------------------------------------------') && pauserSource.includes('\\u6267\\u884c\\u65f6\\u95f4') && pauserSource.includes('\\u5cf0\\u503c\\u5185\\u5b58\\u4f7f\\u7528') && pauserSource.includes('\\u7a0b\\u5e8f\\u8fd4\\u56de\\u503c') && pauserSource.includes('\\u8bf7\\u6309\\u4efb\\u610f\\u952e\\u7ee7\\u7eed...'));
     check('console pauser is built statically first so it needs no MinGW runtime DLLs', mainSource.includes("{ name: 'utf8-static', sourceMode: 'utf8', args: ['-static'] }"));
