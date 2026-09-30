@@ -1133,8 +1133,7 @@ class IntegratedTerminalPanel {
 
         let detail = detailRaw
             .replace(/\s*Require stack:\s*/i, '\nRequire stack:\n')
-            .replace(/\s+-\s+/g, '\n- ')
-            .replace(/\s+尝试位置:\s*/g, '\n尝试位置: ');
+            .replace(/\s+-\s+/g, '\n- ');
 
         return `${reason}\n${detail}`;
     }

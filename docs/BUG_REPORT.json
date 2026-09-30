@@ -1486,5 +1486,17 @@
       "commit": "54c4f49",
       "note": "回退到直接 spawn：command = absoluteConsolePauserPath、args = [absoluteExePath]，去掉 cmd /c start 中转并注释说明 libuv quote_cmd_arg 转义问题（consolepauser 自己会 CreateProcess 并弹窗，不需要 start 提供的控制台）。本机复核实测（目标程序路径含空格）：A 旧写法 cmd /c start → cmd-exit 1、目标程序未启动；B 直接 spawn → cmd-exit 0、目标程序正常运行。tests/clang-format.test.js:133 原先断言 start \"Program Running\" 的回归项已同步改回直接 spawn 的断言。"
     }
-  }
+  },
+  {
+    "id": "M57",
+    "severity": "MEDIUM",
+    "title": "编译输出状态灯用已翻译文案反推语义状态，换文案即失配",
+    "status": "待修复",
+    "file": "src/renderer/js/compile-output.js:118-133",
+    "problem": "getStatusIndicator(status) 通过子串匹配来决定指示灯颜色（compile-output.js:124-129）：先取 compilingHint / successHint / failHint 三个已翻译的文案，再用 status.includes(hint) 判断；后面还并列了三个硬编码中文兜底 status.includes('成功') / includes('失败') / includes('错误')。整个判定建立在一个前提上——「展示给用户的文案」与「语义状态」是同一个字符串。",
+    "impact": "耦合方向是反的，所以它对语言包文案有隐藏要求：任何一次翻译润色都会静默打破判定，且不报错。当前 zh-cn 的 compileOutput.successSimple 为「编译成功」、failSimple 为「编译失败」，en 为 \"Compilation successful\" / \"Compilation failed\"，恰好都能被 includes 命中，所以现在看不出问题。但只要有人把 successSimple 改成「编译 OK（成功）」、或把英文改成 \"Success\"，includes 立刻失配，编译成功/失败的指示灯会一律退回默认的 ready 灰色。三个中文兜底在英文界面下恒为 false，属于和 I8 已清理的那批同类的死分支，同时把语言无关的判断写死成了中文。",
+    "evidence": "compile-output.js:121-123 取的是 t() 结果，124-129 直接对该结果做 includes；调用方 startCompile:167、onCompileSuccess:177、onCompileFailure:198 传入的 status 本身就是这些 key 渲染出来的文本，判定与展示共用一份字符串。",
+    "fix_plan": "让语义状态显式传递，不再从字符串反推：给 setStatus(status, type) 增加 type 参数（'compiling' / 'success' / 'error'），getStatusIndicator(type) 直接按 type 取 className。调用点本就已按分支传入了对应文案（startCompile / onCompileSuccess / onCompileFailure / cloudCompile 各处），补一个 type 是纯局部改动。落地后删除 successHint / failHint / compilingHint 三个取词与三个中文兜底分支，判定与语言包文案彻底解耦。另需注意 compile-manager.js:1325 有一个同名 setStatus(status)，只改 textContent 不带指示灯，两处不要混淆。",
+    "related": "I18N-HARDCODED-CJK ratchet（scripts/ci-check.js I8）"
+}
 ]
