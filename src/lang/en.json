@@ -236,7 +236,21 @@
     "resetFail": "Failed to reset settings: {error}",
     "apiUnavailable": "Settings API is unavailable",
     "unknownError": "Unknown error",
-    "compilerOutputTitle": "Compile Output"
+    "compilerOutputTitle": "Compile Output",
+    "syntaxColorKeywordTitle": "Keyword color",
+    "syntaxColorStringTitle": "String color",
+    "syntaxColorNumberTitle": "Number color",
+    "syntaxColorTypeTitle": "Type color",
+    "syntaxColorFunctionTitle": "Function color",
+    "syntaxColorClassTitle": "Class name color",
+    "syntaxColorCommentTitle": "Comment color",
+    "syntaxColorNamespaceTitle": "Namespace color",
+    "syntaxColorPreprocessorTitle": "Preprocessor color",
+    "syntaxColorOperatorTitle": "Operator color",
+    "syntaxColorPunctuationTitle": "Brackets and semicolons color",
+    "syntaxColorPointerTitle": "Pointer symbol color",
+    "syntaxColorVariableTitle": "Variable color",
+    "syntaxPreviewAria": "Live syntax color preview"
   },
   "keybinding": {
     "formatCode": "Format Code",
@@ -313,7 +327,15 @@
     "cloudCompile": "Cloud Compile",
     "readFileFailed": "Failed to read file",
     "noTempFilePath": "The main process did not return a temp file path",
-    "defaultFeature": "this feature"
+    "defaultFeature": "this feature",
+    "featureDebug": "debugging",
+    "featureCompile": "compiling",
+    "featureRun": "running",
+    "featureFormat": "formatting",
+    "featureCompileAndRun": "compile and run",
+    "unknownError": "Unknown error",
+    "unknown": "Unknown",
+    "newFile": "New file"
   },
   "dialog": {
     "confirm": "Confirm",
@@ -1322,7 +1344,8 @@
     "returnType": "Return type: {type}",
     "currentFile": "Current file",
     "classDefinition": "Class definition",
-    "structDefinition": "Struct definition"
+    "structDefinition": "Struct definition",
+    "contextMenuPaste": "Paste"
   },
   "browser": {
     "title": "Built-in Browser",

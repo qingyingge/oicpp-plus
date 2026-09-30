@@ -215,7 +215,21 @@
     "resetFail": "重置设置失败：{error}",
     "apiUnavailable": "设置 API 不可用",
     "unknownError": "未知错误",
-    "compilerOutputTitle": "编译输出"
+    "compilerOutputTitle": "编译输出",
+    "syntaxColorKeywordTitle": "关键字颜色",
+    "syntaxColorStringTitle": "字符串颜色",
+    "syntaxColorNumberTitle": "数字颜色",
+    "syntaxColorTypeTitle": "类型颜色",
+    "syntaxColorFunctionTitle": "函数颜色",
+    "syntaxColorClassTitle": "类名颜色",
+    "syntaxColorCommentTitle": "注释颜色",
+    "syntaxColorNamespaceTitle": "命名空间颜色",
+    "syntaxColorPreprocessorTitle": "预处理指令颜色",
+    "syntaxColorOperatorTitle": "运算符颜色",
+    "syntaxColorPunctuationTitle": "括号与分号颜色",
+    "syntaxColorPointerTitle": "指针符号颜色",
+    "syntaxColorVariableTitle": "变量颜色",
+    "syntaxPreviewAria": "语法配色实时预览"
   },
   "keybinding": {
     "formatCode": "格式化代码",
@@ -292,7 +306,15 @@
     "cloudCompile": "云端编译",
     "readFileFailed": "读取文件失败",
     "noTempFilePath": "主进程未返回临时文件路径",
-    "defaultFeature": "该功能"
+    "defaultFeature": "该功能",
+    "featureDebug": "调试",
+    "featureCompile": "编译",
+    "featureRun": "运行",
+    "featureFormat": "格式化",
+    "featureCompileAndRun": "编译并运行",
+    "unknownError": "未知错误",
+    "unknown": "未知",
+    "newFile": "新文件"
   },
   "dialog": {
     "confirm": "确认",
@@ -1294,7 +1316,8 @@
     "returnType": "返回类型: {type}",
     "currentFile": "当前文件",
     "classDefinition": "类定义",
-    "structDefinition": "结构体定义"
+    "structDefinition": "结构体定义",
+    "contextMenuPaste": "粘贴"
   },
   "browser": {
     "title": "内置浏览器",

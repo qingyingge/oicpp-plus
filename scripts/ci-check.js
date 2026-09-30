@@ -1026,6 +1026,15 @@ console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
   // CJK is only the pre-JS default that _applyToDOM overwrites. Counting it would keep the
   // ratchet permanently stuck on a backlog that no migration batch can ever clear.
   const alreadyMigratedRe = /data-i18n(-[a-z]+)?\s*=/;
+  // This project calls t() with a third "fallback" argument (renderer main.js:52 and
+  // compile-manager.js:3 both define t(key, params, fallback)), so a Chinese literal in
+  // that slot is a deliberate last-resort string shown only when i18n is unavailable --
+  // it is already gated behind a translation lookup, not hardcoded output. The check must
+  // look at the line with those call arguments removed, otherwise every migrated call
+  // site with a Chinese fallback reads as a fresh regression.
+  const stripTFallback = (line) => line
+    .replace(/\b(?:i18n|i18next|__|this)\s*\.\s*t\s*\((?:[^()]|\([^()]*\))*\)/g, 't()')
+    .replace(/(?<![.\w])t\s*\((?:[^()]|\([^()]*\))*\)/g, 't()');
   let count = 0;
   const byFile = {};
   for (const f of [...jsFiles, ...htmlFiles]) {
@@ -1036,6 +1045,7 @@ console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
       if (/log(Error|Warn|Info|Debug)/.test(line)) continue;      // logs are developer-facing
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;             // comments
       if (alreadyMigratedRe.test(line)) continue;                // already has a data-i18n-* hook
+      if (!/[\u4e00-\u9fff]/.test(stripTFallback(line))) continue; // CJK only lives in a t() fallback
       if (!userVisibleRe.test(line)) continue;                  // not user-facing
       count++;
       const rel = path.relative(root, f);

@@ -3760,7 +3760,12 @@ class MonacoEditorManager {
                 actionItem.textContent || ''
             ].join(' ').trim().toLowerCase();
 
-            if (actionText && (actionText.includes('粘贴') || /\bpaste\b/.test(actionText))) {
+            // 保留语言无关的 \bpaste\b 分支（Monaco 内置菜单在英文下就是 "paste"），
+            // 再叠加语言包的当前语言标签，覆盖非中英文界面。
+            if (actionText && (
+                /\bpaste\b/.test(actionText)
+                || actionText.includes(String(window.i18n.t('monaco.contextMenuPaste')).toLowerCase())
+            )) {
                 return true;
             }
         }

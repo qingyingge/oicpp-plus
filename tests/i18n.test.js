@@ -102,6 +102,48 @@ if (packs['zh-cn'] && packs.en) {
     check('no no-op t() residue in src/', residue.length === 0, residue.slice(0, 5).join(' | '));
 }
 
+// --- CI I8 的豁免规则本身也要被锁定 -------------------------------------------
+// I8 靠两条豁免避免误报：带 data-i18n-* 的行，以及中文字面量只出现在 t() 的
+// fallback 第三个参数里（本项目 renderer/main.js:52 与 compile-manager.js:3 都
+// 定义了 t(key, params, fallback)，中文兜底是有意设计）。规则一旦被无意放宽，
+// 硬编码就会重新混进主干，所以这里把 ci-check 里的实现原样抄过来测。
+{
+    const ciSource = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
+    // 仓库里是 CRLF，按 \r?\n 切分
+    const stripMatch = /const stripTFallback = \(line\) => line\r?\n([\s\S]*?)\r?\n  let count = 0;/.exec(ciSource);
+    check('ci-check still defines the t()-fallback strip used by I8', !!stripMatch);
+    check('ci-check I8 skips lines carrying a data-i18n-* hook', /alreadyMigratedRe\.test\(line\)/.test(ciSource));
+    check('ci-check I8 re-tests the line after stripping t() calls',
+        /if \(!\/\[\\u4e00-\\u9fff\]\/\.test\(stripTFallback\(line\)\)\) continue;/.test(ciSource));
+
+    if (stripMatch) {
+        // 箭头函数体是隐式返回的 `line\n .replace(..).replace(..)`，抽出来单独编译时要补回 line
+        // eslint-disable-next-line no-new-func
+        const stripTFallback = new Function('line', 'return line' + stripMatch[1]);
+        const stillHasCjk = (line) => /[\u4e00-\u9fff]/.test(stripTFallback(line));
+        const exempt = [
+            ["if (label) label.textContent = this.t('lsp.disabledLabel', null, 'LSP 已禁用');"],
+            ["lspItem.title = this.t('k', null, '兜底文案');"],
+            ["x = window.i18n.t('monaco.contextMenuPaste', null, '粘贴');"],
+            ["y = t('message.newFile', null, '新文件');"],
+            ["z = this.t('message.cloudFileLocalOnly', { feature: f }, '请先下载 {feature}');"],
+            ["if (label) label.textContent = this.t('lsp.disabledLabel');"],
+        ];
+        const stillCounted = [
+            ["el.textContent = '编译成功';"],
+            ["throw new Error('无效的路径');"],
+            ["el.textContent = '编译中'; el.title = this.t('k', null, '兜底');"],
+            ["this.showMessage(this.t('k', null, '兜底') + '附加中文');"],
+        ];
+        const badExempt = exempt.filter(([line]) => stillHasCjk(line));
+        check('I8 exempts a Chinese literal that only lives in a t() fallback',
+            badExempt.length === 0, badExempt.map(([l]) => l).join(' | '));
+        const missed = stillCounted.filter(([line]) => !stillHasCjk(line));
+        check('I8 still counts genuinely hardcoded user-visible CJK',
+            missed.length === 0, missed.map(([l]) => l).join(' | '));
+    }
+}
+
 // --- 所有静态引用的 key 都能解析 ---------------------------------------------
 {
     const walk = (dir, out = []) => {

@@ -2255,7 +2255,7 @@ class TabManager {
 #endif // ${guard}`;
         }
 
-        return '// 新文件\n';
+        return `// ${window.i18n.t('message.newFile', null, '新文件')}\n`;
     }
 
     closeTab(fileName, options = {}) {

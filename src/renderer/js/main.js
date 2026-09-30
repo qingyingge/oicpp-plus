@@ -2370,7 +2370,7 @@ class OICPPApp {
         return '';
     }
     startDebug() {
-        if (!this.ensureLocalFileForFeature('调试')) {
+        if (!this.ensureLocalFileForFeature(this.t('message.featureDebug', null, '调试'))) {
             return;
         }
         logInfo('开始调试');
@@ -3266,7 +3266,7 @@ class OICPPApp {
 
     stringifyError(err) {
         try {
-            if (!err) return '未知错误';
+            if (!err) return this.t('message.unknownError', null, '未知错误');
             if (typeof err === 'string') return err;
             if (err instanceof Error) return err.message || err.toString();
             if (err.detail) return this.stringifyError(err.detail);
@@ -3282,7 +3282,7 @@ class OICPPApp {
             if (typeof err.message === 'string') return err.message;
             return JSON.stringify(err);
         } catch (_) {
-            try { return String(err); } catch { return '未知错误'; }
+            try { return String(err); } catch { return this.t('message.unknownError', null, '未知错误'); }
         }
     }
 
@@ -3357,7 +3357,7 @@ class OICPPApp {
     }
 
     compileCode() {
-        if (!this.ensureLocalFileForFeature('编译')) {
+        if (!this.ensureLocalFileForFeature(this.t('message.featureCompile', null, '编译'))) {
             return;
         }
         if (this.compilerManager) {
@@ -3366,7 +3366,7 @@ class OICPPApp {
     }
 
     runCode() {
-        if (!this.ensureLocalFileForFeature('运行')) {
+        if (!this.ensureLocalFileForFeature(this.t('message.featureRun', null, '运行'))) {
             return;
         }
         if (this.compilerManager) {
@@ -3677,7 +3677,7 @@ class OICPPApp {
 
 
     async showAbout() {
-        const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh (修改: qingyingge)' };
+        const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: this.t('message.unknown', null, '未知'), author: 'mywwzh (修改: qingyingge)' };
         let buildInfo = { ...fallbackBuildInfo };
         try {
             const buildInfoData = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
@@ -4012,9 +4012,9 @@ class OICPPApp {
             if (guardedInfo) {
                 icon.textContent = '⊘';
                 icon.style.color = '#111';
-                if (label) label.textContent = this.t('lsp.disabledLabel');
+                if (label) label.textContent = this.t('lsp.disabledLabel', null, 'LSP 已禁用');
                 lspItem.classList.add('warning');
-                lspItem.title = guardedInfo.message || this.t('lsp.largeArrayDisabled');
+                lspItem.title = guardedInfo.message || this.t('lsp.largeArrayDisabled', null, '当前文件包含潜在超大静态数组，已禁用 clangd LSP。');
                 return;
             }
 
@@ -4174,7 +4174,7 @@ class OICPPApp {
     }
 
     async formatCode() {
-        if (!this.ensureLocalFileForFeature('格式化')) {
+        if (!this.ensureLocalFileForFeature(this.t('message.featureFormat', null, '格式化'))) {
             return;
         }
         if (this.editorManager && this.editorManager.formatCode) {
@@ -4200,7 +4200,7 @@ class OICPPApp {
     }
 
     compileAndRun() {
-        if (!this.ensureLocalFileForFeature('编译并运行')) {
+        if (!this.ensureLocalFileForFeature(this.t('message.featureCompileAndRun', null, '编译并运行'))) {
             return;
         }
         if (this.compilerManager) {
