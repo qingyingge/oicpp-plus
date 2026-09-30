@@ -197,6 +197,42 @@ if (packs['zh-cn'] && packs.en) {
     check('premise: OICPPApp.t takes (key, params, fallback)', /^\s{4}t\(key, params, fallback\) \{/m.test(appMain));
 }
 
+// --- 孤儿键 ratchet ------------------------------------------------------------
+// 语言包里有、源码里查不到任何引用的键。只锁死不许增长，存量暂留（人工清理时
+// 每清掉一批就把 ci-check 里的 I18N_ORPHAN_KEY_BASELINE 调低一档）。
+// 口径用"源码任意位置出现过的 dotted 字面量"而非 t('key')，后者认不出
+// t(c ? 'a' : 'b') / _t(key, fb) / t(el.dataset.i18n) 这类动态查表。
+{
+    const getAllJs2 = (dir, out = []) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) getAllJs2(full, out);
+            else if (/\.(js|html)$/.test(entry.name)) out.push(full);
+        }
+        return out;
+    };
+    const corpus = getAllJs2(path.join(root, 'src'))
+        .filter((f) => !f.startsWith(langDir))
+        .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+    const mentioned = new Set();
+    for (const m of corpus.matchAll(/['"]([a-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)['"]/g)) mentioned.add(m[1]);
+
+    const zhFlat2 = packs['zh-cn'];
+    const orphans = Object.keys(zhFlat2).filter((k) => !mentioned.has(k));
+
+    const ciSource2 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
+    const baselineMatch = /const I18N_ORPHAN_KEY_BASELINE = (\d+);/.exec(ciSource2);
+    check('ci-check defines the orphan-key ratchet baseline', !!baselineMatch);
+    if (baselineMatch) {
+        const baseline = Number(baselineMatch[1]);
+        check(`orphaned i18n keys do not exceed the ratchet baseline (${orphans.length} <= ${baseline})`,
+            orphans.length <= baseline, orphans.length > baseline ? orphans.slice(0, 8).join(', ') : '');
+    }
+    // 防呆：口径写错（比如正则退化成匹配不到任何东西）会静默变成 0 < baseline 而恒绿
+    check('the orphan detector actually finds dotted literals', mentioned.size > 500, `${mentioned.size} literals`);
+}
+
 // --- 所有静态引用的 key 都能解析 ---------------------------------------------
 {
     const walk = (dir, out = []) => {
