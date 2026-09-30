@@ -834,7 +834,7 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
 // Ratcheting baselines. Lower these whenever a migration batch lands.
 // Exceeding one means new regressions were introduced, not that the
 // remaining backlog grew — that is a FAIL.
-const I18N_HARDCODED_CJK_BASELINE = 104;
+const I18N_HARDCODED_CJK_BASELINE = 0;
 const I18N_EN_PUNCT_BASELINE = 1;
 
 const langDir = path.join(root, 'src', 'lang');
@@ -1022,6 +1022,10 @@ if (localeCodes.length >= 1) {
 console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
 {
   const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|new Error\(|throw Error)/;
+  // A line carrying a data-i18n-* attribute is already wired for translation; the inline
+  // CJK is only the pre-JS default that _applyToDOM overwrites. Counting it would keep the
+  // ratchet permanently stuck on a backlog that no migration batch can ever clear.
+  const alreadyMigratedRe = /data-i18n(-[a-z]+)?\s*=/;
   let count = 0;
   const byFile = {};
   for (const f of [...jsFiles, ...htmlFiles]) {
@@ -1031,6 +1035,7 @@ console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
       if (!/[\u4e00-\u9fff]/.test(line)) continue;
       if (/log(Error|Warn|Info|Debug)/.test(line)) continue;      // logs are developer-facing
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;             // comments
+      if (alreadyMigratedRe.test(line)) continue;                // already has a data-i18n-* hook
       if (!userVisibleRe.test(line)) continue;                  // not user-facing
       count++;
       const rel = path.relative(root, f);

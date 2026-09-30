@@ -4,6 +4,17 @@ const { Worker } = require('worker_threads');
 const crypto = require('crypto');
 const https = require('https');
 const http = require('http');
+const { t } = require('../lang');
+
+// 取消错误用固定 code 标识，调用方靠它判断「用户取消」而不是匹配 message 文本，
+// 否则一旦文案被翻译，main.js 的 error.message.includes('下载已取消') 就会失效。
+const CANCELLED_CODE = 'DOWNLOAD_CANCELLED';
+const cancelledError = () => {
+    const err = new Error(t('downloader.cancelled'));
+    err.code = CANCELLED_CODE;
+    return err;
+};
+const isCancelledError = (error) => error?.code === CANCELLED_CODE;
 
 function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
@@ -59,7 +70,7 @@ class MultiThreadDownloader {
     cancel() {
         this.isCancelled = true;
         logInfo('[多线程下载] 下载已取消');
-        this.cancelError = new Error('下载已取消');
+        this.cancelError = cancelledError();
     }
 
 
@@ -111,7 +122,7 @@ class MultiThreadDownloader {
         let retries = 0;
 
         while (retries < this.retryCount) {
-            if (this.isCancelled) throw new Error('下载已取消');
+            if (this.isCancelled) throw cancelledError();
             try {
                 const rangeHeader = `bytes=${start}-${end}`;
 
@@ -142,7 +153,7 @@ class MultiThreadDownloader {
                                 }
                             });
                             response.body.destroy();
-                            return reject(this.cancelError || new Error('下载已取消'));
+                            return reject(this.cancelError || cancelledError());
                         }
                         writer.write(chunk);
                         downloadedBytes += chunk.length;
@@ -211,7 +222,7 @@ class MultiThreadDownloader {
                 }
 
                 if (retries >= this.retryCount) {
-                    throw new Error(`分片 ${chunkIndex} 下载失败: ${error.message}`);
+                    throw new Error(t('downloader.chunkFailed', { index: chunkIndex, message: error.message }));
                 }
 
                 let delay;
@@ -271,7 +282,7 @@ class MultiThreadDownloader {
 
         while (attempt < maxAttempts) {
             attempt++;
-            if (this.isCancelled) throw new Error('下载已取消');
+            if (this.isCancelled) throw cancelledError();
 
             let response = null;
             let writer = null;
@@ -297,7 +308,7 @@ class MultiThreadDownloader {
                 const resetInactivityTimer = () => {
                     if (inactivityTimer) clearTimeout(inactivityTimer);
                     inactivityTimer = setTimeout(() => {
-                        try { response.body.destroy(new Error('下载超时(无数据)')); } catch (_) { }
+                        try { response.body.destroy(new Error(t('downloader.stalled'))); } catch (_) { }
                     }, this.timeout);
                 };
 
@@ -307,7 +318,7 @@ class MultiThreadDownloader {
                     if (typeof totalSize === 'number' && totalSize > 0) {
                         const stat = fs.statSync(outputFile);
                         if (stat.size < totalSize) {
-                            throw new Error(`文件大小不完整(${stat.size}/${totalSize})`);
+                            throw new Error(t('downloader.incompleteSize', { actual: stat.size, expected: totalSize }));
                         }
                     }
                 };
@@ -317,7 +328,7 @@ class MultiThreadDownloader {
                         if (this.isCancelled) {
                             try { writer.end(() => { if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile); }); } catch (_) { }
                             try { response.body.destroy(); } catch (_) { }
-                            return reject(this.cancelError || new Error('下载已取消'));
+                            return reject(this.cancelError || cancelledError());
                         }
 
                         resetInactivityTimer();
@@ -383,7 +394,7 @@ class MultiThreadDownloader {
 
                     response.body.on('close', () => {
                         if (!finished) {
-                            return reject(new Error('连接关闭但未完成下载'));
+                            return reject(new Error(t('downloader.closedIncomplete')));
                         }
                     });
 
@@ -423,7 +434,7 @@ class MultiThreadDownloader {
             }
         }
 
-        throw lastError || new Error('单线程下载失败');
+        throw lastError || new Error(t('downloader.singleThreadFailed'));
     }
 
 
@@ -432,11 +443,11 @@ class MultiThreadDownloader {
         logInfo(`[多线程下载] 开始下载: ${url}`);
 
         if (!url || typeof url !== 'string') {
-            throw new Error('下载URL无效或为空');
+            throw new Error(t('downloader.invalidUrl'));
         }
 
         if (!outputFile || typeof outputFile !== 'string') {
-            throw new Error('输出文件路径无效或为空');
+            throw new Error(t('downloader.invalidOutputPath'));
         }
 
         try {
@@ -525,7 +536,7 @@ class MultiThreadDownloader {
                 try {
                     const runWorker = async () => {
                         while (true) {
-                            if (this.isCancelled) throw this.cancelError || new Error('下载已取消');
+                            if (this.isCancelled) throw this.cancelError || cancelledError();
                             const idx = cursor++;
                             if (idx >= parts.length) break;
                             const myTask = parts[idx];
@@ -609,3 +620,5 @@ class MultiThreadDownloader {
 }
 
 module.exports = MultiThreadDownloader;
+module.exports.CANCELLED_CODE = CANCELLED_CODE;
+module.exports.isCancelledError = isCancelledError;

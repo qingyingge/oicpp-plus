@@ -3081,7 +3081,7 @@ class SampleTester {
         if (expandBtn) {
             expandBtn.style.display = truncated ? 'inline-flex' : 'none';
             expandBtn.textContent = isExpanded ? (window.i18n.t('tester.collapse')) : (window.i18n.t('tester.expand'));
-            expandBtn.title = isExpanded ? (window.i18n ? window.i18n.t('tester.collapse') + ' ' + window.i18n.t('tester.actualOutput') : '收起输出') : (window.i18n ? window.i18n.t('tester.expand') + ' ' + window.i18n.t('tester.actualOutput') : '展开完整输出');
+            expandBtn.title = `${isExpanded ? window.i18n.t('tester.collapse') : window.i18n.t('tester.expand')} ${window.i18n.t('tester.actualOutput')}`;
         }
 
         if (outputTextarea && outputContainer) {

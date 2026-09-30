@@ -113,7 +113,8 @@ const clean = (p) => { try { fs.rmSync(p, { recursive: true, force: true }); } c
     setTimeout(() => d3.cancel(), 300);
     let err3 = null;
     try { await d3.download(`${base}/file.bin`, out3); } catch (e) { err3 = e; }
-    check('取消下载抛出下载已取消', !!err3 && /下载已取消/.test(err3.message), err3 && err3.message);
+    // 取消靠 error.code 判定，不再匹配 message 文案（文案已随语言变化）
+    check('取消下载抛出可识别的取消错误', !!err3 && Downloader.isCancelledError(err3), err3 && `${err3.code} ${err3.message}`);
     check('取消后临时目录已清理', fs.readdirSync(tmp).filter(n => n.startsWith('temp_')).length === 0);
 
     // 4. 多线程失败后 progressCallback 被还原

@@ -4012,9 +4012,9 @@ class OICPPApp {
             if (guardedInfo) {
                 icon.textContent = '⊘';
                 icon.style.color = '#111';
-                if (label) label.textContent = this.t('lsp.disabledLabel', null, 'LSP 已禁用');
+                if (label) label.textContent = this.t('lsp.disabledLabel');
                 lspItem.classList.add('warning');
-                lspItem.title = guardedInfo.message || this.t('lsp.largeArrayDisabled', null, '当前文件包含潜在超大静态数组，已禁用 clangd LSP。');
+                lspItem.title = guardedInfo.message || this.t('lsp.largeArrayDisabled');
                 return;
             }
 

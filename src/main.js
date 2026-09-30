@@ -26,6 +26,7 @@ const clangdCompileFlags = require('./utils/clangd-compile-flags');
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
+const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
 
 const APP_VERSION = '1.5.4';
@@ -1228,7 +1229,7 @@ function verifyIdeLoginToken(payload) {
         });
         req.on('error', reject);
         req.on('timeout', () => {
-            try { req.destroy(new Error('请求超时')); } catch (_) { }
+            try { req.destroy(new Error(t('error.requestTimeout'))); } catch (_) { }
         });
         req.write(body);
         req.end();
@@ -1786,7 +1787,7 @@ function isSensitiveIoPath(targetPath) {
 
 function assertSafeIoPath(targetPath) {
     if (isSensitiveIoPath(targetPath)) {
-        throw new Error('非法路径: 不允许访问系统或应用敏感目录');
+        throw new Error(t('error.sensitiveDirBlocked'));
     }
     return targetPath;
 }
@@ -2379,7 +2380,7 @@ async function ensureConsolePauserExecutable(compilerPath) {
     }
 
     if (!compilerPath || !fs.existsSync(compilerPath)) {
-        throw new Error('编译器不可用，无法自动构建consolepauser.exe');
+        throw new Error(t('error.consolePauserNoCompiler'));
     }
 
     const oicppDir = path.dirname(consolePauserPath);
@@ -2492,7 +2493,7 @@ async function ensureConsolePauserExecutable(compilerPath) {
         failures.push(`[${strategy.name}] exit=${result.code} stderr=${(result.stderr || '').trim()}`);
     }
 
-    throw new Error(`自动构建consolepauser.exe失败。${failures.join(' | ')}`);
+    throw new Error(t('error.consolePauserBuildFailed', { details: failures.join(' | ') }));
 }
 
 function findCompilerExecutable(baseDir) {
@@ -3952,7 +3953,7 @@ function setupIPC() {
     ipcMain.handle('open-path', async (_event, targetPath, options = {}) => {
         try {
             if (!targetPath || typeof targetPath !== 'string') {
-                throw new Error('无效的路径');
+                throw new Error(t('error.invalidPath'));
             }
             const normalized = path.normalize(targetPath);
             assertSafeIoPath(normalized);
@@ -4325,10 +4326,10 @@ function setupIPC() {
     ipcMain.on('save-file', (event, filePath, content) => {
         try {
             if (!filePath || typeof filePath !== 'string') {
-                throw new Error('无效的文件路径');
+                throw new Error(t('error.invalidFilePath'));
             }
             if (/^cloud:/i.test(filePath)) {
-                throw new Error('云端文件不支持本地保存');
+                throw new Error(t('error.cloudFileNotSavable'));
             }
             assertSafeIoPath(filePath);
             const writeResult = writeUtf8FileIfChanged(filePath, content);
@@ -4358,12 +4359,12 @@ function setupIPC() {
     ipcMain.handle('save-temp-file', async (event, filePath, content) => {
         try {
             if (!filePath || typeof filePath !== 'string') {
-                throw new Error('无效的文件路径');
+                throw new Error(t('error.invalidFilePath'));
             }
             const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
             const tempPath = path.resolve(codeTempDir, filePath);
             if (!tempPath.startsWith(codeTempDir)) {
-                throw new Error('非法路径: 路径遍历攻击被阻止');
+                throw new Error(t('error.pathTraversalBlocked'));
             }
             const tempDir = path.dirname(tempPath);
 
@@ -4383,7 +4384,7 @@ function setupIPC() {
     ipcMain.handle('save-binary-temp-file', async (_event, fileName, base64Data) => {
         try {
             if (!base64Data || typeof base64Data !== 'string') {
-                throw new Error('缺少文件数据');
+                throw new Error(t('error.missingFileData'));
             }
             const tempDirPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
             if (!fs.existsSync(tempDirPath)) {
@@ -4408,15 +4409,15 @@ function setupIPC() {
     ipcMain.handle('fetch-remote-json', async (_event, spec) => {
         try {
             if (!spec || typeof spec !== 'object' || typeof spec.path !== 'string' || !spec.path) {
-                throw new Error('无效的请求参数');
+                throw new Error(t('error.invalidRequestParams'));
             }
             const qIndex = spec.path.indexOf('?');
             const purePath = qIndex === -1 ? spec.path : spec.path.slice(0, qIndex);
             if (!ALLOWED_REMOTE_API_PATHS.has(purePath)) {
-                throw new Error('不允许请求的远程接口: ' + purePath);
+                throw new Error(t('error.remoteApiNotAllowed', { path: purePath }));
             }
             if (spec.method && String(spec.method).toUpperCase() !== 'GET') {
-                throw new Error('远程接口只允许 GET 请求');
+                throw new Error(t('error.remoteApiGetOnly'));
             }
             const url = REMOTE_API_ORIGIN + spec.path;
             let resp;
@@ -4450,12 +4451,12 @@ function setupIPC() {
     ipcMain.handle('load-temp-file', async (event, filePath) => {
         try {
             if (!filePath || typeof filePath !== 'string') {
-                throw new Error('无效的文件路径');
+                throw new Error(t('error.invalidFilePath'));
             }
             const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
             const tempPath = path.resolve(codeTempDir, filePath);
             if (!tempPath.startsWith(codeTempDir)) {
-                throw new Error('非法路径: 路径遍历攻击被阻止');
+                throw new Error(t('error.pathTraversalBlocked'));
             }
             if (fs.existsSync(tempPath)) {
                 const content = fs.readFileSync(tempPath, 'utf8');
@@ -4488,13 +4489,13 @@ function setupIPC() {
     ipcMain.handle('delete-temp-file', async (event, filePath) => {
         try {
             if (!filePath || typeof filePath !== 'string') {
-                throw new Error('无效的文件路径');
+                throw new Error(t('error.invalidFilePath'));
             }
             const tempPath = path.isAbsolute(filePath)
                 ? path.resolve(filePath)
                 : path.resolve(TEMP_DELETE_ROOTS[0], filePath);
             if (!isPathInsideTempRoots(tempPath)) {
-                throw new Error('非法路径: 路径遍历攻击被阻止');
+                throw new Error(t('error.pathTraversalBlocked'));
             }
 
             if (fs.existsSync(tempPath)) {
@@ -4512,10 +4513,10 @@ function setupIPC() {
     ipcMain.handle('save-file', async (event, filePath, content) => {
         try {
             if (!filePath || typeof filePath !== 'string') {
-                throw new Error('无效的文件路径');
+                throw new Error(t('error.invalidFilePath'));
             }
             if (/^cloud:/i.test(filePath)) {
-                throw new Error('云端文件不支持本地保存');
+                throw new Error(t('error.cloudFileNotSavable'));
             }
             assertSafeIoPath(filePath);
             const writeResult = writeUtf8FileIfChanged(filePath, content);
@@ -4745,11 +4746,11 @@ function setupIPC() {
         try {
             const normalizedPath = normalizeDroppedPath(filePath);
             if (!normalizedPath) {
-                throw new Error('缺少文件路径');
+                throw new Error(t('error.missingFilePath'));
             }
             assertSafeIoPath(normalizedPath);
             if (!fs.existsSync(normalizedPath)) {
-                throw new Error('文件不存在');
+                throw new Error(t('error.fileNotFound'));
             }
             const buffer = fs.readFileSync(normalizedPath);
             return buffer.toString('base64');
@@ -4833,7 +4834,7 @@ function setupIPC() {
         let previousWatchStates = [];
         try {
             if (!filePath || typeof filePath !== 'string') {
-                throw new Error('无效的文件路径');
+                throw new Error(t('error.invalidFilePath'));
             }
             const normalizedPath = path.resolve(filePath);
             assertSafeIoPath(normalizedPath);
@@ -4855,7 +4856,7 @@ function setupIPC() {
     ipcMain.handle('rename-file-invoke', async (_event, oldPath, newName, options = {}) => {
         try {
             if (!oldPath || typeof oldPath !== 'string' || !newName || typeof newName !== 'string') {
-                throw new Error('无效的重命名参数');
+                throw new Error(t('error.invalidRenameParams'));
             }
             assertSafeIoPath(oldPath);
             const targetName = path.basename(newName);
@@ -4887,12 +4888,12 @@ function setupIPC() {
     ipcMain.handle('delete-file-invoke', async (_event, filePath, options = {}) => {
         let previousWatchStates = [];
         try {
-            if (!filePath || typeof filePath !== 'string') throw new Error('无效的文件路径');
+            if (!filePath || typeof filePath !== 'string') throw new Error(t('error.invalidFilePath'));
             const normalizedPath = path.resolve(filePath);
             assertSafeIoPath(normalizedPath);
             const stat = fs.statSync(normalizedPath);
             if (stat.isDirectory() && options?.recursive !== true) {
-                throw new Error('删除目录需要 recursive=true');
+                throw new Error(t('error.deleteDirNeedsRecursive'));
             }
             previousWatchStates = markLocalDeletion(normalizedPath);
             if (stat.isDirectory()) {
@@ -4943,7 +4944,7 @@ function setupIPC() {
 
     ipcMain.handle('create-file', async (_event, filePath, content = '') => {
         try {
-            if (!filePath || typeof filePath !== 'string') throw new Error('无效文件路径');
+            if (!filePath || typeof filePath !== 'string') throw new Error(t('error.invalidFilePath'));
             
             // Validate the file name
             const fileName = path.basename(filePath);
@@ -5032,7 +5033,7 @@ function setupIPC() {
             assertSafeIoPath(sourcePath);
             assertSafeIoPath(targetPath);
             if (!fs.existsSync(sourcePath)) {
-                throw new Error('源文件不存在');
+                throw new Error(t('error.sourceNotFound'));
             }
 
             const targetDir = path.dirname(targetPath);
@@ -5548,7 +5549,7 @@ function setupIPC() {
         const timeLimit = Number(options?.timeLimit);
         const memoryLimit = Number(options?.memoryLimit);
         if (!contestantPath || !graderPath || !inputFilePath || !fs.existsSync(inputFilePath)) {
-            throw new Error('交互题运行参数不完整');
+            throw new Error(t('error.interactiveArgsIncomplete'));
         }
 
         const runtimeEnv = { ...process.env };
@@ -6224,7 +6225,7 @@ function setupIPC() {
                 updateProgress(`开始下载编译器: ${name} ${version}`);
 
                 if (typeof url !== 'string' || !url.includes('.')) {
-                    throw new Error('无效的下载URL格式');
+                    throw new Error(t('error.invalidDownloadUrl'));
                 }
 
                 let fileExtension = '';
@@ -6236,7 +6237,7 @@ function setupIPC() {
                     const urlParts = url.split('.');
                     fileExtension = urlParts[urlParts.length - 1].toLowerCase();
                 }
-                if (!fileExtension) throw new Error('无法识别下载文件类型');
+                if (!fileExtension) throw new Error(t('error.unknownDownloadFileType'));
                 const tempFile = path.join(compilersDir, `${version}.${fileExtension}`);
 
                 downloader = new MultiThreadDownloader({
@@ -6277,7 +6278,7 @@ function setupIPC() {
                     await extractZip(tempFile, { dir: versionDir });
                 } else if (fileExtension === '7z') {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
-                        throw new Error('7z 解压工具不可用，请联网安装依赖或改用zip包');
+                        throw new Error(t('error.sevenZipUnavailable'));
                     }
                     await new Promise((resolve, reject) => {
                         const { spawn } = require('child_process');
@@ -6287,12 +6288,12 @@ function setupIPC() {
                         proc.stderr.on('data', (d) => { stderr += d.toString(); });
                         proc.on('close', (code) => {
                             if (code === 0) resolve();
-                            else reject(new Error(`7z 解压失败(code=${code}): ${stderr || ''}`));
+                            else reject(new Error(t('error.sevenZipFailed', { code, stderr: stderr || '' })));
                         });
                         proc.on('error', (err) => reject(err));
                     });
                 } else {
-                    throw new Error(`不支持的文件格式: ${fileExtension}`);
+                    throw new Error(t('error.unsupportedFileFormat', { ext: fileExtension }));
                 }
 
                 fs.unlinkSync(tempFile);
@@ -6327,13 +6328,13 @@ function setupIPC() {
             } catch (error) {
                 downloadCompleted = true;
 
-                const isCancelledError = error.message.includes('下载已取消') || error.message.includes('用户取消');
-                const errorMessage = isCancelledError ? '下载已取消' : `下载失败: ${error.message}`;
+                const isCancelled = isDownloadCancelled(error) || error.message.includes('用户取消');
+                const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
 
                 logError('[编译器下载] 下载过程出错:', error.message);
 
-                if (backgroundDownload && !isCancelledError) {
-                    notifyUser('编译器下载失败', `${name} ${version} 下载失败: ${error.message}`, 'error');
+                if (backgroundDownload && !isCancelled) {
+                    notifyUser(t('compiler.downloadFailedTitle'), t('compiler.downloadFailedMessage', { name, version, message: error.message }), 'error');
                 }
 
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
@@ -6623,7 +6624,7 @@ function setupIPC() {
                 updateProgress(`开始下载testlib: ${name} ${version}`);
 
                 if (typeof url !== 'string' || !url.includes('.')) {
-                    throw new Error('无效的下载URL格式');
+                    throw new Error(t('error.invalidDownloadUrl'));
                 }
 
                 let fileExtension = '';
@@ -6635,7 +6636,7 @@ function setupIPC() {
                     const urlParts = url.split('.');
                     fileExtension = urlParts[urlParts.length - 1].toLowerCase();
                 }
-                if (!fileExtension) throw new Error('无法识别下载文件类型');
+                if (!fileExtension) throw new Error(t('error.unknownDownloadFileType'));
                 const tempFile = path.join(testlibsDir, `${version}.${fileExtension}`);
 
                 downloader = new MultiThreadDownloader({
@@ -6671,7 +6672,7 @@ function setupIPC() {
                     await extractZip(tempFile, { dir: versionDir });
                 } else if (fileExtension === '7z') {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
-                        throw new Error('7z 解压工具不可用，请联网安装依赖或改用zip包');
+                        throw new Error(t('error.sevenZipUnavailable'));
                     }
                     await new Promise((resolve, reject) => {
                         const { spawn } = require('child_process');
@@ -6681,12 +6682,12 @@ function setupIPC() {
                         proc.stderr.on('data', (d) => { stderr += d.toString(); });
                         proc.on('close', (code) => {
                             if (code === 0) resolve();
-                            else reject(new Error(`7z 解压失败(code=${code}): ${stderr || ''}`));
+                            else reject(new Error(t('error.sevenZipFailed', { code, stderr: stderr || '' })));
                         });
                         proc.on('error', (err) => reject(err));
                     });
                 } else {
-                    throw new Error(`不支持的文件格式: ${fileExtension}`);
+                    throw new Error(t('error.unsupportedFileFormat', { ext: fileExtension }));
                 }
 
                 fs.unlinkSync(tempFile);
@@ -6720,13 +6721,13 @@ function setupIPC() {
             } catch (error) {
                 downloadCompleted = true;
 
-                const isCancelledError = error.message.includes('下载已取消') || error.message.includes('用户取消');
-                const errorMessage = isCancelledError ? '下载已取消' : `下载失败: ${error.message}`;
+                const isCancelled = isDownloadCancelled(error) || error.message.includes('用户取消');
+                const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
 
                 logError('[testlib下载] 下载过程出错:', error.message);
 
-                if (backgroundDownload && !isCancelledError) {
-                    notifyUser('testlib 下载失败', `${name} ${version} 下载失败: ${error.message}`, 'error');
+                if (backgroundDownload && !isCancelled) {
+                    notifyUser(t('compiler.testlibDownloadFailedTitle'), t('compiler.downloadFailedMessage', { name, version, message: error.message }), 'error');
                 }
 
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
@@ -7023,7 +7024,7 @@ async function readFileContent(filePath) {
     try {
         const normalizedPath = normalizeDroppedPath(filePath);
         if (!normalizedPath || !fs.existsSync(normalizedPath)) {
-            throw new Error('文件不存在');
+            throw new Error(t('error.fileNotFound'));
         }
 
         const buffer = fs.readFileSync(normalizedPath);
@@ -7031,7 +7032,7 @@ async function readFileContent(filePath) {
         const isBinary = buffer.some(byte => byte === 0 || (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13));
 
         if (isBinary) {
-            throw new Error('不支持的二进制文件');
+            throw new Error(t('error.unsupportedBinary'));
         }
 
         const encoding = detectEncoding(buffer);
@@ -7211,7 +7212,7 @@ async function openFile() {
             }
         } catch (error) {
             logError('打开文件失败:', error);
-            dialog.showErrorBox('错误', `无法打开文件: ${error.message}`);
+            dialog.showErrorBox(t('error.title'), t('error.openFileFailed', { message: error.message }));
         }
     } else {
         try { logInfo('[打开文件] 用户取消或未选择文件'); } catch (_) { }
@@ -7577,7 +7578,7 @@ function armInstallerLaunchOnQuit(installerPath, installerArgs = []) {
 function runInstaller(installerPath) {
     try {
         logInfo('准备运行安装程序:', installerPath);
-        if (!fs.existsSync(installerPath)) throw new Error('安装程序文件不存在');
+        if (!fs.existsSync(installerPath)) throw new Error(t('error.installerMissing'));
         const isWindows = process.platform === 'win32';
 
         if (!isWindows) {
@@ -7991,13 +7992,13 @@ function exportSettings(filePath) {
 function importSettings(filePath) {
     try {
         if (!fs.existsSync(filePath)) {
-            throw new Error('设置文件不存在');
+            throw new Error(t('error.settingsFileMissing'));
         }
 
         const importData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
 
         if (!importData.settings) {
-            throw new Error('无效的设置文件格式');
+            throw new Error(t('error.invalidSettingsFormat'));
         }
 
         const validKeys = ['compilerPath', 'compilerArgs', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'runAllSamples'];
@@ -8170,7 +8171,7 @@ async function compileFile(options) {
             logError('编译器文件不存在:', compilerPath);
             logError('当前工作目录:', process.cwd());
             logError('编译器路径是否为绝对路径:', path.isAbsolute(compilerPath));
-            reject(new Error(`编译器不存在: ${compilerPath}`));
+            reject(new Error(t('error.compilerNotFound', { path: compilerPath })));
             return;
         }
 
@@ -8189,7 +8190,7 @@ async function compileFile(options) {
         const compilerRoot = path.dirname(compilerDir);
 
         if (!fs.existsSync(inputFile)) {
-            reject(new Error(`源文件不存在: ${inputFile}`));
+            reject(new Error(t('error.sourceNotFoundAt', { path: inputFile })));
             return;
         }
 
@@ -8203,7 +8204,7 @@ async function compileFile(options) {
         let parsedUserArgs = parseArgsPreservingQuotes(userArgsStr).filter(a => a && a.trim());
         const rejectedUserArgs = collectRejectedCompilerArgs(parsedUserArgs);
         if (rejectedUserArgs.length > 0) {
-            reject(new Error('危险编译参数已被拦截: ' + rejectedUserArgs.join(' ')));
+            reject(new Error(t('error.dangerousArgsBlocked', { args: rejectedUserArgs.join(' ') })));
             return;
         }
     const compileCacheVersion = 2;
@@ -8279,7 +8280,7 @@ async function compileFile(options) {
                 logInfo('输出目录创建成功');
             } catch (mkdirError) {
                 logError('创建输出目录失败:', mkdirError);
-                reject(new Error(`无法创建输出目录: ${outputDir}`));
+                reject(new Error(t('error.cannotCreateOutputDir', { path: outputDir })));
                 return;
             }
         }
@@ -8646,7 +8647,7 @@ async function runExecutable(options) {
         logInfo('工作目录:', workingDirectory);
 
         if (!require('fs').existsSync(executablePath)) {
-            reject(new Error(`可执行文件不存在: ${executablePath}`));
+            reject(new Error(t('error.executableNotFound', { path: executablePath })));
             return;
         }
 
@@ -8694,7 +8695,7 @@ async function runExecutable(options) {
 
             if (!consolePauserPath) {
                 logInfo('错误: 未找到consolepauser.exe');
-                reject(new Error('未找到consolepauser.exe，无法启动程序。请确保%userprofile%/.oicpp-plus/consolepauser.exe已正确生成。'));
+                reject(new Error(t('error.consolePauserMissing')));
                 return;
             }
             // 直接 spawn consolepauser.exe（它自己会 CreateProcess 并弹出窗口）。
@@ -8753,7 +8754,7 @@ async function runExecutable(options) {
             ];
             const picked = candidates.find(c => which(c));
             if (!picked) {
-                reject(new Error('未找到可用的终端模拟器（gnome-terminal/konsole/xfce4-terminal/x-terminal-emulator/xterm）'));
+                reject(new Error(t('error.noTerminalEmulator')));
                 return;
             }
             command = picked;
@@ -8815,7 +8816,7 @@ async function runExecutable(options) {
                     diag.cwd = spawnOptions?.cwd;
                     logError('[运行][spawn-error]', diag);
                 } catch (_) { }
-                reject(new Error(`启动程序失败: ${error.message}`));
+                reject(new Error(t('error.launchFailed', { message: error.message })));
             });
 
             child.on('spawn', () => {
@@ -8832,7 +8833,7 @@ async function runExecutable(options) {
 
         } catch (error) {
             logInfo('创建子进程失败:', error.message);
-            reject(new Error(`创建子进程失败: ${error.message}`));
+            reject(new Error(t('error.spawnFailed', { message: error.message })));
         }
     });
 }
@@ -9275,7 +9276,7 @@ async function openFileFromExternalQueue(filePath) {
         logError('通过外部请求打开文件失败:', error);
         if (mainWindow && !mainWindow.isDestroyed()) {
             try {
-                dialog.showErrorBox('打开文件失败', `${path.basename(filePath)}\n${error?.message || error}`);
+                dialog.showErrorBox(t('error.openFileFailedTitle'), `${path.basename(filePath)}\n${error?.message || error}`);
             } catch (_) { }
         }
     }
@@ -10313,7 +10314,7 @@ function runCommandVersionProbe(command, args = [], options = {}) {
 
 function resolveDebuggerLaunchConfig() {
     if (process.platform === 'darwin') {
-        throw new Error('macOS 暂不支持调试功能。');
+        throw new Error(t('error.macOsDebugUnsupported'));
     }
 
     return {
@@ -10524,7 +10525,7 @@ async function startDebugSession(filePath, options = {}) {
         );
         const shouldUseIntegratedTerminal = normalizedRunMode === 'integrated-terminal';
         if (process.platform === 'linux' && shouldUseIntegratedTerminal && !requestedInferiorTTY && !useInputBridge) {
-            throw new Error('Linux 内置终端调试初始化失败：未获取到终端 TTY，请先重试调试启动。');
+            throw new Error(t('error.linuxTtyMissing'));
         }
         if (process.platform === 'linux') {
             logInfo('[主进程] Linux 调试运行模式:', normalizedRunMode);
@@ -10556,7 +10557,7 @@ async function startDebugSession(filePath, options = {}) {
         }
 
         if (!fs.existsSync(filePath)) {
-            throw new Error(`源文件不存在: ${filePath}`);
+            throw new Error(t('error.sourceNotFoundAt', { path: filePath }));
         }
 
         const isWinPlatform = process.platform === 'win32';
@@ -10590,7 +10591,7 @@ async function startDebugSession(filePath, options = {}) {
         } catch (_) { }
 
         if (!fs.existsSync(executablePath)) {
-            throw new Error(`可执行文件不存在: ${executablePath}。请先编译代码（需要包含 -g 参数）。`);
+            throw new Error(t('error.executableNotFoundForDebug', { path: executablePath }));
         }
 
         try {
@@ -11170,10 +11171,10 @@ function setupDebuggerEvents() {
 
 async function sendDebugCommand(command) {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error('调试器未运行');
+        throw new Error(t('error.debuggerNotRunning'));
     }
     if (gdbDebugger.programExited) {
-        throw new Error('程序已结束');
+        throw new Error(t('error.programEnded'));
     }
     lastDebugCommand = command;
     try {
@@ -11207,7 +11208,7 @@ async function sendDebugCommand(command) {
                 await gdbDebugger.stepOut();
                 break;
             default:
-                throw new Error(`未知的调试命令: ${command}`);
+                throw new Error(t('error.unknownDebugCommand', { command }));
         }
 
         return { success: true };
@@ -11221,7 +11222,7 @@ async function sendDebugCommand(command) {
 
 async function sendDebugInput(input) {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error('调试器未运行');
+        throw new Error(t('error.debuggerNotRunning'));
     }
 
     try {
@@ -11249,12 +11250,12 @@ async function addBreakpoint(breakpoint) {
     logInfo('[主进程] 添加断点:', breakpoint);
 
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error('调试器未运行');
+        throw new Error(t('error.debuggerNotRunning'));
     }
 
     try {
         if (!breakpoint.file || !breakpoint.line) {
-            throw new Error('断点参数不完整');
+            throw new Error(t('error.breakpointArgsIncomplete'));
         }
 
         await gdbDebugger.setBreakpoint(breakpoint.file, breakpoint.line);
@@ -11279,12 +11280,12 @@ async function removeBreakpoint(breakpoint) {
     logInfo('[主进程] 移除断点:', breakpoint);
 
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error('调试器未运行');
+        throw new Error(t('error.debuggerNotRunning'));
     }
 
     try {
         if (!breakpoint.file || !breakpoint.line) {
-            throw new Error('断点参数不完整');
+            throw new Error(t('error.breakpointArgsIncomplete'));
         }
 
         const breakpointKey = `${breakpoint.file}:${breakpoint.line}`;
@@ -11319,7 +11320,7 @@ async function removeBreakpoint(breakpoint) {
 
 async function getDebugVariables() {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error('调试器未运行');
+        throw new Error(t('error.debuggerNotRunning'));
     }
 
     try {
@@ -11338,7 +11339,7 @@ async function getDebugVariables() {
 
 async function getDebugCallStack() {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error('调试器未运行');
+        throw new Error(t('error.debuggerNotRunning'));
     }
 
     try {
