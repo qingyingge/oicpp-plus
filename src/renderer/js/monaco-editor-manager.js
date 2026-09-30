@@ -615,24 +615,24 @@ class MonacoEditorManager {
             }
         };
         this._registerLocalCompletionProvider();
-        register('补全', 'textDocument.completionProvider', () => this._registerLspCompletionProvider());
-        register('签名帮助', 'textDocument.signatureHelpProvider', () => this._registerLspSignatureHelpProvider());
-        register('悬停', 'textDocument.hoverProvider', () => this._registerLspHoverProvider());
-        register('定义', 'textDocument.definitionProvider', () => this._registerLspDefinitionProvider());
-        register('文档符号', 'textDocument.documentSymbolProvider', () => this._registerLspDocumentSymbolProvider());
-        register('声明', 'textDocument.declarationProvider', () => this._registerLspLocationProviders());
-        register('引用', 'textDocument.referencesProvider', () => this._registerLspReferencesProvider());
-        register('重命名', 'textDocument.renameProvider', () => this._registerLspRenameProvider());
-        register('Inlay Hint', 'textDocument.inlayHintProvider', () => this._registerLspInlayHintProvider());
-        register('选择范围', 'textDocument.selectionRangeProvider', () => this._registerLspSelectionRangeProvider());
-        register('文档链接', 'textDocument.documentLinkProvider', () => this._registerLspDocumentLinkProvider());
-        register('代码操作', 'textDocument.codeActionProvider', () => this._registerLspCodeActionProvider());
-        register('类型定义', 'textDocument.typeDefinitionProvider', () => this._registerLspTypeDefinitionProvider());
-        register('实现', 'textDocument.implementationProvider', () => this._registerLspImplementationProvider());
-        register('文档高亮', 'textDocument.documentHighlightProvider', () => this._registerLspDocumentHighlightProvider());
-        register('工作区符号', 'workspace.symbolProvider', () => this._registerLspWorkspaceSymbolProvider());
-        register('代码透镜', 'textDocument.codeLensProvider', () => this._registerLspCodeLensProvider());
-        register('折叠', 'textDocument.foldingRangeProvider', () => this._registerLspFoldingRangeProvider());
+        register('补全', 'completionProvider', () => this._registerLspCompletionProvider());
+        register('签名帮助', 'signatureHelpProvider', () => this._registerLspSignatureHelpProvider());
+        register('悬停', 'hoverProvider', () => this._registerLspHoverProvider());
+        register('定义', 'definitionProvider', () => this._registerLspDefinitionProvider());
+        register('文档符号', 'documentSymbolProvider', () => this._registerLspDocumentSymbolProvider());
+        register('声明', 'declarationProvider', () => this._registerLspLocationProviders());
+        register('引用', 'referencesProvider', () => this._registerLspReferencesProvider());
+        register('重命名', 'renameProvider', () => this._registerLspRenameProvider());
+        register('Inlay Hint', 'inlayHintProvider', () => this._registerLspInlayHintProvider());
+        register('选择范围', 'selectionRangeProvider', () => this._registerLspSelectionRangeProvider());
+        register('文档链接', 'documentLinkProvider', () => this._registerLspDocumentLinkProvider());
+        register('代码操作', 'codeActionProvider', () => this._registerLspCodeActionProvider());
+        register('类型定义', 'typeDefinitionProvider', () => this._registerLspTypeDefinitionProvider());
+        register('实现', 'implementationProvider', () => this._registerLspImplementationProvider());
+        register('文档高亮', 'documentHighlightProvider', () => this._registerLspDocumentHighlightProvider());
+        register('工作区符号', 'workspaceSymbolProvider', () => this._registerLspWorkspaceSymbolProvider());
+        register('代码透镜', 'codeLensProvider', () => this._registerLspCodeLensProvider());
+        register('折叠', 'foldingRangeProvider', () => this._registerLspFoldingRangeProvider());
         this._lspProvidersReady = true;
         logInfo('[LSP] LSP 提供器注册完成，已注册: ' + (registered.length ? registered.join('、') : '(无)')
             + (failed.length ? '；失败: ' + failed.join('、') : '')
@@ -642,24 +642,24 @@ class MonacoEditorManager {
     // 把「服务端没宣告」的能力显式列出来，避免日志只报成功、实际静默缺功能
     describeUnsupportedLspCapabilities() {
         const checked = [
-            ['补全', 'textDocument.completionProvider'],
-            ['签名帮助', 'textDocument.signatureHelpProvider'],
-            ['悬停', 'textDocument.hoverProvider'],
-            ['定义', 'textDocument.definitionProvider'],
-            ['文档符号', 'textDocument.documentSymbolProvider'],
-            ['声明', 'textDocument.declarationProvider'],
-            ['引用', 'textDocument.referencesProvider'],
-            ['重命名', 'textDocument.renameProvider'],
-            ['Inlay Hint', 'textDocument.inlayHintProvider'],
-            ['选择范围', 'textDocument.selectionRangeProvider'],
-            ['文档链接', 'textDocument.documentLinkProvider'],
-            ['代码操作', 'textDocument.codeActionProvider'],
-            ['类型定义', 'textDocument.typeDefinitionProvider'],
-            ['实现', 'textDocument.implementationProvider'],
-            ['文档高亮', 'textDocument.documentHighlightProvider'],
-            ['工作区符号', 'workspace.symbolProvider'],
-            ['代码透镜', 'textDocument.codeLensProvider'],
-            ['折叠', 'textDocument.foldingRangeProvider']
+            ['补全', 'completionProvider'],
+            ['签名帮助', 'signatureHelpProvider'],
+            ['悬停', 'hoverProvider'],
+            ['定义', 'definitionProvider'],
+            ['文档符号', 'documentSymbolProvider'],
+            ['声明', 'declarationProvider'],
+            ['引用', 'referencesProvider'],
+            ['重命名', 'renameProvider'],
+            ['Inlay Hint', 'inlayHintProvider'],
+            ['选择范围', 'selectionRangeProvider'],
+            ['文档链接', 'documentLinkProvider'],
+            ['代码操作', 'codeActionProvider'],
+            ['类型定义', 'typeDefinitionProvider'],
+            ['实现', 'implementationProvider'],
+            ['文档高亮', 'documentHighlightProvider'],
+            ['工作区符号', 'workspaceSymbolProvider'],
+            ['代码透镜', 'codeLensProvider'],
+            ['折叠', 'foldingRangeProvider']
         ];
         return checked
             .filter(([, capability]) => !this.lspClient?.supportsCapability?.(capability, false))

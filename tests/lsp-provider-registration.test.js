@@ -99,27 +99,46 @@ function makeManager(Manager, capabilities) {
     return { manager, calls };
 }
 
+// Real clangd 23.1.0 ServerCapabilities are FLAT at the top level.
+// (Client capabilities are the nested ones; querying "textDocument.hoverProvider"
+// against server capabilities always yields undefined and silently disables
+// every provider.) Key list captured from a live initialize handshake.
+const REAL_CLANGD_CAPABILITY_KEYS = [
+    'astProvider', 'callHierarchyProvider', 'clangdInlayHintsProvider', 'codeActionProvider',
+    'compilationDatabase', 'completionProvider', 'declarationProvider', 'definitionProvider',
+    'documentFormattingProvider', 'documentHighlightProvider', 'documentLinkProvider',
+    'documentOnTypeFormattingProvider', 'documentRangeFormattingProvider', 'documentSymbolProvider',
+    'executeCommandProvider', 'foldingRangeProvider', 'hoverProvider', 'implementationProvider',
+    'inactiveRegionsProvider', 'inlayHintProvider', 'memoryUsageProvider', 'positionEncoding',
+    'referencesProvider', 'renameProvider', 'selectionRangeProvider', 'semanticTokensProvider',
+    'signatureHelpProvider', 'standardTypeHierarchyProvider', 'textDocumentSync',
+    'typeDefinitionProvider', 'typeHierarchyProvider', 'workspaceSymbolProvider'
+];
+
 const FULL_CAPS = {
-    textDocument: {
-        completionProvider: {},
-        signatureHelpProvider: {},
-        hoverProvider: true,
-        definitionProvider: true,
-        documentSymbolProvider: true,
-        declarationProvider: true,
-        referencesProvider: true,
-        renameProvider: true,
-        inlayHintProvider: {},
-        selectionRangeProvider: true,
-        documentLinkProvider: {},
-        codeActionProvider: true,
-        typeDefinitionProvider: true,
-        implementationProvider: true,
-        documentHighlightProvider: true,
-        codeLensProvider: {},
-        foldingRangeProvider: true
-    },
-    workspace: { symbolProvider: true }
+    textDocumentSync: { openClose: true, change: 2 },
+    completionProvider: { triggerCharacters: ['.', '<', '>', ':', '"', '/', '*'], resolveProvider: false },
+    signatureHelpProvider: {},
+    hoverProvider: true,
+    definitionProvider: true,
+    documentSymbolProvider: true,
+    declarationProvider: true,
+    referencesProvider: true,
+    renameProvider: { prepareProvider: true },
+    documentFormattingProvider: true,
+    documentRangeFormattingProvider: true,
+    inlayHintProvider: {},
+    selectionRangeProvider: true,
+    documentLinkProvider: {},
+    codeActionProvider: { codeActionKinds: ['quickfix', 'refactor', 'info'] },
+    typeDefinitionProvider: true,
+    implementationProvider: true,
+    documentHighlightProvider: true,
+    foldingRangeProvider: true,
+    semanticTokensProvider: { full: { delta: true } },
+    workspaceSymbolProvider: true,
+    executeCommandProvider: { commands: ['clangd.applyFix', 'clangd.applyRename', 'clangd.applyTweak'] }
+    // NOTE: clangd advertises no codeLensProvider.
 };
 
 (async () => {
@@ -140,7 +159,9 @@ const FULL_CAPS = {
     }
 
     // 2) Capabilities present: everything the server advertises gets registered.
+    //    Real clangd advertises no codeLensProvider, so 17 of 18 is the correct outcome.
     {
+        const EXPECTED = PROVIDER_METHODS.length - 1;
         const records = [];
         const Manager = loadManagerClass(records);
         const { manager, calls } = makeManager(Manager, FULL_CAPS);
@@ -148,8 +169,8 @@ const FULL_CAPS = {
         manager.registerAllLspProviders();
 
         check('registration: all advertised providers are registered',
-            calls.length === PROVIDER_METHODS.length,
-            `registered=${calls.length}/${PROVIDER_METHODS.length}`);
+            calls.length === EXPECTED,
+            `registered=${calls.length}/${EXPECTED}`);
         check('registration: readiness flag is set once registration completes',
             manager._lspProvidersReady === true);
         check('registration: the log names the providers that were registered',
@@ -158,6 +179,7 @@ const FULL_CAPS = {
 
     // 3) A provider that throws must not cancel the rest.
     {
+        const EXPECTED = PROVIDER_METHODS.length - 2; // codeLens unsupported + hover throws
         const records = [];
         const Manager = loadManagerClass(records);
         const { manager, calls } = makeManager(Manager, FULL_CAPS);
@@ -166,8 +188,8 @@ const FULL_CAPS = {
         manager.registerAllLspProviders();
 
         check('registration: a throwing provider does not abort the others',
-            calls.length === PROVIDER_METHODS.length - 1,
-            `registered=${calls.length}/${PROVIDER_METHODS.length}`);
+            calls.length === EXPECTED,
+            `registered=${calls.length}/${EXPECTED}`);
         check('registration: the failure is reported instead of being swallowed',
             records.some((entry) => entry.level === 'warn' && entry.text.includes('注册提供器失败')));
         check('registration: readiness flag is still set so features are usable',
@@ -178,24 +200,31 @@ const FULL_CAPS = {
     {
         const records = [];
         const Manager = loadManagerClass(records);
-        const partial = {
-            textDocument: { ...FULL_CAPS.textDocument },
-            workspace: { symbolProvider: true }
-        };
-        delete partial.textDocument.codeLensProvider;
-        delete partial.textDocument.inlayHintProvider;
+        const partial = { ...FULL_CAPS };
         const { manager, calls } = makeManager(Manager, partial);
 
         manager.registerAllLspProviders();
 
-        check('registration: unsupported providers are skipped',
-            !calls.includes('_registerLspCodeLensProvider') && !calls.includes('_registerLspInlayHintProvider'),
-            `calls=${calls.join(',')}`);
-        check('registration: supported providers still register',
-            calls.includes('_registerLspCompletionProvider') && calls.includes('_registerLspRenameProvider'));
-        check('registration: skipped capabilities are named in the log',
-            records.some((entry) => entry.text.includes('未注册') && entry.text.includes('代码透镜')),
-            records.filter((e) => e.text.includes('未注册')).map((e) => e.text).join(' | '));
+        // clangd genuinely has no codeLensProvider, so it must be the only skip.
+        check('registration: clangd has no codeLensProvider so it is skipped',
+            !calls.includes('_registerLspCodeLensProvider'));
+        check('registration: every other advertised provider still registers',
+            calls.length === PROVIDER_METHODS.length - 1,
+            `registered=${calls.length}/${PROVIDER_METHODS.length}`);
+        check('registration: the skipped capability is named in the log',
+            records.some((entry) => entry.text.includes('未注册') && entry.text.includes('代码透镜')));
+    }
+
+    // 6) Guard against reintroducing the client-side "textDocument." nesting.
+    //    Every path the code queries must exist as a real top-level server key.
+    {
+        const usedPaths = [...managerSource.matchAll(/register\('[^']*',\s*'([^']+)'/g)].map((m) => m[1]);
+        check('registration: capability paths are flat server keys, not client-side paths',
+            usedPaths.length === 18 && usedPaths.every((p) => !p.startsWith('textDocument.') && !p.startsWith('workspace.')),
+            `paths=${usedPaths.filter((p) => p.startsWith('textDocument.') || p.startsWith('workspace.')).join(',') || 'none'}`);
+        const unknown = usedPaths.filter((p) => !REAL_CLANGD_CAPABILITY_KEYS.includes(p) && p !== 'codeLensProvider');
+        check('registration: every queried path is a key real clangd advertises',
+            unknown.length === 0, `unknown=${unknown.join(',')}`);
     }
 
     // 5) Second call after success is a no-op (no duplicate provider registration).
