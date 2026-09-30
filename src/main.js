@@ -40,7 +40,18 @@ const recentExternalOpens = new Map();
 // Compiler probing starts child processes and filesystem scans. Results depend
 // on the compiler installation, so reuse them for this application session.
 const compilerInfoCache = new Map();
-const compilerIncludeCache = new Map();
+// clang-format 每次调用都 spawn 一个新进程；相同请求合并、有限缓存结果
+const clangFormatInFlight = new Map();
+const clangFormatResultCache = new Map();
+const CLANG_FORMAT_RESULT_CACHE_LIMIT = 16;
+
+function cacheClangFormatResult(key, value) {
+    clangFormatResultCache.set(key, value);
+    while (clangFormatResultCache.size > CLANG_FORMAT_RESULT_CACHE_LIMIT) {
+        const oldest = clangFormatResultCache.keys().next().value;
+        clangFormatResultCache.delete(oldest);
+    }
+}
 
 function normalizeExternalOpenUrl(url) {
     const value = String(url || '').trim();
@@ -247,10 +258,20 @@ function findClangFormatExecutableOnPath() {
 }
 
 // 打包目录 → 用户 LSP 目录（与 clangd 同级）→ 系统 PATH，逐级回退，避免单点缺失导致格式化完全不可用
+// 解析结果与进程生命周期无关，缓存一次即可，避免每次格式化都遍历整个 PATH
+let cachedClangFormatExecutablePath;
+let clangFormatExecutablePathResolved = false;
+
 function resolveClangFormatExecutablePath() {
-    return resolveClangFormatExecutable(resolveClangFormatRootFromBundle())
+    if (clangFormatExecutablePathResolved) {
+        return cachedClangFormatExecutablePath;
+    }
+    cachedClangFormatExecutablePath =
+        resolveClangFormatExecutable(resolveClangFormatRootFromBundle())
         || resolveClangFormatExecutable(getUserClangdRoot())
         || findClangFormatExecutableOnPath();
+    clangFormatExecutablePathResolved = true;
+    return cachedClangFormatExecutablePath;
 }
 
 function describeClangFormatSearchPaths() {
@@ -3674,7 +3695,29 @@ function setupIPC() {
                     error: `clang-format not found. Searched: ${describeClangFormatSearchPaths()}. Reinstall the app, or place ${getClangFormatExecutableName()} into ${path.join(getUserClangdRoot(), 'bin')}.`
                 };
             }
-            const result = await formatCodeWithClangFormat({
+            // clang-format 每次格式化都要 spawn 一个新进程（Windows 上 30~150ms），
+            // 长按格式化快捷键会连续 spawn。相同请求合并为一次，并保留最近若干份结果，
+            // 命中缓存时完全不再启动进程。
+            const cacheKey = JSON.stringify([
+                executablePath,
+                request.content,
+                request.filePath || '',
+                request.style ?? null,
+                request.styleRaw ?? null,
+                request.fallbackStyle || '',
+                request.startLine ?? null,
+                request.endLine ?? null
+            ]);
+            const pending = clangFormatInFlight.get(cacheKey);
+            if (pending) {
+                return await pending;
+            }
+            const cached = clangFormatResultCache.get(cacheKey);
+            if (cached) {
+                cacheClangFormatResult(cacheKey, cached);
+                return cached;
+            }
+            const runPromise = formatCodeWithClangFormat({
                 executablePath,
                 content: request.content,
                 filePath: request.filePath,
@@ -3684,10 +3727,16 @@ function setupIPC() {
                 startLine: request.startLine,
                 endLine: request.endLine
             });
-            return {
-                ok: true,
-                content: result.content
-            };
+            clangFormatInFlight.set(cacheKey, runPromise);
+            try {
+                const result = await runPromise;
+                cacheClangFormatResult(cacheKey, { ok: true, content: result.content });
+                return { ok: true, content: result.content };
+            } finally {
+                if (clangFormatInFlight.get(cacheKey) === runPromise) {
+                    clangFormatInFlight.delete(cacheKey);
+                }
+            }
         } catch (error) {
             logError('[clang-format] 格式化失败:', error?.message || error);
             return {
