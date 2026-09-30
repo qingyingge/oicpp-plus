@@ -620,12 +620,12 @@ class MonacoEditorManager {
         }
     }
 
+    // 单槽缓存的键是 长度:首字符码:尾字符码，编辑过程中几乎必然失配，等于没有缓存；
+    // 而真实开销在函数内部（3 次全文正则替换 + arrayPattern 扫描）。真正的重复计算来自
+    // 调用方在同一轮 didChange 里算两遍，所以这里保持纯函数，由调用方复用结果。
     assessLspDocumentSafety(text = '') {
         const source = typeof text === 'string' ? text : String(text ?? '');
-        const cacheKey = `${source.length}:${source.charCodeAt(0) || 0}:${source.charCodeAt(source.length - 1) || 0}`;
-        if (this._lspSafetyCache && this._lspSafetyCache.key === cacheKey) {
-            return this._lspSafetyCache.result;
-        }        const maxArrayBytes = 1024 * 1024 * 1024;
+        const maxArrayBytes = 1024 * 1024 * 1024;
         const expressions = new Map();
         const values = new Map();
 
@@ -790,14 +790,11 @@ class MonacoEditorManager {
                     elementSize,
                     estimatedBytes
                 };
-                this._lspSafetyCache = { key: cacheKey, result };
                 return result;
             }
         }
 
-        const result = { safe: true };
-        this._lspSafetyCache = { key: cacheKey, result };
-        return result;
+        return { safe: true };
     }
 
     _bindLspModelLifecycle(model) {
@@ -2052,12 +2049,12 @@ class MonacoEditorManager {
                 provideDocumentRangeFormattingEdits: async (model, range, _options, token) => {
                     try {
                         if (!model || model.isDisposed?.() || token?.isCancellationRequested) return [];
+                        const original = model.getValue();
                         const content = await this.requestClangFormattedCode(model, range);
                         if (content === null || token?.isCancellationRequested || model.isDisposed?.()) return [];
-                        return [{
-                            range: model.getFullModelRange(),
-                            text: content
-                        }];
+                        // 范围格式化只应改写受影响的行：以整模型范围整体替换会产生巨型
+                        // undo 记录、光标/选区跳变，并让 Monaco 重排整个文档。
+                        return this.buildMinimalFormatEdits(model, original, content);
                     } catch (error) {
                         logWarn('[clang-format] 范围格式化失败:', error?.message || error);
                         return [];
@@ -2598,12 +2595,12 @@ class MonacoEditorManager {
                 await this.openLspDocument(model);
                 return;
             }
-            this.sendLspDidChange(model);
+            this.sendLspDidChange(model, safety);
         }, delay);
         this._lspChangeTimers.set(model, timer);
     }
 
-    sendLspDidChange(model) {
+    sendLspDidChange(model, safetyResult = null) {
         if (!model || model.isDisposed?.()) return Promise.resolve(false);
         const existing = this._lspChangePromises.get(model);
         if (existing) {
@@ -2611,7 +2608,7 @@ class MonacoEditorManager {
             return existing;
         }
 
-        const promise = this._sendLspDidChange(model);
+        const promise = this._sendLspDidChange(model, safetyResult);
         this._lspChangePromises.set(model, promise);
         return promise.finally(() => {
             if (this._lspChangePromises.get(model) === promise) {
@@ -2623,9 +2620,9 @@ class MonacoEditorManager {
         });
     }
 
-    async _sendLspDidChange(model) {
+    async _sendLspDidChange(model, safetyResult = null) {
         if (!model || model.isDisposed?.()) return false;
-        const safety = this.assessLspDocumentSafety(model.getValue ? model.getValue() : '');
+        const safety = safetyResult || this.assessLspDocumentSafety(model.getValue ? model.getValue() : '');
         if (!safety.safe) {
             this._lspChangePending.delete(model);
             if (this._lspDocuments.has(model)) {
@@ -6421,6 +6418,45 @@ class MonacoEditorManager {
     getClangFormatModelPath(model) {
         const uri = model?.uri;
         return uri?.scheme && uri.scheme !== 'file' ? '' : (uri?.fsPath || '');
+    }
+
+    // 以“共同前缀行 + 差异段 + 共同后缀行”的方式把格式化结果收敛成一次最小编辑，
+    // 避免范围格式化退化成整文档替换。
+    buildMinimalFormatEdits(model, original, formatted) {
+        if (typeof original !== 'string' || typeof formatted !== 'string') return [];
+        if (original === formatted) return [];
+
+        const originalLines = original.split('\n');
+        const formattedLines = formatted.split('\n');
+
+        let prefix = 0;
+        const maxPrefix = Math.min(originalLines.length, formattedLines.length);
+        while (prefix < maxPrefix && originalLines[prefix] === formattedLines[prefix]) {
+            prefix++;
+        }
+
+        let suffix = 0;
+        const maxSuffix = Math.min(originalLines.length - prefix, formattedLines.length - prefix);
+        while (suffix < maxSuffix
+            && originalLines[originalLines.length - 1 - suffix] === formattedLines[formattedLines.length - 1 - suffix]) {
+            suffix++;
+        }
+
+        const originalEndLine = originalLines.length - suffix;
+        const formattedEndLine = formattedLines.length - suffix;
+        // 差异段为空（只在中间插入了行）时也要覆盖一个插入点，因此终点至少是下一行
+        const replaceEndLine = originalEndLine > prefix ? originalEndLine : prefix + 1;
+        const replacementLines = formattedLines.slice(prefix, formattedEndLine);
+
+        return [{
+            range: {
+                startLineNumber: prefix + 1,
+                startColumn: 1,
+                endLineNumber: replaceEndLine,
+                endColumn: originalEndLine > prefix ? (model.getLineMaxColumn?.(replaceEndLine) || 1) : 1
+            },
+            text: replacementLines.join('\n')
+        }];
     }
 
     async requestClangFormattedCode(model, range = null) {
