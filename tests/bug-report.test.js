@@ -161,6 +161,42 @@ if (report) {
         check('L28 testTestlib null-checks #testlib-path', !!(testBlock && testBlock[0].includes('if (!testlibPathInput)')));
         check('L28 setTestlibPath null-checks #testlib-path', !!(setBlock && setBlock[0].includes('if (testlibPathInput)')));
     }
+
+    // L6: 报告称 monaco-editor.css 首个 :root 是死代码，实测两个 :root 变量集不同。
+    // 锁定 invalid_reason 成立，防止后续误删仍在使用的变量。
+    const l6 = report.find((i) => i.id === 'L6');
+    if (l6) {
+        check('L6 monaco-editor.css has two :root blocks', l6.status === '无效');
+        const monacoCss = read('src/renderer/css/monaco-editor.css');
+        const rootBlocks = [...monacoCss.matchAll(/(^|\})\s*:root\s*\{([^}]*)\}/gm)].map((m) => m[2]);
+        const varsOf = (body) => [...new Set((body.match(/--[a-z0-9-]+(?=\s*:)/g) || []))];
+        const firstVars = new Set(varsOf(rootBlocks[0] || ''));
+        const secondVars = new Set(varsOf(rootBlocks[1] || ''));
+        const firstOnly = [...firstVars].filter((v) => !secondVars.has(v));
+        check('L6 the two :root blocks do not declare the same variables',
+            rootBlocks.length === 2 && firstOnly.length > 0 && firstVars.size !== secondVars.size,
+            `first=${firstVars.size} second=${secondVars.size} firstOnly=${firstOnly.length}`);
+        const restOfMonacoCss = monacoCss.slice(monacoCss.indexOf(rootBlocks[1] || ''));
+        // 变量可能只在其他 CSS、HTML 或渲染脚本里被引用（如 --editor-font-* 由
+        // settings-init.js 设置、Monaco 消费），所以扫描整个渲染层源码。
+        const corpus = [];
+        const walk = (dir) => {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    walk(full);
+                } else if (/\.(css|html|js)$/.test(entry.name) && full !== path.join(root, 'src', 'renderer', 'css', 'monaco-editor.css')) {
+                    corpus.push(fs.readFileSync(full, 'utf8'));
+                }
+            }
+        };
+        walk(path.join(root, 'src', 'renderer'));
+        const cssCorpus = corpus.join('\n') + '\n' + restOfMonacoCss;
+        const unused = firstOnly.filter((v) => !cssCorpus.includes(v));
+        check('L6 variables unique to the first :root are still used elsewhere',
+            unused.length === 0,
+            unused.join(',') || `${firstOnly.length}/${firstOnly.length} in use`);
+    }
 }
 
 console.log(`bug-report regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);

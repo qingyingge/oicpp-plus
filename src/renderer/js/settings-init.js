@@ -2,8 +2,6 @@
     'use strict';
     document.addEventListener('DOMContentLoaded', async function () {
         try {
-            await new Promise(resolve => setTimeout(resolve, 100));
-
             // Initialize i18n for settings pages
             if (window.i18n && typeof window.i18n.init === 'function') {
                 await window.i18n.init();
