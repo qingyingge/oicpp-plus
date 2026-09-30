@@ -17,6 +17,7 @@ try {
     sevenBinPath = null;
 }
 const logger = require('./utils/logger');
+const { t, setLanguage } = require('./lang');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
@@ -2330,16 +2331,16 @@ function getUpdateDownloadState() {
 
 function buildUpdateMenuLabel(state = getUpdateDownloadState()) {
     if (state.pendingInstall) {
-        return '等待安装更新';
+        return t('menu.updatePendingInstall');
     }
     if (state.autoChecking) {
-        return '自动检查更新中...';
+        return t('menu.updateAutoChecking');
     }
     if (!state.downloading) {
-        return '检查更新';
+        return t('menu.checkUpdate');
     }
-    const progressText = Number.isFinite(state.progress) ? `${Math.max(0, Math.min(100, Math.round(state.progress)))}%` : '0%';
-    return `下载更新中 ${progressText}`;
+    const progressValue = Number.isFinite(state.progress) ? Math.max(0, Math.min(100, Math.round(state.progress))) : 0;
+    return t('menu.updateDownloading', { progress: progressValue });
 }
 
 function refreshNativeUpdateMenuState() {
@@ -2830,6 +2831,7 @@ function applyMacWindowButtonPosition(targetWindow) {
 
 function createWindow() {
     loadSettings();
+    setLanguage(settings.language || 'zh-cn');
     pendingStartupWorkspaceToOpen = null;
     const isMacPlatform = process.platform === 'darwin';
     mainWindow = new BrowserWindow({
@@ -3095,31 +3097,31 @@ function createMenuBar() {
     const compileRunAcceleratorFinal = hasConflictingModifiedKey(compileRunAccelerator) ? undefined : compileRunAccelerator;
     const menuTemplate = [
         {
-            label: '文件',
+            label: t('menu.file'),
             submenu: [
                 {
-                    label: '新建文件',
+                    label: t('menu.newFile'),
                     accelerator: 'CmdOrCtrl+N',
                     click: () => {
                         mainWindow.webContents.send('menu-new-cpp-file');
                     }
                 },
                 {
-                    label: '新建临时文件',
+                    label: t('menu.newTempFile'),
                     accelerator: 'CmdOrCtrl+Shift+N',
                     click: () => {
                         mainWindow.webContents.send('menu-new-temp-file');
                     }
                 },
                 {
-                    label: '打开文件',
+                    label: t('menu.openFile'),
                     accelerator: 'CmdOrCtrl+O',
                     click: () => {
                         openFile();
                     }
                 },
                 {
-                    label: '打开文件夹',
+                    label: t('menu.openFolder'),
                     accelerator: 'CmdOrCtrl+K',
                     click: () => {
                         openFolder();
@@ -3127,14 +3129,14 @@ function createMenuBar() {
                 },
                 { type: 'separator' },
                 {
-                    label: '保存',
+                    label: t('menu.save'),
                     accelerator: 'CmdOrCtrl+S',
                     click: () => {
                         mainWindow.webContents.send('menu-save-file');
                     }
                 },
                 {
-                    label: '另存为',
+                    label: t('menu.saveAs'),
                     accelerator: 'CmdOrCtrl+Shift+S',
                     click: () => {
                         saveAsFile();
@@ -3142,21 +3144,21 @@ function createMenuBar() {
                 },
                 { type: 'separator' },
                 {
-                    label: '历史...',
+                    label: t('menu.history'),
                     click: () => {
                         mainWindow.webContents.send('menu-open-file-history');
                     }
                 },
                 { type: 'separator' },
                 {
-                    label: '设置',
+                    label: t('menu.options'),
                     accelerator: 'CmdOrCtrl+,',
                     click: () => {
                         mainWindow.webContents.send('menu-open-settings');
                     }
                 },
                 {
-                    label: '模板设置',
+                    label: t('menu.templateSettings'),
                     accelerator: 'CmdOrCtrl+T',
                     click: () => {
                         openCodeTemplates();
@@ -3165,23 +3167,23 @@ function createMenuBar() {
             ]
         },
         {
-            label: '编辑',
+            label: t('menu.edit'),
             submenu: [
-                { label: '撤销', accelerator: 'CmdOrCtrl+Z', role: 'undo' },
-                { label: '重做', accelerator: 'CmdOrCtrl+Shift+Z', role: 'redo' },
+                { label: t('menu.undo'), accelerator: 'CmdOrCtrl+Z', role: 'undo' },
+                { label: t('menu.redo'), accelerator: 'CmdOrCtrl+Shift+Z', role: 'redo' },
                 { type: 'separator' },
-                { label: '剪切', accelerator: 'CmdOrCtrl+X', role: 'cut' },
-                { label: '复制', accelerator: 'CmdOrCtrl+C', role: 'copy' },
-                { label: '粘贴', accelerator: 'CmdOrCtrl+V', role: 'paste' },
+                { label: t('menu.cut'), accelerator: 'CmdOrCtrl+X', role: 'cut' },
+                { label: t('menu.copy'), accelerator: 'CmdOrCtrl+C', role: 'copy' },
+                { label: t('menu.paste'), accelerator: 'CmdOrCtrl+V', role: 'paste' },
                 { type: 'separator' },
-                { label: '全选', accelerator: 'CmdOrCtrl+A', role: 'selectAll' }
+                { label: t('menu.selectAll'), accelerator: 'CmdOrCtrl+A', role: 'selectAll' }
             ]
         },
         {
-            label: '运行',
+            label: t('menu.run'),
             submenu: [
                 {
-                    label: '调试',
+                    label: t('menu.debug'),
                     accelerator: debugAccelerator,
                     click: () => {
                         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3190,21 +3192,21 @@ function createMenuBar() {
                     }
                 },
                 {
-                    label: '编译',
+                    label: t('menu.compile'),
                     accelerator: compileAccelerator,
                     click: () => {
                         mainWindow.webContents.send('menu-compile');
                     }
                 },
                 {
-                    label: '运行',
+                    label: t('menu.runCode'),
                     accelerator: runAccelerator,
                     click: () => {
                         mainWindow.webContents.send('menu-run');
                     }
                 },
                 {
-                    label: '编译运行',
+                    label: t('menu.compileAndRun'),
                     accelerator: compileRunAcceleratorFinal,
                     click: () => {
                         mainWindow.webContents.send('menu-compile-run');
@@ -3213,10 +3215,10 @@ function createMenuBar() {
             ]
         },
         {
-            label: '工具',
+            label: t('menu.tools'),
             submenu: [
                 {
-                    label: '打开内置终端',
+                    label: t('menu.openTerminal'),
                     accelerator: openTerminalAccelerator,
                     click: () => {
                         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3225,7 +3227,7 @@ function createMenuBar() {
                     }
                 },
                 {
-                    label: '打开内置浏览器',
+                    label: t('menu.openBuiltinBrowser'),
                     accelerator: 'CmdOrCtrl+Shift+I',
                     click: () => {
                         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3234,7 +3236,7 @@ function createMenuBar() {
                     }
                 },
                 {
-                    label: '新建浏览器标签页',
+                    label: t('menu.newBrowserTab'),
                     accelerator: 'CmdOrCtrl+Shift+B',
                     click: () => {
                         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3245,11 +3247,11 @@ function createMenuBar() {
             ]
         },
         {
-            label: '帮助',
+            label: t('menu.help'),
             submenu: [
                 {
                     id: 'check-update',
-                    label: '检查更新',
+                    label: t('menu.checkUpdate'),
                     click: () => {
                         if (hasPendingUpdateToInstall()) {
                             return;
@@ -8025,6 +8027,11 @@ function updateSettings(settingsType, newSettings) {
         scheduleAutoSettingsBackup('update-top-level-settings');
 
         if (newSettings && Object.prototype.hasOwnProperty.call(newSettings, 'keybindings')) {
+            createMenuBar();
+        }
+
+        if (newSettings && typeof newSettings.language === 'string') {
+            setLanguage(newSettings.language);
             createMenuBar();
         }
 

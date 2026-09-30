@@ -75,7 +75,17 @@
     "startCompare": "开始对拍",
     "stopCompare": "停止对拍",
     "sampleInputPlaceholder": "输入文件名，如 sample.in",
-    "sampleOutputPlaceholder": "输出文件名，如 sample.out"
+    "sampleOutputPlaceholder": "输出文件名，如 sample.out",
+    "edit": "编辑",
+    "undo": "撤销",
+    "redo": "重做",
+    "cut": "剪切",
+    "copy": "复制",
+    "paste": "粘贴",
+    "selectAll": "全选",
+    "openBuiltinBrowser": "打开内置浏览器",
+    "newBrowserTab": "新建浏览器标签页",
+    "help": "帮助"
   },
   "sidebar": {
     "fileExplorer": "文件管理器",

@@ -96,7 +96,17 @@
     "startCompare": "Start Comparison",
     "stopCompare": "Stop Comparison",
     "sampleInputPlaceholder": "Input file name, e.g. sample.in",
-    "sampleOutputPlaceholder": "Output file name, e.g. sample.out"
+    "sampleOutputPlaceholder": "Output file name, e.g. sample.out",
+    "edit": "Edit",
+    "undo": "Undo",
+    "redo": "Redo",
+    "cut": "Cut",
+    "copy": "Copy",
+    "paste": "Paste",
+    "selectAll": "Select All",
+    "openBuiltinBrowser": "Open Built-in Browser",
+    "newBrowserTab": "New Browser Tab",
+    "help": "Help"
   },
   "sidebar": {
     "fileExplorer": "File Explorer",

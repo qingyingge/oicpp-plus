@@ -834,7 +834,7 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
 // Ratcheting baselines. Lower these whenever a migration batch lands.
 // Exceeding one means new regressions were introduced, not that the
 // remaining backlog grew — that is a FAIL.
-const I18N_HARDCODED_CJK_BASELINE = 132;
+const I18N_HARDCODED_CJK_BASELINE = 104;
 const I18N_EN_PUNCT_BASELINE = 1;
 
 const langDir = path.join(root, 'src', 'lang');
