@@ -678,6 +678,143 @@ for (const f of jsFiles) {
 }
 if (dangerousWrites === 0) ok('no dangerous file writes');
 
+// --- E9-E11: Electron webPreferences 反模式（硬回归，存量为 0） ------------------
+// 这三项一旦出现就是新引入的反模式，不设 baseline：出现即 FAIL。
+console.log(`\n${Y}[E9] allowRunningInsecureContent${R}`);
+const webPrefInsecure = (mainJsContent || '').match(/allowRunningInsecureContent.{0,3}true/g) || [];
+if (mainJsContent) {
+  if (webPrefInsecure.length > 0) fail(`allowRunningInsecureContent:true in ${webPrefInsecure.length} place(s)`);
+  else ok('no allowRunningInsecureContent:true');
+} else {
+  warn('main.js not found, skipping allowRunningInsecureContent check');
+}
+
+console.log(`\n${Y}[E10] experimentalFeatures${R}`);
+if (mainJsContent) {
+  const expFeatures = (mainJsContent.match(/experimentalFeatures.{0,3}true/g) || []).length;
+  if (expFeatures > 0) fail(`experimentalFeatures:true in ${expFeatures} place(s)`);
+  else ok('no experimentalFeatures:true');
+} else {
+  warn('main.js not found, skipping experimentalFeatures check');
+}
+
+console.log(`\n${Y}[E11] enableBlinkFeatures${R}`);
+let blinkFeaturesFound = false;
+for (const f of jsFiles) {
+  const rel = path.relative(root, f);
+  const content = readFile(f);
+  if (!content) continue;
+  if (/enableBlinkFeatures/.test(content)) {
+    fail(`${rel} uses enableBlinkFeatures`);
+    blinkFeaturesFound = true;
+  }
+}
+if (!blinkFeaturesFound) ok('no enableBlinkFeatures usage');
+
+// --- E12: <webview allowpopups>（WARN） ----------------------------------------
+console.log(`\n${Y}[E12] <webview allowpopups>${R}`);
+let allowpopupsFound = false;
+for (const f of getAllFiles(path.join(root, 'src'), '.html')) {
+  const rel = path.relative(root, f);
+  const content = readFile(f);
+  if (!content) continue;
+  if (/allowpopups/.test(content)) {
+    warn(`${rel} uses <webview allowpopups>`);
+    allowpopupsFound = true;
+  }
+}
+for (const f of jsFiles) {
+  const rel = path.relative(root, f);
+  const content = readFile(f);
+  if (!content) continue;
+  if (/allowpopups/.test(content)) {
+    warn(`${rel} references allowpopups`);
+    allowpopupsFound = true;
+  }
+}
+if (!allowpopupsFound) ok('no <webview allowpopups> usage');
+
+// --- E13-E14, E16: 尚未落地的加固项（存量缺口，ratchet） ------------------------
+// 这三项检查的是"本该有但还没有"的加固，当前全部缺失。它们不是新引入的回归，
+// 而是待办的安全债，所以按缺口计数 ratchet：新增缺口才 FAIL，修复后调低 baseline。
+// （直接写成 fail() 会让刚引入检查的当天 CI 全红，失去拦截意义。）
+const HARDENING_GAP_BASELINE = 3; // E13 will-navigate + E14 sender 校验 + E16 Fuses
+let hardeningGaps = 0;
+
+console.log(`\n${Y}[E13] will-navigate handler${R}`);
+if (mainJsContent) {
+  if (/will-navigate|willNavigate/.test(mainJsContent)) {
+    ok('will-navigate handler found');
+  } else {
+    hardeningGaps++;
+    warn('no will-navigate handler — renderer navigation is unrestricted (known gap)');
+  }
+} else {
+  fail('main.js not found for will-navigate check');
+}
+
+console.log(`\n${Y}[E14] IPC sender validation${R}`);
+if (mainJsContent) {
+  if (/senderFrame\.origin|validateSender|senderFrame\s*&&/.test(mainJsContent)) {
+    ok('IPC sender validation found');
+  } else {
+    hardeningGaps++;
+    warn('no IPC sender validation — event.senderFrame.origin is never checked (known gap)');
+  }
+} else {
+  fail('main.js not found for IPC sender validation check');
+}
+
+// --- E15: file:// 协议（WARN） --------------------------------------------------
+console.log(`\n${Y}[E15] file:// protocol usage${R}`);
+let fileProtocolCount = 0;
+for (const f of jsFiles) {
+  const rel = path.relative(root, f);
+  const content = readFile(f);
+  if (!content) continue;
+  const matches = (content.match(/file:\/\//g) || []).length;
+  if (matches > 0) {
+    warn(`${rel} uses file:// protocol (${matches}x)`);
+    fileProtocolCount += matches;
+  }
+}
+if (fileProtocolCount === 0) ok('no file:// protocol usage');
+else info(`${fileProtocolCount} file:// reference(s) in total`);
+
+// E16: Electron Fuses
+// 注意：上游原版只认 electron-forge 的 forge.config.*，但本项目用 electron-builder
+// 打安装包（见 AGENTS.md「打安装包」），fuses 要配在 build.electronFuses 上，
+// 所以这里两套都认，否则该检查对本项目恒为假阳性。
+console.log(`\n${Y}[E16] Electron Fuses${R}`);
+let fuseConfigFound = false;
+if (pkg) {
+  const buildCfg = pkg.build || {};
+  if (buildCfg.electronFuses) fuseConfigFound = true;
+  if (buildCfg['electron-fuses']) fuseConfigFound = true;
+}
+if (!fuseConfigFound) {
+  for (const f of ['forge.config.js', 'forge.config.ts', 'forge.config.cjs', 'forge.config.mjs']) {
+    if (fileExists(path.join(root, f))) { fuseConfigFound = true; break; }
+  }
+}
+if (!fuseConfigFound && pkg) {
+  const allDeps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+  if (allDeps['@electron/fuses']) fuseConfigFound = true;
+}
+if (fuseConfigFound) {
+  ok('Electron Fuses configuration found');
+} else {
+  hardeningGaps++;
+  warn('no Electron Fuses configuration — build.electronFuses not set, runAsNode/nodeCliInspect stay open (known gap)');
+}
+
+// E13/E14/E16 缺口 ratchet：超过 baseline 说明新增了加固缺口
+if (hardeningGaps > HARDENING_GAP_BASELINE) {
+  fail(`${hardeningGaps} hardening gaps (baseline ${HARDENING_GAP_BASELINE}, +${hardeningGaps - HARDENING_GAP_BASELINE}) — see E13/E14/E16`);
+} else {
+  ok(`${hardeningGaps} known hardening gap(s) remain (baseline ${HARDENING_GAP_BASELINE}${hardeningGaps < HARDENING_GAP_BASELINE ? `, ${HARDENING_GAP_BASELINE - hardeningGaps} cleared — lower the baseline` : ''})`);
+}
+
 // ============================================================
 // F. Supply Chain
 // ============================================================
