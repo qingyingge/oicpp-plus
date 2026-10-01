@@ -54,17 +54,28 @@ function cacheClangFormatResult(key, value) {
     }
 }
 
+// 允许交给系统处理的协议白名单。shell.openExternal 会把 URL 直接交给
+// 操作系统，file: / ms-settings: / smb: 等都能直达系统处理器甚至本地程序。
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
 function normalizeExternalOpenUrl(url) {
     const value = String(url || '').trim();
     if (!value) {
         return '';
     }
 
+    let parsed = null;
     try {
-        return new URL(value).href;
+        parsed = new URL(value);
     } catch (_) {
-        return value;
+        // 不是合法 URL：拒绝，不把原始字符串透传给系统
+        return '';
     }
+    if (!ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
+        logWarn('[外部链接] 拒绝非白名单协议:', parsed.protocol, value.slice(0, 120));
+        return '';
+    }
+    return parsed.href;
 }
 
 async function openExternalOnce(url) {
@@ -2323,12 +2334,26 @@ function isFrameOutsideUserCode(frameFile) {
         return false;
     }
     try {
-        const root = normalizePathLowerCase(debugSessionRootDir);
-        const resolved = normalizePathLowerCase(path.isAbsolute(raw) ? raw : path.join(debugSessionRootDir, raw));
-        const rootPrefix = root.endsWith('/') ? root : `${root}/`;
-        return !(resolved === root || resolved.startsWith(rootPrefix));
+        const resolved = path.isAbsolute(raw) ? raw : path.join(debugSessionRootDir, raw);
+        return !isPathInsideDir(resolved, debugSessionRootDir);
     } catch (_) {
         return true;
+    }
+}
+
+// 判定 target 是否位于 dir 之内（含 dir 自身）。
+// 不能用 target.startsWith(dir)：缺末尾分隔符时，codeTempEvil 这类兄弟目录
+// 会通过校验，渲染进程即可读写 codeTemp 之外的任意文件。
+// Windows 下路径大小写不敏感，比较前统一小写；分隔符统一为 /。
+function isPathInsideDir(target, dir) {
+    if (!target || !dir) return false;
+    try {
+        const norm = (p) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+        const t = norm(target);
+        const d = norm(dir);
+        return t === d || t.startsWith(`${d}/`);
+    } catch (_) {
+        return false;
     }
 }
 
@@ -3609,7 +3634,19 @@ function setupIPC() {
 
     ipcMain.handle('get-language-file', (_event, langCode) => {
         try {
-            const langPath = path.join(__dirname, 'lang', `${langCode || settings.language || 'zh-cn'}.json`);
+            const code = String(langCode || settings.language || 'zh-cn');
+            // 语言代码只允许字母数字与连字符：原先直接 path.join，
+            // 传 ../../package 就能读到应用目录下的任意 .json
+            if (!/^[a-z0-9-]+$/i.test(code)) {
+                logWarn('[语言] 非法语言代码:', code);
+                return null;
+            }
+            const langDir = path.join(__dirname, 'lang');
+            const langPath = path.resolve(langDir, `${code}.json`);
+            if (!isPathInsideDir(langPath, langDir)) {
+                logWarn('[语言] 语言文件路径越界:', code);
+                return null;
+            }
             if (fs.existsSync(langPath)) {
                 return JSON.parse(fs.readFileSync(langPath, 'utf8'));
             }
@@ -4378,7 +4415,7 @@ function setupIPC() {
             }
             const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
             const tempPath = path.resolve(codeTempDir, filePath);
-            if (!tempPath.startsWith(codeTempDir)) {
+            if (!isPathInsideDir(tempPath, codeTempDir)) {
                 throw new Error(t('error.pathTraversalBlocked'));
             }
             const tempDir = path.dirname(tempPath);
@@ -4470,7 +4507,7 @@ function setupIPC() {
             }
             const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
             const tempPath = path.resolve(codeTempDir, filePath);
-            if (!tempPath.startsWith(codeTempDir)) {
+            if (!isPathInsideDir(tempPath, codeTempDir)) {
                 throw new Error(t('error.pathTraversalBlocked'));
             }
             if (fs.existsSync(tempPath)) {
@@ -5887,10 +5924,28 @@ function setupIPC() {
         }
     });
 
+    // 删除操作限定在当前工作区之内：被攻陷的渲染进程可对任意路径调 unlink。
+    // 工作区未打开时也拒绝 —— 此时无从判断目标是否属于用户授权范围。
+    function assertDeletableInWorkspace(targetPath) {
+        // 运行时目录（codeTemp / compare）里是应用自己生成的临时文件与对拍产物，
+        // 必然在工作区之外，且由 delete-temp-file 通道专门治理
+        if (isPathInsideTempRoots(targetPath)) {
+            return;
+        }
+        if (!currentExternalWorkspacePath) {
+            throw new Error(t('error.noWorkspaceForDelete'));
+        }
+        if (!isPathInsideDir(targetPath, currentExternalWorkspacePath)) {
+            logWarn('[主进程] 拒绝删除工作区之外的路径:', targetPath);
+            throw new Error(t('error.outsideWorkspace'));
+        }
+    }
+
     ipcMain.handle('delete-file', async (event, filePath) => {
         let previousWatchStates = [];
         try {
             assertSafeIoPath(filePath);
+            assertDeletableInWorkspace(filePath);
             previousWatchStates = markLocalDeletion(filePath);
             await fs.promises.unlink(filePath);
             return { success: true };
@@ -5921,6 +5976,12 @@ function setupIPC() {
             // 安全保护：禁止清空驱动器/文件系统根目录
             if (path.dirname(resolved) === resolved) {
                 return { success: false, error: '不允许清空根目录' };
+            }
+            // 并且限定在工作区之内：只禁盘根的话，渲染进程可清空用户任意目录
+            try {
+                assertDeletableInWorkspace(resolved);
+            } catch (e) {
+                return { success: false, error: e.message };
             }
             previousWatchStates = markLocalDeletion(resolved);
             const entries = fs.readdirSync(resolved);

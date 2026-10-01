@@ -422,7 +422,9 @@ try {
             if (href && !href.startsWith('#') && !href.toLowerCase().startsWith('javascript:') && (ev.ctrlKey || ev.metaKey)) {
                 try {
                     const resolvedUrl = new URL(href, window.location.href);
-                    if (!['http:', 'https:', 'mailto:', 'file:'].includes(resolvedUrl.protocol)) {
+                    // 原先含 file: —— markdown 预览里的 file: 链接能被用来
+                    // 拉起本地程序/读取本地资源
+                    if (!ALLOWED_EXTERNAL_PROTOCOLS.has(resolvedUrl.protocol)) {
                         return;
                     }
                     ev.preventDefault();
@@ -602,10 +604,29 @@ const safeIpcRenderer = {
 };
 
 
+// 协议白名单：shell.openExternal 把 URL 直接交给操作系统，
+// file: / ms-settings: / smb: 等能直达系统处理器甚至拉起本地程序。
+// 渲染层多处（monaco-editor-manager、terminal-panel）把 shell.openExternal
+// 当 fallback 直接调用，绕过主进程的 open-external handler，
+// 所以白名单必须在这里也做一份，不能只靠主进程。
+const ALLOWED_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+const safeOpenExternal = (url) => {
+    let parsed;
+    try {
+        parsed = new URL(String(url || '').trim());
+    } catch (_) {
+        return Promise.reject(new Error('invalid external url'));
+    }
+    if (!ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
+        return Promise.reject(new Error('protocol not allowed: ' + parsed.protocol));
+    }
+    return shell.openExternal(parsed.href);
+};
+
 contextBridge.exposeInMainWorld('electron', {
     ipcRenderer: safeIpcRenderer,
     shell: {
-        openExternal: (url) => shell.openExternal(url),
+        openExternal: safeOpenExternal,
         showItemInFolder: (path) => shell.showItemInFolder(path),
         openPath: (targetPath) => shell.openPath(targetPath)
     }
@@ -615,7 +636,7 @@ contextBridge.exposeInMainWorld('getElectronModule', () => {
     return {
         ipcRenderer: safeIpcRenderer,
         shell: {
-            openExternal: (url) => shell.openExternal(url),
+            openExternal: safeOpenExternal,
             showItemInFolder: (path) => shell.showItemInFolder(path),
             openPath: (targetPath) => shell.openPath(targetPath)
         }

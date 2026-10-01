@@ -1591,6 +1591,8 @@
     "requestTimeout": "Request timed out",
     "sensitiveDirBlocked": "Illegal path: access to system or application-sensitive directories is not allowed",
     "pathTraversalBlocked": "Illegal path: path traversal attack blocked",
+    "noWorkspaceForDelete": "No workspace is open, delete is not allowed",
+    "outsideWorkspace": "The path is outside the current workspace; the operation was refused",
     "invalidPath": "Invalid path",
     "invalidFilePath": "Invalid file path",
     "missingFilePath": "Missing file path",

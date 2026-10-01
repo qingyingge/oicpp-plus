@@ -1591,6 +1591,8 @@
     "requestTimeout": "请求超时",
     "sensitiveDirBlocked": "非法路径: 不允许访问系统或应用敏感目录",
     "pathTraversalBlocked": "非法路径: 路径遍历攻击被阻止",
+    "noWorkspaceForDelete": "未打开工作区，无法执行删除操作",
+    "outsideWorkspace": "该路径不在当前工作区内，操作已拒绝",
     "invalidPath": "无效的路径",
     "invalidFilePath": "无效的文件路径",
     "missingFilePath": "缺少文件路径",
