@@ -688,6 +688,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onCompareProgress: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-progress', l); return () => ipcRenderer.removeListener('compare-progress', l); },
     onCompareError: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-error', l); return () => ipcRenderer.removeListener('compare-error', l); },
     onCompareComplete: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
+    onCompareWarning: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-warning', l); return () => ipcRenderer.removeListener('compare-warning', l); },
 
     readDirectory: (dirPath) => safeIpcRenderer.invoke('read-directory', dirPath),
     renameFile: (oldPath, newPath, options = {}) => safeIpcRenderer.invoke('rename-file-invoke', oldPath, newPath, options),

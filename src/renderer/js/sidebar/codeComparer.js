@@ -1,3 +1,5 @@
+const MAX_COMPARE_COUNT = 100000;
+
 class CodeComparer {
     constructor() {
         this.activeTaskKey = null;
@@ -81,9 +83,12 @@ class CodeComparer {
                     currentTest: 0,
                     totalTests: 0,
                     statusText: (window.i18n.t('compare.ready')),
-                    mode: 'idle', // idle | running | error | complete
+                    mode: 'idle', // idle | running | stopping | error | complete | stopped
                     errorResult: null,
-                    warningMessage: null
+                    warningMessage: null,
+                    completedTests: 0,
+                    failedTests: 0,
+                    stopped: false
                 },
                 compiledExecutables: null
             };
@@ -147,7 +152,11 @@ class CodeComparer {
         const compareCount = parseInt(compareCountEl?.value);
         const timeLimit = parseInt(timeLimitEl?.value);
         const threadCount = parseInt(threadCountEl?.value);
-        if (Number.isFinite(compareCount)) task.config.compareCount = Math.max(1, Math.min(compareCount, 100000));
+        if (Number.isFinite(compareCount)) {
+            const cappedCount = Math.max(1, Math.min(compareCount, MAX_COMPARE_COUNT));
+            task.config.compareCount = cappedCount;
+            if (compareCountEl && cappedCount !== compareCount) compareCountEl.value = String(cappedCount);
+        }
         if (Number.isFinite(timeLimit)) task.config.timeLimit = timeLimit;
         if (Number.isFinite(threadCount)) {
             const capped = Math.max(1, Math.min(threadCount, this.maxParallelThreads || threadCount));
@@ -233,6 +242,8 @@ class CodeComparer {
         this.eventsbound = true;
 
         this.ensureThreadLimitUI();
+        // 初始态也走一次，避免进度标签在首次对拍前残留 HTML 里的英文字面量
+        setTimeout(() => this.updateProgress(0, 0), 0);
 
         const stdCodeBrowse = document.getElementById('std-code-browse');
         const testCodeBrowse = document.getElementById('test-code-browse');
@@ -520,14 +531,14 @@ class CodeComparer {
 
         this.updateUIForTask(task);
 
-        if (task.state.mode === 'running') {
+        if (task.state.mode === 'running' || task.state.mode === 'stopping') {
             this.showStatus();
             this.updateStatusText(task.state.statusText || (window.i18n.t('compare.running')));
             this.updateProgress(task.state.currentTest, task.state.totalTests);
         } else if (task.state.mode === 'error') {
             this.showError(task.state.errorResult);
-        } else if (task.state.mode === 'complete') {
-            this.showComplete(task.state.totalTests, task.state.warningMessage);
+        } else if (task.state.mode === 'complete' || task.state.mode === 'stopped') {
+            this.showComplete(this.getCompletedCount(task), task.state.warningMessage);
         } else {
             this.hideStatus();
             this.hideError();
@@ -580,8 +591,12 @@ class CodeComparer {
             return;
         }
 
-        let compareCount = parseInt(document.getElementById('compare-count').value) || task.config.compareCount || 100;
-        compareCount = Math.max(1, Math.min(compareCount, 100000));
+        const compareCountEl = document.getElementById('compare-count');
+        let compareCount = parseInt(compareCountEl?.value) || task.config.compareCount || 100;
+        compareCount = Math.max(1, Math.min(compareCount, MAX_COMPARE_COUNT));
+        if (compareCountEl && Number(compareCountEl.value) !== compareCount) {
+            compareCountEl.value = String(compareCount);
+        }
         const timeLimit = parseInt(document.getElementById('time-limit').value);
         const effectiveTimeLimit = Number.isFinite(timeLimit) ? timeLimit : (task.config.timeLimit || 1000);
         const { cpuThreads, maxParallel } = await this.getMaxParallelThreads();
@@ -595,6 +610,9 @@ class CodeComparer {
 
         task.state.totalTests = compareCount;
         task.state.currentTest = 0;
+        task.state.completedTests = 0;
+        task.state.failedTests = 0;
+        task.state.stopped = false;
         task.state.isRunning = true;
         task.state.shouldStop = false;
         task.state.errorResult = null;
@@ -618,11 +636,12 @@ class CodeComparer {
     }
 
     async runTask(task, effectiveTimeLimit, workerCount, maxParallel) {
-        let cleanupProgress, cleanupError, cleanupComplete;
+        let cleanupProgress, cleanupError, cleanupComplete, cleanupWarning;
         const cleanupAllListeners = () => {
             try { cleanupProgress?.(); } catch(_) {}
             try { cleanupError?.(); } catch(_) {}
             try { cleanupComplete?.(); } catch(_) {}
+            try { cleanupWarning?.(); } catch(_) {}
         };
 
         try {
@@ -651,6 +670,7 @@ class CodeComparer {
                 spjExe: compiledPrograms.spjExe,
                 totalTests: task.state.totalTests,
                 timeLimit: effectiveTimeLimit,
+                generatorTimeout: 0,
                 threadCount: workerCount,
                 useTestlib: task.config.useTestlib,
                 freopen: {
@@ -659,9 +679,16 @@ class CodeComparer {
                 }
             };
 
+            // 非致命告警（如 fastspawn 回退），只记日志，不打断对拍
+            cleanupWarning = window.electronAPI.onCompareWarning((data) => {
+                logWarn('[对拍器][引擎告警]', data?.code || 'warning', data?.message || '');
+            });
+
             cleanupProgress = window.electronAPI.onCompareProgress((data) => {
-                task.state.currentTest = data.current;
-                this.updateProgress(data.current, data.total);
+                const completed = Number(data.current) || 0;
+                task.state.currentTest = completed;
+                task.state.completedTests = completed;
+                this.updateProgress(completed, data.total);
                 this.updateTaskStatus(task, window.i18n.t('compare.testGroup', { i: data.testIndex }));
             });
 
@@ -671,8 +698,13 @@ class CodeComparer {
                     input: error.input || '',
                     stdOutput: error.stdOutput || '',
                     testOutput: error.testOutput || '',
+                    inputTruncated: !!error.inputTruncated,
+                    stdOutputTruncated: !!error.stdOutputTruncated,
+                    testOutputTruncated: !!error.testOutputTruncated,
                     errorType: error.type,
-                    errorMessage: error.message
+                    errorCode: error.code || '',
+                    errorMessage: this.getEngineErrorMessage(error),
+                    rawErrorMessage: error.message || ''
                 };
                 task.state.mode = 'error';
                 this.renderIfActive(task);
@@ -684,15 +716,28 @@ class CodeComparer {
             });
 
             cleanupComplete = window.electronAPI.onCompareComplete((result) => {
-                if (result.warning) {
-                    task.state.warningMessage = result.warning;
-                }
-                if (task.state.mode === 'running') {
+                const completed = Number.isFinite(result.completed) ? result.completed : task.state.completedTests;
+                const failed = Number.isFinite(result.failed) ? result.failed : 0;
+                task.state.completedTests = completed;
+                task.state.currentTest = completed;
+                task.state.failedTests = failed;
+
+                if (result.stopped) {
+                    task.state.stopped = true;
+                    task.state.mode = 'stopped';
+                    task.state.warningMessage = failed > 0
+                        ? window.i18n.t('compare.genFailedWarning', { count: failed })
+                        : null;
+                    this.updateTaskStatus(task, window.i18n.t('compare.compareStopped', { completed, failed }));
+                } else if (task.state.mode === 'running' || task.state.mode === 'stopping') {
                     task.state.mode = 'complete';
+                    task.state.warningMessage = failed > 0
+                        ? window.i18n.t('compare.genFailedWarning', { count: failed })
+                        : null;
                 } else {
-                    logInfo(`对拍已提前结束（状态: ${task.state.mode}），共完成 ${result.completed} 组测试`);
+                    logInfo(`对拍已提前结束（状态: ${task.state.mode}），共完成 ${completed} 组测试`);
                 }
-                logInfo(`对拍完成！共执行 ${result.completed} 组测试`);
+                logInfo(`对拍完成！共执行 ${completed} 组测试`);
                 this.renderIfActive(task);
                 cleanupAllListeners();
                 this.finishCompareTask(task);
@@ -896,7 +941,15 @@ class CodeComparer {
 
         let nextIndex = 1;
         let completed = 0;
+        let executed = 0;
         let errorOccurred = false;
+
+        // 「已完成 N 组」按实际跑过的组数计（生成失败也算跑过），不再拿计划数充当结果
+        const markExecuted = () => {
+            executed++;
+            task.state.completedTests = executed;
+            task.state.currentTest = executed;
+        };
 
         const worker = async () => {
             while (true) {
@@ -907,11 +960,12 @@ class CodeComparer {
 
                 if (this.activeTaskKey === task.key) {
                     this.updateTaskStatus(task, window.i18n.t('compare.testGroup', { i }));
-                    this.updateProgress(completed, totalTests);
+                    this.updateProgress(this.getCompletedCount(task), totalTests);
                 }
 
                 try {
                     const generation = await this.generateTestData(generatorRunTarget || generatorExe, 0);
+                    markExecuted();
                     if (!generation || generation.success !== true) {
                         const generatorMessage = generation?.message || (window.i18n.t('compare.genRunError'));
                         const generatedOutput = generation?.result?.output || '';
@@ -1066,7 +1120,6 @@ class CodeComparer {
                     }
 
                     completed++;
-                    task.state.currentTest = completed;
                     this.updateTaskProgress(task);
 
                 } catch (error) {
@@ -1090,19 +1143,33 @@ class CodeComparer {
         const workers = Array.from({ length: workerCount }, worker);
         await Promise.all(workers);
 
-        task.state.currentTest = completed;
+        task.state.currentTest = executed;
+        task.state.completedTests = executed;
         this.updateTaskProgress(task);
 
-        if (task.state.shouldStop) {
-            logInfo(`对拍被手动停止，已执行 ${completed} 组测试，其中有 ${failedGenerations} 组生成失败`);
-            return;
-        }
+        task.state.failedTests = failedGenerations;
 
+        // 出错优先于停止：出错时面板已经是差异/错误视图，不要被「已停止」覆盖
         if (errorOccurred) {
             return;
         }
 
-        const successfulTests = task.state.totalTests - failedGenerations;
+        if (task.state.shouldStop) {
+            logInfo(`对拍被手动停止，已执行 ${executed} 组测试，其中有 ${failedGenerations} 组生成失败`);
+            task.state.mode = 'stopped';
+            task.state.stopped = true;
+            task.state.warningMessage = failedGenerations > 0
+                ? window.i18n.t('compare.genFailedWarning', { count: failedGenerations })
+                : null;
+            this.updateTaskStatus(task, window.i18n.t('compare.compareStopped', {
+                completed: executed,
+                failed: failedGenerations
+            }));
+            this.renderIfActive(task);
+            return;
+        }
+
+        const successfulTests = executed - failedGenerations;
         if (failedGenerations === 0) {
             logInfo(`对拍完成！共执行 ${successfulTests} 组测试，未发现差异`);
             task.state.mode = 'complete';
@@ -1389,10 +1456,12 @@ class CodeComparer {
         if (!task) return;
         task.state.shouldStop = true;
         task.state.isRunning = false;
+        // 保持 stopping 而非 idle：主进程随后才发 compare-complete {stopped:true}，
+        // 提前置 idle 会让完成事件走 else 分支，完成数与停止文案全部丢失
         if (task.state.mode === 'running') {
-            task.state.mode = 'idle';
+            task.state.mode = 'stopping';
         }
-        this.updateUIForTask(task);
+        this.renderTask(task);
         window.electronAPI.stopCompare().catch(() => {});
     }
 
@@ -1403,10 +1472,15 @@ class CodeComparer {
         task.state.isRunning = false;
         task.state.currentTest = 0;
         task.state.totalTests = 0;
+        task.state.completedTests = 0;
+        task.state.failedTests = 0;
+        task.state.stopped = false;
         task.state.statusText = (window.i18n.t('compare.ready'));
         task.state.errorResult = null;
         task.state.warningMessage = null;
         task.state.mode = 'idle';
+        const progressFill = document.getElementById('progress-fill');
+        if (progressFill) progressFill.style.width = '0%';
         this.renderTask(task);
     }
 
@@ -1415,7 +1489,7 @@ class CodeComparer {
         const stopBtn = document.getElementById('compare-stop-btn');
         const resetBtn = document.getElementById('compare-reset-btn');
 
-        const running = !!task?.state?.isRunning && task?.state?.mode === 'running';
+        const running = !!task?.state?.isRunning && (task?.state?.mode === 'running' || task?.state?.mode === 'stopping');
 
         if (startBtn) startBtn.disabled = running;
         if (stopBtn) stopBtn.disabled = !running;
@@ -1435,16 +1509,18 @@ class CodeComparer {
         }
     }
 
-    updateProgress(currentTest, totalTests) {
-        const currentTestEl = document.getElementById('current-test');
+    // 只表示「已完成 N 组 / 共 M 组」，不表示当前正在跑第几组，
+    // 避免与状态栏的「第 i 组测试」（由 nextIndex 分配）语义混淆、并行时互相矛盾
+    updateProgress(completedTests, totalTests) {
+        const progressLabel = document.getElementById('current-test');
         const progressFill = document.getElementById('progress-fill');
 
-        if (currentTestEl) {
-            currentTestEl.textContent = window.i18n.t('compare.statusGroup', { current: currentTest });
+        if (progressLabel) {
+            progressLabel.textContent = window.i18n.t('compare.progressGroup', { current: completedTests, total: totalTests });
         }
 
         if (progressFill && totalTests > 0) {
-            const percentage = (currentTest / totalTests) * 100;
+            const percentage = Math.max(0, Math.min(100, (completedTests / totalTests) * 100));
             progressFill.style.width = `${percentage}%`;
         }
     }
@@ -1520,7 +1596,9 @@ class CodeComparer {
                     errorTitle.textContent = window.i18n.t('compare.errorRunTimeout');
                 } else if (errType === 'std_re' || errType === 'test_re') {
                     errorTitle.textContent = window.i18n.t('compare.errorRuntime');
-                } else if (errType === 'worker_crash' || errType === 'engine' || errType === 'exception') {
+                } else if (errType === 'output_limit') {
+                    errorTitle.textContent = window.i18n.t('compare.errorOutputLimit');
+                } else if (errType === 'worker_crash' || errType === 'engine' || errType === 'exception' || errType === 'fastspawn_fallback') {
                     errorTitle.textContent = window.i18n.t('compare.engineError');
                 } else {
                     errorTitle.textContent = window.i18n.t('compare.foundDiff');
@@ -1528,12 +1606,18 @@ class CodeComparer {
             }
 
             if (errorTestNum) {
-                errorTestNum.textContent = window.i18n.t('compare.errorGroup', { number: errorResult.testNumber });
+                // 编译失败 / 引擎级错误没有具体组号，不渲染「第 0 组」
+                errorTestNum.textContent = Number(errorResult.testNumber) > 0
+                    ? window.i18n.t('compare.errorGroup', { number: errorResult.testNumber })
+                    : '';
             }
 
             if (inputDiff) {
                 const inputFull = errorResult.input || '';
-                inputDiff.textContent = errorResult.inputExpanded ? inputFull : this.limitOutputLines(inputFull, 100);
+                const shown = errorResult.inputExpanded ? inputFull : this.limitOutputLines(inputFull, 100);
+                inputDiff.textContent = errorResult.inputTruncated
+                    ? shown + '\n' + window.i18n.t('compare.outputTruncated')
+                    : shown;
             }
 
             if (stdOutputDiff) {
@@ -1556,7 +1640,7 @@ class CodeComparer {
                         stdOutputDiffLabel.textContent = window.i18n.t('compare.errorStandardOutput');
                     }
                 } else if (this.isEngineErrorType(errType)) {
-                    const engineMessage = errorResult.errorMessage || '';
+                    const engineMessage = this.buildEngineErrorText(errorResult);
                     stdOutputDiff.textContent = errorResult.stdOutputExpanded ? engineMessage : this.limitOutputLines(engineMessage, 100);
                     if (stdOutputDiffLabel) {
                         stdOutputDiffLabel.textContent = this.getEngineErrorLabel(errType, 'std');
@@ -1569,9 +1653,13 @@ class CodeComparer {
                         const stdFullOutput = errorResult.stdOutput || '';
                         stdOutputDiff.textContent = errorResult.stdOutputExpanded ? stdFullOutput : this.limitOutputLines(stdFullOutput, 100);
                     } else {
-                        const diffPosition = this.getDifferenceInfo(errorResult.stdOutput, errorResult.testOutput);
+                        // 输出被引擎截断时算出的行列对真实输出不可信，只提示不可靠
+                        const truncated = !!(errorResult.stdOutputTruncated || errorResult.testOutputTruncated);
+                        const diffPosition = truncated ? null : this.getDifferenceInfo(errorResult.stdOutput, errorResult.testOutput);
                         if (stdOutputDiffLabel) {
-                            if (diffPosition) {
+                            if (truncated) {
+                                stdOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorStandardOutput')) + ` <span class="diff-info">(${window.i18n.t('compare.diffPositionUnreliable')})</span>`;
+                            } else if (diffPosition) {
                                 const diffMsg = window.i18n.t('compare.diffPosition', { line: diffPosition.line, char: diffPosition.char });
                                 stdOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorStandardOutput')) + ` <span class="diff-info">(${diffMsg})</span>`;
                             } else {
@@ -1581,7 +1669,7 @@ class CodeComparer {
                         if (errorResult.stdOutputExpanded) {
                             this.renderExpandedOutput(stdOutputDiff, errorResult.stdOutput);
                         } else {
-                            stdOutputDiff.innerHTML = this.formatCompareOutput(errorResult.stdOutput, errorResult.testOutput, 'standard');
+                            stdOutputDiff.innerHTML = this.formatCompareOutput(errorResult.stdOutput, errorResult.testOutput, 'standard', truncated);
                         }
                     }
                 }
@@ -1607,7 +1695,7 @@ class CodeComparer {
                         testOutputDiffLabel.textContent = window.i18n.t('compare.errorTestOutput');
                     }
                 } else if (this.isEngineErrorType(errType)) {
-                    const engineMessage = errorResult.errorMessage || '';
+                    const engineMessage = this.buildEngineErrorText(errorResult);
                     testOutputDiff.textContent = errorResult.testOutputExpanded ? engineMessage : this.limitOutputLines(engineMessage, 100);
                     if (testOutputDiffLabel) {
                         testOutputDiffLabel.textContent = this.getEngineErrorLabel(errType, 'test');
@@ -1620,9 +1708,12 @@ class CodeComparer {
                         const testFullOutput = errorResult.testOutput || '';
                         testOutputDiff.textContent = errorResult.testOutputExpanded ? testFullOutput : this.limitOutputLines(testFullOutput, 100);
                     } else {
-                        const diffPosition = this.getDifferenceInfo(errorResult.testOutput, errorResult.stdOutput);
+                        const truncated = !!(errorResult.stdOutputTruncated || errorResult.testOutputTruncated);
+                        const diffPosition = truncated ? null : this.getDifferenceInfo(errorResult.testOutput, errorResult.stdOutput);
                         if (testOutputDiffLabel) {
-                            if (diffPosition) {
+                            if (truncated) {
+                                testOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorTestOutput')) + ` <span class="diff-info">(${window.i18n.t('compare.diffPositionUnreliable')})</span>`;
+                            } else if (diffPosition) {
                                 const diffMsg = window.i18n.t('compare.diffPosition', { line: diffPosition.line, char: diffPosition.char });
                                 testOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorTestOutput')) + ` <span class="diff-info">(${diffMsg})</span>`;
                             } else {
@@ -1632,7 +1723,7 @@ class CodeComparer {
                         if (errorResult.testOutputExpanded) {
                             this.renderExpandedOutput(testOutputDiff, errorResult.testOutput);
                         } else {
-                            testOutputDiff.innerHTML = this.formatCompareOutput(errorResult.testOutput, errorResult.stdOutput, 'test');
+                            testOutputDiff.innerHTML = this.formatCompareOutput(errorResult.testOutput, errorResult.stdOutput, 'test', truncated);
                         }
                     }
                 }
@@ -1647,14 +1738,18 @@ class CodeComparer {
         this.hideComplete();
     }
 
+    // 'output_limit' 之前不在列表里，会掉进 else 分支被当成 WA 渲染
     isEngineErrorType(errType) {
-        return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'worker_crash', 'engine', 'exception'].includes(errType);
+        return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'output_limit', 'worker_crash', 'engine', 'exception', 'fastspawn_fallback'].includes(errType);
     }
 
     getEngineErrorLabel(errType, panel) {
         const isStd = panel === 'std';
         if (errType === 'generator') {
             return window.i18n.t('compare.errorGeneratorOutput');
+        }
+        if (errType === 'output_limit') {
+            return window.i18n.t('compare.errorOutputLimit');
         }
         if (errType === 'std_tle' || errType === 'std_re') {
             return window.i18n.t(isStd ? 'compare.errorStandardOutput' : 'compare.errorStdTestOutput');
@@ -1665,6 +1760,46 @@ class CodeComparer {
         return window.i18n.t('compare.engineError');
     }
 
+    // 本地化文案在前，原始技术细节（含可能的英文）折叠在后，仅供排查
+    buildEngineErrorText(errorResult) {
+        const localized = errorResult.errorMessage || '';
+        const raw = (errorResult.rawErrorMessage || '').trim();
+        if (!raw || raw === localized) return localized;
+        return localized ? `${localized}\n[${raw}]` : `[${raw}]`;
+    }
+
+    // 引擎/worker 只给稳定的 code，具体文案由渲染层查 i18n，避免英文直入中文界面
+    getEngineErrorMessage(error) {
+        const code = error?.code || '';
+        const exitCode = error?.exitCode;
+        const map = {
+            gen_timeout: 'compare.genTle',
+            gen_error: 'compare.genRunFailed',
+            gen_exit: 'compare.genExit',
+            std_timeout: 'compare.stdTle',
+            std_exit: 'compare.stdExit',
+            std_error: 'compare.stdRe',
+            test_timeout: 'compare.testTle',
+            test_exit: 'compare.testExit',
+            test_error: 'compare.testRe',
+            output_limit: 'compare.errorOutputLimitDetail',
+            mismatch: 'compare.foundDiff',
+            exception: 'compare.engineError',
+            engine_start: 'compare.engineError',
+            worker_crash: 'compare.engineError',
+            fastspawn_fallback: 'compare.fastspawnFallback'
+        };
+        const key = map[code];
+        if (!key) return window.i18n.t('compare.engineError');
+        if (code.endsWith('_exit') && Number.isFinite(exitCode)) {
+            return window.i18n.t(key, { code: exitCode, error: error?.message || '' });
+        }
+        if (code.endsWith('_error')) {
+            return window.i18n.t(key, { error: error?.message || '', code: exitCode ?? '' });
+        }
+        return window.i18n.t(key);
+    }
+
     hideError() {
         const errorSection = document.getElementById('compare-result');
         if (errorSection) {
@@ -1672,7 +1807,15 @@ class CodeComparer {
         }
     }
 
-    showComplete(totalTests, warningMessage = null) {
+    // 实际完成数（成功比对 + 生成失败均计入已执行），不再回退到计划数
+    getCompletedCount(task) {
+        const completed = task?.state?.completedTests;
+        if (Number.isFinite(completed)) return completed;
+        const total = task?.state?.totalTests;
+        return Number.isFinite(total) ? total : 0;
+    }
+
+    showComplete(completedCount, warningMessage = null, stopped = false) {
         const completeSection = document.getElementById('compare-complete');
         const completedTests = document.getElementById('completed-tests');
         const completeInfo = completeSection?.querySelector('.complete-info span');
@@ -1682,13 +1825,15 @@ class CodeComparer {
         }
 
         if (completedTests) {
-            completedTests.textContent = totalTests;
+            completedTests.textContent = completedCount;
         }
 
         if (warningMessage && completeInfo) {
-            completeInfo.innerHTML = (window.i18n.t('compare.completedWithWarning', { count: totalTests, warning: warningMessage }));
+            completeInfo.innerHTML = (window.i18n.t('compare.completedWithWarning', { count: completedCount, warning: warningMessage }));
         } else if (completeInfo) {
-            completeInfo.innerHTML = (window.i18n.t('compare.completedText', { count: totalTests }));
+            completeInfo.innerHTML = stopped
+                ? (window.i18n.t('compare.stoppedText', { count: completedCount }))
+                : (window.i18n.t('compare.completedText', { count: completedCount }));
         }
 
         this.hideStatus();
@@ -1774,8 +1919,9 @@ class CodeComparer {
         } catch { }
     }
 
+    // 完成面板的数字现在是真实的完成组数，不能再被拿来当任意提示文案展示
     showSuccessMessage(message) {
-        this.showComplete(message);
+        logInfo(String(message || ''));
     }
 
     renderExpandedOutput(element, output) {
@@ -1794,12 +1940,15 @@ class CodeComparer {
         }
     }
 
-    getOutputSizeMbText(output) {
+    // 自适应 B/KB/MB：小输出不再显示成「0.00 MB」
+    getOutputSizeText(output) {
         const bytes = this.getOutputSizeBytes(output);
-        return (bytes / (1024 * 1024)).toFixed(2);
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
     }
 
-    isLineLimitedOutputTruncated(output, maxLines = 100) {
+        isLineLimitedOutputTruncated(output, maxLines = 100) {
         const safeOutput = output == null ? '' : String(output);
         return safeOutput.split('\n').length > maxLines;
     }
@@ -1907,8 +2056,8 @@ class CodeComparer {
         const output = outputType === 'input'
             ? (errorResult.input || '')
             : (outputType === 'std' ? (errorResult.stdOutput || '') : (errorResult.testOutput || ''));
-        const sizeMbText = this.getOutputSizeMbText(output);
-        const message = window.i18n.t('compare.expandConfirmMsg', { size: sizeMbText });
+        const sizeText = this.getOutputSizeText(output);
+        const message = window.i18n.t('compare.expandConfirmMsg', { size: sizeText });
 
         let shouldExpand = false;
         try {
@@ -1919,9 +2068,9 @@ class CodeComparer {
                 ]);
                 shouldExpand = action === 'expand';
             } else if (window.dialogManager?.showConfirmDialog) {
-                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('compare.expandConfirmTitle'), window.i18n.t('compare.expandConfirmMsgText', { size: sizeMbText }));
+                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('compare.expandConfirmTitle'), window.i18n.t('compare.expandConfirmMsgText', { size: sizeText }));
             } else {
-                shouldExpand = window.confirm(window.i18n.t('compare.expandConfirmMsgText', { size: sizeMbText }));
+                shouldExpand = window.confirm(window.i18n.t('compare.expandConfirmMsgText', { size: sizeText }));
             }
         } catch (error) {
             logWarn('展开输出确认失败，已取消展开:', error);
@@ -1936,16 +2085,21 @@ class CodeComparer {
         this.renderIfActive(task);
     }
 
+    // 截断提示由调用方通过显式标记传递，不再拿译文反推（AGENTS.md M57 同类反模式）
     limitOutputLines(output, maxLines) {
         const safeOutput = output == null ? '' : String(output);
         const lines = safeOutput.split('\n');
         if (lines.length > maxLines) {
-            return lines.slice(0, maxLines).join('\n') + '\n' + window.i18n.t('compare.outputTruncated');
+            return lines.slice(0, maxLines).join('\n') + '\n' + this.getTruncationText();
         }
         return safeOutput;
     }
 
-    formatCompareOutput(currentOutput, otherOutput, outputType) {
+    getTruncationText() {
+        return window.i18n?.t?.('compare.outputTruncated') || '[truncated]';
+    }
+
+    formatCompareOutput(currentOutput, otherOutput, outputType, upstreamTruncated = false) {
         const currentLines = currentOutput.split('\n');
         const otherLines = otherOutput.split('\n');
         const maxLines = 100;
@@ -1963,7 +2117,10 @@ class CodeComparer {
         }
 
         if (firstDiffLine === -1) {
-            return this.addLineNumbers(this.limitOutputLines(currentOutput, maxLines));
+            const allLines = currentOutput.split('\n');
+            const lineLimited = allLines.length > maxLines;
+            const visible = lineLimited ? allLines.slice(0, maxLines) : allLines;
+            return this.addLineNumbers(visible.join('\n'), lineLimited || upstreamTruncated);
         }
 
         const contextLines = 10;
@@ -1989,25 +2146,27 @@ class CodeComparer {
             }
         }
 
-        if (actualEndLine < currentLines.length) {
-            result += `<div class="diff-truncated">${window.i18n.t('compare.outputTruncated')}</div>`;
+        if (actualEndLine < currentLines.length || upstreamTruncated) {
+            result += `<div class="diff-truncated">${this.getTruncationText()}</div>`;
         }
 
         return result;
     }
 
-    addLineNumbers(output) {
+    // truncated 只表示「尾部还有内容被省略」，标记行由本函数自己追加，
+// 不再逐行比对译文判断哪一行是截断标记
+    addLineNumbers(output, truncated = false) {
         const lines = output.split('\n');
         let result = '';
 
         for (let i = 0; i < lines.length; i++) {
             const lineNum = i + 1;
             const line = lines[i];
-            if (line === window.i18n.t('compare.outputTruncated')) {
-                result += `<div class="diff-truncated">${line}</div>`;
-            } else {
-                result += `<div class="diff-line"><span class="line-number">${lineNum.toString().padStart(4)} </span>${this.escapeHtml(line)}</div>`;
-            }
+            result += `<div class="diff-line"><span class="line-number">${lineNum.toString().padStart(4)} </span>${this.escapeHtml(line)}</div>`;
+        }
+
+        if (truncated) {
+            result += `<div class="diff-truncated">${this.getTruncationText()}</div>`;
         }
 
         return result;
@@ -2071,13 +2230,18 @@ class CodeComparer {
         return null;
     }
 
+    // 与 compareOutputs 保持同一口径：逐行去行尾空白 + 去尾部空行，
+    // 否则「仅行尾空格不同」会被这里判成差异并报出错误的行列
     normalizeForCompare(text) {
         if (text == null) return '';
-        let s = String(text);
-        s = s.replace(/^\uFEFF/, '');
-        s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        s = s.replace(/\uFEFF/g, '');
-        return s;
+        return String(text)
+            .replace(/^\uFEFF/, '')
+            .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+            .replace(/\uFEFF/g, '')
+            .split('\n')
+            .map(line => line.replace(/[ \t]+$/, ''))
+            .join('\n')
+            .replace(/\n+$/, '');
     }
 
     escapeHtml(text) {
@@ -2114,9 +2278,14 @@ class CodeComparer {
                 const stdOutputFile = await window.electronAPI.pathJoin(exportDir, 'std_or_force_output.out');
                 const testOutputFile = await window.electronAPI.pathJoin(exportDir, 'code_output.out');
 
-                await window.electronAPI.createFile(inputFile, errorResult.input);
-                await window.electronAPI.createFile(stdOutputFile, errorResult.stdOutput);
-                await window.electronAPI.createFile(testOutputFile, errorResult.testOutput);
+                // 被引擎截断过的数据必须显式标注，否则用户会拿不完整的数据去本地复现
+                const withNotice = (text, truncated) => {
+                    const body = text == null ? '' : String(text);
+                    return truncated ? body + window.i18n.t('compare.exportTruncatedNotice') : body;
+                };
+                await window.electronAPI.createFile(inputFile, withNotice(errorResult.input, errorResult.inputTruncated));
+                await window.electronAPI.createFile(stdOutputFile, withNotice(errorResult.stdOutput, errorResult.stdOutputTruncated));
+                await window.electronAPI.createFile(testOutputFile, withNotice(errorResult.testOutput, errorResult.testOutputTruncated));
 
                 this.showSuccessMessage(window.i18n.t('compare.exportedTo', { dir: exportDir }));
             }

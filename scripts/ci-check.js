@@ -977,7 +977,7 @@ const I18N_EN_PUNCT_BASELINE = 1;
 // 用"源码任意位置出现过的 dotted 字面量"作口径而非 I7 的 t('key') 口径：后者
 // 认不出 t(c ? 'a' : 'b')、_t(key, fb)、t(el.dataset.i18n) 这类动态查表，会把
 // 大量在用键误报成孤儿。宽松口径只会高估引用、不会低估，因此 ratchet 方向安全。
-const I18N_ORPHAN_KEY_BASELINE = 205;
+const I18N_ORPHAN_KEY_BASELINE = 203;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {

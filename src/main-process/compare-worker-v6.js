@@ -13,6 +13,16 @@ try { fast = require('../../fastspawn.node'); } catch(e) { parentPort.postMessag
 const { spawn } = require('child_process');
 const { terminateProcessTree } = require('../utils/process-supervisor');
 const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
+// 回传给渲染层的诊断数据上限：截断时必须显式标记，否则导出的测试数据会被静默砍掉
+const MAX_CAPTURED_INPUT_BYTES = 1024 * 1024;
+const MAX_CAPTURED_OUTPUT_BYTES = 64 * 1024;
+
+function captureText(value, limit) {
+    if (value == null) return { text: '', truncated: false };
+    const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const truncated = buf.length > limit;
+    return { text: (truncated ? buf.subarray(0, limit) : buf).toString('utf8'), truncated };
+}
 
 function normalizeOutput(value) {
     return Buffer.from(value || '')
@@ -151,17 +161,43 @@ parentPort.on('message', async (msg) => {
         running = true;
         const { startIdx, count, gen, stdPath, testPath, timeout, generatorTimeout } = msg;
         const useFast = !!fast;
-        const genTimeout = generatorTimeout || 5000;
+        const genTimeout = (Number.isFinite(generatorTimeout) && generatorTimeout > 0) ? generatorTimeout : 0;
         let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;
+
+        // code 是给渲染层做 i18n 映射用的稳定标识，message 仅作技术细节，不再直接进 UI
+        const fail = (i, kind, code, detail, extra = {}) => {
+            const input = captureText(extra.rawInput, MAX_CAPTURED_INPUT_BYTES);
+            const std = extra.rawStd !== undefined ? captureText(extra.rawStd, MAX_CAPTURED_OUTPUT_BYTES) : null;
+            const test = extra.rawTest !== undefined ? captureText(extra.rawTest, MAX_CAPTURED_OUTPUT_BYTES) : null;
+            parentPort.postMessage({
+                type: 'error',
+                testIndex: i,
+                kind,
+                code,
+                exitCode: extra.exitCode,
+                message: String(detail || ''),
+                genMs: lastGenMs,
+                stdMs: extra.includeStdMs ? lastStdMs : undefined,
+                testMs: extra.includeTestMs ? lastTestMs : undefined,
+                input: input.text,
+                inputTruncated: input.truncated,
+                stdOutput: std ? std.text : undefined,
+                stdOutputTruncated: std ? std.truncated : undefined,
+                testOutput: test ? test.text : undefined,
+                testOutputTruncated: test ? test.truncated : undefined
+            });
+        };
 
         for (let i = startIdx; i < startIdx + count && running; i++) {
             let genOut = null;
+            const rawInput = () => (genOut ? genOut.output : null);
             try {
                 genOut = await runGenerator(gen, genTimeout);
                 if (!running) break;
                 lastGenMs = genOut.ms || 0;
                 if (genOut.timeout || genOut.error || genOut.code !== 0) {
-                    parentPort.postMessage({ type: 'error', testIndex: i, kind: 'generator', message: genOut.error || 'gen fail', genMs: lastGenMs, input: genOut.output ? genOut.output.toString('utf8', 0, 2000) : '' });
+                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error ? 'gen_error' : 'gen_exit'),
+                        genOut.error || ('generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
                     continue;
                 }
 
@@ -175,17 +211,16 @@ parentPort.on('message', async (msg) => {
                     const testCode = pair.code2;
                     const stdOut = pair.out1;
                     const testOut = pair.out2;
+                    const pairExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
 
-                    if (stdCode === -3) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'std_tle', message: 'std TLE', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (stdCode !== 0 && stdCode !== null) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'std_re', message: 'std exit ' + stdCode, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (testCode === -3) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_tle', message: 'test TLE', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (testCode !== 0 && testCode !== null) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_re', message: 'test exit ' + testCode, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (pair.truncated1 || pair.truncated2) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'output_limit', message: 'program output exceeded limit', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
+                    if (stdCode === -3) { fail(i, 'std_tle', 'std_timeout', 'standard program timed out', pairExtra); continue; }
+                    if (stdCode !== 0 && stdCode !== null) { fail(i, 'std_re', 'std_exit', 'standard program exit ' + stdCode, { ...pairExtra, exitCode: stdCode }); continue; }
+                    if (testCode === -3) { fail(i, 'test_tle', 'test_timeout', 'test program timed out', pairExtra); continue; }
+                    if (testCode !== 0 && testCode !== null) { fail(i, 'test_re', 'test_exit', 'test program exit ' + testCode, { ...pairExtra, exitCode: testCode }); continue; }
+                    if (pair.truncated1 || pair.truncated2) { fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', pairExtra); continue; }
 
                     if (!outputsEqual(stdOut, testOut)) {
-                        parentPort.postMessage({ type: 'error', testIndex: i, kind: 'mismatch', message: 'WA',
-                            stdOutput: stdOut.toString('utf8', 0, 200), testOutput: testOut.toString('utf8', 0, 200),
-                            genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) });
+                        fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...pairExtra, rawStd: stdOut, rawTest: testOut });
                         continue;
                     }
                     parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
@@ -197,25 +232,21 @@ parentPort.on('message', async (msg) => {
                     if (!running) break;
                     lastTestMs = testR.ms || 0;
 
-                    if (stdR.timeout) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'std_tle', message: 'std TLE', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (stdR.error || (stdR.code !== 0 && stdR.code !== null)) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'std_re', message: stdR.error || ('std exit ' + stdR.code), genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (testR.timeout) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_tle', message: 'test TLE', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (testR.error || (testR.code !== 0 && testR.code !== null)) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'test_re', message: testR.error || ('test exit ' + testR.code), genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
-                    if (stdR.outputTruncated || testR.outputTruncated) { parentPort.postMessage({ type: 'error', testIndex: i, kind: 'output_limit', message: 'program output exceeded limit', genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) }); continue; }
+                    const spawnExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
+                    if (stdR.timeout) { fail(i, 'std_tle', 'std_timeout', 'standard program timed out', spawnExtra); continue; }
+                    if (stdR.error || (stdR.code !== 0 && stdR.code !== null)) { fail(i, 'std_re', stdR.error ? 'std_error' : 'std_exit', stdR.error || ('standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code }); continue; }
+                    if (testR.timeout) { fail(i, 'test_tle', 'test_timeout', 'test program timed out', spawnExtra); continue; }
+                    if (testR.error || (testR.code !== 0 && testR.code !== null)) { fail(i, 'test_re', testR.error ? 'test_error' : 'test_exit', testR.error || ('test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code }); continue; }
+                    if (stdR.outputTruncated || testR.outputTruncated) { fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', spawnExtra); continue; }
 
                     if (!outputsEqual(stdR.output, testR.output)) {
-                        parentPort.postMessage({ type: 'error', testIndex: i, kind: 'mismatch', message: 'WA',
-                            stdOutput: stdR.output.toString('utf8', 0, 200), testOutput: testR.output.toString('utf8', 0, 200),
-                            genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, input: genOut.output.toString('utf8', 0, 2000) });
+                        fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...spawnExtra, rawStd: stdR.output, rawTest: testR.output });
                         continue;
                     }
                     parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
                 }
             } catch(e) {
-                parentPort.postMessage({
-                    type: 'error', testIndex: i, kind: 'exception', message: e.message,
-                    input: genOut && genOut.output ? genOut.output.toString('utf8', 0, 2000) : ''
-                });
+                fail(i, 'exception', 'exception', e && e.message ? e.message : String(e), { rawInput: rawInput() });
             }
         }
         parentPort.postMessage({ type: 'done' });

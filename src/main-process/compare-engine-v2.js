@@ -39,6 +39,9 @@ class CompareEngineV2 extends EventEmitter {
             const requestedThreads = Number.isInteger(config.threadCount) && config.threadCount > 0
                 ? config.threadCount
                 : os.cpus().length;
+            // 0 = 不限时，与 main.js run-program 的 useTimeouts 语义保持一致；不能用 || 兜底
+            const runTimeout = (Number.isFinite(config.timeLimit) && config.timeLimit > 0) ? config.timeLimit : 0;
+            const genTimeout = (Number.isFinite(config.generatorTimeout) && config.generatorTimeout > 0) ? config.generatorTimeout : 0;
             const threadCount = Math.min(Math.max(1, requestedThreads), totalTests, 32);
             this._total = totalTests;
             const perThread = Math.ceil(totalTests / threadCount);
@@ -88,10 +91,15 @@ class CompareEngineV2 extends EventEmitter {
                             this.emit('error', {
                                 testNumber: msg.testIndex,
                                 type: msg.kind,
+                                code: msg.code,
+                                exitCode: msg.exitCode,
                                 message: msg.message,
                                 stdOutput: msg.stdOutput || '',
                                 testOutput: msg.testOutput || '',
                                 input: msg.input || '',
+                                inputTruncated: !!msg.inputTruncated,
+                                stdOutputTruncated: !!msg.stdOutputTruncated,
+                                testOutputTruncated: !!msg.testOutputTruncated,
                                 genMs: msg.genMs,
                                 stdMs: msg.stdMs,
                                 testMs: msg.testMs
@@ -99,8 +107,9 @@ class CompareEngineV2 extends EventEmitter {
                         } else if (msg.type === 'fastspawn-load-warning') {
                             this.emit('warning', {
                                 testNumber: 0,
-                                type: 'engine',
-                                message: 'fastspawn unavailable; using Node child_process fallback: ' + (msg.message || 'unknown error'),
+                                type: 'fastspawn_fallback',
+                                code: 'fastspawn_fallback',
+                                message: 'fastspawn unavailable, falling back to Node child_process: ' + (msg.message || 'unknown error'),
                                 input: ''
                             });
                         } else if (msg.type === 'done') {
@@ -125,23 +134,23 @@ class CompareEngineV2 extends EventEmitter {
                     type: 'run-tests',
                     startIdx, count,
                     gen, stdPath, testPath,
-                    timeout: config.timeLimit || 5000,
-                    generatorTimeout: config.generatorTimeout || 5000
+                    timeout: runTimeout,
+                    generatorTimeout: genTimeout
                 });
             }
 
             await Promise.all(donePromises);
 
             if (this._state === 'stopping') {
-                this.emit('stopped', { completed: this._completed });
+                this.emit('stopped', { total: this._total, completed: this._completed, failed: this._errors });
             } else {
+                // 不在此处拼英文文案，只给计数，由渲染层按 i18n 组装
                 this.emit('complete', {
-                    total: this._total, completed: this._completed, failed: this._errors,
-                    warning: this._errors > 0 ? this._errors + ' tests failed' : null
+                    total: this._total, completed: this._completed, failed: this._errors
                 });
             }
         } catch (error) {
-            this.emit('error', { testNumber: 0, type: 'engine', message: error.message, input: '' });
+            this.emit('error', { testNumber: 0, type: 'engine', code: 'engine_start', message: error.message, input: '' });
         } finally {
             this._workers.forEach(w => { try { w.terminate(); } catch(_) {} });
             this._workers = [];
