@@ -28,6 +28,58 @@ const check = (name, fn) => {
 // ---------------------------------------------------------------------------
 // 1. _runCounter 必须初始化，且轮次严格递增
 // ---------------------------------------------------------------------------
+
+// 用 VM 沙箱注入假 Worker，跑引擎的真实代码。
+// 归属校验的 bug 恰好落在「本轮消息是否被计入」这一行上，
+// 注入假 Worker 就能验证，不需要真实编译器 + testlib。
+const makeEngineWithFakeWorker = (progressCount) => {
+    const vm = require('vm');
+    const { EventEmitter } = require('events');
+    const engineSrc = fs.readFileSync(path.join(root, 'src/main-process/compare-engine-v2.js'), 'utf8');
+    const sandbox = {
+        require, module: { exports: {} }, console,
+        setTimeout, clearTimeout, Promise, EventEmitter,
+        os: { cpus: () => [{ length: 4 }] },
+        path,
+        __dirname: path.join(root, 'src', 'main-process'),
+        fs: { existsSync: () => true, mkdirSync: () => {}, rmSync: () => {} },
+        Worker: class FakeWorker extends EventEmitter {
+            constructor() {
+                super();
+                this.pid = 1234;
+                setImmediate(() => {
+                    for (let i = 1; i <= progressCount; i++) this.emit('message', { type: 'progress', testIndex: i });
+                    this.emit('message', { type: 'done' });
+                });
+            }
+            postMessage() { }
+            terminate() { return Promise.resolve(); }
+            removeAllListeners() { return this; }
+        }
+    };
+    vm.createContext(sandbox);
+    // 剥掉两行原生 require，改用沙箱注入的 EventEmitter / Worker
+    vm.runInContext(engineSrc
+        .replace(/^const \{ EventEmitter \} = require\('events'\);$/m, '')
+        .replace(/^const \{ Worker \} = require\('worker_threads'\);$/m, ''),
+    sandbox, { filename: 'compare-engine-v2.js' });
+    return sandbox.module.exports.CompareEngineV2;
+};
+
+const runEngineOnce = async (Ctor, progressCount) => {
+    const engine = new Ctor();
+    const progress = [];
+    engine.on('progress', (p) => progress.push(p));
+    try {
+        await engine.start({
+            totalTests: progressCount, threadCount: 1,
+            generator: 'g.exe', stdExe: 'a.exe', testExe: 'b.exe',
+            timeLimit: 0, generatorTimeout: 0
+        });
+    } catch (_) { /* 配置校验等异常不影响本断言 */ }
+    return { engine, progress };
+};
+
 {
     const { CompareEngineV2 } = require(path.join(root, 'src/main-process/compare-engine-v2.js'));
     const engine = new CompareEngineV2();
@@ -251,5 +303,36 @@ const check = (name, fn) => {
     });
 }
 
-console.log(`\n${total - failures}/${total} assertions passed`);
-process.exit(failures === 0 ? 0 : 1);
+// ---------------------------------------------------------------------------
+// 9. 引擎行为验证：本轮 progress 必须被计入（阻断级修复的实测）
+// ---------------------------------------------------------------------------
+(async () => {
+    const Fixed = makeEngineWithFakeWorker(5);
+    const { engine, progress } = await runEngineOnce(Fixed, 5);
+
+    check('本轮 worker 的 progress 被计入（修复前恒为 0）', () => {
+        assert.strictEqual(progress.length, 5,
+            `progress 事件数为 ${progress.length}，应为 5 —— isCurrentRun() 恒 false 时消息会全被丢弃`);
+    });
+    check('_completed 等于实际执行数', () => {
+        assert.strictEqual(engine._completed, 5, `_completed=${engine._completed}`);
+    });
+    check('progress 事件携带正确的 current/total', () => {
+        const last = progress[progress.length - 1];
+        assert.strictEqual(last.total, 5);
+        assert.strictEqual(last.current, 5);
+    });
+
+    // 对照组：把 _runCounter 打回未初始化，必须复现原 bug。
+    // 没有这条，上面的 PASS 可能只是注入方式带来的假象。
+    const Broken = makeEngineWithFakeWorker(5);
+    Broken._runCounter = undefined;
+    const b = await runEngineOnce(Broken, 5);
+    check('对照组：未初始化 _runCounter 时 progress 归零（复现原 bug）', () => {
+        assert.ok(Number.isNaN(b.engine._runId), `runId 应为 NaN，实际 ${b.engine._runId}`);
+        assert.strictEqual(b.progress.length, 0, `对照组本应复现 bug，却收到 ${b.progress.length} 条 progress`);
+    });
+
+    console.log(`\n${total - failures}/${total} assertions passed`);
+    process.exit(failures === 0 ? 0 : 1);
+})();
