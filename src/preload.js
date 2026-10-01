@@ -510,8 +510,6 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
 
 // 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
 const ALLOWED_EVENT_CHANNELS = new Set([
-    // 编译/运行结果
-    'compile-result', 'compile-error', 'run-result', 'run-error',
     // 调试会话
     'debug-started', 'debug-stopped', 'debug-running', 'debug-program-exited',
     'debug-ready-waiting', 'debug-breakpoint-hit', 'debug-error',

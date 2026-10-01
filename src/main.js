@@ -4008,14 +4008,6 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('compile-code', (event, code, options) => {
-        compileCode(code, options).then(result => {
-            event.reply('compile-result', result);
-        }).catch(error => {
-            event.reply('compile-error', error.message);
-        });
-    });
-
     ipcMain.on('start-debug', (event, filePath, options) => {
         startDebugSession(filePath, options).then(result => {
             event.reply('debug-started', result);
@@ -6351,7 +6343,7 @@ function setupIPC() {
             } catch (error) {
                 downloadCompleted = true;
 
-                const isCancelled = isDownloadCancelled(error) || error.message.includes('用户取消');
+                const isCancelled = isDownloadCancelled(error);
                 const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
 
                 logError('[编译器下载] 下载过程出错:', error.message);
@@ -6366,7 +6358,7 @@ function setupIPC() {
                         if (progressWindow && !progressWindow.isDestroyed()) {
                             progressWindow.close();
                         }
-                    }, isCancelledError ? 1000 : 3000); // 取消时更快关闭
+                    }, isCancelled ? 1000 : 3000); // 取消时更快关闭
                 }
 
                 resolve({ success: false, error: errorMessage });
@@ -6744,7 +6736,7 @@ function setupIPC() {
             } catch (error) {
                 downloadCompleted = true;
 
-                const isCancelled = isDownloadCancelled(error) || error.message.includes('用户取消');
+                const isCancelled = isDownloadCancelled(error);
                 const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
 
                 logError('[testlib下载] 下载过程出错:', error.message);
@@ -6759,7 +6751,7 @@ function setupIPC() {
                         if (progressWindow && !progressWindow.isDestroyed()) {
                             progressWindow.close();
                         }
-                    }, isCancelledError ? 1000 : 3000); // 取消时更快关闭
+                    }, isCancelled ? 1000 : 3000); // 取消时更快关闭
                 }
 
                 resolve({ success: false, error: errorMessage });

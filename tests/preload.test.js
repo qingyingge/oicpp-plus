@@ -205,7 +205,8 @@ check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvoke
         const c = fs.readFileSync(f, 'utf8');
         for (const m of c.matchAll(/(?:electronIPC|ipcRenderer)\.on\(\s*['"`]([^'"`]+)['"`]/g)) eventChannels.add(m[1]);
     }
-    for (const ch of ['compile-result', 'compile-error', 'run-result', 'run-error']) eventChannels.add(ch);
+    // 注：compile-result / compile-error / run-result / run-error 曾在此手工补录，
+    // 它们对应的 compile-manager.js 监听已随死代码移除（无任何发送方），故不再补录。
     warns.length = 0;
     const blockedEvents = [];
     for (const ch of eventChannels) {

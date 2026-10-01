@@ -365,13 +365,18 @@ class CloudSyncPanel {
         }
 
         const ok = await window.dialogManager?.showConfirmDialog?.(window.i18n.t('cloud.moveConfirm'), window.i18n.t('cloud.moveConfirmMsg', {name, targetFolder}));
-        if (ok === false) return;
+        // 取消时 dialog 返回 null / false / undefined（见 dialog.js:315、331、200），
+        // 用 === false 判断恒假，会导致点「取消」仍执行移动+删除源文件
+        if (!ok) return;
 
         try {
             if (sourceType === 'file') {
                 const fileData = await this.request('GET', '/cloudSync/download', { path: sourcePath });
-                const content = typeof fileData?.content === 'string' ? fileData.content : '';
-                await this.request('POST', '/cloudSync/upload', { path: targetPath, content });
+                // 取不到内容必须抛错，不能用空串兜底 —— 否则等于「上传一个空文件再删掉源文件」
+                if (typeof fileData?.content !== 'string') {
+                    throw new Error(window.i18n.t('cloud.moveFail'));
+                }
+                await this.request('POST', '/cloudSync/upload', { path: targetPath, content: fileData.content });
                 await this.request('POST', '/cloudSync/delete', { path: sourcePath });
             } else if (sourceType === 'folder') {
                 await this.copyFolderRecursive(sourcePath, targetPath);
@@ -413,8 +418,10 @@ class CloudSyncPanel {
                 await this.request('POST', '/cloudSync/delete', { path: itemPath });
             } else {
                 const fileData = await this.request('GET', '/cloudSync/download', { path: itemPath });
-                const content = typeof fileData?.content === 'string' ? fileData.content : '';
-                await this.request('POST', '/cloudSync/upload', { path: destPath, content });
+                if (typeof fileData?.content !== 'string') {
+                    throw new Error(window.i18n.t('cloud.moveFail'));
+                }
+                await this.request('POST', '/cloudSync/upload', { path: destPath, content: fileData.content });
                 await this.request('POST', '/cloudSync/delete', { path: itemPath });
             }
         }

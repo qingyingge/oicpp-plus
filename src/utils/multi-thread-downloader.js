@@ -144,7 +144,8 @@ class MultiThreadDownloader {
                 const writer = fs.createWriteStream(chunkFile);
                 let downloadedBytes = 0;
 
-                return new Promise((resolve, reject) => {
+                // 必须 await：缺 await 时内层 reject 不会冒泡进下方 catch，分片重试机制整体失效
+                return await new Promise((resolve, reject) => {
                     response.body.on('data', (chunk) => {
                         if (this.isCancelled) {
                             writer.end(() => {
@@ -198,19 +199,25 @@ class MultiThreadDownloader {
                 });
 
             } catch (error) {
+                // 取消不属于可重试错误：立即上抛，保持 CANCELLED_CODE 不被洗成普通失败
+                if (isCancelledError(error) || this.isCancelled) {
+                    throw error?.code === CANCELLED_CODE ? error : cancelledError();
+                }
+
                 retries++;
 
-                const isNetworkError = error.code === 'ECONNRESET' ||
-                    error.code === 'ENOTFOUND' ||
-                    error.code === 'ETIMEDOUT' ||
-                    error.code === 'ECONNREFUSED' ||
-                    error.message.includes('aborted') ||
-                    error.message.includes('timeout');
+                const errorMessage = String(error?.message || '');
+                const isNetworkError = error?.code === 'ECONNRESET' ||
+                    error?.code === 'ENOTFOUND' ||
+                    error?.code === 'ETIMEDOUT' ||
+                    error?.code === 'ECONNREFUSED' ||
+                    errorMessage.includes('aborted') ||
+                    errorMessage.includes('timeout');
 
                 if (isNetworkError) {
-                    logWarn(`[多线程下载] 分片 ${chunkIndex} 网络错误 (尝试 ${retries}/${this.retryCount}):`, error.code || error.message);
+                    logWarn(`[多线程下载] 分片 ${chunkIndex} 网络错误 (尝试 ${retries}/${this.retryCount}):`, error?.code || errorMessage);
                 } else {
-                    logWarn(`[多线程下载] 分片 ${chunkIndex} 下载失败 (尝试 ${retries}/${this.retryCount}):`, error.message);
+                    logWarn(`[多线程下载] 分片 ${chunkIndex} 下载失败 (尝试 ${retries}/${this.retryCount}):`, errorMessage);
                 }
 
                 if (fs.existsSync(chunkFile)) {
@@ -222,7 +229,9 @@ class MultiThreadDownloader {
                 }
 
                 if (retries >= this.retryCount) {
-                    throw new Error(t('downloader.chunkFailed', { index: chunkIndex, message: error.message }));
+                    // 保留原始 error（含 code），仅在 message 上补充上下文
+                    error.message = t('downloader.chunkFailed', { index: chunkIndex, message: errorMessage });
+                    throw error;
                 }
 
                 let delay;

@@ -202,11 +202,10 @@ class CompilerManager {
         if (window.electron && window.electron.ipcRenderer) {
             const ipcRenderer = window.electron.ipcRenderer;
 
+            // 注：compile-result / compile-error / run-result / run-error 四个 IPC 通道已无任何发送方
+            // （编译走 invoke('compile-file')，运行走 invoke('run-program')，结果经 window CustomEvent 分发），
+            // 监听它们恒不触发，已随死代码一并移除。
             this._ipcListeners = {
-                'compile-result': (result) => this.handleCompileResult(result),
-                'compile-error': (error) => this.handleCompileError(error),
-                'run-result': (result) => this.handleRunResult(result),
-                'run-error': (error) => this.handleRunError(error),
                 'settings-changed': (_event, _settingsType, newSettings) => {
                     logInfo('编译管理器收到设置变化通知:', newSettings);
                     if (newSettings && (newSettings.compilerPath !== undefined || newSettings.compilerArgs !== undefined || newSettings.runMode !== undefined)) {
