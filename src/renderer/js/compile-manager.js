@@ -329,7 +329,11 @@ class CompilerManager {
             // 且状态栏先显示「成功」再被后到的失败覆盖
             if (this.isCompiling) {
                 this.appendOutput((window.i18n?.t?.('compileOutput.alreadyRunning', null) || 'A compilation is already in progress.') + '\n', 'warning');
-                return;
+                // 显式告知调用方本次被拒：否则 compileAndRun 里的
+                // `if (!this.isCompiling)` 因 isCompiling 恰为 true 而不成立，
+                // shouldRunAfterCompile 残留到下一次编译完成，把「编译」
+                // 意外变成「编译并运行」
+                return false;
             }
             this.isCompiling = true;
             this.showOutput();
@@ -356,11 +360,11 @@ class CompilerManager {
                 }
                 compilerArgs = compilerArgs.replace(/-s\b/g, '');
                 compilerArgs = compilerArgs.replace(/\s+/g, ' ').trim();
-                this.appendOutput(window.i18n?.t?.('compileOutput.modeDebug', null) || 'Compilation mode: Debug (debug info, optimizations disabled)' + '\n', 'info');
+                this.appendOutput((window.i18n?.t?.('compileOutput.modeDebug', null) || 'Compilation mode: Debug (debug info, optimizations disabled)') + '\n', 'info');
             } else {
                 if (!compilerArgs.includes('-g')) {
                     compilerArgs = compilerArgs + ' -g';
-                    this.appendOutput(window.i18n?.t?.('compileOutput.modeNormal', null) || 'Compilation mode: Normal (with debug info)' + '\n', 'info');
+                    this.appendOutput((window.i18n?.t?.('compileOutput.modeNormal', null) || 'Compilation mode: Normal (with debug info)') + '\n', 'info');
                 }
             }
 
@@ -398,6 +402,7 @@ class CompilerManager {
             logError('编译失败:', error);
             this.handleCompileError(error.message);
         }
+        return true;   // 本次确实启动��编译
     }
 
     async cloudCompileCurrentFile() {
@@ -445,8 +450,11 @@ class CompilerManager {
     async compileAndRun() {
         try {
             this.shouldRunAfterCompile = true;
-            await this.compileCurrentFile();
-            if (!this.isCompiling) this.shouldRunAfterCompile = false;
+            // compileCurrentFile 返回 false = 命中重入守卫、本次没启动编译。
+            // 此时 isCompiling 恰为 true，不能用 `if (!this.isCompiling)` 判断，
+            // 也不该让标志位残留（否则下一次编译完成会凭空多跑一次程序）。
+            const started = await this.compileCurrentFile();
+            if (started === false) this.shouldRunAfterCompile = false;
         } catch (error) {
             logError('编译并运行失败:', error);
             this.shouldRunAfterCompile = false;
@@ -913,7 +921,7 @@ class CompilerManager {
             seen.add(key);
             items.push({
                 severity: diag.severity,
-                location: diag.location || window.i18n.t('compileOutput.title'),
+                location: diag.location || window.i18n?.t?.('cloudCompile.locationUnknown'),
                 message: diag.message,
                 hint: translated || hint.title,
                 suggestion: hint.suggestion
@@ -926,7 +934,7 @@ class CompilerManager {
                 const hint = this.buildHintFromMessage(text);
                 items.push({
                     severity: 'error',
-                    location: ('compileOutput.title'),
+                    location: window.i18n?.t?.('cloudCompile.locationUnknown'),
                     message: this.translateMessage(text),
                     hint: hint.title,
                     suggestion: hint.suggestion
@@ -1091,7 +1099,7 @@ class CompilerManager {
         
             if (result.success) {
             this.setStatus(window.i18n?.t?.('compileOutput.successSimple', null) || 'Compilation successful');
-            this.appendOutput(window.i18n?.t?.('compileOutput.successSimple', null) || 'Compilation successful' + '!\n', 'success');
+            this.appendOutput((window.i18n?.t?.('compileOutput.successSimple', null) || 'Compilation successful') + '!\n', 'success');
             
             if (result.warnings && result.warnings.length > 0) {
                 this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length }) || `Found ${result.warnings.length} warnings:`) + '\n', 'warning');
@@ -1114,11 +1122,11 @@ class CompilerManager {
             }
             } else {
             this.setStatus(window.i18n?.t?.('compileOutput.failSimple', null) || 'Compilation failed');
-            this.appendOutput(window.i18n?.t?.('compileOutput.failSimple', null) || 'Compilation failed' + '!\n', 'error');
+            this.appendOutput((window.i18n?.t?.('compileOutput.failSimple', null) || 'Compilation failed') + '!\n', 'error');
             this.shouldRunAfterCompile = false;
             
             if (result.errors && result.errors.length > 0) {
-                this.appendOutput(window.i18n?.t?.('compileOutput.errorInfo', null) || 'Error information:' + '\n', 'error');
+                this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo', null) || 'Error information:') + '\n', 'error');
                 result.errors.forEach(error => {
                     this.appendOutput(`${this._stringifyError(error)}\n`, 'error');
                 });
@@ -1175,17 +1183,17 @@ class CompilerManager {
         this.setStatus(success ? `${title} ${window.i18n?.t?.('compileOutput.successSimple')}` : `${title} ${window.i18n?.t?.('compileOutput.failSimple')}`);
 
         if (result.stdout) {
-            this.appendOutput(window.i18n?.t?.('compileOutput.standardOutput', null) || 'Standard output:' + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.standardOutput', null) || 'Standard output:') + '\n', 'info');
             this.appendOutput(`${result.stdout}\n`, 'info');
         }
 
         if (result.stderr) {
-            this.appendOutput(window.i18n?.t?.('compileOutput.standardError', null) || 'Standard error:' + '\n', 'error');
+            this.appendOutput((window.i18n?.t?.('compileOutput.standardError', null) || 'Standard error:') + '\n', 'error');
             this.appendOutput(`${result.stderr}\n`, 'error');
         }
 
         if (result.errors && result.errors.length > 0) {
-            this.appendOutput(window.i18n?.t?.('compileOutput.errorInfo', null) || 'Error information:' + '\n', 'error');
+            this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo', null) || 'Error information:') + '\n', 'error');
             result.errors.forEach((err) => {
                 this.appendOutput(`${this._stringifyError(err)}\n`, 'error');
             });

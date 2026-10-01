@@ -412,6 +412,11 @@ class MonacoEditorManager {
             logInfo('[LSP] clangd 重启完成，已应用新编译器路径');
         } catch (err) {
             this._lspReadyPromise = null;
+            // 重启失败也要进冷却：否则后续每个 _ensureLspDocumentReady 都会
+            // 经 ensureLspReady 重新发一次 lsp-start，与冷却的意图相反。
+            // 显式重启入口（restartLspWithCompiler）自己会清 _lspStartFailure，
+            // 不受这里影响。
+            this._lspStartFailure = { at: Date.now(), error: err };
             logWarn('[LSP] 重启 clangd 失败:', err?.message || err);
         }
     }
@@ -6570,8 +6575,13 @@ class MonacoEditorManager {
         if (typeof original !== 'string' || typeof formatted !== 'string') return [];
         if (original === formatted) return [];
 
-        const originalLines = original.split('\n');
-        const formattedLines = formatted.split('\n');
+        // 比较时剥掉行尾 \r：clang-format 走临时文件，行尾有可能与原文不一致
+        // （DeriveLineEnding / UseCRLF 配置差异）。不剥的话每行都因尾部 \r
+        // 不相等，prefix/suffix 双双归零，退化成整文档替换 ——
+        // 恰好把本次修复要消除的巨型 undo、光标跳变和全文重排又放了回来。
+        const splitLines = (text) => text.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
+        const originalLines = splitLines(original);
+        const formattedLines = splitLines(formatted);
 
         let prefix = 0;
         const maxPrefix = Math.min(originalLines.length, formattedLines.length);

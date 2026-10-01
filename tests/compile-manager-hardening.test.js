@@ -61,22 +61,58 @@ const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'en.json'),
             i++;
         }
         const trimmed = arg.trim();
-        if (!/\+\s*'\\n'\s*$/.test(trimmed)) continue;
-        // 去掉结尾的 `+ '\n'`，剩下的表达式必须是「整体被括号包住」
-        const expr = trimmed.replace(/\+\s*'\\n'\s*$/, '').trim();
+        // 结尾形态有两种：+ '\n' 与 + '!\n'（成功/失败结论行）。
+        // 只匹配前者会漏掉后者，'\n' 照样丢失。
+        const tailRe = /\+\s*'(?:\\n|!\\n)'\s*$/;
+        if (!tailRe.test(trimmed)) continue;
+        // 去掉结尾的 `+ '...'`，剩下的表达式必须是「整体被括号包住」
+        const expr = trimmed.replace(tailRe, '').trim();
+        // 用字符串感知的括号配平扫描：只数引号外的括号，
+        // 否则 fallback 文案里的括号（如 'Debug (debug info)'）会误配平
         const balanced = expr.startsWith('(') &&
             expr.endsWith(')') &&
             (() => {
                 let d = 0;
-                for (const c of expr) {
-                    if (c === '(') d++;
-                    else if (c === ')') { d--; if (d === 0 && c !== expr[expr.length - 1]) return false; }
+                let i = 0;
+                while (i < expr.length) {
+                    const c = expr[i];
+                    if (c === "'" || c === '"' || c === '`') {
+                        const q = c;
+                        i++;
+                        while (i < expr.length && expr[i] !== q) {
+                            if (expr[i] === '\\') i++;
+                            i++;
+                        }
+                    } else if (c === '(') d++;
+                    else if (c === ')') {
+                        d--;
+                        if (d === 0 && i !== expr.length - 1) return false;
+                    }
+                    i++;
                 }
                 return d === 0;
             })();
         if (!balanced) bad.push(trimmed.slice(0, 80));
+        // 括号配平通过还不够：`t(...) || 'fb' + '\n'` 的括号同样是平的，
+        // 但 + 落在 || 之外（JS 里 + 优先级高于 ||），fallback 非空时照样丢换行。
+        // 追加一条：剥掉尾部 `+ '...'` 后，|| 之前的部分必须以 '(' 结尾，
+        // 即整个 || 链被同一对括号包住。
+        const stripTail = trimmed.replace(tailRe, '').trim();
+        const orIndex = stripTail.indexOf('||');
+        if (orIndex > 0 && !stripTail.slice(0, orIndex).trim().endsWith('(')) {
+            bad.push(`${trimmed.slice(0, 80)} [|| 链未被括号包裹，+ 仍在 || 之外]`);
+        }
     }
     check('所有带换行的 appendOutput 实参都括号包裹', bad.length === 0, bad.join(' ||| '));
+
+    // 同类退化：t(...) 的返回值被直接当 key 字面量赋值。
+    // I5 只拦 `= ('key')`，`key: ('k')` 这种对象属性形态会漏掉，
+    // 结果是裸 key 直接上屏（原标题栏就是靠这个洞漏了 3 处）。
+    const nakedKey = [];
+    for (const m of src.matchAll(/(?:^|[,{]\s*)([A-Za-z_$][\w$]*)\s*:\s*\(\s*'([a-z][\w]*(?:\.[\w]+)+)'\s*\)/g)) {
+        nakedKey.push(`${m[1]}: ('${m[2]}')`);
+    }
+    check('没有把裸 key 字面量当作文案上屏', nakedKey.length === 0, nakedKey.join(' ||| '));
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +121,13 @@ const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'en.json'),
 
 {
     check('compileCurrentFile 入口有 isCompiling 重入守卫',
-        /if \(this\.isCompiling\) \{[\s\S]{0,200}?A compilation is already in progress[\s\S]{0,120}?return;/.test(src));
+        /if \(this\.isCompiling\) \{[\s\S]{0,200}?A compilation is already in progress[\s\S]{0,600}?return false;/.test(src));
     check('重入时不覆盖 isCompiling 状态',
-        /if \(this\.isCompiling\) \{[\s\S]{0,220}?return;[\s\S]{0,80}?\}\s*\n\s*this\.isCompiling = true;/.test(src));
+        /if \(this\.isCompiling\) \{[\s\S]{0,600}?return false;[\s\S]{0,200}?\}\s*\n\s*this\.isCompiling = true;/.test(src));
+    check('编译成功路径返回 true，供调用方区分「启动」与「被重入拒绝」',
+        /handleCompileError\(error\.message\);\s*\}\s*\n\s*return true;/.test(src));
+    check('compileAndRun 依据返回值复位 shouldRunAfterCompile',
+        /const started = await this\.compileCurrentFile\(\);\s*\n\s*if \(started === false\) this\.shouldRunAfterCompile = false;/.test(src));
     check('重入提示复用 i18n 键',
         /window\.i18n\?\.\?\.t\?\.\('compileOutput\.alreadyRunning'/.test(src) ||
         /window\.i18n\?\.t\?\.\('compileOutput\.alreadyRunning'/.test(src));

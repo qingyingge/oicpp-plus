@@ -526,7 +526,7 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     // 窗口/应用
     'window-maximized', 'window-unmaximized', 'app-close-requested',
     'lsp-apply-edit',
-    'compare-progress', 'compare-error', 'compare-complete', 'menu-save-file', 'apply-settings-preview', 'settings-applied', 'menu-format-code', 'menu-find-replace', 'menu-compile', 'menu-compile-run', 'menu-debug', 'menu-new-temp-file', 'menu-open-file', 'menu-open-folder', 'menu-save-as', 'menu-open-terminal', 'menu-open-browser', 'menu-new-browser-tab', 'menu-about', 'menu-settings', 'menu-check-updates', 'update-download-status', 'app-toast', 'show-debug-developing-message', 'file-opened', 'folder-opened', 'file-opened-from-args', 'external-file-changed', 'sample-tester-create-problem', 'terminal-data', 'terminal-exit', 'ide-login-updated', 'ide-login-error', 'menu-open-file-history', 'lsp-notification', 'request-save-all', 'browser-open-new-tab',
+    'compare-progress', 'compare-error', 'compare-complete', 'compare-warning', 'menu-save-file', 'apply-settings-preview', 'settings-applied', 'menu-format-code', 'menu-find-replace', 'menu-compile', 'menu-compile-run', 'menu-debug', 'menu-new-temp-file', 'menu-open-file', 'menu-open-folder', 'menu-save-as', 'menu-open-terminal', 'menu-open-browser', 'menu-new-browser-tab', 'menu-about', 'menu-settings', 'menu-check-updates', 'update-download-status', 'app-toast', 'show-debug-developing-message', 'file-opened', 'folder-opened', 'file-opened-from-args', 'external-file-changed', 'sample-tester-create-problem', 'terminal-data', 'terminal-exit', 'ide-login-updated', 'ide-login-error', 'menu-open-file-history', 'lsp-notification', 'request-save-all', 'browser-open-new-tab',
 ]);
 
 // P2: get-all-settings 在启动/开文件关键路径上被多处（compile-manager、monaco、
@@ -541,14 +541,22 @@ const SETTINGS_MUTATING_CHANNELS = new Set([
 let settingsCache = null;
 let settingsCacheTime = 0;
 let settingsCacheInflight = null;
+// 失效代数。写入发生时 +1；在途请求只在代数未变时才回填缓存。
+// 否则「读取在途 + 期间发生写入」会让写入前的旧快照被重新写回缓存并续 1s，
+// 表现为改了设置反而读到更旧的旧值。
+let settingsCacheGeneration = 0;
 
 function invalidateSettingsCache() {
     settingsCache = null;
     settingsCacheTime = 0;
+    settingsCacheGeneration++;
 }
 
-// 主进程广播的设置变更同样让本窗口缓存失效（含其他设置窗口的写入）
-for (const ch of ['settings-changed', 'settings-reset', 'settings-imported']) {
+// 主进程广播的设置变更同样让本窗口缓存失效（含其他设置窗口的写入）。
+// settings-applied / apply-settings-preview 也在列：前者是 update-settings
+// 成功后唯一的广播（该 handler 不发 settings-changed），后者是设置页预览应用。
+// 漏掉它们会让「改完设置立刻编译一次」读到 1s 内的旧值。
+for (const ch of ['settings-changed', 'settings-reset', 'settings-imported', 'settings-applied', 'apply-settings-preview']) {
     ipcRenderer.on(ch, invalidateSettingsCache);
 }
 
@@ -565,10 +573,14 @@ function getAllSettings() {
         return Promise.resolve(cloneSettings(settingsCache));
     }
     if (!settingsCacheInflight) {
+        const generation = settingsCacheGeneration;
         settingsCacheInflight = safeIpcRenderer.invoke('get-all-settings')
             .then((value) => {
-                settingsCache = value;
-                settingsCacheTime = Date.now();
+                // 期间发生过失效就不再回填：这个响应反映的是写入之前的状态
+                if (generation === settingsCacheGeneration) {
+                    settingsCache = value;
+                    settingsCacheTime = Date.now();
+                }
                 return value;
             })
             .finally(() => { settingsCacheInflight = null; });
