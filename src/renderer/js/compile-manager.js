@@ -11,6 +11,7 @@ class CompilerManager {
         this.isCompiling = false;
         this.isRunning = false;
         this.compileOutput = null;
+        this._outputHideTimer = null;
         this.shouldRunAfterCompile = false;
         this.isCloudCompiling = false;
         this.cloudCompileTaskId = null;
@@ -303,7 +304,9 @@ class CompilerManager {
             }
 
             let filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
-            const content = currentEditor.getValue();
+            // 原先在这里取一次 getValue() 赋给 content 却从不使用：非 monaco 编辑器
+            // 缺该方法时抛错，被外层 catch 吞成「编译失败」，把「取内容失败」
+            // 误报成「编译失败」
 
             logInfo('[编译管理器] 获取到的文件路径:', filePath);
             logInfo('[编译管理器] 文件路径类型:', typeof filePath);
@@ -321,6 +324,13 @@ class CompilerManager {
                  }
             }
 
+            // 重入保护：原先 isCompiling 只写不读，连按两次 F9 会让两个编译器并发写
+            // 同一个 outputFile（Windows 下后一个直接失败），
+            // 且状态栏先显示「成功」再被后到的失败覆盖
+            if (this.isCompiling) {
+                this.appendOutput((window.i18n?.t?.('compileOutput.alreadyRunning', null) || 'A compilation is already in progress.') + '\n', 'warning');
+                return;
+            }
             this.isCompiling = true;
             this.showOutput();
             this.setStatus(window.i18n?.t?.('compileOutput.compiling', null) || 'Compiling...');
@@ -360,9 +370,11 @@ class CompilerManager {
             logInfo(`目标文件: ${outputFile}`);
             logInfo(`编译命令: ${compileCommand}`);
 
-            this.appendOutput(window.i18n?.t?.('compileOutput.command', { command: compileCommand }) || `Compilation command: ${compileCommand}` + '\n', 'command');
-            this.appendOutput(window.i18n?.t?.('compileOutput.targetFile', { file: outputFile }) || `Output file: ${outputFile}` + '\n', 'info');
-            this.appendOutput(window.i18n?.t?.('compileOutput.compiling', null) || 'Compiling...' + '\n', 'info');
+            // 换行必须无条件生效：写成 `t(...) || 'fallback' + '\n'` 时，
+            // '+' 只作用于 fallback 分支，i18n 一旦就绪相邻行就会黏成一行
+            this.appendOutput((window.i18n?.t?.('compileOutput.command', { command: compileCommand }) || `Compilation command: ${compileCommand}`) + '\n', 'command');
+            this.appendOutput((window.i18n?.t?.('compileOutput.targetFile', { file: outputFile }) || `Output file: ${outputFile}`) + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.compiling', null) || 'Compiling...') + '\n', 'info');
 
             if (typeof require !== 'undefined') {
                 try {
@@ -421,7 +433,7 @@ class CompilerManager {
 
             this.isRunning = true;
             this.showOutput();
-            this.appendOutput(window.i18n?.t?.('compileOutput.startingProgram', { file: executablePath }) || `Starting program: ${executablePath}` + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.startingProgram', { file: executablePath }) || `Starting program: ${executablePath}`) + '\n', 'info');
             this.runExecutable(executablePath);
 
         } catch (error) {
@@ -485,11 +497,13 @@ class CompilerManager {
                 return await window.electronAPI.checkFileExists(filePath);
             }
 
-            logWarn('无法检查文件存在性，假设文件存在:', filePath);
-            return true;
+            // 「查不到」不等于「存在」：原先在无法检查时返回 true，
+            // 用户点运行后看到的是「运行失败」，而不是「请先编译」
+            logWarn('无法检查文件存在性，按不存在处理:', filePath);
+            return false;
         } catch (error) {
             logError('检查文件存在性失败:', error);
-            return true;
+            return false;
         }
     }
 
@@ -1080,7 +1094,7 @@ class CompilerManager {
             this.appendOutput(window.i18n?.t?.('compileOutput.successSimple', null) || 'Compilation successful' + '!\n', 'success');
             
             if (result.warnings && result.warnings.length > 0) {
-                this.appendOutput(window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length }) || `Found ${result.warnings.length} warnings:` + '\n', 'warning');
+                this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length }) || `Found ${result.warnings.length} warnings:`) + '\n', 'warning');
                     result.warnings.forEach(warning => {
                         this.appendOutput(`${warning}\n`, 'warning');
                     });
@@ -1178,7 +1192,7 @@ class CompilerManager {
         }
 
         if (result.warnings && result.warnings.length > 0) {
-            this.appendOutput(window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length }) || `Found ${result.warnings.length} warnings:` + '\n', 'warning');
+            this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length }) || `Found ${result.warnings.length} warnings:`) + '\n', 'warning');
             result.warnings.forEach((warning) => {
                 this.appendOutput(`${warning}\n`, 'warning');
             });
@@ -1248,22 +1262,32 @@ class CompilerManager {
     showOutput() {
         if (!this.compileOutput) this.createCompileOutputWindow();
         if (!this.compileOutput) return;
+        // 两个 setTimeout 必须互相取消：原先 hide 的 300ms 定时器与 show 的
+        // 10ms 定时器各自独立，300ms 内按 F9 时旧的 hide 到期会补上 hidden，
+        // 编译中的面板整块消失
+        this._cancelOutputHideTimer();
         this.compileOutput.classList.remove('hidden');
-        setTimeout(() => {
-            if (!this.compileOutput) return;
-            this.compileOutput.classList.add('show');
-        }, 10);
+        this.compileOutput.classList.add('show');
 
         this.updateAnalysisVisibility();
     }
 
     hideOutput() {
         if (!this.compileOutput) return;
+        this._cancelOutputHideTimer();
         this.compileOutput.classList.remove('show');
-        setTimeout(() => {
+        this._outputHideTimer = setTimeout(() => {
+            this._outputHideTimer = null;
             if (!this.compileOutput) return;
             this.compileOutput.classList.add('hidden');
         }, 300);
+    }
+
+    _cancelOutputHideTimer() {
+        if (this._outputHideTimer) {
+            clearTimeout(this._outputHideTimer);
+            this._outputHideTimer = null;
+        }
     }
 
     clearOutput() {

@@ -1107,7 +1107,8 @@
     "standardError": "Standard error:",
     "clearOutput": "Clear Output",
     "closeOutput": "Close",
-    "analysisEmpty": "No content to parse yet. Check the raw output or wait for the next compilation."
+    "analysisEmpty": "No content to parse yet. Check the raw output or wait for the next compilation.",
+    "alreadyRunning": "A compilation is already in progress. Please wait for it to finish."
   },
   "feedback": {
     "title": "Feedback",

@@ -1086,7 +1086,8 @@
     "standardError": "标准错误:",
     "clearOutput": "清除输出",
     "closeOutput": "关闭",
-    "analysisEmpty": "暂无可解析的内容，先查看原始输出或等待下一次编译。"
+    "analysisEmpty": "暂无可解析的内容，先查看原始输出或等待下一次编译。",
+    "alreadyRunning": "已有编译正在进行，请等待完成。"
   },
   "feedback": {
     "title": "用户反馈",
