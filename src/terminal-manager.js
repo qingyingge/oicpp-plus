@@ -61,12 +61,62 @@ if (!pty) {
     }
 }
 
+// 终端输出聚合窗口：足够小以保持跟手感，又能把高频 chunk 合并成少量 IPC
+const TERMINAL_DATA_FLUSH_MS = 8;
+
 class IntegratedTerminalManager {
     constructor(options = {}) {
         this.sessions = new Map();
-        this.sendToRenderer = typeof options.sendToRenderer === 'function'
+        const rawSendToRenderer = typeof options.sendToRenderer === 'function'
             ? options.sendToRenderer
             : () => {};
+        this._pendingTerminalData = new Map();
+        this._terminalDataFlushTimer = null;
+        this._rawSend = rawSendToRenderer;
+        this.sendToRenderer = (channel, payload) => {
+            // 终端输出按 8ms 窗口聚合：cat/ls -R 这类命令下 PTY 每秒可产生
+            // 数百个 chunk，逐条 send 会打满 IPC 队列并让终端掉帧
+            if (channel === 'terminal-data' && payload && typeof payload.terminalId === 'string') {
+                const chunks = this._pendingTerminalData.get(payload.terminalId);
+                if (chunks) {
+                    chunks.push(payload.data);
+                } else {
+                    this._pendingTerminalData.set(payload.terminalId, [payload.data]);
+                }
+                if (!this._terminalDataFlushTimer) {
+                    this._terminalDataFlushTimer = setTimeout(() => this._flushTerminalData(), TERMINAL_DATA_FLUSH_MS);
+                    if (typeof this._terminalDataFlushTimer.unref === 'function') {
+                        this._terminalDataFlushTimer.unref();
+                    }
+                }
+                return;
+            }
+            // 会话退出前先把该会话的待发数据送出去，避免丢失
+            if (channel === 'terminal-exit' && payload && typeof payload.terminalId === 'string') {
+                this._flushTerminalData(payload.terminalId);
+            }
+            rawSendToRenderer(channel, payload);
+        };
+    }
+
+    _flushTerminalData(onlyTerminalId) {
+        if (onlyTerminalId) {
+            const chunks = this._pendingTerminalData.get(onlyTerminalId);
+            if (!chunks) return;
+            this._pendingTerminalData.delete(onlyTerminalId);
+            this._rawSend('terminal-data', { terminalId: onlyTerminalId, data: chunks.join('') });
+            return;
+        }
+        if (this._terminalDataFlushTimer) {
+            clearTimeout(this._terminalDataFlushTimer);
+            this._terminalDataFlushTimer = null;
+        }
+        if (this._pendingTerminalData.size === 0) return;
+        const pending = this._pendingTerminalData;
+        this._pendingTerminalData = new Map();
+        for (const [terminalId, chunks] of pending) {
+            this._rawSend('terminal-data', { terminalId, data: chunks.join('') });
+        }
     }
 
     isAvailable() {
