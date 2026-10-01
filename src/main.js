@@ -4232,22 +4232,19 @@ function setupIPC() {
                         return;
                     }
 
-                    gdbDebugger.updateVariables().then(() => {
-                        const vars = gdbDebugger.getVariables();
-                        if (mainWindow && !mainWindow.isDestroyed()) {
-                            mainWindow.webContents.send('debug-variables-updated', {
-                                local: vars.local || {},
-                                global: vars.global || {},
-                                watches: vars.watches || {}
-                            });
-                        } else {
-                            event.reply('debug-variables-updated', {
-                                local: vars.local || {},
-                                global: vars.global || {},
-                                watches: vars.watches || {}
-                            });
-                        }
-                    }).catch(() => { });
+                    // addWatchVariable 内部已经抓过一次变量，这里直接取结果推送，
+                    // 不再重复发一轮 -stack-list-variables
+                    const vars = gdbDebugger.getVariables();
+                    const payload = {
+                        local: vars.local || {},
+                        global: vars.global || {},
+                        watches: vars.watches || {}
+                    };
+                    if (mainWindow && !mainWindow.isDestroyed()) {
+                        mainWindow.webContents.send('debug-variables-updated', payload);
+                    } else {
+                        event.reply('debug-variables-updated', payload);
+                    }
                 } catch (_) { }
             }).catch(error => {
                 try { pendingWatchExprs.delete(expr); } catch (_) { }
