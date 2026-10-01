@@ -36,6 +36,31 @@ const LSP_REQUEST_TIMEOUT_MS = 30000;
 const LSP_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 // 诊断推送节流窗口：同一 uri 的 publishDiagnostics 在窗口内只下发最新一份
 const LSP_DIAGNOSTICS_THROTTLE_MS = 60;
+// 语言包在进程生命周期内只读盘解析一次：切换语言时主进程与渲染层会各请求一次，
+// 打开语言列表也会用到同一份数据
+const LANG_FILE_CACHE = new Map();
+
+// 语言代码只允许字母数字与连字符：原先直接 path.join，
+// 传 ../../package 就能读到应用目录下的任意 .json
+function loadLanguageFile(code) {
+    if (!/^[a-z0-9-]+$/i.test(code)) {
+        logWarn('[语言] 非法语言代码:', code);
+        return null;
+    }
+    const langDir = path.join(__dirname, 'lang');
+    const langPath = path.resolve(langDir, `${code}.json`);
+    if (!isPathInsideDir(langPath, langDir)) {
+        logWarn('[语言] 语言文件路径越界:', code);
+        return null;
+    }
+    if (!fs.existsSync(langPath)) {
+        return null;
+    }
+    if (!LANG_FILE_CACHE.has(code)) {
+        LANG_FILE_CACHE.set(code, JSON.parse(fs.readFileSync(langPath, 'utf8')));
+    }
+    return LANG_FILE_CACHE.get(code);
+}
 const EXTERNAL_OPEN_DEDUP_WINDOW_MS = 800;
 const recentExternalOpens = new Map();
 // Compiler probing starts child processes and filesystem scans. Results depend
@@ -3643,22 +3668,7 @@ function setupIPC() {
     ipcMain.handle('get-language-file', (_event, langCode) => {
         try {
             const code = String(langCode || settings.language || 'zh-cn');
-            // 语言代码只允许字母数字与连字符：原先直接 path.join，
-            // 传 ../../package 就能读到应用目录下的任意 .json
-            if (!/^[a-z0-9-]+$/i.test(code)) {
-                logWarn('[语言] 非法语言代码:', code);
-                return null;
-            }
-            const langDir = path.join(__dirname, 'lang');
-            const langPath = path.resolve(langDir, `${code}.json`);
-            if (!isPathInsideDir(langPath, langDir)) {
-                logWarn('[语言] 语言文件路径越界:', code);
-                return null;
-            }
-            if (fs.existsSync(langPath)) {
-                return JSON.parse(fs.readFileSync(langPath, 'utf8'));
-            }
-            return null;
+            return loadLanguageFile(code);
         } catch (e) {
             logError('[语言] 加载语言文件失败:', e);
             return null;
@@ -3673,16 +3683,14 @@ function setupIPC() {
                 const files = fs.readdirSync(langDir);
                 for (const file of files) {
                     if (!file.endsWith('.json') || file === 'index.js') continue;
-                    try {
-                        const content = JSON.parse(fs.readFileSync(path.join(langDir, file), 'utf8'));
-                        if (content.meta && content.meta.code) {
-                            languages.push({
-                                code: content.meta.code,
-                                name: content.meta.name,
-                                nameEn: content.meta.nameEn
-                            });
-                        }
-                    } catch (_) {}
+                    const content = loadLanguageFile(file.slice(0, -5));
+                    if (content && content.meta && content.meta.code) {
+                        languages.push({
+                            code: content.meta.code,
+                            name: content.meta.name,
+                            nameEn: content.meta.nameEn
+                        });
+                    }
                 }
             }
             return languages;
