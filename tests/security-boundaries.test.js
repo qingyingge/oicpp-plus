@@ -139,12 +139,16 @@ const normalizeExternalOpenUrl = extractFunction(mainSource, 'normalizeExternalO
     const handler = mainSource.slice(
         mainSource.indexOf("ipcMain.handle('get-language-file'"),
         mainSource.indexOf("ipcMain.handle('get-available-languages'"));
+    // 语言代码/路径校验已抽到 loadLanguageFile，检查范围含该 helper
+    const helperStart = mainSource.indexOf('function loadLanguageFile(code)');
+    const helper = helperStart >= 0 ? mainSource.slice(helperStart, helperStart + 1500) : '';
+    const langCodeScope = handler + helper;
     check('get-language-file 校验语言代码字符集',
-        /if \(!\/\^\[a-z0-9-\]\+\$\/i\.test\(code\)\)/.test(handler), '');
+        /if \(!\/\^\[a-z0-9-\]\+\$\/i\.test\(code\)\)/.test(langCodeScope), '');
     check('get-language-file 校验路径未越界',
-        /if \(!isPathInsideDir\(langPath, langDir\)\)/.test(handler));
+        /if \(!isPathInsideDir\(langPath, langDir\)\)/.test(langCodeScope));
     check('get-language-file 不再直接 path.join 未经校验的 code',
-        !/path\.join\(__dirname, 'lang', `\$\{langCode/.test(handler));
+        !/path\.join\(__dirname, 'lang', `\$\{langCode/.test(langCodeScope));
 }
 
 // --- 新增 i18n 键真实存在且两语言一致 ---
