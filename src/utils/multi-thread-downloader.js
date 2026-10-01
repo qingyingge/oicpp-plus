@@ -9,6 +9,8 @@ const { t } = require('../lang');
 // 取消错误用固定 code 标识，调用方靠它判断「用户取消」而不是匹配 message 文本，
 // 否则一旦文案被翻译，main.js 的 error.message.includes('下载已取消') 就会失效。
 const CANCELLED_CODE = 'DOWNLOAD_CANCELLED';
+// 服务器忽略 Range 返回整个文件时抛这个码，由 download() 捕获后降级单线程
+const RANGE_UNSUPPORTED_CODE = 'RANGE_UNSUPPORTED';
 const cancelledError = () => {
     const err = new Error(t('downloader.cancelled'));
     err.code = CANCELLED_CODE;
@@ -138,7 +140,14 @@ class MultiThreadDownloader {
                 }
 
                 if (response.status !== 206) {
-                    logWarn(`[多线程下载] 警告：分片 ${chunkIndex} 未收到206状态码，可能服务器不支持范围请求`);
+                    // 服务器忽略了 Range 并回整个文件：写盘得到的是「整个文件」而非分片，
+                    // 合并后会静默产出损坏结果（原先只 logWarn 就继续）。
+                    // 必须拒绝，让调用方回退到单线程路径。
+                    const err = new Error(t('downloader.chunkNotPartial', { index: chunkIndex, status: response.status }));
+                    // 标记为「Range 不可用」，供 download() 识别后降级到单线程，
+                    // 而不是直接让整次下载失败
+                    err.code = RANGE_UNSUPPORTED_CODE;
+                    throw err;
                 }
 
                 const writer = fs.createWriteStream(chunkFile);
@@ -252,28 +261,83 @@ class MultiThreadDownloader {
     async mergeChunks(chunks, outputFile) {
         logInfo('[多线程下载] 开始合并分片文件');
 
-        const writer = fs.createWriteStream(outputFile);
+        const sorted = chunks.slice().sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+        // 合并到临时文件再 rename：直接覆盖 outputFile 时，中途 ENOSPC 会留下
+        // 半截目标文件且分片已删，既无法重试也无法回退到原有文件
+        const tempOutput = `${outputFile}.merging`;
+        const writer = fs.createWriteStream(tempOutput);
 
         try {
-            for (const chunk of chunks.sort((a, b) => a.chunkIndex - b.chunkIndex)) {
-                const chunkData = fs.readFileSync(chunk.file);
-                writer.write(chunkData);
-
-                try {
-                    fs.unlinkSync(chunk.file);
-                } catch (error) {
-                    logWarn(`[多线程下载] 删除临时文件失败:`, error.message);
-                }
-            }
-
             await new Promise((resolve, reject) => {
-                writer.end((error) => {
-                    if (error) reject(error);
-                    else resolve();
-                });
+                // 流式管道而非逐块 readFileSync：后者把整个分片读进内存，
+                // 且丢弃 write() 的返回值 = 没有背压，大文件会撑爆内存
+                const pipeline = (async () => {
+                    for (const chunk of sorted) {
+                        if (this.isCancelled) throw cancelledError();
+                        if (!fs.existsSync(chunk.file)) {
+                            throw new Error(t('downloader.chunkMissing', { index: chunk.chunkIndex }));
+                        }
+                        // 校验分片实际长度：服务器未回 206 时该分片文件是整个文件，
+                        // 不校验就会静默写出损坏结果，错误延后到解压阶段才暴露
+                        const expected = typeof chunk.size === 'number' ? chunk.size : null;
+                        if (expected !== null && expected > 0) {
+                            const actual = fs.statSync(chunk.file).size;
+                            if (actual !== expected) {
+                                throw new Error(t('downloader.chunkSizeMismatch', {
+                                    index: chunk.chunkIndex, actual, expected
+                                }));
+                            }
+                        }
+
+                        // 只有在数据真正落盘（drain）之后才删源分片
+                        await new Promise((res, rej) => {
+                            const rs = fs.createReadStream(chunk.file);
+                            let settled = false;
+                            const fail = (e) => {
+                                if (settled) return;
+                                settled = true;
+                                try { rs.destroy(); } catch (_) { }
+                                rej(e);
+                            };
+                            rs.on('error', fail);
+                            rs.on('end', () => {
+                                if (settled) return;
+                                settled = true;
+                                res();
+                            });
+                            // 背压：write 返回 false 时等 drain 再推进
+                            rs.on('data', (piece) => {
+                                if (!writer.write(piece)) {
+                                    rs.pause();
+                                    writer.once('drain', () => rs.resume());
+                                }
+                            });
+                            rs.on('error', fail);
+                        });
+
+                        try {
+                            fs.unlinkSync(chunk.file);
+                        } catch (error) {
+                            logWarn(`[多线程下载] 删除临时文件失败:`, error.message);
+                        }
+                    }
+                })();
+
+                writer.on('error', reject);
+                writer.on('finish', resolve);
+                // 全部写完后必须 end()，否则 'finish' 永不触发（曾因此挂起）
+                pipeline.then(() => writer.end(), reject);
             });
 
+            // rename 是同分区内的原子操作：要么旧文件，要么完整新文件
+            fs.renameSync(tempOutput, outputFile);
             logInfo('[多线程下载] 分片合并完成');
+        } catch (error) {
+            try {
+                if (fs.existsSync(tempOutput)) fs.unlinkSync(tempOutput);
+            } catch (_) { }
+            throw error;
         } finally {
             if (!writer.destroyed) {
                 writer.destroy();
@@ -288,6 +352,11 @@ class MultiThreadDownloader {
         const maxAttempts = Math.max(1, this.retryCount);
         let attempt = 0;
         let lastError = null;
+
+        // 写临时文件、成功后 rename。原先直接写 outputFile 并在每次重试前
+        // unlinkSync(outputFile)：一次网络抖动就把磁盘上原有的文件删干净，
+        // 而重试无任何续传/offset，每次都从 0 重来。
+        const partialFile = `${outputFile}.downloading`;
 
         while (attempt < maxAttempts) {
             attempt++;
@@ -308,7 +377,8 @@ class MultiThreadDownloader {
                 }
 
                 const totalSize = parseInt(response.headers.get('content-length') || '0');
-                writer = fs.createWriteStream(outputFile);
+                // 写临时文件，validateOutputSize 也针对它
+                writer = fs.createWriteStream(partialFile);
 
                 let downloadedBytes = 0;
                 const startTime = Date.now();
@@ -325,7 +395,7 @@ class MultiThreadDownloader {
 
                 const validateOutputSize = () => {
                     if (typeof totalSize === 'number' && totalSize > 0) {
-                        const stat = fs.statSync(outputFile);
+                        const stat = fs.statSync(partialFile);
                         if (stat.size < totalSize) {
                             throw new Error(t('downloader.incompleteSize', { actual: stat.size, expected: totalSize }));
                         }
@@ -335,7 +405,7 @@ class MultiThreadDownloader {
                 await new Promise((resolve, reject) => {
                     response.body.on('data', (chunk) => {
                         if (this.isCancelled) {
-                            try { writer.end(() => { if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile); }); } catch (_) { }
+                            try { writer.end(() => { if (fs.existsSync(partialFile)) fs.unlinkSync(partialFile); }); } catch (_) { }
                             try { response.body.destroy(); } catch (_) { }
                             return reject(this.cancelError || cancelledError());
                         }
@@ -394,6 +464,8 @@ class MultiThreadDownloader {
                             }
                             try {
                                 validateOutputSize();
+                                // 校验通过才落到目标路径：原子替换，原有文件在此之前完好
+                                fs.renameSync(partialFile, outputFile);
                                 resolve();
                             } catch (validateError) {
                                 reject(validateError);
@@ -431,7 +503,8 @@ class MultiThreadDownloader {
                 lastError = error;
                 logWarn(`[单线程下载] 失败(尝试 ${attempt}/${maxAttempts}):`, error?.message || String(error));
                 try { if (writer && !writer.destroyed) writer.destroy(); } catch (_) { }
-                try { if (fs.existsSync(outputFile)) fs.unlinkSync(outputFile); } catch (_) { }
+                // 只清自己的临时文件，不动 outputFile —— 后者是磁盘上原有的文件
+                try { if (fs.existsSync(partialFile)) fs.unlinkSync(partialFile); } catch (_) { }
                 if (attempt < maxAttempts) {
                     const backoff = Math.min(8000, Math.pow(2, attempt - 1) * 1000);
                     await new Promise(r => setTimeout(r, backoff));
@@ -443,6 +516,8 @@ class MultiThreadDownloader {
             }
         }
 
+        // 全部尝试失败：清掉残留的临时文件，但保留 outputFile 原有的内容
+        try { if (fs.existsSync(partialFile)) fs.unlinkSync(partialFile); } catch (_) { }
         throw lastError || new Error(t('downloader.singleThreadFailed'));
     }
 
@@ -485,7 +560,10 @@ class MultiThreadDownloader {
                 return;
             }
 
-            const tempDir = path.join(path.dirname(outputFile), `temp_${Date.now()}`);
+            // 加上随机后缀：原先只用 Date.now()，同毫秒并发两次下载会共用同一目录，
+            // chunk_${i}.tmp 互相覆盖
+            const tempDir = path.join(path.dirname(outputFile),
+                `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`);
             if (!fs.existsSync(tempDir)) {
                 fs.mkdirSync(tempDir, { recursive: true });
             }
@@ -596,6 +674,13 @@ class MultiThreadDownloader {
                 } catch (cleanupError) {
                     logWarn('[多线程下载] 清理临时目录失败:', cleanupError.message);
                 }
+                // 探测阶段说支持 Range、实际分片时又不支持（CDN 常见）：
+                // 降级到单线程重下，而不是让整次下载失败
+                if (error?.code === RANGE_UNSUPPORTED_CODE && !this.isCancelled) {
+                    logWarn('[多线程下载] 服务器实际不支持范围请求，降级为单线程下载');
+                    await this.downloadSingleThread(url, outputFile);
+                    return;
+                }
                 throw error;
             }
 
@@ -610,24 +695,43 @@ class MultiThreadDownloader {
         } catch (error) {
             logError('[多线程下载] 下载失败:', error);
             throw error;
+        } finally {
+            // 单线程路径的临时文件：成功时已 rename，失败/降级时在这里兜底清理。
+            // 不能碰 outputFile —— 那是磁盘上原有的文件
+            try {
+                const leftover = `${outputFile}.downloading`;
+                if (fs.existsSync(leftover)) fs.unlinkSync(leftover);
+            } catch (_) { }
         }
     }
 
 
     async verifyFile(filePath, expectedMd5) {
-        if (!expectedMd5) return true;
+        // 无期望值时返回 null 而不是 true：true 与「校验通过」不可区分，
+        // 调用方会误以为校验过了
+        if (!expectedMd5) return null;
 
-        try {
-            const fileBuffer = fs.readFileSync(filePath);
-            const actualMd5 = crypto.createHash('md5').update(fileBuffer).digest('hex');
-            return actualMd5 === expectedMd5;
-        } catch (error) {
-            logError('[多线程下载] 文件验证失败:', error.message);
-            return false;
-        }
+        return new Promise((resolve) => {
+            try {
+                // 流式算 MD5：原先 readFileSync 把整个文件读进内存，
+                // 编译器动辄上百 MB
+                const hash = crypto.createHash('md5');
+                const rs = fs.createReadStream(filePath);
+                rs.on('data', (piece) => hash.update(piece));
+                rs.on('error', (error) => {
+                    logError('[多线程下载] 文件验证失败:', error.message);
+                    resolve(false);
+                });
+                rs.on('end', () => resolve(hash.digest('hex') === expectedMd5));
+            } catch (error) {
+                logError('[多线程下载] 文件验证失败:', error.message);
+                resolve(false);
+            }
+        });
     }
 }
 
 module.exports = MultiThreadDownloader;
 module.exports.CANCELLED_CODE = CANCELLED_CODE;
+module.exports.RANGE_UNSUPPORTED_CODE = RANGE_UNSUPPORTED_CODE;
 module.exports.isCancelledError = isCancelledError;

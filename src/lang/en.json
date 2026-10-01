@@ -1573,6 +1573,9 @@
   "downloader": {
     "cancelled": "Download cancelled",
     "chunkFailed": "Chunk {index} download failed: {message}",
+    "chunkNotPartial": "Chunk {index} did not receive a 206 status (got {status}); the server does not actually support range requests",
+    "chunkMissing": "The temporary file for chunk {index} is missing",
+    "chunkSizeMismatch": "Chunk {index} size mismatch (got {actual}, expected {expected})",
     "stalled": "Download timed out (no data)",
     "incompleteSize": "File size incomplete ({actual}/{expected})",
     "closedIncomplete": "Connection closed before the download finished",

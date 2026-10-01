@@ -1573,6 +1573,9 @@
   "downloader": {
     "cancelled": "下载已取消",
     "chunkFailed": "分片 {index} 下载失败: {message}",
+    "chunkNotPartial": "分片 {index} 未收到 206 状态码（收到 {status}），服务器实际不支持范围请求",
+    "chunkMissing": "分片 {index} 的临时文件已丢失",
+    "chunkSizeMismatch": "分片 {index} 大小不符（实际 {actual}，应为 {expected}）",
     "stalled": "下载超时(无数据)",
     "incompleteSize": "文件大小不完整({actual}/{expected})",
     "closedIncomplete": "连接关闭但未完成下载",
