@@ -465,7 +465,9 @@ class GDBDebugger extends EventEmitter {
         this.emit('variables-updated', this._variables);
     }
 
-    async updateVariables() {
+    // options.silent: 跳过 variables-updated 事件，由调用方自行决定推送时机，
+    // 避免同一次抓取既走事件又走显式发送导致渲染层重复全量重绘
+    async updateVariables(options = {}) {
         if (!this.isRunning || this._inferiorRunning || this.programExited) return;
         this._variables.local = {};
         this._variables.watches = {};
@@ -497,7 +499,9 @@ class GDBDebugger extends EventEmitter {
                 this._variables.watches[expression] = { name: expression, value: t('debug.variableValueError'), children: [] };
             }
         }
-        this.emit('variables-updated', this._variables);
+        if (!options.silent) {
+            this.emit('variables-updated', this._variables);
+        }
     }
 
     _setVariable(scope, variable) {
