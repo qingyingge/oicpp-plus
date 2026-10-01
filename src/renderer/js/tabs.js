@@ -2198,25 +2198,41 @@ class TabManager {
             logInfo('从文件系统重新读取文件:', tab.filePath);
             tab.isLoading = true; // 设置加载标志
             const requestedPath = tab.filePath;
+            const requestedKey = tab.uniqueKey || null;
+            // await 期间可能已切换 tab / 关闭 tab：写入目标是 await 之后重新读取的 currentEditor，
+            // 守卫必须同时锚定「tab 身份」和「目标编辑器身份」，否则 A 的内容会写进 B 的编辑器，
+            // 并用 tab.modified = false 吞掉 B 的未保存改动
+            const targetEditor = this.monacoEditorManager?.currentEditor || null;
+            const isSameTab = () => (requestedKey
+                ? this.tabs.get(requestedKey) === tab
+                : tab.filePath === requestedPath);
+            const isStillTarget = () => isSameTab() && this.monacoEditorManager?.currentEditor === targetEditor;
+
             window.electronAPI.readFileContent(requestedPath)
                 .then((content) => {
-                    if (tab.filePath !== requestedPath) return;
+                    if (!isSameTab()) {
+                        logWarn('文件读取返回时标签页已失效，丢弃结果:', requestedPath);
+                        return;
+                    }
+                    if (!isStillTarget()) {
+                        // 目标编辑器已切走：只回填 tab 缓存，等切回该 tab 时再由 switchTab 载入
+                        tab.content = content;
+                        logWarn('文件读取返回时已切换编辑器，仅更新缓存:', requestedPath);
+                        return;
+                    }
                     logInfo('文件内容读取成功，直接设置到当前编辑器');
                     this.setEditorContent(content, true); // 标记为已保存
                     tab.content = content;
                     tab.modified = false; // 从文件系统加载的内容标记为未修改
 
-                    if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-                        const editor = this.monacoEditorManager.currentEditor;
-                        if (editor.updateFileName) {
-                            editor.updateFileName(fileName, false);
-                        }
+                    if (targetEditor && targetEditor.updateFileName) {
+                        targetEditor.updateFileName(fileName, false);
                     }
                 })
                 .catch((error) => {
                     logError('读取文件失败:', error);
                     logWarn('[TabReadFileErrorSuppressed]', '无法读取文件: ' + error);
-                    if (tab.content !== undefined) {
+                    if (isStillTarget() && tab.content !== undefined) {
                         this.setEditorContent(tab.content);
                     }
                 })
@@ -2455,8 +2471,9 @@ class TabManager {
             this.handleGroupBecameEmpty(groupId);
         }
 
-        if (this.activeTab === fileName) {
+        if (this.activeTab === fileName || this.activeTabKey === uniqueKey) {
             this.activeTab = null;
+            this.activeTabKey = null;
 
             const remainingTabs = Array.from(this.tabs.keys());
             if (remainingTabs.length > 0) {
@@ -2487,7 +2504,12 @@ class TabManager {
         let counter = 1;
         let fileName = `untitled-${counter}.cpp`;
 
-        while (this.tabs.has(fileName)) {
+        // this.tabs 的 key 是 uniqueKey（磁盘文件为完整路径），只比 key 会漏掉
+        // 已打开的同名磁盘文件，导致新建 tab 与其并存
+        const nameTaken = (name) => [...this.tabs.values()]
+            .some((tabData) => tabData?.fileName === name || tabData?.uniqueKey === name);
+
+        while (this.tabs.has(fileName) || nameTaken(fileName)) {
             counter++;
             fileName = `untitled-${counter}.cpp`;
         }
@@ -4688,26 +4710,34 @@ class TabManager {
             if (!result) return;
         }
 
+        // this.tabs 的 key 是 uniqueKey（磁盘文件即完整路径），不是 fileName，
+        // 直接把 key 当 fileName 传给 closeTab 会让 getTabByFileName 全部落空
         const tabsToClose = [...this.tabs.keys()];
-        tabsToClose.forEach(fileName => {
-            this.closeTab(fileName, { skipCloseConfirm: true });
+        tabsToClose.forEach(uniqueKey => {
+            const tabData = this.tabs.get(uniqueKey);
+            this.closeTab(tabData?.fileName || uniqueKey, { skipCloseConfirm: true, uniqueKeyOverride: uniqueKey });
         });
     }
 
     closeOtherTabs() {
         if (!this.activeTab) return;
 
-        const currentTab = this.activeTab;
-        const tabsToClose = [...this.tabs.keys()].filter(fileName => fileName !== currentTab);
+        // 同样按 uniqueKey 比对，不能拿 key 与 fileName（this.activeTab）混比，
+        // 否则当前 tab 也在待关列表内
+        const currentKey = this.tabs.has(this.activeTabKey)
+            ? this.activeTabKey
+            : [...this.tabs.entries()].find(([, tabData]) => tabData?.fileName === this.activeTab)?.[0];
+        const tabsToClose = [...this.tabs.keys()].filter(uniqueKey => uniqueKey !== currentKey);
 
-        const modifiedTabs = tabsToClose.filter(fileName => this.tabs.get(fileName).modified);
+        const modifiedTabs = tabsToClose.filter(uniqueKey => this.tabs.get(uniqueKey)?.modified);
         if (modifiedTabs.length > 0) {
             const result = confirm(window.i18n.t('tabs.closeOtherConfirm', { count: modifiedTabs.length }));
             if (!result) return;
         }
 
-        tabsToClose.forEach(fileName => {
-            this.closeTab(fileName, { skipCloseConfirm: true });
+        tabsToClose.forEach(uniqueKey => {
+            const tabData = this.tabs.get(uniqueKey);
+            this.closeTab(tabData?.fileName || uniqueKey, { skipCloseConfirm: true, uniqueKeyOverride: uniqueKey });
         });
     }
 
@@ -5332,11 +5362,19 @@ void hello() {
 
             if (this.tabs.has(newKey) && newKey !== actualOldKey) {
                 const dup = this.tabs.get(newKey);
+                if (dup?.modified) {
+                    // 重名 tab 有未保存内容：不能静默丢弃，至少要留下痕迹
+                    logWarn('重命名目标已存在且该标签页有未保存内容，重命名后的内容将覆盖它:', newFileName || newKey);
+                }
                 try {
+                    const editorManager = this.monacoEditorManager || window.monacoEditorManager || window.editorManager;
+                    if (dup?.tabId && typeof editorManager?.cleanupEditor === 'function') {
+                        editorManager.cleanupEditor(dup.tabId);
+                    }
                     if (dup && dup.element && dup.element.parentNode) {
                         dup.element.parentNode.removeChild(dup.element);
                     }
-                } catch (_) { }
+                } catch (e) { logWarn('清理重名标签页失败:', e); }
                 this.tabs.delete(newKey);
             }
 
@@ -5349,6 +5387,21 @@ void hello() {
                 tabData.fileName = newFileName;
             }
             this.tabs.set(newKey, tabData);
+
+            // group.tabs 的 key 与 group.activeTabKey 都以 uniqueKey 为准，必须同步迁移，
+            // 否则分组内找不到该 tab
+            try {
+                for (const group of this.groups.values()) {
+                    if (!(group.tabs instanceof Map)) continue;
+                    if (group.tabs.has(actualOldKey)) {
+                        group.tabs.delete(actualOldKey);
+                        group.tabs.set(newKey, tabData);
+                    }
+                    if (group.activeTabKey === actualOldKey) {
+                        group.activeTabKey = newKey;
+                    }
+                }
+            } catch (e) { logWarn('同步分组结构失败:', e); }
 
             try {
                 let tabEl = tabData.element;
@@ -5369,9 +5422,13 @@ void hello() {
                 if (tabOrderIndex !== -1) {
                     this.tabOrder[tabOrderIndex] = newFileName;
                 }
-                if (this.activeTabKey === newKey || this.activeTabKey === actualOldKey) {
-                    this.activeTab = newFileName;
-                }
+            }
+
+            // activeTabKey 必须跟着迁移：它悬空指向已删除的 key 时，
+            // 依赖它的自动保存/编译路径会静默 return
+            if (this.activeTabKey === actualOldKey || this.activeTabKey === newKey) {
+                this.activeTabKey = newKey;
+                this.activeTab = tabData.fileName;
             }
 
             try {
