@@ -36,6 +36,11 @@ const LSP_REQUEST_TIMEOUT_MS = 30000;
 const LSP_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 // 诊断推送节流窗口：同一 uri 的 publishDiagnostics 在窗口内只下发最新一份
 const LSP_DIAGNOSTICS_THROTTLE_MS = 60;
+// 内存采样间隔：设了内存上限时需要较密地盯 MLE，没设上限只为上报峰值。
+// Windows 上每次采样都要 spawn 一次 tasklist，间隔过密会让一次批量测试
+// 产生几十次进程创建，8 worker 并行时更甚。
+const MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT = 500;
+const MEMORY_SAMPLE_INTERVAL_MS_PLAIN = 2000;
 // 语言包在进程生命周期内只读盘解析一次：切换语言时主进程与渲染层会各请求一次，
 // 打开语言列表也会用到同一份数据
 const LANG_FILE_CACHE = new Map();
@@ -5480,7 +5485,9 @@ function setupIPC() {
             childProcess.on('spawn', () => {
                 startTime = performance.now();
                 sampleMemory();
-                memoryTimer = setInterval(sampleMemory, 200);
+                memoryTimer = setInterval(sampleMemory, memoryLimitBytes > 0
+                    ? MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT
+                    : MEMORY_SAMPLE_INTERVAL_MS_PLAIN);
                 try { logInfo('[运行程序][启动] 子进程已启动'); } catch (_) { }
             });
 
@@ -5898,7 +5905,9 @@ function setupIPC() {
                 finish();
             });
 
-            memoryTimer = setInterval(sampleMemory, 200);
+            memoryTimer = setInterval(sampleMemory, memoryLimitBytes > 0
+                ? MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT
+                : MEMORY_SAMPLE_INTERVAL_MS_PLAIN);
             sampleMemory();
         });
     });
