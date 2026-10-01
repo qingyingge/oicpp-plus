@@ -218,6 +218,7 @@ int main(int argc, char** argv)
     CloseHandle(processInfo.hThread);
     CloseHandle(processInfo.hProcess);
 
+    PrintConsoleLine(L"");
     PrintConsoleLine(L"-----------------------------------------------");
     PrintConsoleFormat(L"\u6267\u884c\u65f6\u95f4\uff1a%llu.%03llu ms",
         static_cast<unsigned long long>(elapsedMs / 1000),
@@ -235,6 +236,7 @@ int main(int argc, char** argv)
         static_cast<unsigned long long>(exitCode),
         static_cast<unsigned long long>(exitCode));
     PrintConsoleLine(L"\u8bf7\u6309\u4efb\u610f\u952e\u7ee7\u7eed...");
+    PrintConsoleLine(L"");
     _getch();
 
     return static_cast<int>(exitCode);
