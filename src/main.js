@@ -10690,7 +10690,8 @@ async function startDebugSession(filePath, options = {}) {
         if (isDebugging || (gdbDebugger && gdbDebugger.isRunning)) {
             logInfo('[主进程] 停止当前调试会话...');
             await stopDebugSession();
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // stopDebugSession 内部已等 gdb 退出，这里只留极短的句柄/tty 释放余量
+            await new Promise(resolve => setTimeout(resolve, 100));
         }
 
         if (!fs.existsSync(filePath)) {
@@ -10993,7 +10994,8 @@ async function stopDebugSession() {
 
         if (gdbDebugger && gdbDebugger.isRunning) {
             await gdbDebugger.stop();
-            await new Promise(r => setTimeout(r, 200));
+            // stop() 内部已等 gdb 进程退出，额外等待仅作极短余量
+            await new Promise(r => setTimeout(r, 100));
         }
 
         isDebugging = false;
