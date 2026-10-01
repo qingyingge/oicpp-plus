@@ -5286,8 +5286,12 @@ function setupIPC() {
             if (!skipPreKill && process.platform === 'win32') {
                 const target = typeof executablePath === 'string' ? executablePath : '';
                 if (target) {
-                    await killByExePathWindows(require('path').resolve(target));
-                    await killConsolePauserForTargetWindows(require('path').resolve(target));
+                    const resolvedTarget = require('path').resolve(target);
+                    // 两个清理动作互不依赖，并发执行省掉一次 PowerShell 冷启的等待
+                    await Promise.all([
+                        killByExePathWindows(resolvedTarget),
+                        killConsolePauserForTargetWindows(resolvedTarget)
+                    ]);
                 }
             }
         } catch (_) { }
@@ -8766,8 +8770,10 @@ async function runExecutable(options) {
     try {
         if (process.platform === 'win32') {
             const abs = require('path').resolve(executablePath);
-            await killByExePathWindows(abs);
-            await killConsolePauserForTargetWindows(abs);
+            await Promise.all([
+                killByExePathWindows(abs),
+                killConsolePauserForTargetWindows(abs)
+            ]);
         }
     } catch (_) { }
 
@@ -10714,9 +10720,12 @@ async function startDebugSession(filePath, options = {}) {
         }
 
         try {
-            await killImageWindows('gdb.exe');
-            await killByExePathWindows(executablePath);
-            await killConsolePauserForTargetWindows(executablePath);
+            // 三个清理动作互不依赖，并发执行省掉两次串行 PowerShell/WMI 查询
+            await Promise.all([
+                killImageWindows('gdb.exe'),
+                killByExePathWindows(executablePath),
+                killConsolePauserForTargetWindows(executablePath)
+            ]);
         } catch (_) { }
 
         if (!fs.existsSync(executablePath)) {
