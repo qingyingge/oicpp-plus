@@ -3115,6 +3115,18 @@ class OICPPApp {
         logInfo('[调试状态]', message);
     }
 
+    // 调试面板的所有文本都来自被调试进程的 gdb 输出，属攻击者可控输入，
+    // 未转义直接拼进 innerHTML 即为渲染进程 XSS。变量面板之外，
+    // 调用栈（function/file/line）与状态/错误文案走的是同一路径。
+    escapeDebugHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     showDebugInfo(message) {
         const container = document.getElementById('debug-variables');
         if (container) {
@@ -3136,8 +3148,8 @@ class OICPPApp {
             }
             
             infoElement.innerHTML = `
-                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">${window.i18n?.t?.('debug.debugStatus')}</h4>
-                <p style="margin: 0; white-space: pre-line;">${message}</p>
+                <h4 style="margin: 0 0 8px 0; color: #4fc3f7;">${this.escapeDebugHtml(window.i18n?.t?.('debug.debugStatus'))}</h4>
+                <p style="margin: 0; white-space: pre-line;">${this.escapeDebugHtml(message)}</p>
             `;
         }
     }
@@ -3244,11 +3256,11 @@ class OICPPApp {
             frameElement.innerHTML = `
                 <div class="frame-info">
                     <span class="frame-index">#${index}</span>
-                    <span class="frame-function">${frame.function || window.i18n.t('debug.unknownFunction')}</span>
+                    <span class="frame-function">${this.escapeDebugHtml(frame.function || window.i18n.t('debug.unknownFunction'))}</span>
                 </div>
                 <div class="frame-location">
-                    <span class="frame-file">${frame.file || window.i18n.t('debug.unknownFile')}</span>
-                    ${frame.line ? `<span class="frame-line">:${frame.line}</span>` : ''}
+                    <span class="frame-file">${this.escapeDebugHtml(frame.file || window.i18n.t('debug.unknownFile'))}</span>
+                    ${frame.line ? `<span class="frame-line">:${this.escapeDebugHtml(frame.line)}</span>` : ''}
                 </div>
             `;
             
@@ -3261,10 +3273,10 @@ class OICPPApp {
         if (container) {
             container.innerHTML = `
                 <div class="debug-error-message" style="padding: 16px; color: #f44747;">
-                    <p><strong>${window.i18n.t('debug.debugErrorTitle')}</strong></p>
-                    <p>${message}</p>
+                    <p><strong>${this.escapeDebugHtml(window.i18n.t('debug.debugErrorTitle'))}</strong></p>
+                    <p>${this.escapeDebugHtml(message)}</p>
                     <p style="margin-top: 8px; font-size: 11px; color: #cccccc;">
-                        ${window.i18n.t('debug.debugErrorHint')}
+                        ${this.escapeDebugHtml(window.i18n.t('debug.debugErrorHint'))}
                     </p>
                 </div>
             `;

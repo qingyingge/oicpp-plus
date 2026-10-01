@@ -631,7 +631,7 @@ class CloudSyncPanel {
         }
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: ('dialog.selectUploadFile'),
+                title: window.i18n?.t?.('dialog.selectUploadFile'),
                 properties: ['openFile'],
                 filters: [
                     {
@@ -683,7 +683,7 @@ class CloudSyncPanel {
         }
         try {
             const result = await window.electronAPI.showOpenDialog({
-                title: ('dialog.selectUploadFolder'),
+                title: window.i18n?.t?.('dialog.selectUploadFolder'),
                 properties: ['openDirectory']
             });
             const folderPath = result?.filePaths?.[0];

@@ -4786,45 +4786,6 @@ class TabManager {
         this.activeTab = 'Welcome';
     }
 
-    getWelcomePageContent() {
-        const t = (key, params) => window.i18n?.t?.(key, params) || key;
-        return `
-            <div class="welcome-page">
-                <div class="welcome-header">
-                    <img class="welcome-logo-image" alt="OICPP-Plus Logo">
-                    <div class="welcome-logo">OICPP-Plus</div>
-                    <div class="welcome-subtitle">${t('welcome.subtitle')}</div>
-                    <div class="welcome-version">${t('app.version')} 1.5.4 (v49)</div>
-                </div>
-                
-                <div class="welcome-content">
-                    <div class="welcome-section">
-                        <h3>${t('welcome.getStarted')}</h3>
-                        <div class="welcome-actions">
-                            <a href="#" class="welcome-action" data-action="open-folder">
-                                <span class="icon" data-ui-icon="folder" aria-hidden="true"></span>
-                                <span>${t('welcome.openFolder')}</span>
-                                <span class="shortcut">Ctrl+K</span>
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="welcome-section">
-                        <h3>${t('welcome.recentFiles')}</h3>
-                        <div class="welcome-recent" id="welcome-recent">
-                            <!-- 最近文件列表将动态生成 -->
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="welcome-footer">
-                    <p>${t('welcome.footer')}</p>
-                    <p><a href="#">${t('welcome.docs')}</a> | <a href="#">${t('welcome.shortcuts')}</a> | <a href="#">${t('welcome.about')}</a></p>
-                </div>
-            </div>
-        `;
-    }
-
     showWelcomeContent() {
         const editorArea = document.querySelector('.editor-area');
         if (editorArea) {
@@ -5223,6 +5184,34 @@ void hello() {
         this.activateTab('Welcome');
     }
 
+    // 欢迎页原先把版本号硬编码成 '1.5.4 (v49)'，发版后不会变。
+    // build-info.json 由主进程 require，渲染层读不到，这里在首次需要时取一次并缓存。
+    getBuildVersionLabel() {
+        if (this._welcomeVersionLabel) return this._welcomeVersionLabel;
+        const fallback = '1.5.4 (v49)';
+        this._welcomeVersionLabel = fallback;
+        if (window.electronAPI?.getBuildInfo) {
+            Promise.resolve(window.electronAPI.getBuildInfo())
+                .then((info) => {
+                    const version = typeof info?.version === 'string' ? info.version.trim() : '';
+                    const tag = info?.buildTag || info?.buildVersion || info?.buildNo;
+                    if (!version) return;
+                    let label = version;
+                    if (!/\(v[^)]+\)/i.test(label) && typeof tag === 'string' && tag.trim()) {
+                        const normalizedTag = tag.trim().startsWith('v') ? tag.trim() : `v${tag.trim()}`;
+                        label = `${label} (${normalizedTag})`;
+                    }
+                    this._welcomeVersionLabel = label;
+                    // 已渲染的欢迎页同步刷新
+                    document.querySelectorAll('.welcome-version').forEach((el) => {
+                        el.textContent = `${window.i18n?.t?.('app.version') || ''} ${label}`;
+                    });
+                })
+                .catch(() => { });
+        }
+        return this._welcomeVersionLabel;
+    }
+
     getWelcomePageContent() {
         const t = (key, params) => window.i18n?.t?.(key, params) || key;
         return `
@@ -5231,7 +5220,7 @@ void hello() {
                     <img class="welcome-logo-image" alt="OICPP-Plus Logo">
                     <div class="welcome-logo">OICPP-Plus</div>
                     <div class="welcome-subtitle">${t('welcome.subtitle')}</div>
-                    <div class="welcome-version">${t('app.version')} 1.5.4 (v49)</div>
+                    <div class="welcome-version">${t('app.version')} ${this.getBuildVersionLabel()}</div>
                 </div>
                 
                 <div class="welcome-content">
@@ -5259,7 +5248,7 @@ void hello() {
                 
                 <div class="welcome-footer">
                     <p>${t('welcome.footer')}</p>
-                    <p>${t('app.version')} 1.5.4 (v49), Copyright (C) 2025 mywwzh. Modified by qingyingge.</p>
+                    <p>${t('app.version')} ${this.getBuildVersionLabel()}, Copyright (C) 2025 mywwzh. Modified by qingyingge.</p>
                 </div>
             </div>
         `;
