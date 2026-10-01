@@ -7128,9 +7128,19 @@ async function readFileContent(filePath) {
             throw new Error(t('error.fileNotFound'));
         }
 
-        const buffer = fs.readFileSync(normalizedPath);
+        const buffer = await fs.promises.readFile(normalizedPath);
 
-        const isBinary = buffer.some(byte => byte === 0 || (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13));
+        // 二进制探测只采样头部 64KB：文本文件头部无 NUL/控制字符，
+        // 二进制文件（可执行/图片/压缩包）头部必有，避免对整个大文件逐字节回调
+        const probeLength = Math.min(buffer.length, 65536);
+        let isBinary = false;
+        for (let i = 0; i < probeLength; i++) {
+            const byte = buffer[i];
+            if (byte === 0 || (byte < 32 && byte !== 9 && byte !== 10 && byte !== 13)) {
+                isBinary = true;
+                break;
+            }
+        }
 
         if (isBinary) {
             throw new Error(t('error.unsupportedBinary'));
