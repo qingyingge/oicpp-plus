@@ -74,7 +74,16 @@
     "gdbAvailable": "GDB可用: {version}",
     "gdbMissing": "GDB调试器未安装或不可用。请安装GDB调试器以使用调试功能。",
     "gdbUnavailable": "GDB调试器不可用: {error}。请安装GDB调试器以使用调试功能。",
-    "gdbCheckTimeout": "GDB检查超时。请确保GDB调试器已正确安装。"
+    "gdbCheckTimeout": "GDB检查超时。请确保GDB调试器已正确安装。",
+    "loginFailedTitle": "登录失败",
+    "loginBadSource": "非法回调来源。",
+    "loginNotFoundTitle": "未找到",
+    "loginBadPath": "回调路径无效。",
+    "loginStateMismatch": "状态校验失败。",
+    "loginBadParams": "回调参数不完整或服务标识不匹配。",
+    "loginVerifyFailed": "验证失败。",
+    "debugReadyWithBreakpoints": "调试器已启动，程序已加载断点，点击继续执行开始调试",
+    "debugReadyNoBreakpoints": "调试器已启动，程序已准备就绪，点击继续执行开始运行"
   },
   "meta": {
     "name": "中文（简体）",

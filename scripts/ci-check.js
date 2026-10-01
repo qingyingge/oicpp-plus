@@ -1118,16 +1118,19 @@ console.log(`\n${Y}[I6] Referenced key resolution${R}`);
 {
   const refKeys = new Set();
   const scanFiles = [...jsFiles, ...htmlFiles].filter((f) => !f.startsWith(langDir));
-  // 同时匹配 i18n.t('k') 与 window.i18n?.t?.('k')：
-  // 可选链是 AGENTS.md 认可的写法，严格口径对它完全不可见，
-  // 会导致「键被删/改名」不告警（裸 key 上屏）
-  const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*)?t\s*(?:\?\s*\.\s*)?\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  // 覆盖 i18n.t('k') / i18n?.t?.('k') / i18n?.t('k') / i18n.t?.('k') 四种连接形态：
+  // 可选链是 AGENTS.md 认可的写法，历史上严格口径对它不可见，导致键被删/改名
+  // 不告警（裸 key 上屏）且不计入引用。连接点必须写成 (?:\?\s*\.\s*|\.\s*)，
+  // 不能只写可选的那一支 —— 否则常规的 i18n.t('k') 反而匹配不上。
+  // 用命名捕获组，四种形态共用一个 key 组。
+  const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*|\.\s*)t\s*(?:\?\s*\.\s*)?\(\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const bareCallRe = /(?<![.\w])t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const attrRe = /data-i18n(?:-[a-z]+)?\s*=\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   for (const f of scanFiles) {
     const content = readFile(f);
     if (!content) continue;
-    for (const re of [callRe, bareCallRe, attrRe]) {
+    for (const m of content.matchAll(callRe)) refKeys.add(m.groups.key);
+    for (const re of [bareCallRe, attrRe]) {
       for (const m of content.matchAll(re)) refKeys.add(m[1]);
     }
   }
@@ -1151,13 +1154,14 @@ console.log(`\n${Y}[I7] Unused keys${R}`);
 if (localeCodes.length >= 1) {
   const base = locales[localeCodes[0]];
   const refKeys = new Set();
-  const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*)?t\s*(?:\?\s*\.\s*)?\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*|\.\s*)t\s*(?:\?\s*\.\s*)?\(\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const bareCallRe = /(?<![.\w])t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const attrRe = /data-i18n(?:-[a-z]+)?\s*=\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   for (const f of [...jsFiles, ...htmlFiles].filter((x) => !x.startsWith(langDir))) {
     const content = readFile(f);
     if (!content) continue;
-    for (const re of [callRe, bareCallRe, attrRe]) for (const m of content.matchAll(re)) refKeys.add(m[1]);
+    for (const m of content.matchAll(callRe)) refKeys.add(m.groups.key);
+    for (const re of [bareCallRe, attrRe]) for (const m of content.matchAll(re)) refKeys.add(m[1]);
   }
   const unused = Object.keys(base).filter((k) => !refKeys.has(k));
   info(`${unused.length} of ${Object.keys(base).length} keys are not statically referenced (dynamic lookups are not detected)`);

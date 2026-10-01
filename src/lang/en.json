@@ -74,7 +74,16 @@
     "gdbAvailable": "GDB available: {version}",
     "gdbMissing": "GDB is not installed or unavailable. Install GDB to use the debugging feature.",
     "gdbUnavailable": "GDB is unavailable: {error}. Install GDB to use the debugging feature.",
-    "gdbCheckTimeout": "The GDB check timed out. Make sure GDB is installed correctly."
+    "gdbCheckTimeout": "The GDB check timed out. Make sure GDB is installed correctly.",
+    "loginFailedTitle": "Sign-in failed",
+    "loginBadSource": "Invalid callback source.",
+    "loginNotFoundTitle": "Not found",
+    "loginBadPath": "Invalid callback path.",
+    "loginStateMismatch": "State verification failed.",
+    "loginBadParams": "Incomplete callback parameters or service mismatch.",
+    "loginVerifyFailed": "Verification failed.",
+    "debugReadyWithBreakpoints": "Debugger started with breakpoints loaded. Click continue to start debugging",
+    "debugReadyNoBreakpoints": "Debugger started and the program is ready. Click continue to run"
   },
   "meta": {
     "name": "English",

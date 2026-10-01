@@ -1248,7 +1248,7 @@ async function handleIdeLoginCallback(req, res) {
 
     if (!isLocalAddress(req.socket?.remoteAddress)) {
         logWarn('[登录] 回调来源非法:', { remoteAddress: req.socket?.remoteAddress || '' });
-        sendLoginHtml(res, '登录失败', '非法回调来源。', 403);
+        sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginBadSource'), 403);
         clearIdeLoginServer();
         return;
     }
@@ -1256,7 +1256,7 @@ async function handleIdeLoginCallback(req, res) {
     const reqUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
     if (reqUrl.pathname !== '/callback') {
         logWarn('[登录] 回调路径无效:', { path: reqUrl.pathname || '' });
-        sendLoginHtml(res, '未找到', '回调路径无效。', 404);
+        sendLoginHtml(res, t('main.loginNotFoundTitle'), t('main.loginBadPath'), 404);
         return;
     }
 
@@ -1271,7 +1271,7 @@ async function handleIdeLoginCallback(req, res) {
 
     if (!state || state !== ideLoginState) {
         logWarn('[登录] 状态校验失败:', { hasState: !!state, match: state === ideLoginState });
-        sendLoginHtml(res, '登录失败', '状态校验失败。');
+        sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginStateMismatch'));
         broadcastIdeLoginError('状态校验失败');
         clearIdeLoginServer();
         return;
@@ -1285,7 +1285,7 @@ async function handleIdeLoginCallback(req, res) {
             hasToken: !!token,
             service: service || ''
         });
-        sendLoginHtml(res, '登录失败', '回调参数不完整或服务标识不匹配。');
+        sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginBadParams'));
         broadcastIdeLoginError('回调参数不完整');
         clearIdeLoginServer();
         return;
@@ -1299,7 +1299,7 @@ async function handleIdeLoginCallback(req, res) {
                 code: verifyResult?.code,
                 error: verifyResult?.error || verifyResult?.message || ''
             });
-            sendLoginHtml(res, '登录失败', verifyResult?.error || '验证失败。');
+            sendLoginHtml(res, t('main.loginFailedTitle'), verifyResult?.error || t('main.loginVerifyFailed'));
             broadcastIdeLoginError(verifyResult?.error || '验证失败');
             clearIdeLoginServer();
             return;
@@ -1317,7 +1317,7 @@ async function handleIdeLoginCallback(req, res) {
                 hasVerifyLoginToken: !!verifyResult?.login_token,
                 hasVerifyToken: !!verifyResult?.token
             });
-            sendLoginHtml(res, '登录失败', '未获取到登录凭证。');
+            sendLoginHtml(res, t('main.loginFailedTitle'), '未获取到登录凭证。');
             broadcastIdeLoginError('未获取到登录凭证');
             clearIdeLoginServer();
             return;
@@ -1342,7 +1342,7 @@ async function handleIdeLoginCallback(req, res) {
         clearIdeLoginServer();
     } catch (err) {
         logError('[登录] 验证请求失败:', err?.message || err);
-        sendLoginHtml(res, '登录失败', '验证请求失败。');
+        sendLoginHtml(res, t('main.loginFailedTitle'), '验证请求失败。');
         broadcastIdeLoginError('验证请求失败');
         clearIdeLoginServer();
     }
@@ -10730,8 +10730,8 @@ async function startDebugSession(filePath, options = {}) {
             mainWindow.webContents.send('debug-ready-waiting', {
                 hasBreakpoints: hasBreakpoints,
                 message: hasBreakpoints ?
-                    '调试器已启动，程序已加载断点，点击继续执行开始调试' :
-                    '调试器已启动，程序已准备就绪，点击继续执行开始运行'
+                    t('main.debugReadyWithBreakpoints') :
+                    t('main.debugReadyNoBreakpoints')
             });
         }
 
