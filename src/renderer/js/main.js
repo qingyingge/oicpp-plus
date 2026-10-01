@@ -3180,18 +3180,27 @@ class OICPPApp {
     createVariableElement(name, data, scope) {
         const element = document.createElement('div');
         element.className = 'variable-item';
-        
+
         const hasChildren = data.children && data.children.length > 0;
-        
+
+        // name/type/value 全部来自被调试进程的 gdb 输出，属攻击者可控输入，
+        // 未转义直接拼进 innerHTML 即为渲染进程 XSS
+        const escapeHtml = (value) => String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+
         element.innerHTML = `
             <div class="variable-header">
                 ${hasChildren ? '<span class="expand-toggle">▶</span>' : '<span class="expand-spacer"></span>'}
-                <span class="variable-name" title="${data.type || 'unknown'}">${name}</span>
-                <span class="variable-value" title="${data.value || ''}">${this.formatVariableValue(data)}</span>
-                ${scope === 'watch' ? `<button class="remove-watch-btn" title="${window.i18n?.t?.('debug.removeWatch')}">×</button>` : ''}
+                <span class="variable-name" title="${escapeHtml(data.type || 'unknown')}">${escapeHtml(name)}</span>
+                <span class="variable-value" title="${escapeHtml(data.value || '')}">${escapeHtml(this.formatVariableValue(data))}</span>
+                ${scope === 'watch' ? `<button class="remove-watch-btn" title="${escapeHtml(window.i18n?.t?.('debug.removeWatch'))}">×</button>` : ''}
             </div>
         `;
-        
+
         return element;
     }
 

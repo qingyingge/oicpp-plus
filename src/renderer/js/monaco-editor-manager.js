@@ -6548,12 +6548,19 @@ class MonacoEditorManager {
 
     async formatCppCode() {
         try {
-            const model = this.currentEditor?.getModel?.();
-            if (!model || model.isDisposed?.()) return false;
+            // 守卫对象必须与作用对象是同一个：await 期间可能已切 tab，
+            // 此时 currentEditor 已是 B，而 model/range 仍来自 A
+            const editor = this.currentEditor;
+            const model = editor?.getModel?.();
+            if (!editor || !model || model.isDisposed?.()) return false;
             const content = await this.requestClangFormattedCode(model);
-            if (content === null || model.isDisposed?.()) return false;
+            if (content === null) return false;
+            if (this.currentEditor !== editor || editor.getModel?.() !== model || model.isDisposed?.()) {
+                logWarn('[clang-format] 格式化期间编辑器已切换，丢弃结果');
+                return false;
+            }
 
-            this.currentEditor.executeEdits('clang-format', [{
+            editor.executeEdits('clang-format', [{
                 range: model.getFullModelRange(),
                 text: content
             }]);

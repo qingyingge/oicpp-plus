@@ -8,6 +8,15 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+// 超时判定只看错误码，不匹配 message 文案（AGENTS.md 登记的反模式：
+// 文案一改判定就静默失配）。axios 超时给 ECONNABORTED，Node 层给 ETIMEDOUT，
+// fetch/axios 取消给 AbortError。
+function isTimeoutError(error) {
+    if (!error) return false;
+    if (error.name === 'AbortError' || error.name === 'TimeoutError') return true;
+    return error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT';
+}
+
 class CompilerSettings {
     constructor() {
         this.settings = {
@@ -534,7 +543,7 @@ class CompilerSettings {
             if (controller !== this._compilerListAbort) {
                 return;
             }
-            if (error && (error.name === 'AbortError' || /timeout|timed out|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
+            if (isTimeoutError(error)) {
                 logError('获取编译器列表超时:', error);
                 compilerList.innerHTML = `
                     <div class="error-message">
@@ -742,7 +751,7 @@ class CompilerSettings {
     async downloadCompiler(compiler) {
         logInfo('[编译器设置] 开始下载编译器流程:', compiler);
 
-        const downloadBtn = document.querySelector(`button.download-btn[data-version="${compiler.version}"]`);
+        const downloadBtn = this.findListItem('compiler', compiler.version)?.querySelector('button.download-btn') || null;
         if (!downloadBtn) {
             logError('[编译器设置] 未找到下载按钮，compiler.version:', compiler.version);
             return;
@@ -827,28 +836,14 @@ class CompilerSettings {
                     
                     logInfo(`开始重置所有编译器状态，当前选择版本: ${version}`);
                     
-                    const allCompilerItems = document.querySelectorAll('.compiler-item');
+                    const allCompilerItems = this.getListItems('compiler');
                     logInfo(`找到 ${allCompilerItems.length} 个编译器项`);
-                    
+
                     allCompilerItems.forEach(item => {
-                        let itemVersion = item.dataset.version || null;
-                        
-                        if (!itemVersion) {
-                            const versionEl = item.querySelector('[data-version]');
-                            if (versionEl) {
-                                itemVersion = versionEl.getAttribute('data-version');
-                            }
-                        }
-                        
-                        if (!itemVersion) {
-                            const buttonEl = item.querySelector('button[data-version]');
-                            if (buttonEl) {
-                                itemVersion = buttonEl.getAttribute('data-version');
-                            }
-                        }
-                        
+                        const itemVersion = this.getItemVersion(item);
+
                         logInfo(`编译器项版本: ${itemVersion}，当前选择: ${version}`);
-                        
+
                         if (itemVersion) {
                             if (itemVersion !== version) {
                                 if (item.classList.contains('selected') || item.querySelector('.selected-status')) {
@@ -1042,34 +1037,35 @@ class CompilerSettings {
         });
     }
 
+    // 编译器列表与 testlib 列表共用 .compiler-item class，且同处一个设置窗口，
+    // 任何 document 级查询都会把另一类列表的行一起改写（按钮被清掉且需重开弹窗才恢复），
+    // 因此查找一律按容器作用域。
+    getListContainer(kind) {
+        return document.getElementById(kind === 'testlib' ? 'testlib-list' : 'compiler-list');
+    }
+
+    getListItems(kind) {
+        const container = this.getListContainer(kind);
+        return container ? [...container.querySelectorAll('.compiler-item')] : [];
+    }
+
+    getItemVersion(item) {
+        if (!item) return null;
+        if (item.dataset && item.dataset.version) return item.dataset.version;
+        const versionEl = item.querySelector('[data-version]');
+        return versionEl ? versionEl.getAttribute('data-version') : null;
+    }
+
+    findListItem(kind, version) {
+        if (!version) return null;
+        return this.getListItems(kind).find((item) => this.getItemVersion(item) === version) || null;
+    }
+
     refreshCompilerItemState(version, newState) {
         logInfo(`刷新编译器项状态: ${version} -> ${newState}`);
-        
-        let compilerItem = null;
-        
-        const versionEl = document.querySelector(`[data-version="${version}"]`);
-        if (versionEl) {
-            compilerItem = versionEl.closest('.compiler-item');
-        }
-        
-        if (!compilerItem) {
-            const buttonEl = document.querySelector(`button[data-version="${version}"]`);
-            if (buttonEl) {
-                compilerItem = buttonEl.closest('.compiler-item');
-            }
-        }
-        
-        if (!compilerItem) {
-            const allItems = document.querySelectorAll('.compiler-item');
-            for (const item of allItems) {
-                const infoDiv = item.querySelector('.compiler-info');
-                if (infoDiv && infoDiv.textContent.includes(version)) {
-                    compilerItem = item;
-                    break;
-                }
-            }
-        }
-        
+
+        const compilerItem = this.findListItem('compiler', version);
+
         if (!compilerItem) {
             logWarn(`未找到编译器项: ${version}`);
             return;
@@ -1091,7 +1087,7 @@ class CompilerSettings {
                 compilerItem.classList.add('downloaded');
                 compilerItem.classList.remove('selected');
                 actionsDiv.innerHTML = `
-                    <button class="select-btn" data-version="${version}">${window.i18n.t('compiler.select')}</button>
+                    <button class="select-btn" data-version="${escapeHtml(version)}">${window.i18n.t('compiler.select')}</button>
                     <span class="status downloaded-status">${window.i18n.t('compiler.downloaded')}</span>
                 `;
                 const selectBtn = actionsDiv.querySelector('.select-btn');
@@ -1260,25 +1256,29 @@ class CompilerSettings {
                 const testlibDiv = document.createElement('div');
                 testlibDiv.className = `compiler-item ${isDownloaded ? 'downloaded' : ''} ${isSelected ? 'selected' : ''}`;
                 
-                const downloadUrl = testlib.downloadUrl.startsWith('http') 
-                    ? testlib.downloadUrl 
-                    : `https://oicpp.mywwzh.top${testlib.downloadUrl}`;
-                
+                // 远端字段名不统一（编译器用 download_url，testlib 用 downloadUrl），两种都认；
+                // 可选链兜住缺字段，避免单个字段缺失把整个面板变成「网络错误」
+                const rawUrl = testlib?.downloadUrl || testlib?.download_url || '';
+                const downloadUrl = rawUrl.startsWith('http')
+                    ? rawUrl
+                    : `https://oicpp.mywwzh.top${rawUrl}`;
+
                 const versionLabel = window.i18n.t('compiler.versionSelectedPrefix');
-                const sizeLabel = window.i18n.t('compiler.testlibSize', { size: testlib.file_size_mb });
+                const sizeLabel = window.i18n.t('compiler.testlibSize', { size: testlib.file_size_mb ?? '-' });
+                testlibDiv.dataset.version = testlib.version;
                 testlibDiv.innerHTML = `
                     <div class="compiler-info">
-                        <h4>${testlib.name}</h4>
-                        <p>${versionLabel} ${testlib.version}</p>
-                        <p>${testlib.description}</p>
+                        <h4>${escapeHtml(testlib.name)}</h4>
+                        <p>${versionLabel} ${escapeHtml(testlib.version)}</p>
+                        <p>${escapeHtml(testlib.description)}</p>
                         <span class="platform">${sizeLabel}</span>
                     </div>
                     <div class="compiler-actions">
-                        ${isSelected ? 
+                        ${isSelected ?
                             '<span class="status selected-status">' + (window.i18n.t('compiler.selected')) + '</span>' :
-                            isDownloaded ? 
-                                '<button class="select-btn" data-version="' + testlib.version + '">' + (window.i18n.t('compiler.select')) + '</button>' :
-                                '<button class="download-btn" data-url="' + downloadUrl + '" data-version="' + testlib.version + '" data-name="' + testlib.name + '">' + (window.i18n.t('compiler.download')) + '</button>'
+                            isDownloaded ?
+                                '<button class="select-btn" data-version="' + escapeHtml(testlib.version) + '">' + (window.i18n.t('compiler.select')) + '</button>' :
+                                '<button class="download-btn" data-url="' + escapeHtml(downloadUrl) + '" data-version="' + escapeHtml(testlib.version) + '" data-name="' + escapeHtml(testlib.name) + '">' + (window.i18n.t('compiler.download')) + '</button>'
                         }
                         ${isDownloaded ? '<span class="status downloaded-status">' + (window.i18n.t('compiler.downloaded')) + '</span>' : ''}
                     </div>
@@ -1293,7 +1293,7 @@ class CompilerSettings {
             if (controller !== this._testlibListAbort) {
                 return;
             }
-            if (error && (error.name === 'AbortError' || /timeout|timed out|超时|ECONNABORTED/i.test(error && error.message ? error.message : ''))) {
+            if (isTimeoutError(error)) {
                 logError('获取Testlib列表超时:', error);
                 testlibList.innerHTML = `
                     <div class="error-message">
@@ -1352,7 +1352,7 @@ class CompilerSettings {
     }
     
     async downloadTestlib(testlib) {
-        const downloadBtn = document.querySelector(`button.download-btn[data-version="${testlib.version}"]`);
+        const downloadBtn = this.findListItem('testlib', testlib.version)?.querySelector('button.download-btn') || null;
         if (!downloadBtn) return;
         
         try {
@@ -1365,9 +1365,10 @@ class CompilerSettings {
             }), 'info');
             
             if (window.electronAPI && window.electronAPI.downloadTestlib) {
-                const fullUrl = testlib.downloadUrl.startsWith('http') 
-                    ? testlib.downloadUrl 
-                    : `https://oicpp.mywwzh.top${testlib.downloadUrl}`;
+                const testlibUrl = testlib?.downloadUrl || testlib?.download_url || '';
+                const fullUrl = testlibUrl.startsWith('http')
+                    ? testlibUrl
+                    : `https://oicpp.mywwzh.top${testlibUrl}`;
                 
                 const result = await window.electronAPI.downloadTestlib({
                     url: fullUrl,
@@ -1419,7 +1420,7 @@ class CompilerSettings {
                         await this.setTestlibPath(result.testlibPath);
                     }
                     
-                    const testlibItems = document.querySelectorAll('.compiler-item');
+                    const testlibItems = this.getListItems('testlib');
                     testlibItems.forEach(item => {
                         const selectBtn = item.querySelector('.select-btn');
                         if (selectBtn) {
@@ -1436,7 +1437,7 @@ class CompilerSettings {
                                 if (item.classList.contains('downloaded')) {
                                     const actionsDiv = item.querySelector('.compiler-actions');
                                     actionsDiv.innerHTML = `
-                                        <button class="select-btn" data-version="${itemVersion}">${window.i18n.t('compiler.select')}</button>
+                                        <button class="select-btn" data-version="${escapeHtml(itemVersion)}">${window.i18n.t('compiler.select')}</button>
                                         <span class="status downloaded-status">${window.i18n.t('compiler.downloaded')}</span>
                                     `;
                                     const newSelectBtn = actionsDiv.querySelector('.select-btn');
