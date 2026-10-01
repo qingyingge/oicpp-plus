@@ -1598,7 +1598,7 @@ class CodeComparer {
                     errorTitle.textContent = window.i18n.t('compare.errorRuntime');
                 } else if (errType === 'output_limit') {
                     errorTitle.textContent = window.i18n.t('compare.errorOutputLimit');
-                } else if (errType === 'worker_crash' || errType === 'engine' || errType === 'exception' || errType === 'fastspawn_fallback') {
+                } else if (errType === 'worker_crash' || errType === 'engine' || errType === 'exception' || errType === 'fastspawn_fallback' || errType === 'incomplete_run') {
                     errorTitle.textContent = window.i18n.t('compare.engineError');
                 } else {
                     errorTitle.textContent = window.i18n.t('compare.foundDiff');
@@ -1740,7 +1740,7 @@ class CodeComparer {
 
     // 'output_limit' 之前不在列表里，会掉进 else 分支被当成 WA 渲染
     isEngineErrorType(errType) {
-        return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'output_limit', 'worker_crash', 'engine', 'exception', 'fastspawn_fallback'].includes(errType);
+        return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'output_limit', 'worker_crash', 'engine', 'exception', 'fastspawn_fallback', 'incomplete_run'].includes(errType);
     }
 
     getEngineErrorLabel(errType, panel) {
@@ -1774,7 +1774,8 @@ class CodeComparer {
         const exitCode = error?.exitCode;
         const map = {
             gen_timeout: 'compare.genTle',
-            gen_error: 'compare.genRunFailed',
+            // 键名是 generatorRunFailed，语言包里没有 compare.genRunFailed
+            gen_error: 'compare.generatorRunFailed',
             gen_exit: 'compare.genExit',
             std_timeout: 'compare.stdTle',
             std_exit: 'compare.stdExit',
@@ -1787,7 +1788,8 @@ class CodeComparer {
             exception: 'compare.engineError',
             engine_start: 'compare.engineError',
             worker_crash: 'compare.engineError',
-            fastspawn_fallback: 'compare.fastspawnFallback'
+            fastspawn_fallback: 'compare.fastspawnFallback',
+            incomplete_run: 'compare.incompleteRun'
         };
         const key = map[code];
         if (!key) return window.i18n.t('compare.engineError');

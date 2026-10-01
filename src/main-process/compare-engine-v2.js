@@ -23,13 +23,19 @@ class CompareEngineV2 extends EventEmitter {
     get state() { return this._state; }
 
     async start(config) {
-        if (this._state === 'running') throw new Error('Engine already running');
+        if (this._state === 'running' || this._state === 'stopping') throw new Error('Engine already running');
         this._state = 'running';
         this._stopRequested = false;
         this._fastspawnErrorForwarded = false;
         this._completed = 0;
         this._total = 0;
         this._errors = 0;
+        // 本次运行的标识。stop() 是 fire-and-forget：旧 worker 的消息可能在
+        // terminate 生效前抵达，若不加归属校验，这些迟到的 progress/error 会被
+        // 算到下一次运行头上（完成数虚高、错误张冠李戴）。
+        this._runId = ++CompareEngineV2._runCounter;
+        const runId = this._runId;
+        const isCurrentRun = () => this._runId === runId;
 
         try {
             const totalTests = Number(config.totalTests);
@@ -83,6 +89,8 @@ class CompareEngineV2 extends EventEmitter {
                         resolve();
                     };
                     const handler = (msg) => {
+                        // 上一轮遗留的迟到消息：不再计入本轮状态，也不再向上广播
+                        if (!isCurrentRun()) { settle(); return; }
                         if (msg.type === 'progress') {
                             this._completed++;
                             this.emit('progress', { current: this._completed, total: this._total, testIndex: msg.testIndex });
@@ -117,7 +125,7 @@ class CompareEngineV2 extends EventEmitter {
                         }
                     };
                     const onWorkerError = (err) => {
-                        if (!this._stopRequested) {
+                        if (isCurrentRun() && !this._stopRequested) {
                             this._errors++;
                             this.emit('error', { testNumber: 0, type: 'worker_crash', message: err.message, input: '' });
                         }
@@ -140,6 +148,23 @@ class CompareEngineV2 extends EventEmitter {
             }
 
             await Promise.all(donePromises);
+
+            // worker 崩溃/提前退出时，它负责的那批测试根本没跑完，
+            // 但完成数只统计了真正跑过的。不指出这点，UI 会显示
+            // 「已完成 N 组」并给出 100% 覆盖率，缺口不可见。
+            if (isCurrentRun() && this._state === 'running' && this._completed < this._total) {
+                this.emit('warning', {
+                    testNumber: 0,
+                    type: 'incomplete_run',
+                    code: 'incomplete_run',
+                    // 不在此处拼英文文案：只给计数，由渲染层按 i18n 组装
+                    completed: this._completed,
+                    total: this._total,
+                    missing: this._total - this._completed,
+                    message: '',
+                    input: ''
+                });
+            }
 
             if (this._state === 'stopping') {
                 this.emit('stopped', { total: this._total, completed: this._completed, failed: this._errors });

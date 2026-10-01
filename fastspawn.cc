@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <errno.h>
 #include <time.h>
 #include <pthread.h>
@@ -55,8 +56,11 @@ static void drainAppend(DrainBuf* b, const char* data, size_t n) {
 
 // Drain stdout and stderr concurrently via poll(), bounded by deadlineMs.
 // Returns 0 when both pipes reach EOF, -3 on timeout (child killed & reaped).
+// truncatedOut/truncatedErr 回报是否因超过 MAX_OUTPUT 而丢弃了数据：
+// 不回报的话调用方会拿残缺输出判等，且完全无从察觉。
 static int drainBoth(int outFd, int errFd, int64_t deadlineMs, pid_t pid,
-                     char** out, size_t* outLen, char** errOut, size_t* errLen) {
+                     char** out, size_t* outLen, char** errOut, size_t* errLen,
+                     int* truncatedOut, int* truncatedErr) {
     DrainBuf ob = { NULL, 0, 0, 0 }, eb = { NULL, 0, 0, 0 };
     int outOpen = 1, errOpen = 1;
     for (;;) {
@@ -78,6 +82,8 @@ static int drainBoth(int outFd, int errFd, int64_t deadlineMs, pid_t pid,
             *out = ob.buf; *outLen = ob.len;
             if (errOut) { *errOut = eb.buf; *errLen = eb.len; }
             else if (eb.buf) free(eb.buf);
+            if (truncatedOut) *truncatedOut = ob.drop;
+            if (truncatedErr) *truncatedErr = eb.drop;
             return -3;
         }
         int to = (remain > 500) ? 500 : (int)remain;
@@ -104,6 +110,8 @@ static int drainBoth(int outFd, int errFd, int64_t deadlineMs, pid_t pid,
     *out = ob.buf; *outLen = ob.len;
     if (errOut) { *errOut = eb.buf; *errLen = eb.len; }
     else if (eb.buf) free(eb.buf);
+    if (truncatedOut) *truncatedOut = ob.drop;
+    if (truncatedErr) *truncatedErr = eb.drop;
     return 0;
 }
 
@@ -132,8 +140,9 @@ static int waitpidTimed(pid_t pid, int64_t deadlineMs) {
 }
 
 static int runOne(const char* path, const char* input, size_t inputLen,
-                   int64_t timeoutMs, char** out, size_t* outLen) {
+                   int64_t timeoutMs, char** out, size_t* outLen, int* truncated) {
     *out = NULL; *outLen = 0;
+    if (truncated) *truncated = 0;
     int inPipe[2] = {-1, -1}, outPipe[2] = {-1, -1}, errPipe[2] = {-1, -1};
     if (pipe2(inPipe, O_CLOEXEC) != 0 || pipe2(outPipe, O_CLOEXEC) != 0 || pipe2(errPipe, O_CLOEXEC) != 0) {
         closePair(inPipe); closePair(outPipe); closePair(errPipe);
@@ -162,7 +171,15 @@ static int runOne(const char* path, const char* input, size_t inputLen,
     }
 
     close(inPipe[0]); close(outPipe[1]); close(errPipe[1]);
-    int64_t deadlineMs = nowMs() + timeoutMs;
+    // timeoutMs <= 0 表示「不限时」，与 main.js run-program 的 useTimeouts 语义一致：
+    //   const useTimeouts = Number.isFinite(effectiveTimeLimit) && effectiveTimeLimit > 0;
+    // 原先直接 nowMs() + timeoutMs，0 会让 deadlineMs == nowMs()，drainBoth 首次进入
+    // remain <= 0 立刻 SIGKILL，std/test 双双判超时 —— 清零时限想跑无限制对拍时
+    // 每一组都 TLE，而回退到 child_process 路径又正常，两套引擎行为分裂。
+    // 这里把不限时映射为 INT64_MAX：poll 的超时仍按 500ms 一段走（由 remain>500
+    // 决定），只是不再有整体截止时间。不能用有限大数替代，长时间对拍仍会误杀。
+    const int64_t NO_DEADLINE = INT64_MAX;
+    int64_t deadlineMs = (timeoutMs > 0) ? (nowMs() + timeoutMs) : NO_DEADLINE;
     fcntl(inPipe[1], F_SETFL, fcntl(inPipe[1], F_GETFL, 0) | O_NONBLOCK);
 
     if (input && inputLen > 0) {
@@ -173,8 +190,17 @@ static int runOne(const char* path, const char* input, size_t inputLen,
             if (errno == EINTR) continue;
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 struct pollfd writeFd = { inPipe[1], POLLOUT, 0 };
-                int64_t remain = deadlineMs - nowMs();
-                if (remain <= 0 || poll(&writeFd, 1, (int)(remain > 50 ? 50 : remain)) <= 0) {
+                int64_t remain = (deadlineMs == NO_DEADLINE) ? -1 : (deadlineMs - nowMs());
+                // 不限时：无限期等 POLLOUT（-1）。原先固定 50ms 一段，poll 返回 0
+                // 就 SIGKILL —— 子进程只是暂时没读（负载高 / 磁盘慢），输入稍大的
+                // 对拍数据会被误杀，且表现为静默截断的 stdin。
+                int wr = (remain < 0) ? poll(&writeFd, 1, -1)
+                                      : poll(&writeFd, 1, (remain > 50 ? 50 : (int)remain));
+                if (deadlineMs != NO_DEADLINE && remain <= 0) {
+                    kill(-pid, SIGKILL);
+                    break;
+                }
+                if (wr <= 0 && errno != EINTR) {
                     kill(-pid, SIGKILL);
                     break;
                 }
@@ -187,8 +213,10 @@ static int runOne(const char* path, const char* input, size_t inputLen,
 
     char* outBuf = NULL; size_t outLen_ = 0;
     char* errBuf = NULL; size_t errLen = 0;
+    int truncatedOut = 0, truncatedErr = 0;
     int code;
-    if (drainBoth(outPipe[0], errPipe[0], deadlineMs, pid, &outBuf, &outLen_, &errBuf, &errLen) == -3) {
+    if (drainBoth(outPipe[0], errPipe[0], deadlineMs, pid, &outBuf, &outLen_, &errBuf, &errLen,
+                  &truncatedOut, &truncatedErr) == -3) {
         code = -3;
     } else {
         int status = 0;
@@ -209,6 +237,7 @@ static int runOne(const char* path, const char* input, size_t inputLen,
     close(outPipe[0]); close(errPipe[0]);
     if (errBuf) free(errBuf);
     *out = outBuf; *outLen = outLen_;
+    if (truncated) *truncated = (truncatedOut || truncatedErr) ? 1 : 0;
     return code;
 }
 
@@ -220,11 +249,12 @@ struct RunPairArg {
     int code;
     char* out;
     size_t outLen;
+    int truncated;
 };
 
 static void* runPairThread(void* arg) {
     RunPairArg* a = (RunPairArg*)arg;
-    a->code = runOne(a->path, a->input, a->inputLen, a->timeoutMs, &a->out, &a->outLen);
+    a->code = runOne(a->path, a->input, a->inputLen, a->timeoutMs, &a->out, &a->outLen, &a->truncated);
     return NULL;
 }
 
@@ -254,13 +284,17 @@ static napi_value Run(napi_env env, napi_callback_info info) {
     if (argc > 2) { int64_t v; if (napi_get_value_int64(env, argv[2], &v) == napi_ok) timeoutMs = v; }
 
     char* outBuf = NULL; size_t outLen = 0;
-    int code = runOne(pathBuf, input, inputLen, timeoutMs, &outBuf, &outLen);
+    int truncated = 0;
+    int code = runOne(pathBuf, input, inputLen, timeoutMs, &outBuf, &outLen, &truncated);
     free(pathBuf);
 
     napi_value result, rCode, rOut;
     napi_create_object(env, &result);
     napi_create_int64(env, code, &rCode);
     napi_set_named_property(env, result, "code", rCode);
+    napi_value rTrunc;
+    napi_get_boolean(env, truncated ? true : false, &rTrunc);
+    napi_set_named_property(env, result, "truncated", rTrunc);
     void* bufData = NULL;
     napi_create_buffer_copy(env, outLen, outBuf, &bufData, &rOut);
     napi_set_named_property(env, result, "output", rOut);
@@ -299,8 +333,8 @@ static napi_value RunPair(napi_env env, napi_callback_info info) {
     int64_t timeoutMs = 10000;
     if (argc > 3) { int64_t v; if (napi_get_value_int64(env, argv[3], &v) == napi_ok) timeoutMs = v; }
 
-    RunPairArg arg1 = { path1, input, inputLen, timeoutMs, 0, NULL, 0 };
-    RunPairArg arg2 = { path2, input, inputLen, timeoutMs, 0, NULL, 0 };
+    RunPairArg arg1 = { path1, input, inputLen, timeoutMs, 0, NULL, 0, 0 };
+    RunPairArg arg2 = { path2, input, inputLen, timeoutMs, 0, NULL, 0, 0 };
 
     pthread_t t1, t2;
     int p1 = pthread_create(&t1, NULL, runPairThread, &arg1);
@@ -309,8 +343,8 @@ static napi_value RunPair(napi_env env, napi_callback_info info) {
     if (p1 != 0 || p2 != 0) {
         if (p1 == 0) pthread_join(t1, NULL);
         if (p2 == 0) pthread_join(t2, NULL);
-        if (p1 != 0) { arg1.code = runOne(path1, input, inputLen, timeoutMs, &arg1.out, &arg1.outLen); }
-        if (p2 != 0) { arg2.code = runOne(path2, input, inputLen, timeoutMs, &arg2.out, &arg2.outLen); }
+        if (p1 != 0) { arg1.code = runOne(path1, input, inputLen, timeoutMs, &arg1.out, &arg1.outLen, &arg1.truncated); }
+        if (p2 != 0) { arg2.code = runOne(path2, input, inputLen, timeoutMs, &arg2.out, &arg2.outLen, &arg2.truncated); }
     } else {
         pthread_join(t1, NULL);
         pthread_join(t2, NULL);
@@ -326,6 +360,10 @@ static napi_value RunPair(napi_env env, napi_callback_info info) {
     napi_set_named_property(env, result, "code1", r);
     napi_create_int64(env, arg2.code, &r);
     napi_set_named_property(env, result, "code2", r);
+
+    napi_value rTrunc;
+    napi_get_boolean(env, (arg1.truncated || arg2.truncated) ? true : false, &rTrunc);
+    napi_set_named_property(env, result, "truncated", rTrunc);
 
     void* bufData1 = NULL;
     napi_create_buffer_copy(env, arg1.outLen, arg1.out, &bufData1, &r);

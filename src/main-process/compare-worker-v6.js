@@ -97,6 +97,13 @@ function killProc(proc) { terminateProcessTree(proc); }
 
 function writeInput(proc, input) {
     return new Promise((resolve) => {
+        // 子进程可能在读完输入前就退出（编译失败、std 先崩），此时 write 触发
+        // EPIPE。stdin 是 EventEmitter，没有 error 监听就会变成未捕获异常，
+        // 直接打崩整个 worker（一组测试失败 → 剩余测试组全部丢失）。
+        // 必须在 write 之前挂上。
+        try {
+            proc.stdin.on('error', () => { resolve(false); });
+        } catch (_) { /* stdin 不可用时下面自然失败 */ }
         try {
             if (proc.stdin.destroyed || proc.stdin.writableEnded) { resolve(false); return; }
             proc.stdin.write(input);
@@ -121,7 +128,16 @@ function runFast(exePath, input, timeout) {
     }
     const t0 = Date.now();
     const r = fast.run(exePath, input, timeout);
-    return { code: r.code, output: r.output, timeout: r.code === -3, error: r.code === -3 ? 'TLE' : null, ms: Date.now() - t0 };
+    // 截断标志由 native 侧回报。原先靠 output.length >= MAX_WORKER_OUTPUT_BYTES 猜，
+    // 而 native 的 MAX_OUTPUT(64MB) 与 JS 的 MAX_WORKER_OUTPUT_BYTES(32MB) 不等，
+    // 落在两者之间的截断完全察觉不到，会拿残缺输出判等。
+    return {
+        code: r.code, output: r.output,
+        outputTruncated: !!r.truncated,
+        timeout: r.code === -3,
+        error: r.code === -3 ? 'TLE' : null,
+        ms: Date.now() - t0
+    };
 }
 
 function runFastPair(stdPath, testPath, input, timeout) {
@@ -134,8 +150,9 @@ function runFastPair(stdPath, testPath, input, timeout) {
     return {
         code1: r.code1, code2: r.code2,
         out1: r.out1, out2: r.out2,
-        truncated1: !!r.out1 && r.out1.length >= MAX_WORKER_OUTPUT_BYTES,
-        truncated2: !!r.out2 && r.out2.length >= MAX_WORKER_OUTPUT_BYTES,
+        // 同上：以 native 回传的 truncated 为准，不用长度猜
+        truncated1: !!r.truncated,
+        truncated2: !!r.truncated,
         ms
     };
 }

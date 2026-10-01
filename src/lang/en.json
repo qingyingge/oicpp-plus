@@ -896,6 +896,7 @@
     "errorOutputLimit": "Output exceeds limit (OLE)",
     "errorOutputLimitDetail": "Program output exceeded the limit; this test case was terminated",
     "fastspawnFallback": "fastspawn is unavailable, fell back to Node child_process",
+    "incompleteRun": "The comparison did not finish every test group: {error}. The number of completed groups is not the total progress",
     "noExportResults": "No error results to export",
     "selectExportDir": "Select Export Directory",
     "exportedTo": "Test data exported to: {dir}",

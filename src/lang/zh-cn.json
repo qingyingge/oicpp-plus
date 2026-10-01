@@ -875,6 +875,7 @@
     "errorOutputLimit": "输出超过限制（OLE）",
     "errorOutputLimitDetail": "程序输出超过上限，已终止该组测试",
     "fastspawnFallback": "fastspawn 不可用，已回退到 Node child_process 模式",
+    "incompleteRun": "对拍未完成全部测试组：{error}。已跑完的组数不代表总进度",
     "noExportResults": "没有可导出的错误结果",
     "selectExportDir": "选择导出目录",
     "exportedTo": "测试数据已导出到: {dir}",
