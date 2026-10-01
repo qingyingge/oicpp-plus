@@ -977,6 +977,10 @@ const I18N_EN_PUNCT_BASELINE = 1;
 // 用"源码任意位置出现过的 dotted 字面量"作口径而非 I7 的 t('key') 口径：后者
 // 认不出 t(c ? 'a' : 'b')、_t(key, fb)、t(el.dataset.i18n) 这类动态查表，会把
 // 大量在用键误报成孤儿。宽松口径只会高估引用、不会低估，因此 ratchet 方向安全。
+// 2026-10-01：删除 tabs.js 中重复的第二份 getWelcomePageContent 后，
+// welcome.about / welcome.docs / welcome.shortcuts 三个键失去了唯一的
+// 引用点（原先只被那份死代码引用）。存量下降 3，baseline 随之下调。
+// 取 tests/i18n.test.js 的口径（更严格：只扫 src，键名全字符类）算出的值。
 const I18N_ORPHAN_KEY_BASELINE = 203;
 
 const langDir = path.join(root, 'src', 'lang');
@@ -1094,21 +1098,34 @@ if (locales.en) {
 // parenthesized string behind, which silently renders the key name to the user.
 // The lowercase dotted shape is what keeps this signal free of false positives;
 // `('key')` is a no-op regardless of whether the key exists in the packs.
+// 两种形态都要拦：`= ('k')` 赋值与 `k: ('key')` 对象属性。
+// 只拦前者时，3 处裸 key（原生对话框标题 x2、编译输出诊断位置 x1）从 CI 漏了过去。
 console.log(`\n${Y}[I5] No-op t() residue${R}`);
 {
   const allKeys = new Set();
   for (const flat of Object.values(locales)) for (const k of Object.keys(flat)) allKeys.add(k);
-  const residueRe = /(?<![=!<>+\-*/&|%?:])\s=\s*\(\s*['"]([a-z][\w]*(?:\.[a-zA-Z][\w]*)+)['"]\s*\)\s*;?\s*$/gm;
-  let residue = 0;
+  const residueRes = [
+    /(?<![=!<>+\-*/&|%?:])\s=\s*\(\s*['"]([a-z][\w]*(?:\.[a-zA-Z][\w]*)+)['"]\s*\)\s*;?\s*$/gm,
+    /(^|[,{]\s*)([A-Za-z_$][\w$]*)\s*:\s*\(\s*['"]([a-z][\w]*(?:\.[a-zA-Z][\w]*)+)['"]\s*\)/gm
+  ];
+  const hits = new Map();
   for (const f of [...jsFiles, ...htmlFiles]) {
     const content = readFile(f);
     if (!content) continue;
-    for (const m of content.matchAll(residueRe)) {
-      const line = content.slice(0, m.index).split('\n').length;
-      const unknown = allKeys.has(m[1]) ? '' : ' (and the key is not in any language pack)';
-      fail(`${path.relative(root, f)}:${line} assigns ('${m[1]}') instead of calling t() — renders the raw key${unknown}`);
-      residue++;
+    for (const re of residueRes) {
+      for (const m of content.matchAll(re)) {
+        const key = m[m.length - 1];
+        const line = content.slice(0, m.index).split('\n').length;
+        const loc = `${path.relative(root, f)}:${line}`;
+        if (!hits.has(loc)) hits.set(loc, key);
+      }
     }
+  }
+  let residue = 0;
+  for (const [loc, key] of hits) {
+    const unknown = allKeys.has(key) ? '' : ' (and the key is not in any language pack)';
+    fail(`${loc} has a bare parenthesized key ('${key}') instead of calling t() — renders the raw key${unknown}`);
+    residue++;
   }
   if (residue === 0) ok('no no-op t() residue');
 }
@@ -1201,31 +1218,58 @@ console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
   // CJK is only the pre-JS default that _applyToDOM overwrites. Counting it would keep the
   // ratchet permanently stuck on a backlog that no migration batch can ever clear.
   const alreadyMigratedRe = /data-i18n(-[a-z]+)?\s*=/;
-  // This project calls t() with a third "fallback" argument (renderer main.js:52 and
-  // compile-manager.js:3 both define t(key, params, fallback)), so a Chinese literal in
-  // that slot is a deliberate last-resort string shown only when i18n is unavailable --
-  // it is already gated behind a translation lookup, not hardcoded output. The check must
-  // look at the line with those call arguments removed, otherwise every migrated call
-  // site with a Chinese fallback reads as a fresh regression.
+  // 渲染层/主进程用 `t(...) || '兜底'` 形态：中文兜底串在语言包里查不到键时
+  // 才会用到，本身不是硬编码输出。所以判定时要把 t() 调用连同其后的
+  // 一个 `|| '字面量'` 一起剥掉，否则每个迁移过的调用点都算成新回归。
+  //
+  // 但这个豁免必须收紧：t() 查不到键时返回键名本身（非空、truthy），
+  // `|| 兜底` 永远不触发，屏幕上出现的是裸 key 而不是兜底文案。
+  // 也就是说「键写错 + 中文兜底」是 CI 全绿却显示裸 key 的组合。
+  // 因此只有当该行 t() 的键确实存在于语言包时才豁免。
   const stripTFallback = (line) => line
     .replace(/\b(?:window\s*\.\s*)?(?:i18n|i18next|__|this)\s*(?:\?\.|\.)\s*t\s*(?:\?\.|\.)?\s*\((?:[^()]|\([^()]*\))*\)(?:\s*\|\|\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\([^()]*\)|[A-Za-z_$][\w.$]*))?/g, 't()')
     .replace(/(?<![.\w])t\s*\((?:[^()]|\([^()]*\))*\)/g, 't()');
+  const packKeys = new Set();
+  for (const flat of Object.values(locales)) for (const k of Object.keys(flat)) packKeys.add(k);
+  // 行上出现的 t() 键（字面量形式）是否都真实存在于语言包
+  const tKeysOnLine = (line) => {
+    const keys = [];
+    const keyRe = /(?:\bi18n|\bi18next|\b__|\bthis)\s*(?:\?\.|\.)\s*t\s*(?:\?\.|\.)?\s*\(\s*['"]([a-z][\w]*(?:\.[a-zA-Z][\w]*)+)['"]/g;
+    let m;
+    while ((m = keyRe.exec(line)) !== null) keys.push(m[1]);
+    const bareRe = /(?<![.\w])t\s*\(\s*['"]([a-z][\w]*(?:\.[a-zA-Z][\w]*)+)['"]/g;
+    while ((m = bareRe.exec(line)) !== null) keys.push(m[1]);
+    return keys;
+  };
+  const missingKeys = [];
   let count = 0;
   const byFile = {};
   for (const f of [...jsFiles, ...htmlFiles]) {
     const content = readFile(f);
     if (!content) continue;
+    const lineNo = (idx) => content.slice(0, idx).split('\n').length;
     for (const line of content.split('\n')) {
       if (!/[\u4e00-\u9fff]/.test(line)) continue;
       if (/log(Error|Warn|Info|Debug)/.test(line)) continue;      // logs are developer-facing
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;             // comments
       if (alreadyMigratedRe.test(line)) continue;                // already has a data-i18n-* hook
-      if (!/[\u4e00-\u9fff]/.test(stripTFallback(line))) continue; // CJK only lives in a t() fallback
+      if (!/[\u4e00-\u9fff]/.test(stripTFallback(line))) {
+        // 中文只存在于 t() 兜底里 —— 但键写错时兜底永远不生效，会显示裸 key
+        const unknown = tKeysOnLine(line).filter((k) => !packKeys.has(k));
+        if (unknown.length > 0) {
+          const rel = path.relative(root, f);
+          missingKeys.push(`${rel}: ${unknown.join(', ')}`);
+        }
+        continue;
+      }
       if (!userVisibleRe.test(line)) continue;                  // not user-facing
       count++;
       const rel = path.relative(root, f);
       byFile[rel] = (byFile[rel] || 0) + 1;
     }
+  }
+  if (missingKeys.length > 0) {
+    fail(`t() key(s) not in any language pack on a line whose CJK is exempted as a fallback — the fallback never renders, the raw key does: ${missingKeys.join(' | ')}`);
   }
   if (count > I18N_HARDCODED_CJK_BASELINE) {
     fail(`${count} user-visible hardcoded CJK lines (baseline ${I18N_HARDCODED_CJK_BASELINE}, +${count - I18N_HARDCODED_CJK_BASELINE}) — migrate to t() or lower the baseline`);

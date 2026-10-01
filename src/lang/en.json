@@ -1554,10 +1554,7 @@
     "openFolder": "Open Folder",
     "recentFiles": "Recent Files",
     "noRecentFiles": "No recent files",
-    "footer": "OICPP-Plus - Built for competitive programming",
-    "docs": "Documentation",
-    "shortcuts": "Shortcuts",
-    "about": "About"
+    "footer": "OICPP-Plus - Built for competitive programming"
   },
   "fileHistory": {
     "title": "File History",

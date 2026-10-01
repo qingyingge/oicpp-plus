@@ -1554,10 +1554,7 @@
     "openFolder": "打开文件夹",
     "recentFiles": "最近打开",
     "noRecentFiles": "暂无最近文件",
-    "footer": "OICPP-Plus - 为竞赛编程而生",
-    "docs": "使用文档",
-    "shortcuts": "快捷键",
-    "about": "关于"
+    "footer": "OICPP-Plus - 为竞赛编程而生"
   },
   "fileHistory": {
     "title": "文件历史",

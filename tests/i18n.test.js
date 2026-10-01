@@ -114,7 +114,13 @@ if (packs['zh-cn'] && packs.en) {
     check('ci-check still defines the t()-fallback strip used by I8', !!stripMatch);
     check('ci-check I8 skips lines carrying a data-i18n-* hook', /alreadyMigratedRe\.test\(line\)/.test(ciSource));
     check('ci-check I8 re-tests the line after stripping t() calls',
-        /if \(!\/\[\\u4e00-\\u9fff\]\/\.test\(stripTFallback\(line\)\)\) continue;/.test(ciSource));
+        /if \(!\/\[\\u4e00-\\u9fff\]\/\.test\(stripTFallback\(line\)\)\)/.test(ciSource));
+    // 豁免收紧：t() 查不到键时返回键名本身（非空 truthy），`|| 兜底` 永远不触发，
+    // 屏幕上出现的是裸 key。所以只有键确实存在于语言包时才允许豁免。
+    check('ci-check I8 only exempts the fallback when the t() key exists in the packs',
+        /const missingKeys = \[\]/.test(ciSource) &&
+        /tKeysOnLine\(line\)\.filter\(\(k\) => !packKeys\.has\(k\)\)/.test(ciSource) &&
+        /missingKeys\.length > 0/.test(ciSource));
 
     if (stripMatch) {
         // 箭头函数体是隐式返回的 `line\n .replace(..).replace(..)`，抽出来单独编译时要补回 line
