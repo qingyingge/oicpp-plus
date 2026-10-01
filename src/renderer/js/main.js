@@ -4125,6 +4125,14 @@ class OICPPApp {
     startLspIfNeeded() {
         if (!this.editorManager) return;
         try {
+            // 无 C/C++ 文件时不启动 clangd，与 editorManager._initLspProactively 的
+            // 判断保持一致：启动 clangd 会派生 g++ --query-driver 子进程并做后台索引，
+            // 与首屏抢 CPU 和磁盘
+            if (!this.editorManager.hasAnyCppModel || !this.editorManager.hasAnyCppModel()) {
+                logInfo('[LSP] 当前无 C/C++ 文件，跳过启动；打开 C/C++ 文件时再启动。');
+                this.updateLspStatusBar();
+                return;
+            }
             // 仅在 LSP 客户端可用时启动
             if (this.editorManager.lspClient || window.lspClient) {
                 this.editorManager.ensureLspReady().then(() => {

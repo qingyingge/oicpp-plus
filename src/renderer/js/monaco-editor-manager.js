@@ -338,13 +338,18 @@ class MonacoEditorManager {
         }
     }
 
+    // 是否存在已打开的 C/C++ 文件：没有就不必为其它语言启动 clangd
+    hasAnyCppModel() {
+        if (typeof monaco === 'undefined' || !monaco.editor?.getModels) return false;
+        return monaco.editor.getModels().some((model) => {
+            const languageId = model.getLanguageId ? model.getLanguageId() : '';
+            return languageId === 'cpp' || languageId === 'c';
+        });
+    }
+
     _initLspProactively() {
         setTimeout(() => {
-            const hasAnyCppModel = typeof monaco !== 'undefined' && monaco.editor?.getModels?.().some((model) => {
-                const languageId = model.getLanguageId ? model.getLanguageId() : '';
-                return languageId === 'cpp' || languageId === 'c';
-            });
-            if (!hasAnyCppModel) {
+            if (!this.hasAnyCppModel()) {
                 logInfo('[LSP] 未检测到 C/C++ 文件，跳过主动启动；打开文件时再启动。');
                 return;
             }
