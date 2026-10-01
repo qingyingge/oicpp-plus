@@ -8975,18 +8975,24 @@ async function runExecutable(options) {
 app.whenReady().then(() => {
     ensureLegacyDataMigration();
     app.commandLine.appendSwitch('charset', 'utf-8');
-    ensureClangdUserBundle().then((clangdStatus) => {
-        if (clangdStatus.ok) {
-            logInfo('[LSP] 启动时 clangd 就绪:', clangdStatus.root);
-        } else {
-            logWarn('[LSP] 启动时 clangd 未就绪:', clangdStatus.error || 'unknown');
-        }
-    }).catch(() => { });
     createWindow();
 
     // 启动后的空闲时段预热 CPU 核心数，避免对拍器初始化等关键路径上的
     // get-cpu-threads 付出 os.cpus() 的全部同步开销
     scheduleCpuThreadsWarmUp();
+
+    // 首次运行需要把 clangd 包（96MB）拷到用户目录，与渲染层首屏抢磁盘会拖慢启动。
+    // 延后到首屏之后再做；LSP 真正启动时（_startClangdInternal）仍会 await，
+    // 所以这里只是挪时机，不影响可用性。
+    setTimeout(() => {
+        ensureClangdUserBundle().then((clangdStatus) => {
+            if (clangdStatus.ok) {
+                logInfo('[LSP] 启动时 clangd 就绪:', clangdStatus.root);
+            } else {
+                logWarn('[LSP] 启动时 clangd 未就绪:', clangdStatus.error || 'unknown');
+            }
+        }).catch(() => { });
+    }, 3000);
 
     handleCommandLineArgs();
 
