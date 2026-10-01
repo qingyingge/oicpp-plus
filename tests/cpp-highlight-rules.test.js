@@ -99,6 +99,52 @@ if (cppLang) {
     check('关键字表每一项都能在 monarch 里找到', notInMonarch.length === 0, notInMonarch.join(','));
 }
 
+// --- P2-1: 内置类型关键字必须走 keyword 槽，不能走 type 槽 ---
+//
+// 实测 clangd 23.1.0（.opencode/tmp-probe，真实 LSP 交互）：
+//   int/double/float/unsigned/bool/char/void/long/short/signed -> clangd 不发语义 token
+//   if/return/const/static                                     -> clangd 不发语义 token
+//   auto -> type [deduced+defaultLibrary+globalScope]   ← 唯一例外
+//   MyClass -> class [declaration+definition+globalScope]
+//   size_t  -> type [fileScope]
+//
+// 结论：int 等完全由 monarch 决定，monarch token 是 keyword.<kw>。
+// 上一批把它们映射到 colors.type，用户改「关键字」配色时它们纹丝不动 ——
+// 实际读的是「类型」槽。规则命中了，但取错了颜色槽。
+{
+    // 结尾是 `}))` —— .map((kw) => ({ ... })) 后跟分号，两个右括号
+    const kwRuleBlock = syntaxRules.match(/const cppTypeKeywordRules = [\s\S]{0,600}?\}\)\)\;/);
+    check('内置类型关键字规则块可解析', !!kwRuleBlock);
+    if (kwRuleBlock) {
+        const block = kwRuleBlock[0];
+        check('内置类型关键字取 colors.keyword 而非 colors.type',
+            /foreground:\s*this\.toMonacoColorHex\(colors\.keyword\)/.test(block) &&
+            !/colors\.type/.test(block),
+            block.replace(/\s+/g, ' ').slice(0, 200));
+        check('内置类型关键字的 fontStyle 也取 keyword 槽',
+            !/toMonacoFontStyle\(styles\.type\)/.test(block));
+    }
+}
+
+// --- P2-2: auto 由 clangd 发 type[deduced]，必须单独接住 ---
+//
+// Monaco 的语义匹配是 [type].concat(modifiers).join('.')，
+// auto 实际查询串是 type.deduced.defaultLibrary.globalScope。
+// trie 按最长前缀优先，所以只需一条 type.deduced 规则即可命中。
+{
+    check('语义规则含 type.deduced（clangd 对 auto 的实际分类）',
+        /(^|[\s{,])'type\.deduced':/.test(semanticRules) || /(^|[\s{,])type\.deduced:/.test(semanticRules),
+        'auto 会落到 type 的 mainRule，与普通 typedef 同色');
+
+    const deduced = semanticRules.match(/'?type\.deduced'?:\s*withStyle\('(\w+)',\s*'(\w+)'\)/);
+    check('type.deduced 映射到 keyword 槽', !!deduced && deduced[1] === 'keyword' && deduced[2] === 'keyword',
+        deduced ? `colorKey=${deduced[1]} styleKey=${deduced[2]}` : '未找到 withStyle 映射');
+
+    // 普通 type（typedef / size_t）仍应是 type 槽，不能被 deduced 规则牵连
+    check('普通 type 规则仍指向 type 槽',
+        /(^|[\s{,])type:\s*withStyle\('type',\s*'type'\)/.test(semanticRules));
+}
+
 // --- P1-3: TextMate 残留与键名漂移的死规则已清除 ---
 for (const dead of ['entity.name.', 'support.class', 'support.type', 'support.function',
     'type.identifier', 'constant.numeric', 'meta.preprocessor', "makeRule('pointer'",

@@ -3055,10 +3055,16 @@ class MonacoEditorManager {
             return rule;
         };
 
+        // 实测 clangd 23.1.0（见 tests/cpp-highlight-rules.test.js 的 P2-1）：
+        // int/double/float/unsigned/bool/char/void 等内置类型，clangd 根本不发
+        // 语义 token，完全由 monarch 决定，token 名是 keyword.<kw>。
+        // 它们是 C++ 关键字（cpp.js 的 keywords 表里有），必须读 keyword 槽 —— 
+        // 原先映射到 colors.type，用户改「关键字」配色时这些词纹丝不动，
+        // 因为规则虽然命中，取的却是「类型」槽的颜色。
         const cppTypeKeywordRules = cppBuiltinTypeKeywords.map((keyword) => ({
             token: `keyword.${keyword}`,
-            foreground: this.toMonacoColorHex(colors.type),
-            ...(this.toMonacoFontStyle(styles.type) ? { fontStyle: this.toMonacoFontStyle(styles.type) } : {})
+            foreground: this.toMonacoColorHex(colors.keyword),
+            ...(this.toMonacoFontStyle(styles.keyword) ? { fontStyle: this.toMonacoFontStyle(styles.keyword) } : {})
         }));
         return [
             makeRule('keyword', 'keyword'),
@@ -3119,10 +3125,23 @@ class MonacoEditorManager {
         // clangd legend（23.1.0）实测发出：variable parameter function method
         // property class interface enum enumMember type namespace typeParameter
         // concept macro modifier operator bracket label comment unknown。
+        //
+        // 实测各词的实际分类（真实 LSP 交互，见 tests 的 P2-2）：
+        //   int/double/float/bool/char/void 等 -> clangd 不发语义 token，走 monarch
+        //   if/return/const/static            -> clangd 不发语义 token，走 monarch
+        //   auto   -> type [deduced+defaultLibrary+globalScope]
+        //   size_t -> type [fileScope]
+        //   MyClass-> class [declaration+definition+globalScope]
+        //
+        // Monaco 匹配的是 [type].concat(modifiers).join('.')，auto 实际查询
+        // type.deduced.defaultLibrary.globalScope；trie 按最长前缀优先，故只需
+        // type.deduced 一条即可命中。auto 是 C++ 关键字，归keyword 槽。
         return Object.entries({
             namespace: withStyle('namespace', 'namespace'),
             type: withStyle('type', 'type'),
             'type.defaultLibrary': withStyle('type', 'type'),
+            // clangd 把 auto 判成 deduced type，但它语义上是关键字
+            'type.deduced': withStyle('keyword', 'keyword'),
             class: withStyle('class', 'class'),
             struct: withStyle('class', 'class'),
             interface: withStyle('class', 'class'),
