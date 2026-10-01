@@ -5307,7 +5307,7 @@ function setupIPC() {
 
             const stdoutChunks = [];
             const stderrChunks = [];
-            const OUTPUT_LIMIT_BYTES = 256 * 1024 * 1024;
+            const OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
             const limitLabel = `${Math.floor(OUTPUT_LIMIT_BYTES / (1024 * 1024))} MB`;
             let combinedOutputBytes = 0;
             let observedOutputBytes = 0;

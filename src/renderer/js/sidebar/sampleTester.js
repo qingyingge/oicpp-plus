@@ -1,4 +1,5 @@
 const MAX_PERSISTED_OUTPUT_BYTES = 1024 * 1024;
+const MAX_RUNTIME_OUTPUT_CHARS = 64 * 1024;
 
 class SampleTester {
     constructor() {
@@ -749,6 +750,9 @@ class SampleTester {
                 const { rawOutput, ...restResult } = s.result;
                 s.result = {
                     ...restResult,
+                    stderr: typeof restResult.stderr === 'string'
+                        ? this.truncateForStorage(restResult.stderr, MAX_PERSISTED_OUTPUT_BYTES)
+                        : restResult.stderr,
                     output: persistedOutput,
                     outputExpanded: !!s.result.outputExpanded,
                     outputSizeBytes,
@@ -2321,9 +2325,9 @@ class SampleTester {
             return {
                 status,
                 output: this.truncateOutput(output),
-                rawOutput: output,
+                rawOutput: this.truncateForStorage(output),
                 expectedOutput: '',
-                stderr: runResult.stderr || '',
+                stderr: this.truncateForStorage(runResult.stderr),
                 outputSizeBytes: this.getOutputSizeBytes(output),
                 outputExpanded: false,
                 time: runResult.time,
@@ -2442,9 +2446,9 @@ class SampleTester {
             return {
                 status: status,
                 output: this.truncateOutput(actualOutput),
-                rawOutput: actualOutput,
+                rawOutput: this.truncateForStorage(actualOutput),
                 expectedOutput,
-                stderr: runResult.stderr || '',
+                stderr: this.truncateForStorage(runResult.stderr),
                 outputSizeBytes: this.getOutputSizeBytes(actualOutput),
                 outputExpanded: false,
                 time: runResult.time,
@@ -2641,9 +2645,9 @@ class SampleTester {
             return {
                 status: status,
                 output: this.truncateOutput(actualOutput),
-                rawOutput: actualOutput,
+                rawOutput: this.truncateForStorage(actualOutput),
                 expectedOutput,
-                stderr: runResult.stderr || '',
+                stderr: this.truncateForStorage(runResult.stderr),
                 outputSizeBytes: this.getOutputSizeBytes(actualOutput),
                 outputExpanded: false,
                 time: runResult.time,
@@ -2890,8 +2894,21 @@ class SampleTester {
         return output;
     }
 
+    // 运行结果常出现数十 MB 的输出（死循环打印等），完整留在内存会拖垮渲染进程，
+    // 故 rawOutput/stderr 只保留前 cap 个字符，超出部分丢弃。
+    truncateForStorage(output, cap = MAX_RUNTIME_OUTPUT_CHARS) {
+        const str = output == null ? '' : String(output);
+        if (str.length <= cap) return str;
+        return str.substring(0, cap) + '\n' + window.i18n.t('tester.outputTruncated');
+    }
+
     getOutputSizeBytes(output) {
         const safeOutput = output == null ? '' : String(output);
+        // 大输出不再整体编码：TextEncoder().encode() 会分配与字符串等大的数组，
+        // 60MB 输出即多占 60MB 峰值，这里改用上界估算。
+        if (safeOutput.length > MAX_RUNTIME_OUTPUT_CHARS) {
+            return safeOutput.length * 2;
+        }
         try {
             return new TextEncoder().encode(safeOutput).length;
         } catch (_) {
