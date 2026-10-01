@@ -719,8 +719,16 @@ class ClangdLspManager {
         // clangd 拉起来，stop 形同虚设。
         const inFlightStart = this._startPromise;
         if (inFlightStart) {
+            // 必须有超时：本函数下方的 kill 路径就有 2s 兜底，这里不能裸 await。
+            // 启动流程里目前每个 await 都保证 settle（拷贝有 catch、探测有超时），
+            // 但那是被调方的实现细节 —— 将来加一个可能挂起的 await（网络下载、
+            // 等某个事件）就会让 stop 静默挂死，而 lsp-restart 是 await stop()，
+            // 整个重启流程会卡住且无任何提示。
             try {
-                await inFlightStart;
+                await Promise.race([
+                    inFlightStart,
+                    new Promise((resolve) => setTimeout(() => resolve('timeout'), 15000))
+                ]);
             } catch (_) { }
         }
         // 停止前把节流窗口内待发的诊断补发出去，避免最后一次诊断丢失
@@ -4890,6 +4898,7 @@ function setupIPC() {
             }
             const normalizedPath = path.resolve(filePath);
             assertSafeIoPath(normalizedPath);
+            assertDeletableInWorkspace(normalizedPath);
             const stat = fs.statSync(normalizedPath);
             previousWatchStates = markLocalDeletion(normalizedPath);
             if (stat.isDirectory()) {
@@ -4922,6 +4931,8 @@ function setupIPC() {
                 }
                 if (options?.overwrite) {
                     assertSafeIoPath(newPath);
+                    // 覆盖即删除既有目标，与删除通道同一套边界
+                    assertDeletableInWorkspace(path.resolve(newPath));
                     fs.rmSync(newPath, { recursive: true, force: true });
                 } else {
                     newPath = getUniquePath(path.dirname(newPath), targetName);
@@ -4943,6 +4954,7 @@ function setupIPC() {
             if (!filePath || typeof filePath !== 'string') throw new Error(t('error.invalidFilePath'));
             const normalizedPath = path.resolve(filePath);
             assertSafeIoPath(normalizedPath);
+            assertDeletableInWorkspace(normalizedPath);
             const stat = fs.statSync(normalizedPath);
             if (stat.isDirectory() && options?.recursive !== true) {
                 throw new Error(t('error.deleteDirNeedsRecursive'));
@@ -5887,14 +5899,15 @@ function setupIPC() {
             await fs.promises.access(filePath, fs.constants.F_OK);
             return true;
         } catch (error) {
-            logInfo(`[主进程] 文件不存在: ${filePath}, 错误: ${error.message}`);
-            try {
-                const exists = fs.existsSync(filePath);
-                return exists;
-            } catch (syncError) {
-                logInfo(`[主进程] 同步检查也失败: ${syncError.message}`);
-                return false;
+            // 只把「确实不存在」当成不存在。EACCES / EPERM / ENAMETOOLONG / EINVAL
+            // （Windows 上含 <>:"|?* 的路径很常见）同样被 existsSync 吞成 false，
+            // 渲染层据此提示「请先编译」，而 exe 其实在。
+            if (error?.code !== 'ENOENT') {
+                logWarn(`[主进程] 检查文件存在性失败（非不存在）: ${filePath}, 错误: ${error.message}`);
+                return true;
             }
+            logInfo(`[主进程] 文件不存在: ${filePath}`);
+            return false;
         }
     });
 
@@ -6445,6 +6458,11 @@ function setupIPC() {
 
             settings.compilerPath = compilerPath;
             saveSettings();
+            // 换编译器后主窗口的 get-all-settings 缓存必须失效：
+            // 否则 1s 内 ensureLspReady 读到旧 compilerPath，用旧编译器拉起 clangd
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('settings-changed', null, settings);
+            }
             return { success: true, compilerPath };
         } catch (error) {
             return { success: false, error: error.message };
@@ -6843,6 +6861,10 @@ function setupIPC() {
 
             settings.testlibPath = testlibPath;
             saveSettings();
+            // 同 select-compiler：改动不进 get-all-settings 缓存的失效路径
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('settings-changed', null, settings);
+            }
 
             logInfo('[选择testlib] 选择成功，已更新设置，testlib路径:', testlibPath);
             return { success: true, testlibPath };
