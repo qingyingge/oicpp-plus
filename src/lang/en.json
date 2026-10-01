@@ -673,7 +673,9 @@
     "testTestlib": "Test Testlib Environment",
     "versionSelectedPrefix": "Version:",
     "platformPrefix": "Platform:",
-    "integratedOnlyHint": "macOS/Linux only supports integrated terminal mode"
+    "integratedOnlyHint": "macOS/Linux only supports integrated terminal mode",
+    "loadSettingsFailed": "Failed to load settings; saving is blocked so your configuration is not overwritten. Restart the settings window and try again.",
+    "saveBlockedLoadFailed": "Settings were not loaded successfully, so saving is blocked to avoid overwriting your configuration. Restart the settings window and try again."
   },
   "tester": {
     "title": "Sample Tester",

@@ -652,7 +652,9 @@
     "testTestlib": "测试 Testlib 环境",
     "versionSelectedPrefix": "版本：",
     "platformPrefix": "平台：",
-    "integratedOnlyHint": "macOS/Linux 仅支持集成终端模式"
+    "integratedOnlyHint": "macOS/Linux 仅支持集成终端模式",
+    "loadSettingsFailed": "读取设置失败，已阻止保存以免覆盖你的配置。请重启设置窗口后重试。",
+    "saveBlockedLoadFailed": "设置未成功加载，已阻止保存以免覆盖你的配置。请重启设置窗口后重试。"
   },
   "tester": {
     "title": "样例测试器",

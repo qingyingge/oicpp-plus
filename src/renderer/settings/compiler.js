@@ -29,6 +29,8 @@ class CompilerSettings {
         this.isIntegratedOnlyPlatform = false;
         this._compilerListAbort = null;
         this._testlibListAbort = null;
+        // loadSettings 成功后才为 true；false 表示加载失败，保存被阻断
+        this._settingsLoaded = true;
         
         this.init();
     }
@@ -59,15 +61,39 @@ class CompilerSettings {
         if (themeFromUrl) {
             this.applyTheme(themeFromUrl);
         }
-        await this.loadSettings();
-        this.isMacPlatform = await this.detectMacPlatform();
-        this.isIntegratedOnlyPlatform = await this.detectIntegratedOnlyPlatform();
+
+        // 平台探测各走一次 IPC，任何一个 reject 都会让整条链断在这里，
+        // setupEventListeners() 不执行 —— 表现是「设置窗口所有按钮都没反应」。
+        // 因此逐项兜底：探测失败用 false，事件绑定无论如何都要跑。
+        try {
+            await this.loadSettings();
+        } catch (error) {
+            logError('[编译器设置] 加载设置失败，使用默认值:', error);
+        }
+        try {
+            this.isMacPlatform = await this.detectMacPlatform();
+        } catch (error) {
+            logError('[编译器设置] 平台探测失败，按非 macOS 处理:', error);
+            this.isMacPlatform = false;
+        }
+        try {
+            this.isIntegratedOnlyPlatform = await this.detectIntegratedOnlyPlatform();
+        } catch (error) {
+            logError('[编译器设置] 集成终端平台探测失败:', error);
+            this.isIntegratedOnlyPlatform = false;
+        }
         if (this.isIntegratedOnlyPlatform) {
             this.settings.runMode = 'integrated-terminal';
         }
+
+        // 事件绑定放在最后且不参与上面的失败链
         this.setupEventListeners();
         this.setupThemeListener();
-        await this.applyCurrentTheme();
+        try {
+            await this.applyCurrentTheme();
+        } catch (error) {
+            logError('[编译器设置] 应用主题失败:', error);
+        }
         this.updateUI();
         this.detectExistingCompiler();
     }
@@ -274,13 +300,8 @@ class CompilerSettings {
             });
         }
         
-        const closeDialogBtn = document.getElementById('close-install-dialog');
-        if (closeDialogBtn) {
-            closeDialogBtn.addEventListener('click', () => {
-                logInfo('[编译器设置] 关闭安装对话框按钮被点击');
-                this.closeInstallDialog();
-            });
-        }
+        // #close-install-dialog 的绑定已在上方完成：
+        // 原先同一函数内对同一按钮绑了两次（当前幂等，后续加动画/埋点即双触发）
     }
 
     async loadSettings() {
@@ -304,8 +325,14 @@ class CompilerSettings {
                 };
             }
             logInfo('编译器设置加载完成:', this.settings);
+            this._settingsLoaded = true;
         } catch (error) {
+            // 加载失败时 this.settings 仍是构造默认值。若继续让 updateUI 把默认值
+            // 写进 input，用户点「保存」就会把默认值整体写回，
+            // 静默改回 -std=c++14 -O2 -static，丢掉 TA 自定义的编译选项。
+            this._settingsLoaded = false;
             logError('加载编译器设置失败:', error);
+            this.showMessage(window.i18n.t('compiler.loadSettingsFailed'), 'error');
         }
     }
 
@@ -585,6 +612,14 @@ class CompilerSettings {
 
     async saveSettings() {
         try {
+            // 设置没加载成功时，input 里显示的是构造默认值而不是用户的真实配置。
+            // 此时保存 = 把默认值整体写回，静默改掉用户的编译选项。必须阻断。
+            if (this._settingsLoaded === false) {
+                this.showMessage(window.i18n.t('compiler.saveBlockedLoadFailed'), 'error');
+                logError('[编译器设置] 设置未成功加载，拒绝保存以免覆盖用户配置');
+                return;
+            }
+
             const compilerPath = document.getElementById('compiler-path').value;
             const pythonInterpreterPath = document.getElementById('python-interpreter-path').value;
             let compilerArgs = document.getElementById('compiler-options').value;
@@ -653,14 +688,26 @@ class CompilerSettings {
     }
 
     async getCurrentPlatform() {
+        // 归一化到 'windows' | 'macos' | 'linux'：主进程 get-platform 直接透传
+        // process.platform（win32 / darwin），而各处过滤是按 windows/macos/linux
+        // 比较的。不归一化的话过滤结果恒为空，只显示「该平台无可用编译器」，
+        // 且没有任何报错。
+        const normalize = (value) => {
+            const v = String(value || '').toLowerCase();
+            if (v.startsWith('win')) return 'windows';
+            if (v.startsWith('darwin') || v.startsWith('mac') || v === 'osx') return 'macos';
+            if (v.startsWith('linux')) return 'linux';
+            return v;
+        };
+
         if (window.electronAPI && window.electronAPI.getPlatform) {
-            return await window.electronAPI.getPlatform();
+            return normalize(await window.electronAPI.getPlatform());
         }
-        
+
         const userAgent = navigator.userAgent.toLowerCase();
-    if (userAgent.includes('win')) return 'windows';
-    if (userAgent.includes('mac')) return 'macos';
-    if (userAgent.includes('linux')) return 'linux';
+        if (userAgent.includes('win')) return 'windows';
+        if (userAgent.includes('mac')) return 'macos';
+        if (userAgent.includes('linux')) return 'linux';
         return 'windows'; // 默认
     }
 
