@@ -11478,7 +11478,8 @@ async function getDebugVariables() {
     }
 
     try {
-        const updated = await gdbDebugger.updateVariables();
+        // silent：结果由调用方推送，避免与 variables-updated 事件重复
+        const updated = await gdbDebugger.updateVariables({ silent: true });
         const variables = gdbDebugger.getVariables();
         return {
             local: variables.local || {},
