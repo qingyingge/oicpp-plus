@@ -41,6 +41,8 @@ const LSP_DIAGNOSTICS_THROTTLE_MS = 60;
 // 产生几十次进程创建，8 worker 并行时更甚。
 const MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT = 500;
 const MEMORY_SAMPLE_INTERVAL_MS_PLAIN = 2000;
+// 环境里是否存在 objdump：不存在时后续调试启动可完全跳过调试信息检查
+let objdumpAvailable = true;
 // 语言包在进程生命周期内只读盘解析一次：切换语言时主进程与渲染层会各请求一次，
 // 打开语言列表也会用到同一份数据
 const LANG_FILE_CACHE = new Map();
@@ -10735,45 +10737,60 @@ async function startDebugSession(filePath, options = {}) {
         try {
             const { spawn } = require('child_process');
 
-            let debugEnv = { ...process.env };
-            const compilerPath = settings.compilerPath || '';
-            if (compilerPath && fs.existsSync(compilerPath)) {
-                const compilerDir = path.dirname(compilerPath);
-                const compilerRoot = path.dirname(compilerDir);
+            if (objdumpAvailable) {
+                let debugEnv = { ...process.env };
+                const compilerPath = settings.compilerPath || '';
+                if (compilerPath && fs.existsSync(compilerPath)) {
+                    const compilerDir = path.dirname(compilerPath);
+                    const compilerRoot = path.dirname(compilerDir);
 
-                const mingwBinPaths = [
-                    compilerDir,
-                    path.join(compilerRoot, 'bin'),
-                    path.join(compilerRoot, 'mingw64', 'bin'),
-                    path.join(compilerRoot, 'mingw32', 'bin')
-                ].filter(p => fs.existsSync(p));
+                    const mingwBinPaths = [
+                        compilerDir,
+                        path.join(compilerRoot, 'bin'),
+                        path.join(compilerRoot, 'mingw64', 'bin'),
+                        path.join(compilerRoot, 'mingw32', 'bin')
+                    ].filter(p => fs.existsSync(p));
 
-                if (mingwBinPaths.length > 0) {
-                    const envPath = [process.env.PATH, ...mingwBinPaths].join(path.delimiter);
-                    debugEnv.PATH = envPath;
+                    if (mingwBinPaths.length > 0) {
+                        const envPath = [process.env.PATH, ...mingwBinPaths].join(path.delimiter);
+                        debugEnv.PATH = envPath;
+                    }
                 }
-            }
 
-            const objdumpProcess = spawn('objdump', ['-h', executablePath], {
-                stdio: 'pipe',
-                env: debugEnv
-            });
-            let hasDebugInfo = false;
+                const objdumpProcess = spawn('objdump', ['-h', executablePath], {
+                    stdio: 'pipe',
+                    env: debugEnv
+                });
+                let hasDebugInfo = false;
 
-            objdumpProcess.stdout.on('data', (data) => {
-                const output = data.toString();
-                if (output.includes('.debug_info') || output.includes('.debug_line')) {
-                    hasDebugInfo = true;
+                objdumpProcess.stdout.on('data', (data) => {
+                    const output = data.toString();
+                    if (output.includes('.debug_info') || output.includes('.debug_line')) {
+                        hasDebugInfo = true;
+                    }
+                });
+
+                await new Promise((resolve) => {
+                    let settled = false;
+                    const done = () => {
+                        if (settled) return;
+                        settled = true;
+                        resolve();
+                    };
+                    objdumpProcess.on('close', done);
+                    // 环境里没有 objdump 时 spawn 立即失败；没有 error 监听会变成
+                    // uncaughtException，且只能等 2 秒兜底超时才继续
+                    objdumpProcess.on('error', (err) => {
+                        objdumpAvailable = false;
+                        logInfo('[主进程] 未找到 objdump，跳过调试信息检查:', err.message);
+                        done();
+                    });
+                    setTimeout(done, 2000); // 2秒超时
+                });
+
+                if (!hasDebugInfo) {
+                    logWarn('[主进程] 警告：可执行文件可能不包含调试信息');
                 }
-            });
-
-            await new Promise((resolve) => {
-                objdumpProcess.on('close', resolve);
-                setTimeout(resolve, 2000); // 2秒超时
-            });
-
-            if (!hasDebugInfo) {
-                logWarn('[主进程] 警告：可执行文件可能不包含调试信息');
             }
         } catch (error) {
             logWarn('[主进程] 无法检查调试信息:', error.message);
