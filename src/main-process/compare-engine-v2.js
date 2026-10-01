@@ -9,6 +9,13 @@ const path = require('path');
 const os = require('os');
 
 class CompareEngineV2 extends EventEmitter {
+    // 轮次序号：start() 用 ++CompareEngineV2._runCounter 分配本轮 _runId，
+    // 配合 isCurrentRun() 把上一轮 worker 的迟到消息挡在门外。
+    // 必须初始化 —— 未初始化时 ++undefined === NaN，而 NaN !== NaN，
+    // isCurrentRun() 恒为 false，会把本轮每条 worker 消息都当成上一轮的
+    // 迟��消息丢弃，表现为对拍秒结束且完成数恒为 0。
+    static _runCounter = 0;
+
     constructor() {
         super();
         this._state = 'idle';
