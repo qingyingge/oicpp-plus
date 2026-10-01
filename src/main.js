@@ -3720,9 +3720,10 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('terminal-write', (_event, terminalId, data) => {
-        const ok = terminalManager.write(terminalId, data);
-        return { ok };
+    // 终端输入走 send 而非 invoke：按键路径上省掉一次跨进程 RTT，
+    // 同一通道内 send 仍是 FIFO，初始化命令与用户命令的先后顺序不受影响
+    ipcMain.on('terminal-write', (_event, terminalId, data) => {
+        terminalManager.write(terminalId, data);
     });
 
     ipcMain.handle('terminal-resize', (_event, terminalId, cols, rows) => {

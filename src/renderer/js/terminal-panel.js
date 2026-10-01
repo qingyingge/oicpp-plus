@@ -470,7 +470,7 @@ class IntegratedTerminalPanel {
             }
 
             try {
-                await window.electronAPI?.writeTerminal?.(remoteId, String(text));
+                window.electronAPI?.writeTerminal?.(remoteId, String(text));
             } catch (_) {
             }
         };
@@ -590,7 +590,7 @@ class IntegratedTerminalPanel {
                 initCmd = '[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false);[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false);chcp 65001 > $null\r';
             }
             try {
-                await window.electronAPI.writeTerminal(terminalId, initCmd);
+                window.electronAPI.writeTerminal(terminalId, initCmd);
             } catch (_) {
             }
         }
@@ -599,7 +599,7 @@ class IntegratedTerminalPanel {
         const startupCommand = this.resolveTerminalStartupCommand();
         if (startupCommand) {
             try {
-                await window.electronAPI.writeTerminal(terminalId, startupCommand + '\r');
+                window.electronAPI.writeTerminal(terminalId, startupCommand + '\r');
             } catch (_) {
             }
         }
@@ -859,7 +859,7 @@ class IntegratedTerminalPanel {
         }
 
         try {
-            await window.electronAPI.writeTerminal(terminalId, text);
+            window.electronAPI.writeTerminal(terminalId, text);
         } catch (_) { }
     }
 
@@ -912,7 +912,7 @@ class IntegratedTerminalPanel {
 
         const session = this.sessions.get(terminalId);
         const command = this.buildRunCommandForShell(executablePath, session?.shell || '', platform);
-        await window.electronAPI.writeTerminal(terminalId, command);
+        window.electronAPI.writeTerminal(terminalId, command);
         return terminalId;
     }
 

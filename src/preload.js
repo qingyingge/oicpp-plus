@@ -485,7 +485,7 @@ const ALLOWED_SEND_CHANNELS = new Set([
     'paste-file', 'move-file',
     'debug-send-input', 'start-debug', 'stop-debug',
     'debug-continue', 'debug-step-over', 'debug-step-into', 'debug-step-out',
-    'debug-add-watch', 'debug-request-variables',
+    'debug-add-watch', 'debug-request-variables', 'terminal-write',
     'open-template-settings', 'check-updates-manual', 'logger-log-batch'
 ]);
 
@@ -507,7 +507,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
     'compile-file', 'run-program', 'run-interactive', 'run-executable', 'check-file-exists', 'format-cpp-code',
-    'get-settings', 'reset-settings', 'export-settings', 'import-settings', 'save-setting', 'get-platform', 'get-user-home', 'get-user-icon-path', 'get-build-info', 'get-downloaded-compilers', 'download-compiler', 'select-compiler', 'get-downloaded-testlibs', 'download-testlib', 'select-testlib', 'test-testlib', 'compare-start', 'compare-stop', 'read-directory', 'rename-file-invoke', 'delete-file-invoke', 'clear-directory-contents', 'write-file', 'create-file', 'create-folder', 'ensure-directory', 'watch-file', 'unwatch-file', 'ensure-dir', 'terminal-feature-status', 'terminal-create', 'terminal-write', 'terminal-resize', 'terminal-kill', 'terminal-list', 'terminal-get-tty', 'get-update-download-status', 'consume-startup-workspace-to-open', 'get-cpu-threads', 'list-client-logs', 'upload-client-log', 'get-device-info', 'get-encoded-token', 'open-external', 'get-language', 'get-available-languages', 'ide-login-start', 'ide-login-status', 'ide-logout', 'cloud-sync-request', 'backup-settings-to-cloud', 'get-settings-backup-info', 'sync-settings-from-cloud', 'get-recent-files', 'open-recent-file', 'get-file-history', 'add-to-file-history', 'open-file-from-history', 'clear-file-history', 'save-last-open-tabs', 'get-last-open-tabs', 'relaunch-app', 'clipboard-write-text', 'clipboard-read-text', 'walk-directory', 'lsp-start', 'lsp-stop', 'lsp-restart', 'lsp-request', 'lsp-cancel', 'lsp-apply-edit-result', 'lsp-notify', 'browser-resolve-url', 'browser-get-page-title',
+    'get-settings', 'reset-settings', 'export-settings', 'import-settings', 'save-setting', 'get-platform', 'get-user-home', 'get-user-icon-path', 'get-build-info', 'get-downloaded-compilers', 'download-compiler', 'select-compiler', 'get-downloaded-testlibs', 'download-testlib', 'select-testlib', 'test-testlib', 'compare-start', 'compare-stop', 'read-directory', 'rename-file-invoke', 'delete-file-invoke', 'clear-directory-contents', 'write-file', 'create-file', 'create-folder', 'ensure-directory', 'watch-file', 'unwatch-file', 'ensure-dir', 'terminal-feature-status', 'terminal-create', 'terminal-resize', 'terminal-kill', 'terminal-list', 'terminal-get-tty', 'get-update-download-status', 'consume-startup-workspace-to-open', 'get-cpu-threads', 'list-client-logs', 'upload-client-log', 'get-device-info', 'get-encoded-token', 'open-external', 'get-language', 'get-available-languages', 'ide-login-start', 'ide-login-status', 'ide-logout', 'cloud-sync-request', 'backup-settings-to-cloud', 'get-settings-backup-info', 'sync-settings-from-cloud', 'get-recent-files', 'open-recent-file', 'get-file-history', 'add-to-file-history', 'open-file-from-history', 'clear-file-history', 'save-last-open-tabs', 'get-last-open-tabs', 'relaunch-app', 'clipboard-write-text', 'clipboard-read-text', 'walk-directory', 'lsp-start', 'lsp-stop', 'lsp-restart', 'lsp-request', 'lsp-cancel', 'lsp-apply-edit-result', 'lsp-notify', 'browser-resolve-url', 'browser-get-page-title',
 ]);
 
 // 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
@@ -741,7 +741,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     getTerminalFeatureStatus: () => safeIpcRenderer.invoke('terminal-feature-status'),
     createTerminal: (options) => safeIpcRenderer.invoke('terminal-create', options),
-    writeTerminal: (terminalId, data) => safeIpcRenderer.invoke('terminal-write', terminalId, data),
+    writeTerminal: (terminalId, data) => safeIpcRenderer.send('terminal-write', terminalId, data),
     resizeTerminal: (terminalId, cols, rows) => safeIpcRenderer.invoke('terminal-resize', terminalId, cols, rows),
     killTerminal: (terminalId) => safeIpcRenderer.invoke('terminal-kill', terminalId),
     listTerminals: () => safeIpcRenderer.invoke('terminal-list'),
