@@ -3031,9 +3031,16 @@ class MonacoEditorManager {
     buildSyntaxColorRules(syntaxColors, syntaxStyles, theme = 'dark') {
         const colors = this.normalizeSyntaxColors(syntaxColors, theme);
         const styles = this.normalizeSyntaxStyles(syntaxStyles);
+        // 必须与 Monaco C++ 语言定义（monaco-editor/esm/vs/languages/definitions/cpp/cpp.js）
+        // 的关键字表对齐：漏一个，同一处声明里两种颜色（auto 是 keyword 色、int 是
+        // type 色）；多列一个 monarch 里不存在的关键字，则该规则永不命中。
+        // size_t / char16_t 这类不是 C++ 关键字，token 是 identifier，由 clangd 的
+        // type / type.defaultLibrary 语义 token 负责上色，不在此列。
         const cppBuiltinTypeKeywords = [
-            'bool', 'char', 'char8_t', 'char16_t', 'char32_t', 'double', 'float', 'int', 'long', 'short',
-            'signed', 'unsigned', 'void', 'wchar_t', 'size_t', 'ssize_t', 'ptrdiff_t'
+            'bool', 'char', 'double', 'float', 'int', 'long', 'short',
+            'signed', 'unsigned', 'void', 'wchar_t',
+            // 原先漏掉：真实关键字但不在表里，导致 auto x = 1 与 int x = 1 颜色不一致
+            'auto', 'decltype', '__int8', '__int16', '__int32', '__int64'
         ];
 
         const makeRule = (token, colorKey) => {
@@ -3055,48 +3062,48 @@ class MonacoEditorManager {
         }));
         return [
             makeRule('keyword', 'keyword'),
-            makeRule('keyword.control', 'keyword'),
-            makeRule('keyword.operator', 'keyword'),
+            // keyword.<具体关键字> 由下面的 cppTypeKeywordRules 逐个覆盖
             makeRule('keyword.directive', 'preprocessor'),
-            makeRule('meta.preprocessor', 'preprocessor'),
-            makeRule('preprocessor', 'preprocessor'),
+            makeRule('keyword.directive.include', 'preprocessor'),
+            makeRule('annotation', 'preprocessor'),
             ...cppTypeKeywordRules,
             makeRule('string', 'string'),
             makeRule('string.escape', 'string'),
             makeRule('number', 'number'),
-            makeRule('constant.numeric', 'number'),
+            // 基座主题有更具体的 number.hex / number.float / number.octal /
+            // number.binary，而 TokenTheme trie 按「最长前缀」优先匹配、与书写顺序
+            // 无关（tokenization.js 的 _match）。不逐个覆盖的话，用户配的数字色对
+            // 0x3f / 0b1010 / 0o17 一律无效。
+            makeRule('number.hex', 'number'),
+            makeRule('number.float', 'number'),
+            makeRule('number.octal', 'number'),
+            makeRule('number.binary', 'number'),
+            // 以下 token 名取自 Monaco C++ 语言定义实际产出的集合
+            // (definitions/cpp/cpp.js)。原先混入的 entity.name.* / support.* /
+            // type.identifier / constant.numeric / meta.preprocessor / pointer /
+            // operator.pointer / localVar / globalVar / variable.local /
+            // variable.global / keyword.control / keyword.operator 都是 TextMate
+            // 时代残留或键名漂移，monarch 永不产出，共 28 条空转规则。
             makeRule('type', 'type'),
-            makeRule('type.identifier', 'type'),
-            makeRule('entity.name.type', 'type'),
-            makeRule('entity.name.type.class', 'class'),
-            makeRule('entity.name.class', 'class'),
-            makeRule('support.class', 'class'),
             makeRule('class', 'class'),
-            makeRule('entity.name.namespace', 'namespace'),
+            makeRule('struct', 'class'),
             makeRule('namespace', 'namespace'),
-            makeRule('support.type', 'type'),
-            makeRule('entity.name.function', 'function'),
-            makeRule('entity.name.function.constructor', 'function'),
-            makeRule('support.function', 'function'),
-            makeRule('support.function.builtin', 'function'),
             makeRule('function', 'function'),
             makeRule('operator', 'operator'),
+            makeRule('variable', 'variable'),
+            makeRule('comment', 'comment'),
+            makeRule('comment.doc', 'comment'),
+            makeRule('string.raw.begin', 'string'),
+            makeRule('string.invalid', 'string'),
             makeRule('delimiter', 'punctuation'),
             makeRule('delimiter.parenthesis', 'punctuation'),
             makeRule('delimiter.square', 'punctuation'),
             makeRule('delimiter.curly', 'punctuation'),
-            makeRule('operator.pointer', 'pointer'),
-            makeRule('pointer', 'pointer'),
-            makeRule('variable', 'variable'),
-            makeRule('variable.local', 'variable'),
-            makeRule('variable.global', 'variable'),
-            makeRule('localVar', 'variable'),
-            makeRule('globalVar', 'variable'),
-            makeRule('comment', 'comment')
+            makeRule('delimiter.angle', 'punctuation')
         ];
     }
 
-    buildSemanticTokenColors(colors, styles) {
+    buildSemanticTokenRules(colors, styles) {
         const styleMap = this.normalizeSyntaxStyles(styles);
         const withStyle = (colorKey, styleKey) => {
             const base = colors[colorKey];
@@ -3104,7 +3111,15 @@ class MonacoEditorManager {
             const fontStyle = this.toMonacoFontStyle(styleMap[styleKey] || styleMap[colorKey]);
             return fontStyle ? { foreground: base, fontStyle } : base;
         };
-        return {
+        // 返回的是 Monaco TokenTheme rule 数组，不是 VS Code 扩展主题的
+        // semanticTokenColors 字段：StandaloneTheme 只读 base/inherit/colors/
+        // rules/encodedTokensColors，defineTheme 不校验多余键，写 semanticTokenColors
+        // 会石沉大海且无报错。语义 token 的真实取色路径是 tokenTheme._match(
+        // type + '.' + modifiers)，即只能用 rules 里的 token 名去匹配。
+        // clangd legend（23.1.0）实测发出：variable parameter function method
+        // property class interface enum enumMember type namespace typeParameter
+        // concept macro modifier operator bracket label comment unknown。
+        return Object.entries({
             namespace: withStyle('namespace', 'namespace'),
             type: withStyle('type', 'type'),
             'type.defaultLibrary': withStyle('type', 'type'),
@@ -3112,21 +3127,27 @@ class MonacoEditorManager {
             struct: withStyle('class', 'class'),
             interface: withStyle('class', 'class'),
             enum: withStyle('type', 'type'),
+            enumMember: withStyle('variable', 'variable'),
             typeParameter: withStyle('type', 'type'),
+            concept: withStyle('type', 'type'),
             parameter: withStyle('variable', 'variable'),
             variable: withStyle('variable', 'variable'),
             property: withStyle('variable', 'variable'),
-            enumMember: withStyle('variable', 'variable'),
             function: withStyle('function', 'function'),
             method: withStyle('function', 'function'),
             macro: withStyle('preprocessor', 'preprocessor'),
             keyword: withStyle('keyword', 'keyword'),
+            modifier: withStyle('keyword', 'keyword'),
             comment: withStyle('comment', 'comment'),
             string: withStyle('string', 'string'),
             number: withStyle('number', 'number'),
             operator: withStyle('operator', 'operator'),
             decorator: withStyle('preprocessor', 'preprocessor')
-        };
+        })
+            .filter(([, value]) => value !== undefined)
+            .map(([token, value]) => (typeof value === 'string'
+                ? { token, foreground: value }
+                : { token, ...value }));
     }
 
     updatePreprocessorLineDecorations(editor, enabled, color) {
@@ -3225,9 +3246,10 @@ class MonacoEditorManager {
                 inherit: true,
                 rules: [
                     ...(Array.isArray(themePreset.rules) ? themePreset.rules : []),
-                    ...this.buildSyntaxColorRules(normalized.colors, normalized.styles, theme)
+                    ...this.buildSyntaxColorRules(normalized.colors, normalized.styles, theme),
+                    // 语义 token 必须走 rules：Monaco 不读 semanticTokenColors 字段
+                    ...this.buildSemanticTokenRules(normalized.colors, normalized.styles)
                 ],
-                semanticTokenColors: this.buildSemanticTokenColors(normalized.colors, normalized.styles),
                 colors: themePreset.colors || {}
             });
             return customThemeName;
