@@ -1118,7 +1118,10 @@ console.log(`\n${Y}[I6] Referenced key resolution${R}`);
 {
   const refKeys = new Set();
   const scanFiles = [...jsFiles, ...htmlFiles].filter((f) => !f.startsWith(langDir));
-  const callRe = /\b(?:i18n|i18next|__|this)\s*\.\s*t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  // 同时匹配 i18n.t('k') 与 window.i18n?.t?.('k')：
+  // 可选链是 AGENTS.md 认可的写法，严格口径对它完全不可见，
+  // 会导致「键被删/改名」不告警（裸 key 上屏）
+  const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*)?t\s*(?:\?\s*\.\s*)?\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const bareCallRe = /(?<![.\w])t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const attrRe = /data-i18n(?:-[a-z]+)?\s*=\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   for (const f of scanFiles) {
@@ -1148,7 +1151,7 @@ console.log(`\n${Y}[I7] Unused keys${R}`);
 if (localeCodes.length >= 1) {
   const base = locales[localeCodes[0]];
   const refKeys = new Set();
-  const callRe = /\b(?:i18n|i18next|__|this)\s*\.\s*t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+  const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*)?t\s*(?:\?\s*\.\s*)?\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const bareCallRe = /(?<![.\w])t\s*\(\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   const attrRe = /data-i18n(?:-[a-z]+)?\s*=\s*['"]([A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
   for (const f of [...jsFiles, ...htmlFiles].filter((x) => !x.startsWith(langDir))) {
@@ -1187,7 +1190,9 @@ if (localeCodes.length >= 1) {
 // I8: Hardcoded CJK ratchet
 console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
 {
-  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|new Error\(|throw Error)/;
+  // message:/title:/detail: 是原生 dialog 与 IPC 载荷的用户可见文案出口，
+  // innerText 同理；漏掉它们会让「I8 baseline 0」虚高
+  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|message\s*:|title\s*:|detail\s*:|new Error\(|throw Error)/;
   // A line carrying a data-i18n-* attribute is already wired for translation; the inline
   // CJK is only the pre-JS default that _applyToDOM overwrites. Counting it would keep the
   // ratchet permanently stuck on a backlog that no migration batch can ever clear.

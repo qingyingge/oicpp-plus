@@ -1337,8 +1337,8 @@ async function handleIdeLoginCallback(req, res) {
             sendHeartbeat('start', verifyResult.user?.username || '');
         } catch (_) { }
 
-        sendLoginHtml(res, '登录成功', '已完成登录。');
-        broadcastIdeLoginState({ loggedIn: true, user: verifyResult.user, message: '登录成功' });
+        sendLoginHtml(res, t('main.loginSuccess'), '已完成登录。');
+        broadcastIdeLoginState({ loggedIn: true, user: verifyResult.user, message: t('main.loginSuccess') });
         clearIdeLoginServer();
     } catch (err) {
         logError('[登录] 验证请求失败:', err?.message || err);
@@ -1350,7 +1350,7 @@ async function handleIdeLoginCallback(req, res) {
 
 function startIdeLoginFlow() {
     if (ideLoginServer) {
-        return Promise.resolve({ ok: false, message: '登录流程正在进行，请稍候完成。' });
+        return Promise.resolve({ ok: false, message: t('main.loginInProgress') });
     }
 
     return new Promise((resolve) => {
@@ -1380,9 +1380,9 @@ function startIdeLoginFlow() {
                 resolve({ ok: true });
             } catch (err) {
                 logError('[登录] 打开浏览器失败:', err?.message || err);
-                broadcastIdeLoginError('打开浏览器失败');
+                broadcastIdeLoginError(t('main.openBrowserFailed'));
                 clearIdeLoginServer();
-                resolve({ ok: false, message: '打开浏览器失败' });
+                resolve({ ok: false, message: t('main.openBrowserFailed') });
             }
         });
     });
@@ -2087,8 +2087,8 @@ function showPostInstallNoticeIfNeeded() {
         try {
             dialog.showMessageBox(mainWindow, {
                 type: 'info',
-                title: '更新完成',
-                message: `OICPP-Plus 已更新到 ${APP_VERSION}`,
+                title: t('main.updateCompletedTitle'),
+                message: t('main.updatedTo', { version: APP_VERSION }),
                 detail
             });
         } catch (_) { }
@@ -2116,9 +2116,9 @@ function promptForPendingUpdateInstallQuit() {
     pendingUpdateQuitPromptInProgress = true;
     dialog.showMessageBox({
         type: 'info',
-        title: '即将安装更新',
-        message: 'OICPP-Plus 将在退出后自动安装更新',
-        detail: '请不要关闭电脑，安装过程将自动完成，预计需要 1-2 分钟。',
+        title: t('main.installSoonTitle'),
+        message: t('main.installOnQuit'),
+        detail: t('main.installDoNotPowerOff'),
         buttons: ['继续退出并安装', '取消'],
         defaultId: 0,
         cancelId: 1,
@@ -3837,7 +3837,7 @@ function setupIPC() {
 
     ipcMain.handle('ide-login-start', async () => {
         // OICPP-Plus: 云服务已禁用
-        return { ok: false, message: '云服务已禁用，登录不可用' };
+        return { ok: false, message: t('main.cloudDisabledLogin') };
     });
 
     ipcMain.handle('ide-login-status', () => {
@@ -3847,12 +3847,12 @@ function setupIPC() {
 
     ipcMain.handle('cloud-sync-request', async (_event, payload) => {
         // OICPP-Plus: 云服务已禁用
-        return { success: false, message: '云服务已禁用，暂不可用' };
+        return { success: false, message: t('main.cloudDisabledGeneric') };
     });
 
     ipcMain.handle('backup-settings-to-cloud', async () => {
         // OICPP-Plus: 云服务已禁用（无独立服务），不上传设置备份
-        return { success: false, message: '云服务已禁用，云备份不可用' };
+        return { success: false, message: t('main.cloudDisabledBackup') };
     });
 
     ipcMain.handle('get-settings-backup-info', async () => {
@@ -3861,13 +3861,13 @@ function setupIPC() {
 
     ipcMain.handle('sync-settings-from-cloud', async () => {
         // OICPP-Plus: 云服务已禁用（无独立服务），不从云端恢复设置
-        return { success: false, message: '云服务已禁用，云恢复不可用' };
+        return { success: false, message: t('main.cloudDisabledRestore') };
     });
 
     ipcMain.handle('ide-logout', () => {
         settings.account = null;
         saveSettings();
-        broadcastIdeLoginState({ loggedIn: false, user: null, message: '已退出登录' });
+        broadcastIdeLoginState({ loggedIn: false, user: null, message: t('main.loggedOut') });
         return { ok: true };
     });
 
@@ -4026,7 +4026,7 @@ function setupIPC() {
 
     ipcMain.on('debug-step-over', (event) => {
         sendDebugCommand('step').then(result => {
-            event.reply('debug-output', { message: '步过执行', type: 'debug' });
+            event.reply('debug-output', { message: t('main.debugStepOver'), type: 'debug' });
         }).catch(error => {
             event.reply('debug-error', error.message);
         });
@@ -4034,7 +4034,7 @@ function setupIPC() {
 
     ipcMain.on('debug-step-into', (event) => {
         sendDebugCommand('stepi').then(result => {
-            event.reply('debug-output', { message: '步入执行', type: 'debug' });
+            event.reply('debug-output', { message: t('main.debugStepInto'), type: 'debug' });
         }).catch(error => {
             event.reply('debug-error', error.message);
         });
@@ -4042,7 +4042,7 @@ function setupIPC() {
 
     ipcMain.on('debug-step-out', (event) => {
         sendDebugCommand('finish').then(result => {
-            event.reply('debug-output', { message: '步出执行', type: 'debug' });
+            event.reply('debug-output', { message: t('main.debugStepOut'), type: 'debug' });
         }).catch(error => {
             event.reply('debug-error', error.message);
         });
@@ -4052,7 +4052,7 @@ function setupIPC() {
         logInfo('[主进程] 收到继续执行命令');
         sendDebugCommand('continue').then(result => {
             logInfo('[主进程] 继续执行命令发送成功');
-            event.reply('debug-output', { message: '继续执行', type: 'debug' });
+            event.reply('debug-output', { message: t('main.debugContinue'), type: 'debug' });
         }).catch(error => {
             logError('[主进程] 继续执行命令失败:', error);
             event.reply('debug-error', error.message);
@@ -4064,7 +4064,7 @@ function setupIPC() {
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.run().then(() => {
                 logInfo('[主进程] 程序手动启动成功');
-                event.reply('debug-output', { message: '程序已启动', type: 'debug' });
+                event.reply('debug-output', { message: t('main.debugProgramStarted'), type: 'debug' });
 
                 if (mainWindow) {
                     mainWindow.webContents.send('debug-running');
@@ -4090,7 +4090,7 @@ function setupIPC() {
         logInfo('[主进程] 收到添加断点请求:', breakpoint);
         addBreakpoint(breakpoint).then(result => {
             logInfo('[主进程] 断点添加成功:', result);
-            event.reply('debug-output', { message: `断点已设置: ${breakpoint.file}:${breakpoint.line}`, type: 'info' });
+            event.reply('debug-output', { message: t('main.debugBreakpointSet', { file: breakpoint.file, line: breakpoint.line }), type: 'info' });
             event.reply('debug-breakpoint-set', {
                 file: breakpoint.file,
                 line: breakpoint.line,
@@ -4112,7 +4112,7 @@ function setupIPC() {
         logInfo('[主进程] 收到移除断点请求:', breakpoint);
         removeBreakpoint(breakpoint).then(result => {
             logInfo('[主进程] 断点移除成功:', result);
-            event.reply('debug-output', { message: `断点已移除: ${breakpoint.file}:${breakpoint.line}`, type: 'info' });
+            event.reply('debug-output', { message: t('main.debugBreakpointRemoved', { file: breakpoint.file, line: breakpoint.line }), type: 'info' });
             event.reply('debug-breakpoint-removed', {
                 file: breakpoint.file,
                 line: breakpoint.line,
@@ -4163,7 +4163,7 @@ function setupIPC() {
 
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.addWatchVariable(expr).then(() => {
-                event.reply('debug-output', { message: `已添加监视变量: ${expr}`, type: 'info' });
+                event.reply('debug-output', { message: t('main.debugWatchAdded', { expr: expr }), type: 'info' });
                 try {
                     const isInferiorRunning = !!gdbDebugger._inferiorRunning;
                     if (isInferiorRunning) {
@@ -4194,7 +4194,7 @@ function setupIPC() {
             });
         } else {
             broadcastPendingWatchSnapshot(event);
-            event.reply('debug-output', { message: `已添加监视待处理: ${expr}`, type: 'info' });
+            event.reply('debug-output', { message: t('main.debugWatchPendingAdded', { expr: expr }), type: 'info' });
         }
     });
 
@@ -4207,7 +4207,7 @@ function setupIPC() {
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.removeWatchVariable(expr).then(() => {
                 removeFromCache();
-                event.reply('debug-output', { message: `已移除监视变量: ${expr}`, type: 'info' });
+                event.reply('debug-output', { message: t('main.debugWatchRemoved', { expr: expr }), type: 'info' });
                 try {
                     gdbDebugger.updateVariables().then(() => {
                         const vars = gdbDebugger.getVariables();
@@ -4232,7 +4232,7 @@ function setupIPC() {
         } else {
             removeFromCache();
             broadcastPendingWatchSnapshot(event);
-            event.reply('debug-output', { message: `已移除监视待处理: ${expr}`, type: 'info' });
+            event.reply('debug-output', { message: t('main.debugWatchPendingRemoved', { expr: expr }), type: 'info' });
         }
     });
 
@@ -4260,7 +4260,7 @@ function setupIPC() {
     ipcMain.on('debug-expand-variable', (event, variableName, options = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.expandVariable(variableName, options).then((result) => {
-                event.reply('debug-output', { message: `已展开变量: ${variableName}`, type: 'info' });
+                event.reply('debug-output', { message: t('main.debugVarExpanded', { name: variableName }), type: 'info' });
                 broadcastCurrentVariablesSnapshot(event);
                 const payload = {
                     name: variableName,
@@ -4286,7 +4286,7 @@ function setupIPC() {
         if (gdbDebugger && gdbDebugger.isRunning) {
             const nextOptions = { ...options, append: true };
             gdbDebugger.expandVariable(variableName, nextOptions).then((result) => {
-                event.reply('debug-output', { message: `已加载更多: ${variableName}`, type: 'info' });
+                event.reply('debug-output', { message: t('main.debugVarMoreLoaded', { name: variableName }), type: 'info' });
                 broadcastCurrentVariablesSnapshot(event);
                 const payload = {
                     name: variableName,
@@ -4312,7 +4312,7 @@ function setupIPC() {
     ipcMain.on('debug-collapse-variable', (event, variableName, options = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
             gdbDebugger.collapseVariable(variableName, options).then(result => {
-                event.reply('debug-output', { message: `已折叠变量: ${variableName}`, type: 'info' });
+                event.reply('debug-output', { message: t('main.debugVarCollapsed', { name: variableName }), type: 'info' });
                 broadcastCurrentVariablesSnapshot(event);
             }).catch(error => {
                 event.reply('debug-error', error.message);
@@ -4552,7 +4552,7 @@ function setupIPC() {
     ipcMain.handle('save-as-file', async (event, content) => {
         try {
             const result = await dialog.showSaveDialog(mainWindow, {
-                title: '另存为',
+                title: t('main.saveAsTitle'),
                 defaultPath: 'untitled.cpp',
                 filters: [
                     { name: 'C++ Files', extensions: ['cpp', 'cc', 'cxx', 'c++'] },
@@ -5070,7 +5070,7 @@ function setupIPC() {
     ipcMain.handle('export-settings', async () => {
         try {
             const result = await dialog.showSaveDialog(mainWindow, {
-                title: '导出设置',
+                title: t('main.exportSettingsTitle'),
                 defaultPath: 'oicpp-settings.json',
                 filters: [
                     { name: 'JSON文件', extensions: ['json'] },
@@ -5083,7 +5083,7 @@ function setupIPC() {
                 return { success: true, filePath: result.filePath };
             }
 
-            return { success: false, message: '用户取消操作' };
+            return { success: false, message: t('main.userCancelled') };
         } catch (error) {
             logError('导出设置失败:', error);
             return { success: false, error: error.message };
@@ -5093,7 +5093,7 @@ function setupIPC() {
     ipcMain.handle('import-settings', async () => {
         try {
             const result = await dialog.showOpenDialog(mainWindow, {
-                title: '导入设置',
+                title: t('main.importSettingsTitle'),
                 filters: [
                     { name: 'JSON文件', extensions: ['json'] },
                     { name: '所有文件', extensions: ['*'] }
@@ -5123,7 +5123,7 @@ function setupIPC() {
                 return { success: true, settings };
             }
 
-            return { success: false, message: '用户取消操作' };
+            return { success: false, message: t('main.userCancelled') };
         } catch (error) {
             logError('导入设置失败:', error);
             return { success: false, error: error.message };
@@ -6156,10 +6156,10 @@ function setupIPC() {
 
                         const choice = dialog.showMessageBoxSync(progressWindow, {
                             type: 'question',
-                            title: '后台下载',
-                            message: '是否在后台继续下载编译器？',
-                            detail: '关闭此窗口后，下载将在后台继续进行。',
-                            buttons: ['后台下载', '取消下载'],
+                            title: t('main.backgroundDownloadTitle'),
+                            message: t('main.continueDownloadCompiler'),
+                            detail: t('main.backgroundDownloadDetail'),
+                            buttons: [t('main.backgroundDownloadTitle'), '取消下载'],
                             defaultId: 0
                         });
 
@@ -6555,10 +6555,10 @@ function setupIPC() {
 
                         const choice = dialog.showMessageBoxSync(progressWindow, {
                             type: 'question',
-                            title: '后台下载',
-                            message: '是否在后台继续下载testlib？',
-                            detail: '关闭此窗口后，下载将在后台继续进行。',
-                            buttons: ['后台下载', '取消下载'],
+                            title: t('main.backgroundDownloadTitle'),
+                            message: t('main.continueDownloadTestlib'),
+                            detail: t('main.backgroundDownloadDetail'),
+                            buttons: [t('main.backgroundDownloadTitle'), '取消下载'],
                             defaultId: 0
                         });
 
@@ -6794,7 +6794,7 @@ function setupIPC() {
     ipcMain.handle('test-compiler', async (event, compilerPath) => {
         try {
             if (!compilerPath || !fs.existsSync(compilerPath)) {
-                return { success: false, message: '编译器路径无效或不存在。' };
+                return { success: false, message: t('main.compilerPathInvalid') };
             }
 
             const testDir = path.join(os.tmpdir(), 'oicpp-test');
@@ -6819,7 +6819,7 @@ function setupIPC() {
             });
 
             if (!compileResult.success) {
-                return { success: false, message: '编译测试代码失败。', details: compileResult.stderr };
+                return { success: false, message: t('main.compileTestFailed'), details: compileResult.stderr };
             }
 
             const runResult = await new Promise((resolve) => {
@@ -6861,7 +6861,7 @@ function setupIPC() {
                     } else {
                         resolve({
                             success: false,
-                            message: `测试程序运行失败 (退出码: ${code})`,
+                            message: t('main.testProgramFailed', { code: code }),
                             details: stderr || output || '程序无输出'
                         });
                     }
@@ -6891,22 +6891,22 @@ function setupIPC() {
     ipcMain.handle('test-testlib', async (event, testlibPath) => {
         try {
             if (!testlibPath || !fs.existsSync(testlibPath)) {
-                return { success: false, message: 'testlib路径无效或不存在。' };
+                return { success: false, message: t('main.testlibPathInvalid') };
             }
 
             const fileName = path.basename(testlibPath).toLowerCase();
             if (fileName !== 'testlib.h') {
-                return { success: false, message: '所选文件不是testlib.h文件。' };
+                return { success: false, message: t('main.notTestlibHeader') };
             }
 
             const content = fs.readFileSync(testlibPath, 'utf8');
             if (!content.includes('This file contains testlib library')) {
-                return { success: false, message: '所选文件不是有效的testlib库文件。' };
+                return { success: false, message: t('main.notTestlibLib') };
             }
 
-            return { success: true, message: 'testlib测试成功！' };
+            return { success: true, message: t('main.testlibTestOk') };
         } catch (error) {
-            return { success: false, message: '测试testlib时发生未知错误。', details: error.message };
+            return { success: false, message: t('main.testlibTestUnknownError'), details: error.message };
         }
     });
 
@@ -7338,7 +7338,7 @@ function openCompilerSettings() {
             sandbox: false,
             webSecurity: true
         },
-        title: '编译器设置',
+        title: t('main.compilerSettingsTitle'),
         icon: getUserIconPath()
     });
 
@@ -7372,7 +7372,7 @@ function openEditorSettings() {
             sandbox: false,
             webSecurity: true
         },
-        title: '编辑器设置',
+        title: t('main.editorSettingsTitle'),
         icon: getUserIconPath()
     });
 
@@ -7412,7 +7412,7 @@ function openCodeTemplates() {
             sandbox: false,
             webSecurity: true
         },
-        title: '代码模板设置',
+        title: t('main.templateSettingsTitle'),
         icon: getUserIconPath()
     });
 
@@ -7443,7 +7443,7 @@ function openBackupSettings() {
             sandbox: false,
             webSecurity: true
         },
-        title: '设置备份设置',
+        title: t('main.backupSettingsTitle'),
         icon: getUserIconPath()
     });
 
@@ -7460,9 +7460,9 @@ async function checkForUpdates(isManual = false) {
     try {
         await dialog.showMessageBox(mainWindow, {
             type: 'info',
-            title: '检查更新',
-            message: '更新检查功能暂不可用',
-            detail: 'OICPP-Plus 暂时没有独立的更新服务。请前往 GitHub Releases 页面下载新版本：https://github.com/qingyingge/oicpp-plus/releases'
+            title: t('main.checkUpdateTitle'),
+            message: t('main.checkUpdateUnavailable'),
+            detail: t('main.checkUpdateUnavailableDetail')
         });
     } catch (error) {
         logError('显示更新提示失败:', error);
@@ -7545,8 +7545,8 @@ function promptLinuxManualInstall(pendingUpdate) {
 
     dialog.showMessageBox(mainWindow, {
         type: 'info',
-        title: '更新包已下载',
-        message: `版本 ${pendingUpdate.version || ''} 已下载完成`,
+        title: t('main.updateDownloadedTitle'),
+        message: t('main.updateDownloadedMessage', { version: pendingUpdate.version || '' }),
         detail: detailParts.join('\n'),
         buttons: ['打开所在目录', '知道了'],
         defaultId: 0
@@ -7611,9 +7611,9 @@ function runInstaller(installerPath) {
         try {
             dialog.showMessageBoxSync({
                 type: 'info',
-                title: '即将安装更新',
-                message: 'OICPP-Plus 将在退出后自动安装更新',
-                detail: '请不要关闭电脑，安装过程将自动完成，预计需要 1-2 分钟。',
+                title: t('main.installSoonTitle'),
+                message: t('main.installOnQuit'),
+                detail: t('main.installDoNotPowerOff'),
                 buttons: ['确定'],
                 defaultId: 0
             });
@@ -7637,8 +7637,8 @@ function runInstaller(installerPath) {
         let errorDetail = `错误信息: ${error.message}\n\n安装程序位置: ${installerPath}\n\n您可以手动运行安装程序来完成更新。`;
         dialog.showMessageBox(mainWindow, {
             type: 'error',
-            title: '无法启动安装程序',
-            message: '自动启动安装程序失败',
+            title: t('main.installerLaunchFailedTitle'),
+            message: t('main.installerLaunchFailed'),
             detail: errorDetail,
             buttons: ['打开安装程序所在文件夹', '确定']
         }).then(res => { if (res.response === 0) shell.showItemInFolder(installerPath); });
@@ -8679,7 +8679,7 @@ async function runExecutable(options) {
                 mode: 'integrated-terminal',
                 executablePath: absoluteExePath,
                 workingDirectory: resolvedCwd,
-                message: '程序已转交内置终端运行'
+                message: t('main.programHandedToTerminal')
             });
             return;
         }
@@ -8839,13 +8839,13 @@ async function runExecutable(options) {
 
             child.on('spawn', () => {
                 logInfo('程序启动成功！');
-                resolve({ success: true, message: '程序已在新窗口启动' });
+                resolve({ success: true, message: t('main.programStartedNewWindow') });
             });
 
             setTimeout(() => {
                 if (!child.killed) {
-                    logInfo('程序启动中...');
-                    resolve({ success: true, message: '程序启动中...' });
+                    logInfo(t('main.programStarting'));
+                    resolve({ success: true, message: t('main.programStarting') });
                 }
             }, 1000);
 
@@ -9838,33 +9838,33 @@ function scheduleAutoSettingsBackup() {
 
 async function uploadClientLogFile(filePath) {
     if (!filePath || typeof filePath !== 'string') {
-        return { success: false, message: '日志路径无效' };
+        return { success: false, message: t('main.logPathInvalid') };
     }
 
     const normalizedPath = path.normalize(filePath);
     const ext = path.extname(normalizedPath).toLowerCase();
     if (ext !== '.log') {
-        return { success: false, message: '仅支持上传 .log 文件' };
+        return { success: false, message: t('main.logOnlyLogFiles') };
     }
 
     let stat;
     try {
         stat = fs.statSync(normalizedPath);
     } catch (_) {
-        return { success: false, message: '日志文件不存在或不可读取' };
+        return { success: false, message: t('main.logUnreadable') };
     }
 
     if (!stat.isFile()) {
-        return { success: false, message: '请选择有效的日志文件' };
+        return { success: false, message: t('main.logSelectValid') };
     }
 
     const maxBytes = 5 * 1024 * 1024;
     if (stat.size > maxBytes) {
-        return { success: false, message: '日志文件超过 5MB 限制' };
+        return { success: false, message: t('main.logTooLarge') };
     }
 
     if (typeof FormData === 'undefined' || typeof Blob === 'undefined') {
-        return { success: false, message: '当前运行环境不支持日志上传' };
+        return { success: false, message: t('main.logUploadUnsupported') };
     }
 
     try {
@@ -9922,24 +9922,24 @@ async function uploadClientLogFile(filePath) {
         if (!response.ok) {
             return {
                 success: false,
-                message: data?.message || `上传失败（HTTP ${response.status}）`
+                message: data?.message || t('main.logUploadFailedHttp', { status: response.status })
             };
         }
 
         const traceCode = data?.trace_code || '';
         if (!traceCode) {
-            return { success: false, message: '上传成功但未返回追踪码，请稍后重试' };
+            return { success: false, message: t('main.logUploadNoTraceId') };
         }
 
         return {
             success: true,
             traceCode,
             uploadedAt: data?.uploaded_at || '',
-            message: data?.message || '日志上传成功'
+            message: data?.message || t('main.logUploadSuccess')
         };
     } catch (error) {
         logWarn('上传客户端日志失败:', error?.message || error);
-        return { success: false, message: error?.message || '日志上传失败' };
+        return { success: false, message: error?.message || t('main.logUploadFailed') };
     }
 }
 
@@ -9973,7 +9973,7 @@ function listClientLogFiles() {
         return { success: true, logs };
     } catch (error) {
         logWarn('读取日志列表失败:', error?.message || error);
-        return { success: false, logs: [], message: error?.message || '读取日志列表失败' };
+        return { success: false, logs: [], message: error?.message || t('main.logListFailed') };
     }
 }
 
@@ -10006,7 +10006,7 @@ ipcMain.handle('get-device-info', () => {
 
 ipcMain.handle('upload-client-log', async (_event, filePath) => {
     // OICPP-Plus: 云服务已禁用（无独立服务），日志不上传
-    return { success: false, message: '云服务已禁用，日志上传不可用' };
+    return { success: false, message: t('main.cloudDisabledLogUpload') };
 });
 
 ipcMain.handle('list-client-logs', () => {
@@ -10319,7 +10319,7 @@ function runCommandVersionProbe(command, args = [], options = {}) {
         return {
             ok: false,
             output,
-            message: output || `退出码: ${result.status}`
+            message: output || t('main.exitCode', { status: result.status })
         };
     } catch (error) {
         return {
@@ -10349,7 +10349,7 @@ async function checkGDBAvailability() {
         return {
             available: false,
             debugger: 'unsupported',
-            message: 'macOS 暂不支持调试功能。'
+            message: t('main.debugUnsupportedOnMac')
         };
     }
 
@@ -10401,13 +10401,13 @@ async function checkGDBAvailability() {
                 resolve({
                     available: true,
                     version: versionLine,
-                    message: `GDB可用: ${versionLine}`
+                    message: t('main.gdbAvailable', { version: versionLine })
                 });
             } else {
                 logInfo('[主进程] GDB不可用，退出码:', code);
                 resolve({
                     available: false,
-                    message: 'GDB调试器未安装或不可用。请安装GDB调试器以使用调试功能。'
+                    message: t('main.gdbMissing')
                 });
             }
         });
@@ -10416,7 +10416,7 @@ async function checkGDBAvailability() {
             logInfo('[主进程] GDB检查出错:', error.message);
             resolve({
                 available: false,
-                message: `GDB调试器不可用: ${error.message}。请安装GDB调试器以使用调试功能。`
+                message: t('main.gdbUnavailable', { error: error.message })
             });
         });
 
@@ -10424,7 +10424,7 @@ async function checkGDBAvailability() {
             testProcess.kill();
             resolve({
                 available: false,
-                message: 'GDB检查超时。请确保GDB调试器已正确安装。'
+                message: t('main.gdbCheckTimeout')
             });
         }, 5000);
     });
