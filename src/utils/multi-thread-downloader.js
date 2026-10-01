@@ -522,7 +522,41 @@ class MultiThreadDownloader {
     }
 
 
+    // 落盘后核对总字节数。分片阶段的长度校验是同义反复（chunk.size 由同一流的
+    // 'data' 事件累加而来，拿它比对同一流的产物，只要 write 没报错必然相等），
+    // 抓不到服务器谎报 Content-Range 后返回自洽短 body 的情况。
+    // 只有合并/写完的最终文件与 content-length 对得上，才算下载成功。
+    _assertDownloadedSize(outputFile, expectedSize) {
+        if (!expectedSize || expectedSize <= 0) return;   // 拿不到期望值则无法核对
+        let actual = 0;
+        try {
+            actual = fs.statSync(outputFile).size;
+        } catch (error) {
+            throw new Error(t('downloader.incompleteSize', { actual: 0, expected: expectedSize }));
+        }
+        if (actual !== expectedSize) {
+            const error = new Error(t('downloader.incompleteSize', { actual, expected: expectedSize }));
+            error.code = 'SIZE_MISMATCH';
+            throw error;
+        }
+    }
+
     async download(url, outputFile, options = {}) {
+        const expectedMd5 = options?.expectedMd5 || null;
+        const expectedSize = options?.expectedSize || null;
+        await this._downloadInternal(url, outputFile);
+        if (expectedSize) this._assertDownloadedSize(outputFile, expectedSize);
+        if (expectedMd5) {
+            const ok = await this.verifyFile(outputFile, expectedMd5);
+            if (ok === false) {
+                const error = new Error(t('downloader.failed', { message: 'MD5 mismatch' }));
+                error.code = 'MD5_MISMATCH';
+                throw error;
+            }
+        }
+    }
+
+    async _downloadInternal(url, outputFile) {
         const startTime = Date.now();
         logInfo(`[多线程下载] 开始下载: ${url}`);
 
@@ -659,6 +693,9 @@ class MultiThreadDownloader {
                 const completedChunks = results.filter(Boolean);
                 logInfo(`[多线程下载] 分片全部完成，准备合并 ${completedChunks.length} 个分片`);
                 await this.mergeChunks(completedChunks, outputFile);
+                // 分片阶段的长度校验只保证每片自身自洽，合并结果仍可能整体偏短
+                // （服务器对 Range 返回自洽的短 body）。合并完再对一次总量。
+                this._assertDownloadedSize(outputFile, fileSize);
 
                 try {
                     fs.rmSync(tempDir, { recursive: true, force: true });

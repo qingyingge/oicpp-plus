@@ -312,18 +312,26 @@ class CompilerSettings {
             this.isMacPlatform = isMacPlatform;
             this.isIntegratedOnlyPlatform = isIntegratedOnlyPlatform;
             const allSettings = await window.electronAPI.getAllSettings();
-            if (allSettings) {
-                const loadedCompilerArgs = allSettings.compilerArgs || (isMacPlatform ? '-std=c++14 -O2' : '-std=c++14 -O2 -static');
-                this.settings = {
-                    compilerPath: allSettings.compilerPath || '',
-                    pythonInterpreterPath: allSettings.pythonInterpreterPath || '',
-                    compilerArgs: isMacPlatform
-                        ? loadedCompilerArgs.replace(/\s-static\b/g, ' ').replace(/\s+/g, ' ').trim()
-                        : loadedCompilerArgs,
-                    runMode: isIntegratedOnlyPlatform ? 'integrated-terminal' : (allSettings.runMode || 'popup'),
-                    testlibPath: allSettings.testlibPath || ''
-                };
+            // 空结果与「加载失败」同等对待：this.settings 仍是构造默认值，
+            // 若继续按成功处理，用户点「保存」就把默认值整体写回。
+            // 原先写成 `if (allSettings)`，null/undefined 会静默跳到下面置
+            // _settingsLoaded = true，恰好放过了要阻断的那种回写。
+            if (!allSettings || typeof allSettings !== 'object') {
+                throw new Error('getAllSettings returned no settings object');
             }
+            if (allSettings.compilerPath === undefined && allSettings.compilerArgs === undefined) {
+                throw new Error('getAllSettings result has no compiler fields');
+            }
+            const loadedCompilerArgs = allSettings.compilerArgs || (isMacPlatform ? '-std=c++14 -O2' : '-std=c++14 -O2 -static');
+            this.settings = {
+                compilerPath: allSettings.compilerPath || '',
+                pythonInterpreterPath: allSettings.pythonInterpreterPath || '',
+                compilerArgs: isMacPlatform
+                    ? loadedCompilerArgs.replace(/\s-static\b/g, ' ').replace(/\s+/g, ' ').trim()
+                    : loadedCompilerArgs,
+                runMode: isIntegratedOnlyPlatform ? 'integrated-terminal' : (allSettings.runMode || 'popup'),
+                testlibPath: allSettings.testlibPath || ''
+            };
             logInfo('编译器设置加载完成:', this.settings);
             this._settingsLoaded = true;
         } catch (error) {
@@ -926,6 +934,17 @@ class CompilerSettings {
         }
         
         try {
+            // 加载失败时 this.settings.compilerArgs 还是构造默认值，
+            // 这里落盘等于绕过 saveSettings 的阻断把默认值写回去。
+            // 只更新用户明确改动的 compilerPath，不碰其它字段。
+            if (this._settingsLoaded === false) {
+                logWarn('设置未成功加载，仅更新编译器路径，不回写其它字段');
+                if (window.electronAPI && window.electronAPI.updateSettings) {
+                    await window.electronAPI.updateSettings({ compilerPath: path });
+                }
+                return;
+            }
+
             const newSettings = {
                 compilerPath: path,
                 compilerArgs: this.settings.compilerArgs
