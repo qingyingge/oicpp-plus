@@ -2533,17 +2533,27 @@ class MonacoEditorManager {
     }
 
     _normalizeLspUri(uri) {
-        if (/%3[Aa]/.test(uri)) {
-            const decoded = decodeURIComponent(uri);
-            if (decoded.startsWith('file:///')) {
-                const pathPart = decoded.slice('file:///'.length);
-                if (/^[a-zA-Z]:/.test(pathPart)) {
-                    return 'file:///' + pathPart;
-                }
-            }
-            return decoded;
+        if (typeof uri !== 'string' || !uri.includes('%')) {
+            return uri;
         }
-        return uri;
+        // 只认 %3A 属于「碰巧能用」：clangd 按 RFC 把 `+` `#` `空格` 等一律百分号
+        // 编码（如 C%2B%2B），那些编码不触发解码分支，URI 保持编码态。
+        // findModelByLspUri 的多级回退目前能兜住，但那是巧合而非契约。
+        // 统一解码一次，再把 Windows 盘符冒号补回成 URI 形态。
+        let decoded;
+        try {
+            decoded = decodeURIComponent(uri);
+        } catch (_) {
+            // 非法百分号序列（如路径里本来就带 %），保持原样
+            return uri;
+        }
+        if (decoded.startsWith('file:///')) {
+            const pathPart = decoded.slice('file:///'.length);
+            if (/^[a-zA-Z]:/.test(pathPart)) {
+                return 'file:///' + pathPart;
+            }
+        }
+        return decoded;
     }
 
     async openLspDocument(model, filePathHint = null, fileNameHint = null) {
@@ -5074,7 +5084,9 @@ class MonacoEditorManager {
 
             const model = this.findModelByLspUri(uri);
             if (!model) {
-                logWarn('[LSP] 无法找到诊断对应的模型, uri:', uri);
+                // 诊断可能在 model 重建窗口内到达（保存触发重建 / setValue），
+                // 此时直接丢弃就丢掉了这一次的全部诊断。延迟重试覆盖该窗口。
+                this._scheduleLspDiagnosticsRetry(uri, diagnostics);
                 return;
             }
 
@@ -5097,6 +5109,38 @@ class MonacoEditorManager {
             logWarn('[LSP] applyLspDiagnostics 失败:', err);
         }
     }
+    _scheduleLspDiagnosticsRetry(uri, diagnostics, attempt = 1) {
+        const RETRY_DELAYS = [200, 500];
+        if (!this._lspDiagnosticRetryTimers) {
+            this._lspDiagnosticRetryTimers = new Map();
+        }
+        if (attempt === 1) {
+            // 同一 uri 只保留一条待重试链，重试期间到达的新诊断覆盖旧的，
+            // 否则连续保存会叠出多条重试链
+            const pending = this._lspDiagnosticRetryTimers.get(uri);
+            if (pending) clearTimeout(pending);
+        }
+        if (attempt > RETRY_DELAYS.length) {
+            this._lspDiagnosticRetryTimers.delete(uri);
+            logWarn('[LSP] 重试后仍无法找到诊断对应的模型, uri:', uri);
+            return;
+        }
+        const timer = setTimeout(() => {
+            this._lspDiagnosticRetryTimers.delete(uri);
+            try {
+                if (this.findModelByLspUri(uri)) {
+                    this.applyLspDiagnostics(uri, diagnostics);
+                    return;
+                }
+            } catch (err) {
+                logWarn('[LSP] 诊断重试失败:', err);
+                return;
+            }
+            this._scheduleLspDiagnosticsRetry(uri, diagnostics, attempt + 1);
+        }, RETRY_DELAYS[attempt - 1]);
+        this._lspDiagnosticRetryTimers.set(uri, timer);
+    }
+
     _installMarkerWidgetInterceptor(editor) {
         try {
             if (!editor || editor.__oicppMarkerWidgetInstalled) return;

@@ -5054,7 +5054,10 @@ class TabManager {
         if (this.isDiscardCloseInProgress()) {
             return;
         }
-        const tasks = [];
+        // 按 uniqueKey 遍历、按 filePath 保存，两者不是一一对应：同一文件开在多个
+        // 分栏（或存在残留 tab）时会对同一文件并发发起 N 次保存，产生多余的 IPC
+        // 往返、file-saved 事件与重复的 clangd 分析。先按 filePath 归并。
+        const byFilePath = new Map();
         for (const [uniqueKey, tab] of this.tabs.entries()) {
             if (!tab || tab.viewType === 'pdf' || tab.viewType === 'markdown-preview') {
                 continue;
@@ -5064,20 +5067,32 @@ class TabManager {
                 if (!filePath) continue;
                 const content = this.getTabContentForSave(tab);
                 if (typeof content !== 'string') continue;
-                if (window.electronAPI?.saveFile && typeof window.electronAPI.saveFile === 'function') {
-                    tasks.push(
-                        window.electronAPI.saveFile(filePath, content).then(() => {
-                            this.markTabAsSavedByUniqueKey(uniqueKey);
-                        }).catch((e) => {
-                            (window.logWarn || console.warn)('保存文件失败:', filePath, e);
-                        })
-                    );
+                if (!byFilePath.has(filePath)) {
+                    byFilePath.set(filePath, { content, uniqueKeys: [] });
                 } else {
-                    this.markTabAsSavedByUniqueKey(uniqueKey);
+                    // 同一文件被打开多次：内容取首个可用的，标记时覆盖全部 uniqueKey
+                    (window.logWarn || console.warn)('同一文件存在多个标签页，只保存一次:', filePath);
                 }
+                byFilePath.get(filePath).uniqueKeys.push(uniqueKey);
             } catch (e) {
                 (window.logWarn || console.warn)('保存标签失败:', tab?.fileName, e);
             }
+        }
+
+        const hasSaveApi = typeof window.electronAPI?.saveFile === 'function';
+        const tasks = [];
+        for (const [filePath, { content, uniqueKeys }] of byFilePath.entries()) {
+            if (!hasSaveApi) {
+                uniqueKeys.forEach((key) => this.markTabAsSavedByUniqueKey(key));
+                continue;
+            }
+            tasks.push(
+                window.electronAPI.saveFile(filePath, content).then(() => {
+                    uniqueKeys.forEach((key) => this.markTabAsSavedByUniqueKey(key));
+                }).catch((e) => {
+                    (window.logWarn || console.warn)('保存文件失败:', filePath, e);
+                })
+            );
         }
         try { await Promise.allSettled(tasks); } catch (_) { }
     }

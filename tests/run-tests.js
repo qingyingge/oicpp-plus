@@ -25,9 +25,19 @@ for (const file of files) {
         cwd: path.join(testsDir, '..')
     });
     const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-    const lines = `${r.stdout || ''}`.split(/\r?\n/);
+    // stdout 与 stderr 都要统计：只看 stdout 时，测试把 [FAIL] 写到 stderr 就彻底不可见
+    const lines = `${r.stdout || ''}${r.stderr || ''}`.split(/\r?\n/);
     const assertions = lines.filter((l) => l.includes('[PASS]') || l.includes('[FAIL]')).length;
     const failedAssertions = lines.filter((l) => l.includes('[FAIL]')).length;
+
+    // 一个标记都不打印的测试文件不能记为 PASS：异步用例若 promise 永不 settle，
+    // 进程会静默 exit 0，形成假绿
+    if (assertions === 0) {
+        failedCount++;
+        console.log(`[FAIL] ${file} (no assertions reported, ${elapsed}s)`);
+        if (r.stderr) console.log(`${r.stderr}`.trimEnd());
+        continue;
+    }
 
     if (r.status === 0 && failedAssertions === 0) {
         console.log(`[PASS] ${file} (${assertions} assertions, ${elapsed}s)`);

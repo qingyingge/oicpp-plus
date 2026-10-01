@@ -620,6 +620,8 @@ class OICPPApp {
             });
 
             window.electronAPI.onFileSaved((filePath, error) => {
+                // 只打一行：此前这里与 onFileSaved 各打一行，一次正常保存产生 2 行日志，
+                // 按行数统计「重复保存」时会把正常情况误判成重复
                 try { logInfo('[渲染进程] 收到 file-saved:', { filePath, error }); } catch (_) {}
                 if (error) {
                     this.showMessage(window.i18n?.t?.('message.saveFailed', { error }) || `Save failed: ${error}`, 'error');
@@ -4092,7 +4094,8 @@ class OICPPApp {
     }
 
     onFileSaved(filePath) {
-        logInfo('文件已保存:', filePath);
+        // 不再在此打「文件已保存」：调用点 onFileSaved 回调已打「收到 file-saved」，
+        // 两行日志让「一次事件一行」的计数前提失效
         if (this.editorManager) {
             this.editorManager.markFileSaved(filePath);
         }
