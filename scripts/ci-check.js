@@ -1254,6 +1254,30 @@ function runRegressionTests() {
   }
 }
 
+// T2: fastspawn.cc 静态语法检查
+// fastspawn.cc 是 POSIX-only 扩展，build-fastspawn.js 在 Windows 上直接跳过，
+// 于是它的语法/类型错误要到 POSIX 机器打包时才暴露。用 g++ -fsyntax-only +
+// 最小 N-API/POSIX 桩在任意平台做检查；没有 g++ 时跳过而不判 FAIL。
+function runFastspawnSyntaxCheck() {
+  console.log(`\n${Y}[T2] fastspawn.cc syntax${R}`);
+  const script = path.join(root, 'scripts', 'check-fastspawn-syntax.js');
+  if (!fileExists(script)) {
+    warn('scripts/check-fastspawn-syntax.js not found — native syntax check skipped');
+    return;
+  }
+  try {
+    const out = execSync(`node "${script}"`, { encoding: 'utf8', timeout: 120000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+    out.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${GR}  ${line}${R}`));
+    ok('fastspawn.cc passes g++ -fsyntax-only');
+  } catch (err) {
+    const errOut = `${err.stdout || ''}${err.stderr || ''}`;
+    errOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${RD}  ${line}${R}`));
+    fail('fastspawn.cc syntax check failed');
+  }
+}
+
+runFastspawnSyntaxCheck();
+
 if (skipTests) {
   info('regression tests skipped (--skip tests)');
 } else {
