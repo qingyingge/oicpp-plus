@@ -70,7 +70,11 @@ async function initializeApp() {
         };
         
         logInfo('初始化标签页管理器...');
-        window.tabManager = new TabManager();
+        // tabs.js 已在 DOMContentLoaded 时创建过实例并挂到 window.tabManager，
+        // 这里复用，避免重复执行 initializeGroups/setupEventListeners
+        if (!window.tabManager) {
+            window.tabManager = new TabManager();
+        }
 
         logInfo('初始化主应用...');
         window.oicppApp = new OICPPApp();
