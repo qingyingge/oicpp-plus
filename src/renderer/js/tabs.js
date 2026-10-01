@@ -3598,13 +3598,26 @@ class TabManager {
         }
     }
 
+    // Markdown 预览每次按键都要全量重新渲染，开销较重；
+    // 合并为停手后渲染一次，避免连续输入时反复触发 markdown-it + highlight
+    debouncedUpdateMarkdownPreview(editor, timerKey, container, filePath) {
+        if (!container) return;
+        if (editor[timerKey]) {
+            clearTimeout(editor[timerKey]);
+        }
+        editor[timerKey] = setTimeout(() => {
+            editor[timerKey] = null;
+            if (!container.isConnected) return;
+            this.updateMarkdownPreview(container, editor.getValue(), filePath);
+        }, 250);
+    }
+
     setupMarkdownLiveUpdate(tabId, previewContainer, filePath) {
         if (!this.monacoEditorManager) return;
         const editor = this.monacoEditorManager.editors.get(tabId);
         if (editor && !editor._markdownListenerAttached) {
             editor.onDidChangeModelContent(() => {
-                const val = editor.getValue();
-                this.updateMarkdownPreview(previewContainer, val, filePath);
+                this.debouncedUpdateMarkdownPreview(editor, '_markdownLiveTimer', previewContainer, filePath);
             });
             editor._markdownListenerAttached = true;
 
@@ -3790,8 +3803,7 @@ class TabManager {
         if (editor && !editor._markdownPreviewSyncAttached) {
             editor.onDidChangeModelContent(() => {
                 if (previewTabData.previewContainer) {
-                    const val = editor.getValue();
-                    this.updateMarkdownPreview(previewTabData.previewContainer, val, previewTabData.filePath);
+                    this.debouncedUpdateMarkdownPreview(editor, '_markdownPreviewSyncTimer', previewTabData.previewContainer, previewTabData.filePath);
                 }
             });
             editor._markdownPreviewSyncAttached = true;

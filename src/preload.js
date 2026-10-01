@@ -305,6 +305,10 @@ try {
         return self.renderToken(tokens, idx, options);
     };
 
+    // 无语言标注的代码块自动探测时的候选语言：highlightAuto 对全部注册语言
+    // 逐个试匹配是 markdown 渲染里最贵的分支，限定到常用集合可大幅降低单次按键成本
+    const AUTO_DETECT_LANGUAGES = ['cpp', 'c', 'python', 'javascript', 'java', 'bash', 'json', 'xml', 'sql', 'go', 'rust', 'csharp'];
+
     md.renderer.rules.fence = function (tokens, idx, options, env, self) {
         const token = tokens[idx];
         const code = token.content;
@@ -318,7 +322,7 @@ try {
                               '</code></pre>';
             } else {
                 highlighted = '<pre class="hljs"><code>' +
-                              hljs.highlightAuto(code).value +
+                              hljs.highlightAuto(code, AUTO_DETECT_LANGUAGES).value +
                               '</code></pre>';
             }
         } catch (__) {
