@@ -1814,20 +1814,39 @@ class SampleTester {
         }
     }
 
+    // 「程序输出」只取 stdout：run-program 的 output 字段在非零退出时会用 stderr 顶替 stdout，
+    // 直接用它会让 stderr 内容出现在程序输出里、并把已产生的 stdout 整段丢掉。
+    buildProgramOutput(runResult) {
+        let text = typeof runResult?.stdout === 'string' ? runResult.stdout : '';
+        const notices = [];
+        if (runResult?.outputLimitExceeded) {
+            const limitMb = Math.max(1, Math.floor((runResult.outputLimitBytes || 0) / (1024 * 1024)));
+            notices.push(window.i18n.t('tester.outputLimitNotice', { limit: limitMb }));
+        }
+        if (runResult?.memoryLimitExceeded) {
+            const limitMb = Math.max(1, Math.floor((runResult.memoryLimitBytes || 0) / (1024 * 1024)));
+            notices.push(window.i18n.t('tester.memoryLimitNotice', { limit: limitMb }));
+        }
+        for (const notice of notices) {
+            text = text ? (text.endsWith('\n') ? text + notice : `${text}\n${notice}`) : notice;
+        }
+        return text;
+    }
+
     async resolveProgramOutput(runResult, freopenContext) {
         if (!freopenContext?.outputFilePath) {
-            return runResult.output || '';
+            return this.buildProgramOutput(runResult);
         }
 
         try {
             const exists = await window.electronAPI.checkFileExists(freopenContext.outputFilePath);
             if (!exists) {
-                return runResult.output || '';
+                return this.buildProgramOutput(runResult);
             }
             return await window.electronAPI.readFileContent(freopenContext.outputFilePath);
         } catch (error) {
             try { logWarn('[样例测试器] 读取freopen输出文件失败:', error); } catch (_) { }
-            return runResult.output || '';
+            return this.buildProgramOutput(runResult);
         }
     }
 

@@ -5844,12 +5844,11 @@ function setupIPC() {
                 const contestantStderr = decode(contestantErr);
                 const graderStdout = decode(graderOut);
                 const graderStderr = decode(graderErr);
+                // output 只放 stdout：stderr 单独走 stderr 字段，避免样例测试器「程序输出」混入错误流
                 const parts = [];
                 if (graderStdout) parts.push('[grader stdout]\n' + graderStdout);
                 if (contestantStdout) parts.push('[contestant stdout]\n' + contestantStdout);
-                if (graderStderr) parts.push('[grader stderr]\n' + graderStderr);
-                if (contestantStderr) parts.push('[contestant stderr]\n' + contestantStderr);
-                if (processError) parts.push(processError);
+                const stderrParts = [graderStderr, contestantStderr, processError].filter(Boolean);
                 const elapsed = Math.round(performance.now() - startTime);
                 resolve({
                     output: parts.join('\n'),
@@ -5859,7 +5858,7 @@ function setupIPC() {
                     contestantExitCode,
                     graderExitCode,
                     stdout: contestantStdout,
-                    stderr: [graderStderr, contestantStderr].filter(Boolean).join('\n'),
+                    stderr: stderrParts.join('\n'),
                     graderStdout,
                     graderStderr,
                     outputLimitExceeded,

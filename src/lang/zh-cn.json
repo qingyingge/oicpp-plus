@@ -712,6 +712,8 @@
     "sampleTitle": "样例 {id}",
     "openWorkspaceFirst": "请先打开工作区，然后重新发送题目。",
     "outputPlaceholder": "运行程序后显示输出...",
+    "outputLimitNotice": "输出超过限制（{limit} MB），程序已被终止。",
+    "memoryLimitNotice": "内存超过限制（{limit} MB），程序已被终止。",
     "noWorkspaceForSample": "未打开工作区，无法写入大样例文件",
     "writeSampleFail": "写入样例文件失败：{name}",
     "readZipFail": "读取压缩包失败",

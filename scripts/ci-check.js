@@ -981,7 +981,7 @@ const I18N_EN_PUNCT_BASELINE = 1;
 // welcome.about / welcome.docs / welcome.shortcuts 三个键失去了唯一的
 // 引用点（原先只被那份死代码引用）。存量下降 3，baseline 随之下调。
 // 取 tests/i18n.test.js 的口径（更严格：只扫 src，键名全字符类）算出的值。
-const I18N_ORPHAN_KEY_BASELINE = 203;
+const I18N_ORPHAN_KEY_BASELINE = 202;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {

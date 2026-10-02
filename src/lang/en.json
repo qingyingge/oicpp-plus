@@ -733,6 +733,8 @@
     "sampleTitle": "Sample {id}",
     "openWorkspaceFirst": "Please open a workspace first, then resend the problem.",
     "outputPlaceholder": "Program output will appear after running...",
+    "outputLimitNotice": "Output exceeded the limit ({limit} MB); the program was terminated.",
+    "memoryLimitNotice": "Memory usage exceeded the limit ({limit} MB); the program was terminated.",
     "noWorkspaceForSample": "No workspace is open; cannot write large sample files",
     "writeSampleFail": "Failed to write sample file: {name}",
     "readZipFail": "Failed to read archive",
