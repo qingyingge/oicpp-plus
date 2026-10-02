@@ -5337,6 +5337,7 @@ function setupIPC() {
             let memorySamplePromise = null;
             let timeout = false;
             let startTime = null;
+            let exitTime = null;
 
             const parsedMemoryLimit = Number(memoryLimit);
             const effectiveMemoryLimitMb = Number.isFinite(parsedMemoryLimit) && parsedMemoryLimit > 0
@@ -5494,6 +5495,11 @@ function setupIPC() {
                 try { logInfo('[运行程序][启动] 子进程已启动'); } catch (_) { }
             });
 
+            // 进程真正退出的时刻，计时的右端点用它；close 事件还要等 stdio 收尾
+            childProcess.on('exit', () => {
+                exitTime = performance.now();
+            });
+
             childProcess.stdout.on('data', (data) => {
                 pushChunkWithLimit(data, stdoutChunks, 'stdout');
             });
@@ -5509,7 +5515,9 @@ function setupIPC() {
                 if (memorySamplePromise) {
                     try { await memorySamplePromise; } catch (_) { }
                 }
-                const endTime = performance.now();
+                // 内存采样与 memwatch 收尾都排在 close 里 await，会额外引入上百毫秒开销，
+                // 计时必须取进程退出的那一刻，否则短程序的记录时间会明显虚高。
+                const endTime = exitTime !== null ? exitTime : performance.now();
 
                 let executionTime = 0;
                 if (startTime !== null) {
