@@ -38,7 +38,14 @@ if (isPathInsideTempRoots) {
     check('accepts a comparer artifact under the compare dir', isPathInsideTempRoots(path.join(compare, 'std_1700000000000.exe')));
     check('accepts a nested freopen run file under the compare dir', isPathInsideTempRoots(path.join(compare, 'freopen_runs', 'task', 'in.txt')));
     check('accepts a file under codeTemp', isPathInsideTempRoots(path.join(codeTemp, 'tmp.cpp')));
-    check('accepts a case-shifted path inside compare', isPathInsideTempRoots(path.join(compare.toUpperCase(), 'std_1.exe')));
+    // 大小写：win32 的 path.relative 不敏感，同一目录换个大小写仍算目录内；
+    // POSIX 上 .OICPP-PLUS/COMPARE 就是另一个目录，必须判为目录外。
+    const caseShifted = path.join(compare.toUpperCase(), 'std_1.exe');
+    if (process.platform === 'win32') {
+        check('accepts a case-shifted path inside compare', isPathInsideTempRoots(caseShifted));
+    } else {
+        check('rejects a case-shifted path on case-sensitive FS', !isPathInsideTempRoots(caseShifted));
+    }
     check('rejects a sibling dir sharing the codeTemp prefix', !isPathInsideTempRoots(path.join(os.homedir(), '.oicpp-plus', 'codeTempEvil', 'x.exe')));
     check('rejects a sibling dir sharing the compare prefix', !isPathInsideTempRoots(path.join(os.homedir(), '.oicpp-plus', 'compareOld', 'x.exe')));
     check('rejects unrelated paths', !isPathInsideTempRoots(path.join(os.homedir(), 'Documents', 'x.exe')));

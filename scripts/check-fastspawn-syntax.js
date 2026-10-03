@@ -47,7 +47,13 @@ if (!gpp) {
     process.exit(0);
 }
 
-// 最小桩：只声明 fastspawn.cc 实际用到的 N-API 与 POSIX 符号
+// 最小桩：只声明 fastspawn.cc 实际用到的 N-API 与 POSIX 符号。
+// POSIX 桩（spawn.h/poll.h/unistd.h/sys/*）只在 Windows 上装：MinGW 缺
+// posix_spawn/pipe2/POLL* 这些符号，不桩就编不过。POSIX 上系统头文件本来就
+// 齐全，装桩反而会遮住系统头（桩 unistd.h 会把 <unistd.h> 抢过来，导致
+// read/write/close 无声明；桩里的 kill 又会和真 <signal.h> 的 __THROW 撞出
+// exception specifier 不一致），所以那边只保留 node_api.h 桩。
+const isWin = process.platform === 'win32';
 const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fastspawn-stub-'));
 const write = (rel, body) => {
     const p = path.join(stubDir, rel);
@@ -104,6 +110,7 @@ napi_status napi_module_register(napi_env, napi_deprecated*);
 #endif
 `);
 
+if (isWin) {
 write('posix_stub.h', `
 #ifndef STUB_POSIX_H
 #define STUB_POSIX_H
@@ -176,8 +183,14 @@ write('poll.h', '#include "posix_stub.h"\n');
 write('unistd.h', '#include "posix_stub.h"\n');
 write('sys/wait.h', '#include "../posix_stub.h"\n');
 write('sys/time.h', '#include "../posix_stub.h"\n');
+}
 
-const result = spawnSync(gpp, ['-fsyntax-only', '-std=c++17', '-I', stubDir, source], {
+// -D_GNU_SOURCE：和 POSIX 上真实的 node-gyp 构建保持一致（pipe2 等只在它下面可见）
+const cppArgs = ['-fsyntax-only', '-std=c++17', '-I', stubDir];
+if (!isWin) cppArgs.push('-D_GNU_SOURCE');
+cppArgs.push(source);
+
+const result = spawnSync(gpp, cppArgs, {
     encoding: 'utf8'
 });
 

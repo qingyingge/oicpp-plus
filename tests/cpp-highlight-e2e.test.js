@@ -23,9 +23,16 @@ const ROOT = path.resolve(__dirname, '..');
 process.chdir(ROOT);
 
 let failures = 0;
+let skipped = 0;
 const check = (name, cond, extra = '') => {
     console.log(`${cond ? '[PASS]' : '[FAIL]'} ${name}${extra ? ' | ' + extra : ''}`);
     if (!cond) failures++;
+};
+// 前提不成立时跳过，而不是判 FAIL：clangd 是 Windows 打包产物，
+// Linux 开发机 / 未跑 prebuild:clangd 的机器上本来就取不到语义 token。
+const skip = (name, why) => {
+    skipped++;
+    console.log(`[SKIP] ${name} | ${why}`);
 };
 
 // ---------------------------------------------------------------------------
@@ -333,8 +340,12 @@ function monarchTokenize(lang, text) {
     } catch (e) {
         console.log('  clangd 查询失败：' + (e.message || e));
     }
-    check('拿到 clangd 语义 token', Array.isArray(semTokens) && semTokens.length > 0,
-        semTokens ? `${semTokens.length} 个` : 'clangd 不可用');
+    if (semTokens === null) {
+        skip('拿到 clangd 语义 token', 'clangd 不可用（仅 Windows 打包产物，语义部分跳过）');
+    } else {
+        check('拿到 clangd 语义 token', Array.isArray(semTokens) && semTokens.length > 0,
+            `${semTokens.length} 个`);
+    }
 
     if (Array.isArray(semTokens)) {
         console.log('');
@@ -419,7 +430,9 @@ function monarchTokenize(lang, text) {
     function finish() {
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
         console.log('');
-        console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILED`);
+        console.log(failures === 0
+            ? `ALL PASS${skipped ? `（${skipped} 项跳过）` : ''}`
+            : `${failures} FAILED`);
         process.exit(failures ? 1 : 0);
     }
 })();

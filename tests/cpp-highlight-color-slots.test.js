@@ -6,7 +6,9 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-process.chdir('D:/Users/admin/Desktop/oicpp-plus');
+// 曾经硬编码成某个开发机的 D:/Users/admin/Desktop/oicpp-plus，在别的机器上
+// 直接 ENOENT 崩掉。跟其他测试一样以 __dirname 上溯定位仓库根。
+process.chdir(path.resolve(__dirname, '..'));
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
