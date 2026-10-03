@@ -1,7 +1,8 @@
-# TypeScript迁移方案（4 AI agent 并行编排）
+# TypeScript 迁移方案（4 AI agent 并行编排）
 
-> 状态：**方案已定，待排期**。所有数字为实测值，测量方法见附录A。
-> 适用版本：1.5.4 · 测量基准commit `6ac0ba1`
+> 状态：**方案已定，待排期**。所有数字为实测值，测量方法见附录 A。
+> 适用版本：1.5.4 · 测量基准 commit `6ac0ba1`
+> 行数口径：`sum(1 for _ in open(f))`，末尾无换行的文件计为完整行（故与 `wc -l` 差 5）
 
 ---
 
@@ -9,11 +10,12 @@
 
 | 结论 | 依据 |
 |---|---|
-| **不做全量 `.ts` 重写** | 固定成本 8–11 人天只买到"工具链"，不做任何业务代码类型化 |
-| **拆分与迁移必须串行，且顺序不可颠倒** | 拆分要先于TS（拆出的段需要独立文件才能表达 `import`） |
-| **拆分的并行上限 = 4，且只有一种并行方式可行** | 实测：只有「纯新增文件」型分支能零冲突；「从主文件删除」型分支在段相邻时必冲突 |
-| **关键路径 = A4 测试改造 → 拆分 → G1 闸门 → 冷段TS 化** | 约 10–13 人天，加并发也压不动 |
-| **`src/main.js` 本轮不做** | 11522 行 / 15 个测试读它源码 / 26.6 人天，4 并发下是负价值 |
+| **不做全量 `.ts` 重写** | 固定成本 8–11 人天只买到「工具链」，不做任何业务代码类型化 |
+| **拆分与迁移必须串行，顺序不可颠倒** | 拆出的段需要独立文件才能表达 `import` |
+| **拆分的并行上限 = 4，且只有「纯新增文件」一种方式可行** | 实测：删除型分支在段相邻时必冲突 |
+| **真正的瓶颈不是拆分，是 `security-regression.test.js` 造成的串行链** | 16 个「有测试依赖」文件中 11 个被同一测试串联 = 20 人天不可并行 |
+| **总日历 D1–D22 = 22 天**，瓶颈在叶子线而非拆分线 | 见 §5.3 关键路径模型 |
+| **`src/main.js` 本轮不做** | 11522 行 / 15 个测试读它源码 / 26.6 人天 |
 
 ---
 
@@ -28,46 +30,60 @@
 | `src/renderer/js/tabs.js` | 5572 | 1 |
 | `src/renderer/js/main.js` | 4547 | 1 |
 | `src/renderer/js/sidebar/sampleTester.js` | 3798 | 1 |
-| 其余 renderer（js + sidebar + settings + formatters + ui） | ~20.7k | 27 |
+| 其余 renderer（js + sidebar + settings + formatters + ui） | 18414 | 25 |
 | `src/preload.js` | 966 | 1 |
-| `src/utils/` | 2018 | 8 |
+| `src/utils/` | 2021 | 8 |
 | `src/main-process/` | 480 | 2 |
-| gdb / terminal / clang-format 服务 | 2682 | 6 |
-| **src 小计** | **59109** | **48** |
+| `src/lang/` + gdb / terminal / clang-format 服务 | 2713 | 7 |
+| **src 合计** | **59109** | **48** |
 | `scripts/` | 2374 | 10 |
 | `tests/` | 6642 | 36 |
+
+> 逐行求和 = 59109，与合计一致。`wc -l` 口径为 59104，差 5 来自末尾无换行的文件。
 
 ### 1.2 开发速率
 
 | 指标 | 值 |
 |---|---|
 | 项目龄期 | 418 天 |
-| 总提交 | 702 |
+| 总提交（基准 `6ac0ba1`） | 702 |
 | 近 90 天提交 | 397 |
 | 近 30 天提交 | 314（约 10/天） |
-| 近 90 天活跃者 | qingyingge 266 + mywwzh 131（+76 bot） |
-| **近 90 天 src churn** | **82858 行变动（+46434 / −36424）** |
+| 近 90 天活跃者 | qingyingge 266 + mywwzh 131 |
+| `copilot-swe-agent` 累计 | 76，**全部发生在 90 天之前，近 90 天内为 0** |
+| **近 90 天 src churn（原始）** | **51513 行（0.87x）** |
+| **近 90 天 src churn（剔除事故）** | **40482 行（0.68x）** |
 
-> **重要修正**：初版分析称 churn 为 1.40x/季度，源于两个事故恢复提交被计入：
-> `ce90668` "修复了编辑器核心文件被错误覆盖的 bug"（+6908 行）、
-> `a92e11a` "编辑器核心文件缺失导致功能异常的 bug"（+4118 行）。
-> 剔除后 **src 整体 churn = 0.75x**，`monaco-editor-manager.js` = **2.16x**。
+> **重要修正 —— 还原提交清单此前漏了一个。**
+> `src` 下近 90 天有**三个**整文件还原提交，全部为 2026-08-13：
 >
-> 全代码库并未"每季度重写一遍"，而是**少数文件在高频重写，其余在稳定演化**。
+> | commit | parent | 消息 | +行 |
+> |---|---|---|---:|
+> | `ce90668fd4eb` | `5840d615` | 修复了编辑器核心文件被错误覆盖的 bug | 6908 |
+> | `87e1deb0f2d2` | `fe57bac8` | 修复了编辑器核心文件被错误覆盖的 bug | 6908 |
+> | `a92e11a04841` | — | 修复了编辑器核心文件缺失导致功能异常的 bug | 4118 |
+>
+> `ce90668` 与 `87e1deb` 是 parent 不同的**两个独立提交**（同消息、同行数），此前只排除了这两个，
+> `a92e11a` 的 +4118 一直被计入。三个都排除后：
+> src 整体 **1.40x → 0.87x → 0.68x**，
+> `monaco-editor-manager.js` **5.40x → 2.92x → 1.70x**（等价重写周期 17 天 → 42 天 → **53 天**）。
+>
+> 全代码库并未「每季度重写一遍」，而是少数文件高频重写、其余稳定演化。
 
-### 1.3 关键文件 churn（剔除事故提交后）
+### 1.3 关键文件 churn（剔除三个还原提交后）
 
-| 文件 | LOC | churn/行 | 等价重写周期 |
-|---|---:|---:|---:|
-| monaco-editor-manager.js | 9076 | 2.16 | 42 天 |
-| browser-manager.js | 643 | 1.57 | 57 天 |
-| compare-worker-v6.js | 275 | 1.49 | 60 天 |
-| **tabs.js** | 5572 | **0.56** | 161 天 |
-| **sampleTester.js** | 3798 | **0.64** | 141 天 |
-| **main.js** | 11522 | **0.43** | 208 天 |
-| settings/editor.js | 2145 | 0.20 | 448 天 |
-| gdb-utils.js | 597 | 0.00 | — |
-| cppFormatter.js | 542 | 0.02 | — |
+| 文件 | LOC | 原始 churn/行 | 剔除后 | 等价重写周期 |
+|---|---:|---:|---:|---:|
+| monaco-editor-manager.js | 9076 | 2.92 | **1.70** | 53 天 |
+| browser-manager.js | 643 | 1.57 | 1.57 | 57 天 |
+| compare-worker-v6.js | 275 | 1.49 | 1.49 | 61 天 |
+| **tabs.js** | 5572 | 0.56 | **0.56** | 161 天 |
+| **sampleTester.js** | 3798 | 0.64 | **0.64** | 141 天 |
+| **main.js** | 11522 | 0.43 | **0.43** | 208 天 |
+| settings/editor.js | 2145 | 0.20 | 0.20 | 448 天 |
+| terminal-panel.js | 1178 | 0.15 | 0.15 | 599 天 |
+| cppFormatter.js | 542 | 0.02 | 0.02 | — |
+| gdb-utils.js | 597 | 0.00 | 0.00 | — |
 
 ### 1.4 验证周期（AI agent 的货币单位）
 
@@ -78,11 +94,9 @@
 | `pnpm run ci:tests`（35 个测试） | **31 s** |
 | `pnpm run ci`（53 项检查） | **38 s** |
 
-反馈周期 40 秒 → **工作包应按报错簇切（最小 8 条、最大 280 条），而不是按人天打包**。
-
 ### 1.5 TypeScript 报错量
 
-配置：`tsc --noEmit --allowJs --checkJs --skipLibCheck --moduleResolution bundler`
+配置：`tsc --noEmit --allowJs --checkJs --skipLibCheck --strict false --moduleResolution bundler`
 
 | 配置 | 报错数 |
 |---|---:|
@@ -90,14 +104,26 @@
 | + 一份 15 行 `global.d.ts` | **4911**（−49%） |
 | + `--strict false` | **863** |
 
-> 9593 → 4911 的落差全部来自"缺声明"而非"缺类型"。
-> 863 条中 637 条是 `TS2339`，集中在 4 个 DOM 收窄模式：
-> `.value` on `HTMLElement`（152）、`.style` on `Element`（72）、
-> `.checked` on `HTMLElement`（39）、`.value`/`.dataset`/`.closest` on `EventTarget`（78）。
+> **测量前提**：`node_modules` 下**无任何 `@types`**（`@types/node`、`@types/electron` 均未安装）。
+> 9593 / 4911 / 863 全部在该状态下测得。A1 要求装 `@types/node` 后基线会漂移
+> （`process` / `__dirname` / `Buffer` 等约 400 条 `TS2304` 会消失，
+> 但 `Buffer` 的严格类型可能新增报错），**方向与幅度均未实测**。
+> 因此「−49%」应视为**下限估计**。
 >
-> **另有存量类型缺陷被顺带发现**：`Token.prototype.extractString`（17 处）、
-> `Token.prototype.trim`（4 处）是挂在原型上的动态方法；`Error.code`（18 处）、
-> `ChildProcess._result`/`_collectors`（10 处）是鸭子类型。
+> 863 条中 637 条为 `TS2339`。按类型分组：
+>
+> | 模式 | 条数 | 占 637 |
+> |---|---:|---:|
+> | `.value` on `HTMLElement` | 152 | 24% |
+> | `.style` on `Element` | 72 | 11% |
+> | `.value`/`.dataset`/`.closest` on `EventTarget`/`Element` | 78 | 12% |
+> | `.checked` on `HTMLElement` | 39 | 6% |
+> | **DOM 收窄小计** | **341** | **54%** |
+> | 其余非 DOM（`Token.prototype.*`、`Error.code`、`ChildProcess._*` 等） | 296 | 46% |
+>
+> 后者含**存量类型缺陷**：`Token.prototype.extractString`（17 处）、
+> `Token.prototype.trim`（4 处）是挂在原型上的动态方法，TS 不可见；
+> `Error.code`（18 处）、`ChildProcess._result`/`_collectors`（10 处）是鸭子类型。
 
 ---
 
@@ -105,31 +131,31 @@
 
 ### 2.1 反馈快 → 粒度要细
 
-40 秒闭环意味着 agent 可以"改一处跑一次"，不需要攒批。
+40 秒闭环意味着 agent 可以「改一处跑一次」。
 
-### 2.2 关键路径是串行的，加并发压不动
+### 2.2 并行上限由测试共享决定 —— 而非由文件数决定
 
-```
-A1 tsconfig → A4 测试改造 → 拆分 → G1 闸门 → 冷段 TS 化
-        约 10–13 人天，无论 4 个还是 40 个 agent
-```
+35 个测试中有 32 个用 `readFileSync` 读源码做文本断言。改源码 = 改测试 = 冲突。
 
-### 2.3 并行上限由测试共享决定
-
-用 `readFileSync` 路径分析 35 个测试对源码的依赖，得到强约束组：
+**最强的一条耦合**：`security-regression.test.js` 同时读取 14 个源码文件，
+在 N5–N8 的 16 个候选文件里命中 **11 个**：
 
 ```
-共享测试文件 → 必须同一个 agent / 同一个 PR
-  src/main.js                    ← 15 个测试   🔴 最热冲突面
-  src/settings/compiler.js + src/main.js      ← 3 个测试
-  src/preload.js + compile-manager.js         ← 2 个测试
-  src/settings/editor.js + tabs.js            ← 2 个测试
-  src/lang/index.js + sampleTester.js + sidebar.js
-  src/compare-engine-v2.js + cloudSync.js
-  monaco-editor-manager.js       ← 2 个测试
+settings/editor.js   settings/compiler.js  compile-manager.js  preload.js
+multi-thread-downloader.js  gdb-mi-debugger.js  compare-worker-v6.js
+settings-init.js  init.js  process-supervisor.js  gdb-debugger.js
 ```
 
-**27 个文件与任何其他文件零冲突** —— 这是可以完全并行撒出去的部分。
+> 这 11 个文件**跨越原方案的 G1 / G4 / G5 三组**，被同一个测试文件串成一条链。
+> 任何两个由不同 agent 同时修改，都会在 `security-regression.test.js` 上冲突。
+> **有效并行度 = 1**，合计 20.0 人天。
+>
+> 剩余 5 个文件（`sidebar.js` / `cloudSync.js` / `sampleTester.js` /
+> `lang/index.js` / `compare-engine-v2.js`）不被该测试读取，可 4 路并行，13.6 人天。
+
+### 2.3 关键路径是串行的
+
+瓶颈不是并发度不足，而是 §2.2 那条 20 人天的串行链。完整模型见 §5.3。
 
 ---
 
@@ -139,48 +165,57 @@ A1 tsconfig → A4 测试改造 → 拆分 → G1 闸门 → 冷段 TS 化
 
 ### 3.1 分段结构
 
-按主题将文件切成 18 个段：
+按「方法声明行的归属」切分，18 个段：
 
 | 段 | 行数 | 方法 | 自包含度 | churn/行 | 外部转发点 |
 |---|---:|---:|---:|---:|---:|
-| lsp-providers | 2450 | 57 | 83% | **2.64** | 34 |
-| include-resolution | 931 | 27 | 89% | 0.01 | 12 |
-| groups+open | 859 | 8 | 8% | 0.21 | 7 |
-| theme+colors | 697 | 18 | **100%** | 0.20 | 12 |
-| settings-apply | 603 | 15 | 51% | 0.49 | 9 |
-| cpp-parser | 634 | 22 | **98%** | 0.05 | 2 |
-| tab-ops+diff | 438 | 14 | 54% | 0.07 | 17 |
-| diag+markers | 424 | 14 | 83% | 0.21 | 5 |
-| keybindings | 400 | 14 | 81% | 0.10 | 19 |
-| selection-guard | 267 | 7 | 44% | 0.00 | 4 |
-| clipboard+fmt | 251 | 6 | 75% | 0.29 | 7 |
-| completion | 309 | 7 | 55% | 0.03 | 4 |
-| editor-lifecycle | 337 | 2 | 6% | 0.09 | 0 |
-| rename | 126 | 1 | 0% | 0.02 | 0 |
-| semantic-hl | 106 | 2 | 0% | 0.26 | 6 |
-| breakpoints | 106 | 1 | — | 0.78 | 1 |
-| open-at-pos | 69 | 1 | 20% | 0.00 | 1 |
-| legacy（死代码） | 65 | 2 | — | 0.00 | 0 |
+| lsp-providers | 2450 | 58 | 79% | **2.64** | 34 |
+| include-resolution | 931 | 28 | 86% | 0.01 | 12 |
+| groups+open | 859 | 9 | 42% | 0.21 | 7 |
+| theme+colors | 697 | 19 | 66% | 0.20 | 17 |
+| settings-apply | 603 | 16 | 68% | 0.49 | 9 |
+| cpp-parser | 634 | 23 | 94% | 0.05 | 4 |
+| tab-ops+diff | 438 | 15 | 47% | 0.07 | 17 |
+| diag+markers | 424 | 15 | 60% | 0.21 | 7 |
+| keybindings | 400 | 15 | 41% | 0.10 | 20 |
+| editor-lifecycle | 337 | 2 | 100% | 0.09 | 0 |
+| completion | 309 | 8 | 46% | 0.03 | 7 |
+| selection-guard | 267 | 8 | 64% | 0.00 | 4 |
+| clipboard+fmt | 251 | 7 | 25% | 0.29 | 9 |
+| rename | 126 | 2 | 0% | 0.02 | 1 |
+| semantic-hl | 106 | 3 | 0% | 0.26 | 9 |
+| breakpoints | 106 | 1 | 0% | 0.78 | 1 |
+| open-at-pos | 69 | 2 | 20% | 0.00 | 4 |
+| legacy（死代码） | 65 | 3 | 100% | 0.00 | 0 |
+| **段合计** | **9072** | **234** | — | — | **162** |
 
-> **段边界口径**：上表按「方法声明行的归属」切分，边界落在方法之间。
-> 特别注意 `getCurrentContent`（5384-5395）虽与 `breakpoints` 段行号相邻，
-> 但**属于活代码** —— 被 `renderer/js/main.js:2249` 与
-> `sidebar/sampleTester.js:2767` 通过 `editorManager.getCurrentContent()` 调用，
-> **不得随 breakpoints 段一起删除**。
+> 段行数合计 9072 + 文件头 4 行（注释 / 常量 / 空行 / `class` 声明）= 9076 ✓
+> 方法数合计 234 = 文件方法总数 ✓
+>
+> **口径说明**：`churn/行` 一列是**段级** hunk 归属统计（按 hunk 落点行号），
+> 与 §1.3 的**文件级** churn 不是同一口径。
+> `lsp-providers` 段级 2.64 显著高于所在文件的 1.70 —— 说明该段的改动密度
+> 确实远高于文件其余部分，这是「只拆热段」策略的依据。
+>
+> **段边界口径**：上表按方法声明行归属切分，边界落在方法之间。
+> `getCurrentContent`（5384-5395）虽与 `breakpoints` 段行号相邻，但**属活代码** ——
+> 被 `renderer/js/main.js:2249` 与 `sidebar/sampleTester.js:2767` 调用，
+> **不得随 breakpoints 段删除**。
 
 ### 3.2 实测结果
 
 | 实验 | 分支策略 | 结果 |
 |---|---|---|
-| **E1** | 4 分支，各删 1 段（theme+colors / breakpoints / legacy / cpp-parser），间隔 1000–1994 行 | ✅ **4/4 零冲突**，行数 9076→7574 精确守恒 |
-| **E2** | 4 分支，各删 1 段（include-resolution / diag+markers / keybindings / tab-ops+diff） | ❌ S8 冲突 1 块 |
-| **E3** | 3 分支贪心着色分组 | ❌ 5 个冲突块 |
-| **E4** | 2 分支交替奇偶分组 | ❌ 6 个冲突块 |
-| **E5** | 4 分支**只新增文件**，主文件不动 | ✅ **4/4 零冲突**，18 个文件全部落地 |
+| **E1** | 4 分支各删 1 段，间隔 1000–1994 行 | ⚠️ 零冲突，行数守恒，**但已误删 `getCurrentContent`**（见下） |
+| **E2** | 4 分支各删 1 段，段相邻 | ❌ 1 冲突块 |
+| **E3** | 3 分支贪心着色分组 | ❌ 5 冲突块 |
+| **E4** | 2 分支交替奇偶分组 | ❌ 6 冲突块 |
+| **E5** | 4 分支**只新增文件**，主文件不动 | ✅ 4/4 零冲突，18 文件全部落地 |
 
-> E1 的行数守恒（9076−697−106−65−634 = 7574）证明**行数层面**无冲突。
-> 但 E5 的方法数检查暴露了另一类问题：区间边界会把边界方法一并带走（见附录 B）。
-> **行数守恒 ≠ 方法守恒**，两者必须分别校验。
+> **E1 不是干净的成功案例。** `breakpoints` 段区间 `[5278, 5384]` 的末行 5384
+> 正是 `getCurrentContent() {` 的声明行 —— E1 已经删掉了这个有外部调用者的方法，
+> 而「行数 9076→7574 精确守恒」正是给出虚假安全感的信号。
+> 真正的成功案例只有 **E5**。
 
 ### 3.3 冲突机制（已完全定位）
 
@@ -198,159 +233,207 @@ E2 冲突块原文：
 
 **根因**：第 389 行与第 390 行相邻。S5（include-resolution）改写第 390 行的
 `this.getCompilerSettingsSnapshot()`，S8（tab-ops+diff）改写第 389 行的
-`this.getFileNameFromPath()`。git把两条相邻行的改动合成同一个冲突块。
+`this.getFileNameFromPath()`。git 把两条相邻行的改动合成同一个冲突块。
 
-进一步定位发现更强的约束：**18 个段在文件中首尾相接，两两间隔均为 0**。
-任何两个段分配到不同分支时，它们的删除边界直接相接，git 缺少锚定行，
-必然冲突。
-
-**规律**：
+**更强约束**：18 个段在文件中首尾相接，两两间隔均为 0。任何两段分到不同分支时，
+删除边界直接相接，git 缺少锚定行，必然冲突。
 
 | 分支类型 | 可行性 |
 |---|---|
-| 分支只**新增**文件，主文件不动 | ✅ 任意数量并行，零冲突 |
-| 分支从主文件**删除**一个段，且与其它分支的段**间隔 ≥ ~1000 行** | ✅ 可行 |
-| 分支从主文件**删除**一个段，且与其它分支的段**相邻或近邻（<100 行）** | ❌ 必冲突 |
+| 只**新增**文件，主文件不动 | ✅ 任意数量并行，零冲突 |
+| 从主文件**删除**一个段，与其它分支的段**间隔 ≥ ~1000 行** | ⚠️ 可合并，但仍须校验方法数（见 E1） |
+| 从主文件**删除**一个段，与其它分支的段**相邻或近邻（<100 行）** | ❌ 必冲突 |
 
-### 3.4 方案
-
-采用「**两阶段拆分**」：把并行放在安全的一侧。
+### 3.4 方案：两阶段拆分
 
 ```
 阶段 S1（4 路并行，零冲突）：agent 各自【新增】拆出文件
      每路只写自己的新文件，主文件完全不动
         ↓  顺序 merge，每步 32s 验证
 阶段 S2（1 路，单 agent）：从主文件删除 17 个活段 + legacy 死代码
-     + 改写外部转发点 + 新文件挂到 index.html
+     + 改写 162 处外部转发点 + 新文件挂到 index.html
 ```
 
-S1 的产物是纯新增文件，可 4 路并行；S2 是唯一有冲突风险的操作，单点执行。
-**拆分总工期从「4 路并行但互相冲突反复 abort」变成「4 路并行准备 + 1 次集成」。**
+S1 产物是纯新增文件，可 4 路并行；S2 是唯一有冲突风险的操作，单点执行。
 
-> **S2 的边界纪律**：段边界必须落在方法声明行之间。
-> `getCurrentContent`（5384-5395）虽与 `breakpoints` 段行号相邻，
-> 但**属于活代码** —— `renderer/js/main.js:2249` 与
-> `sidebar/sampleTester.js:2767` 通过 `editorManager.getCurrentContent()` 调用，
-> **严禁随段删除**。S2 验收必须包含「方法数守恒」检查（§7），
-> 差值与计划移出数不符即驳回。
+> **S2 的边界纪律**：段边界必须落在方法声明行之间，逐方法核对归属。
+> `getCurrentContent`（5384-5395）严禁随 `breakpoints` 段删除。
 
 ---
 
 ## 4. 节点定义（DAG）
 
-### L0 — 引导（4 路并行）
+### 4.0 前置：本方案不修改任何 `.js` 源文件
+
+`noEmit` 模式下，**只加 `tsconfig.json` + `global.d.ts`，`src/**/*.js` 一行不改**，
+32 个文本断言测试完全不受影响，A4 也不必做。
+
+代价是剩余 863 条报错无法消除。取舍：
+
+| 路线 | 源码改动 | 报错 | 测试影响 | agent 耦合 |
+|---|---|---|---|---|
+| **路线甲（推荐起步）** | 零 | 4911 → 维持 | 零 | 零，可全并行 |
+| 路线乙（加 `@ts-ignore` / JSDoc 注解） | 每文件数十行 | 863 → 趋近 0 | **32 个文本断言测试需同步改** | §2.2 的耦合全部生效 |
+
+> **建议：先只做路线甲。** 它拿到 49% 的报错削减、零测试改动、零 agent 耦合，
+> 成本 2.5 人天。路线乙的收益（863 条）远小于其引入的串行链（20 人天）。
+> 下方 N1–N9 描述的是路线乙，**仅在确有必要时启动**。
+
+### L0 — 引导（路线甲，全部零源码改动）
 
 | ID | 任务 | 人天 | 产出 / 验收 |
 |---|---|---:|---|
 | **A1** | `tsconfig.json`（`allowJs`+`checkJs`+`noEmit`+`strict:false`）+ 装 `@types/node`、`@types/electron` | 2 | `tsc --noEmit` 可跑 |
 | **A2** | `src/types/global.d.ts`（~15 行：`logInfo/logWarn/logError/monaco/require` + `Window` 上 15 个全局） | 0.5 | **报错 9593 → 4911（−49%）** |
 | **A3** | `src/types/preload.d.ts`：131 个 `electronAPI.*` 方法 + 153 个 IPC channel 签名 | 2–3 | 渲染层 709 处 `electronAPI.*` 调用有类型 |
-| **A4** | 测试去路径硬编码（9 处→ 标记搜索），拆 4 个并行子任务 | 1.5–2 | 拆文件后测试不ENOENT |
 
-**A4 的 4 个并行子任务**：
+> **A1 完成后必须重测基线**（§1.5 已说明理由）。A2 的「−49%」是装 `@types` **之前**的数字。
+
+**A4（测试去路径硬编码）仅在启动路线乙或执行 S2 时才需要**，届时拆 4 个并行子任务：
 
 | 子任务 | 位置 | 备注 |
 |---|---|---|
 | A4-1 | `cpp-highlight-color-slots.test.js` 的 `methodBody()` 提取器 | 最脆：正则按 `^\s{4}method(` 定位 + `eval` |
 | A4-2 | `cpp-highlight-rules/e2e.test.js` + `clang-format.test.js` | 3 处同模式 |
 | A4-3 | `lsp-{completion-command,diagnostics-uri,provider-registration,main-audit}.test.js` | 4 处同模式 |
-| A4-4 | `ci-check.js` 4 处硬编码文件列表改glob | D1/D8/BOM/selector |
+| A4-4 | `ci-check.js` 4 处硬编码文件列表改 glob | D1/D8/BOM/selector |
 
-> **A4 与 TS 无关也该做** —— 它是现存 CI 脆弱点。两个"文件被覆盖"事故能通过 CI，
-> 就是这些文本断言的盲区。
+### L1 — 路线乙的叶子层 TS 化（可选）
 
-### L1 — 依赖 L0
+| ID | 任务 | 人天 | 并行度 | 依赖 | 验收 |
+|---|---|---:|---:|---|---|
+| **N1–N4** | **28 个零测试依赖文件**（14213 LOC / 1101 报错） | 32.7 | **4** | A2, A4 | 各文件 `tsc` 零报错 |
+| **N5–N8** | 5 个未被 `security-regression` 读取的文件（13.6 人天） | 13.6 | **4** | A2, A4 | 同上 |
+| **N9** | **11 个被 `security-regression` 耦合的文件**（20.0 人天） | 20.0 | **1（串行）** | A2, A4 | 同上 |
+| **N10** | 删死代码：`monaco-editor-manager.js:9012-9076` | 0.5 | 1 | — | 减 65 行 |
 
-| ID | 任务 | 人天 | 依赖 | 验收 |
-|---|---|---:|---|---|
-| **N1–N4** | 叶子层 TS 化：27 个**零测试依赖**文件（13969 LOC / 1101 报错） | 32/4 = **8.0** | A2, A4 | 各文件 `tsc` 零报错 |
-| **N5–N8** | 温/冷叶子：15 个有测试依赖文件（14176 LOC / 1531 报错） | 33.6/4 = **8.3** | A2, A4 | 同上 |
-| **N9** | 删死代码：`monaco-editor-manager.js:9012-9076` 的 `parseFunctions` / `parseStructsAndClasses` / `removeComments` | 0.5 | — | 减 65 行 |
-
-> **N9 的死代码判定依据**（已实测）：
+> **N10 的死代码判定依据**（已实测）：
 > `parseFunctions` 与 `parseStructsAndClasses` 在**全仓库零调用点**
 > （`grep -rn` 仅命中自身定义行 9012 / 9037）；
 > `removeComments` 的 2 处调用（9014 / 9039）**都在这两个死方法内部**，
-> 因此整段 9012-9076 可整体删除，不影响任何活代码。
-> LSP 改造后 `completion` 已改走 `parseFunctionsWithLocations`（6821 行）。
+> 因此整段 9012-9076 可整体删除。`completion` 已改走 `parseFunctionsWithLocations`（6821 行）。
 
 **N1–N4 的 4 包划分**（LPT 均衡，每包报错数 245–304）：
 
-| 包 | 文件数 | LOC | 报错 |
-|---|---:|---:|---:|
-| PKG-1 | 4 | 3688 | 304 |
-| PKG-2 | 3 | 3458 | 251 |
-| PKG-3 | 9 | 3378 | 245 |
-| PKG-4 | 11 | 3445 | 301 |
-
-**N5–N8 的强约束组**（共享测试文件，不能拆给不同 agent）：
-
-```
-G1: gdb-mi-debugger + compare-worker-v6 + init + settings-init
-    + multi-thread-downloader + process-supervisor← security-regression
-G2: lang/index + sidebar + sampleTester(3798行)                     ← bug-report
-G3: compare-engine-v2 + cloudSync                                  ← audit-fixes
-G4: preload + compile-manager + compiler(1570行)← audit-fixes + security
-G5: settings/editor(2145行)                                        ← security + bug-report
-```
+| 包 | 文件数 | LOC | 报错 | 人天 |
+|---|---:|---:|---:|---:|
+| PKG-1 | 4 | 3688 | 304 | 8.6 |
+| PKG-2 | 3 | 3458 | 251 | 7.8 |
+| PKG-3 | 9 | 3378 | 245 | 7.8 |
+| PKG-4 | 11 | 3445 | 301 | 7.9 |
 
 ### L2 — 拆分（两阶段）
 
 | ID | 任务 | 并发 | 依赖 | 验收 |
 |---|---|---:|---|---|
-| **S1a–S1d** | 阶段 S1：**新增** 18 个拆出文件（每 agent 4–5 个） | **4** | N9 | `node -c` 全通过 |
-| **S2** | 阶段 S2：主文件删除 17 个活段 + 删 legacy 死代码 + 改写外部转发点 + `index.html` 加 `<script>` | **1** | S1 | `ci:tests` 35/35 |
+| **S1a–S1d** | 阶段 S1：**新增** 18 个拆出文件（每 agent 4–5 个） | **4** | N10 | `node -c` 全通过 |
+| **S2** | 阶段 S2：主文件删除 17 个活段 + legacy 死代码 + 改写 162 处外部转发 + `index.html` 挂载 | **1** | S1, A4 | `ci:tests` 35/35 **且方法数守恒** |
 | **🚦 G1** | 复测 `churn/行` | 人工 | S2 | 判据见下 |
 
 **G1 判据**：
 
 ```
-churn/行 ≤ 0.2  → 放行，执行 N10
-churn/行 > 0.5   → 停止，重评，不执行 N10
+churn/行 ≤ 0.2  → 放行，执行 N11
+churn/行 > 0.5   → 停止，重评，不执行 N11
 ```
 
-> 依据：热段 `lsp-providers` 实测 2.64，冷段实测 0.01–0.21。
-> 拆分后若 churn 未降到 ≤0.2，说明改动量并未真正隔离，N10 的前提不成立。
+> 依据：`lsp-providers` 段级 churn 2.64，冷段实测 0.01–0.29。
+> 拆分后若 churn 未降到 ≤0.2，说明改动量并未真正隔离。
 
 ### L3 — 仅在 G1 放行后
 
 | ID | 任务 | 并发 | 人天 |
 |---|---|---:|---:|
-| **N10** | 冷段 TS 化：拆分后 monaco 其余 ~6600 行 + 18 个新文件 | **4** | 12–16 |
+| **N11** | 冷段 TS 化：拆分后 monaco 其余 ~6600 行 + 18 个新文件 | **4** | 12–16 |
 
 ---
 
 ## 5. 4-agent 排期
 
+### 5.1 阶段一：路线甲（推荐先落地）
+
 | 天 | AG-1 | AG-2 | AG-3 | AG-4 |
 |---|---|---|---|---|
-| **D1** | A1 tsconfig + @types | A2 global.d.ts | A3 preload.d.ts | A4-1 测试改造 ★ |
-| **D2** | A4-2/3 支援 | A4-4 ci-check glob | A3 收尾 | A4-1 收尾 |
-| **D3** | A4 收尾 ★关键路径 | 读 monaco 设计拆分 | PKG-1 | PKG-2 |
-| **D4** | PKG-1 续 | PKG-3 | PKG-4 | **S1a** 新增拆出文件 |
-| **D5–D11** | PKG-1 (8.0d) | PKG-3 | PKG-4 | PKG-2 |
-| **D6–D12** | ↓ | PKG-5 | PKG-6 | **S1b** 新增拆出文件 |
-| **D8–D14** | PKG-7 | PKG-8 | **S1c** | **S1d** |
-| **D13** | 合并 S1a→S1b→S1c→S1d（每步 32s 验证） | | | |
-| **D14** | **S2** 单开：主文件删除 + 转发改写 + index.html | | | |
-| **D15** | 🚦 **G1 闸门** | | | |
-| **D16–D19** | N10 冷段 TS 化 ×4 并发 | | | |
+| **D1** | A1 tsconfig + @types | A2 global.d.ts | A3 preload.d.ts | 复核基线并更新本文档 §1.5 |
+| **D2** | A3 支援 | 写 `docs/TS_MIGRATION_STATUS.md` | — | — |
 
-**关键路径**：`A4(2d) → S1(2d) → S2(1d) → G1(0.5d) → N10(3-4d)` ≈ **19 天**
-（叶子层 N1–N8 在关键路径外并行吃掉）
+**阶段一总工期 2 天，2.5 人天，零源码改动，零测试影响。**
+
+### 5.2 阶段二：拆分线（与阶段三并行）
+
+| 天 | AG-1 | AG-2 | AG-3 | AG-4 |
+|---|---|---|---|---|
+| **D3** | A4-1 测试改造 ★ | A4-2 | A4-3 | A4-4 ci-check glob |
+| **D4** | A4 收尾 | **S1a** 新增拆出文件 | | |
+| **D5–D6** | **S1b** | **S1c** | **S1d** | 合并 S1a→d，每步 32s 验证 |
+| **D7** | **S2** 单开：主文件删除 + 转发改写 + index.html | | | |
+| **D8** | 🚦 **G1 闸门** | | | |
+| **D9–D12** | **N11** 冷段 TS 化 ×4 并发 | | | |
+
+**拆分线：D3–D12 = 10 天（A4 2 + S1 2 + S2 1 + G1 0.5 + N11 3.5 = 9 人天）。**
+
+### 5.3 阶段三：叶子线 —— 真正的瓶颈
+
+| 天 | AG-1 | AG-2 | AG-3 | AG-4 |
+|---|---|---|---|---|
+| **D3–D13** | **N9** 耦合串行链（20 人天，1 agent） | N1–N4 包 1 | N1–N4 包 2 | N1–N4 包 3 |
+| **D3** | ↑ | A4-1 | A4-2/3 | A4-4 |
+| **D4–D6** | ↑ | N1–N4 续 | N1–N4 续 | N1–N4 续 + **S1a–S1d** |
+| **D7** | ↑ | **S2** 单开 | 合并验证 | ↑ |
+| **D8** | ↑ | 🚦 **G1 闸门** | ↑ | ↑ |
+| **D14–D17** | ↑ | **N5–N8**（5 文件并行，13.6 人天） | **N11** ×4 并发 | ↑ |
+| **D18–D22** | ↑ | N11 续 / 缓冲 | ↑ | ↑ |
+
+> N1–N4（32.7 人天 / 3 agent ≈ 10.9 天）由 AG-2/3/4 承接，D3 起 11 天内完成；
+> N9（20 人天）由 AG-1 独占，D3–D22 连续 20 天。两者并行不冲突
+> （N9 的 11 个文件与 N1–N4 的 28 个文件无测试交集）。
+
+**关键路径模型**（统一用日历天）：
+
+```
+路径甲（拆分线）：D1–D12  = 12 天
+路径乙（叶子线）：D3–D22  = 20 天   ← N9 从 D3 起独占 1 个 agent 连做 20 天
+总日历 = D1–D22 = 22 天
+```
+
+> **瓶颈已从「拆分是串行的」转移到「security-regression 造成的 20 人天串行链」。**
+> AG-1 从 D3 到 D22 连续 20 天只做 N9，是整个方案的资源瓶颈。
+> 这也是 §4.0 推荐先只做路线甲的原因：路线甲完全不触碰这条链，
+> **2.5 人天 / 2 天即可交付，且零 agent 耦合**。
+>
+> 若要缩短总工期，唯一有效的手段是拆掉 §2.2 那条耦合 ——
+> 即让 `security-regression.test.js` 不再按源码文本断言（改为行为断言或 AST 解析）。
+> 该改造本身属 A4 范畴，但**只做这一项**即可把 N9 的 11 个文件解耦。
 
 ---
 
 ## 6. 收益曲线
 
-| 完成到 | LOC 覆盖 | strict 报错解决 | 累计人天 | 日历 |
-|---|---:|---|---:|---:|
-| A1+A2 | 0% | **49%** | 2.5 | D1 |
-| +A4（4 路） | 0% | 49% + CI 可持续 | 4.5 | D2 |
-| +N1–N4 | **24%** | 71% | 36 | D11 |
-| +N5–N8 | **48%** | 100%（除三巨头） | 70 | D14 |
-| +S1+S2+G1 | 48% | — | 79 | D15 |
-| **+N10** | **80%** | 100% | 92–96 | **D19** |
+| 完成到 | LOC 覆盖 | 累计人天 | 日历 | 说明 |
+|---|---:|---:|---|---|
+| A1+A2 | 0% | 2.5 | D1 | 零源码改动，报错 −49% |
+| +A3 | 0% | 5.0 | D2 | 153 channel 契约文档化 |
+| +S1+S2+G1 | 0%（仅拆分，无类型化） | 8.5 | D8 | — |
+| +N1–N4+N5–N8+N9 | **48%** | 74.8 | D22 | 28+16 文件 = 28392 LOC |
+| **+N11** | **59%** | 86.8–90.8 | **D22** | + 拆分后 monaco 冷段 ~6600 行 |
+
+> 累计人天含 L0（4.5）+ 拆分线（9）+ 叶子线（66.3）+ N11（12–16）。
+> 日历取两条路径的较大者：拆分线 D1–D12，叶子线 D3–D22。
+
+**覆盖率口径**：`(28392 + 6600) / 59109 = 59%`。
+
+**59% 同时是天花板**，因为按 §7 明确排除的部分共 24091 行：
+
+| 排除项 | 行数 | 理由 |
+|---|---:|---|
+| `src/main.js` | 11522 | 15 个测试读其源码，26.6 人天 |
+| `src/renderer/js/tabs.js` | 5572 | 本轮不排 |
+| `src/renderer/js/main.js` | 4547 | 本轮不排 |
+| `lsp-providers` 段（拆分后独立文件） | 2450 | churn 2.64/行，留 JS |
+| **合计排除** | **24091** | `59109 − 24091 = 35018 = 59.2%` |
+
+> 此前版本写「80%」是错的 —— 它把 `tabs.js` 与 `renderer/main.js` 计入了分子，
+> 而这两者恰在 §7 的排除清单里。
 
 ---
 
@@ -358,12 +441,16 @@ churn/行 > 0.5   → 停止，重评，不执行 N10
 
 | 项 | 人天 | 理由 |
 |---|---:|---|
-| `lsp-providers` 段 TS 化 | ~14 | churn **2.64/行**，全项目最热。拆出去正是为了让它留在 JS |
-| `src/main.js` TS 化 | 26.6 | 11522 行 / 15 个测试读它源码。4 并发下占满一槽 6–7 天，负价值。列为此后候选 |
-| `tabs.js` / `sampleTester.js` / `renderer/main.js` TS 化 | ~31 | 0.45–0.64x，churn 可接受但成本高。N10 后按需再排 |
-| 引入 esbuild / webpack | 10–15 | 拆出的新文件仍可用 `<script>` + `window.X` 挂载。全局单例架构短期不改 |
-| `tsc` 产出运行时 JS | 5–8 | 只做 `noEmit` 类型检查。改 31 个 script 标签 + monaco AMD 加载 + CSP，风险大于收益 |
+| `lsp-providers` 段 TS 化 | 5.9 | 段级 churn **2.64/行**，全项目最热。拆出去正是为了让它留在 JS |
+| `src/main.js` TS 化 | 26.6 | 11522 行 / 15 个测试读它源码。4 并发下占满一槽，负价值 |
+| `tabs.js` / `sampleTester.js` / `renderer/main.js` TS 化 | 31.9 | churn 0.45–0.64 可接受但成本高。N11 后按需再排 |
+| 引入 esbuild / webpack | 10–15 | 拆出的新文件仍可用 `<script>` + `window.X` 挂载 |
+| `tsc` 产出运行时 JS | 5–8 | 只做 `noEmit`。改 31 个 script 标签 + monaco AMD 加载 + CSP，风险大于收益 |
 | 删除型分支并行拆分 | — | 实测必冲突（§3.3）。改为「新增并行 + 单点集成」 |
+| **路线乙（N1–N9）整体** | 66.3 | **可延后** —— 收益 863 条报错，代价 20 人天串行链。优先做路线甲 |
+
+> 人天口径：`LOC×0.0022 + strictErr×0.0006 + looseErr×0.004`。
+> 该公式可复现 `main.js`（26.55）与三巨头合计（31.88）。
 
 ---
 
@@ -371,15 +458,17 @@ churn/行 > 0.5   → 停止，重评，不执行 N10
 
 | 护栏 | 原因 |
 |---|---|
-| 每个 agent **独占一个 worktree + 一个文件** | 渲染层 52 处 `window.X =` 是隐式全局，两 agent 改同一文件必冲突 |
+| 路线甲阶段**禁止修改任何 `src/**/*.js`** | 32 个文本断言测试按源码文本断言 |
+| 每个 agent **独占一个 worktree + 一个文件** | 渲染层 46 处 `window.X =` 是隐式全局 |
 | **禁止改 `<script>` 标签顺序和 HTML**（S2 阶段除外） | 31 个标签的执行顺序就是依赖图 |
-| **禁止 `this.t` / `window.__` / 改 `module.exports` 形态** | 已有 AGENTS.md 禁令，破坏 `preload.test.js` 的 IPC 白名单断言 |
+| **禁止 `this.t` / `window.__` / 改 `module.exports` 形态** | AGENTS.md 禁令，破坏 `preload.test.js` 的 IPC 白名单断言 |
 | **禁止 `innerHTML` 注入类型收窄** | I8 baseline 0，改动会触发 CJK ratchet |
-| 每 agent 只跑 `tsc --noEmit <自己的文件>` + `ci:tests` | 全量 `tsc` 仅 4.2s，不必省 |
-| **`src/main.js` 全程冻结** | 15 个测试读它文本，并发改动会与 N5–N8 产生测试串扰 |
+| 每 agent 只跑 `tsc --noEmit <自己的文件>` + `ci:tests` | 全量 `tsc` 仅 4.2s |
+| **`src/main.js` 全程冻结** | 15 个测试读它文本 |
 | S2 阶段**主文件由单 agent 独占 worktree** | 删除型操作是唯一有冲突风险的动作 |
-| S2 阶段**段边界必须落在方法声明行之间** | `getCurrentContent`（5384）行号贴着 `breakpoints` 段尾，但被 `renderer/main.js:2249` 与 `sampleTester.js:2767` 调用，属活代码 |
-| 每次 merge 后必跑 `node -c` + `ci:tests` | 32s 闭环，不设闸门等于没验证 |
+| S2 阶段**段边界必须落在方法声明行之间** | `getCurrentContent`（5384）行号贴着 `breakpoints` 段尾但属活代码 |
+| **被 `security-regression.test.js` 读取的文件必须同一 agent 串行** | 11 个文件跨 3 组被同一测试串联（§2.2） |
+| 每次 merge 后必跑 `node -c` + `ci:tests` | 32s 闭环 |
 
 ---
 
@@ -387,48 +476,44 @@ churn/行 > 0.5   → 停止，重评，不执行 N10
 
 | 检查 | 命令 | 判据 |
 |---|---|---|
-| 语法 | `node -c <file>` | exit 0（**每个拆出文件都要单独跑**） |
-| 方法数守恒 | `grep -cE "^    (async \|static \|get \|set )*[a-zA-Z_#][a-zA-Z0-9_]*\("` 合并前后对比 | 差值 = 移出方法数；**不符即驳回** |
-| 行数守恒 | `wc -l` | 差值 = 移出行数 |
+| 语法 | `node -c <file>` | exit 0（**每个拆出文件单独跑**） |
+| **方法数守恒** | `grep -cE "^    (async \|static \|get \|set )*[a-zA-Z_#][a-zA-Z0-9_]*\("` 合并前后对比 | 差值 = 计划移出数（**S2 全部 18 段 = 234 − 剩余**）；不符即驳回 |
+| 行数守恒 | `wc -l` | 差值 = 移出行数（**必要但不充分**，见下） |
+| 外部调用存活 | `grep -rn "<方法名>" src/ tests/` | 每个被摘出段的公开方法，其外部调用点必须已改为 `window.<NS>.` |
 | 回归 | `pnpm run ci:tests` | 35/35 PASS |
 | 零逻辑变更 | `git diff -M --stat main..<branch>` | 相似度 ≥95% |
 
-`git diff -M`（rename detection）能自动识别"这段代码被移走了"。
-相似度低说明 agent 顺手改了逻辑，必须驳回。
-
-**方法数守恒是唯一能拦住"误删活代码"的闸门。** E5 实验里曾出现
-「计划移出 64 个方法、实际移出 72 个」的偏差 —— 多出的 8 个全部是
-**段边界溢出**（方法落在被删区间的尾巴上被一并带走）。
-`getCurrentContent` 就是这类边界方法，且它**有外部调用者**，
-误删会让 `renderer/main.js:2249` 在运行时抛 `TypeError`。
-因此：
-
-- S2 的每一步删除都必须记录「预期移出方法数」
-- 合并后立刻比对实际值，**多一个都不能放过**
-- 删除区间的起止行必须逐个方法核对归属，不能只按区间边界切
+**行数守恒不是充分条件。** E1 实测：`breakpoints` 段区间 `[5278, 5384]` 的末行
+正是 `getCurrentContent() {` 的声明行，该方法（有 2 处外部调用）被连带删除，
+而行数仍「精确守恒」。**只有方法数守恒 + 外部调用存活检查能拦住。**
 
 ---
 
 ## 附录 A：测量方法
 
 ```bash
-# 1. 类型报错量
+# 1. 类型报错量（注意：测量时 node_modules 下无任何 @types）
 tsc --noEmit --allowJs --checkJs --skipLibCheck --strict false \
     --target es2022 --module esnext --moduleResolution bundler \
-    --lib es2022,dom,dom.iterable src/**/*.js
+    --lib es2022,dom,dom.iterable $(find src -name '*.js')
 
-# 2. 剔除事故提交后的 churn
+# 2. 剔除还原提交后的 churn（三个，不是两个）
 git log --since="90 days ago" --numstat --format='C %H' -- src
-# 排除 87e1deb0f2d2 / ce90668fd4eb（整文件还原，+6908/+4118 行）
+# 排除：
+#   ce90668fd4ebc7b2892fbc12fca1e16ca21e593b  (parent 5840d615, +6908)
+#   87e1deb0f2d2ba4cf1db0e285edc4aad3f22799e  (parent fe57bac8, +6908)
+#   a92e11a048419111ee600a3fde2c04c4da80afb2  (+4118)
+# 后两个 parent 不同的提交消息相同，只按消息过滤会漏
 
-# 3. 段间调用图与 SCC
-#   按 this.method() 建图，Tarjan 求强连通分量
-#   结果：15 个段（8204 行）构成单个 SCC，不可独立摘出
+# 3. 测试→源码耦合分析
+grep -roE "src/[A-Za-z0-9_/.-]+\.js" tests/*.test.js | sort -u
+# security-regression.test.js 单独列出：它命中 14 个文件，是最强耦合
 
 # 4. 分支并行合并冲突实验
 git clone --no-hardlinks . /tmp/mtest
 # 每个分支：① 删除自己那段 ② 改写该段的外部 this.X 调用点
 git merge --no-edit <branch>   # 观察 CONFLICT
+# 注意：E1 显示「零冲突 + 行数守恒」仍可能误删边界方法，必须另查方法数
 ```
 
 ---
@@ -437,25 +522,23 @@ git merge --no-edit <branch>   # 观察 CONFLICT
 
 **段间隔**（前一 end → 后一 start）：18 个段两两间隔**全部为 0**（首尾相接）。
 
-**冲突实验矩阵**：
-
 | 实验 | 分支 | 段间隔 | 结果 |
 |---|---|---|---|
-| E1 | 4 删+转发 | 1000 / 1789 / 1994 | ✅ 零冲突，行数精确守恒 |
+| E1 | 4 删+转发 | 1000 / 1789 / 1994 | ⚠️ 零冲突但误删 `getCurrentContent` |
 | E2 | 4 删+转发 | 0（相邻） | ❌ 1 冲突块 |
 | E3 | 3 贪心着色 | 混合 | ❌ 5 冲突块 |
 | E4 | 2 奇偶交替 | 0 | ❌ 6 冲突块 |
 | E5 | 4 **纯新增** | N/A | ✅ 零冲突，18 文件全部落地 |
 
-**E5 的重要副产物 —— 方法数偏差**：
+**E5 的副产物 —— 方法数偏差**：
 
 ```
 base1 方法数 188 → 合并后 116
 计划移出       64 个（22+14+14+14）
-实际移出       72 个          ← 多出 8个
+实际移出       72 个          ← 多出 8 个
 ```
 
-多出的 8 个全部是**段边界溢出** —— 方法声明行落在被删区间的尾巴上被一并带走：
+多出的 8 个全是**段边界溢出**：
 
 | 被误删的方法 | 真实归属 | 外部调用者 |
 |---|---|---|
@@ -463,10 +546,6 @@ base1 方法数 188 → 合并后 116
 | `getCurrentEditor` | groups+open / diag+markers 边界 | — |
 | `getDefaultKeybindings` | semantic-hl / keybindings 边界 | — |
 | `getIncludedFilePaths` | cpp-parser / include-resolution 边界 | — |
-
-**教训**：段边界不能只按行号区间切，必须逐方法核对归属。
-`getCurrentContent` 有真实外部调用者，误删会在运行时抛 `TypeError`，
-而 **`node -c` 与 `git merge` 都发现不了** —— 只有方法数守恒检查能拦住。
 
 **E2 冲突原文**：
 
