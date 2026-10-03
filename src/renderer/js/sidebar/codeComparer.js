@@ -168,21 +168,21 @@ class CodeComparer {
     mergeTaskConfigIfEmpty(targetTask, sourceConfig) {
         if (!targetTask?.config || !sourceConfig) return;
 
-        const t = targetTask.config;
+        const targetCfg = targetTask.config;
         const s = sourceConfig;
-        if (!t.standardCodePath && s.standardCodePath) t.standardCodePath = s.standardCodePath;
-        if (!t.generatorPath && s.generatorPath) t.generatorPath = s.generatorPath;
-        if (!t.spjPath && s.spjPath) t.spjPath = s.spjPath;
-        if (!t.freopenInputFile && s.freopenInputFile) t.freopenInputFile = s.freopenInputFile;
-        if (!t.freopenOutputFile && s.freopenOutputFile) t.freopenOutputFile = s.freopenOutputFile;
+        if (!targetCfg.standardCodePath && s.standardCodePath) targetCfg.standardCodePath = s.standardCodePath;
+        if (!targetCfg.generatorPath && s.generatorPath) targetCfg.generatorPath = s.generatorPath;
+        if (!targetCfg.spjPath && s.spjPath) targetCfg.spjPath = s.spjPath;
+        if (!targetCfg.freopenInputFile && s.freopenInputFile) targetCfg.freopenInputFile = s.freopenInputFile;
+        if (!targetCfg.freopenOutputFile && s.freopenOutputFile) targetCfg.freopenOutputFile = s.freopenOutputFile;
 
-        if (!t.useTestlib && s.useTestlib) t.useTestlib = !!s.useTestlib;
+        if (!targetCfg.useTestlib && s.useTestlib) targetCfg.useTestlib = !!s.useTestlib;
 
-        if (!Number.isFinite(t.compareCount) && Number.isFinite(s.compareCount)) t.compareCount = s.compareCount;
-        if (!Number.isFinite(t.timeLimit) && Number.isFinite(s.timeLimit)) t.timeLimit = s.timeLimit;
-        if (!Number.isFinite(t.threadCount) && Number.isFinite(s.threadCount)) t.threadCount = s.threadCount;
+        if (!Number.isFinite(targetCfg.compareCount) && Number.isFinite(s.compareCount)) targetCfg.compareCount = s.compareCount;
+        if (!Number.isFinite(targetCfg.timeLimit) && Number.isFinite(s.timeLimit)) targetCfg.timeLimit = s.timeLimit;
+        if (!Number.isFinite(targetCfg.threadCount) && Number.isFinite(s.threadCount)) targetCfg.threadCount = s.threadCount;
 
-        if (!t.testCodePath && s.testCodePath) t.testCodePath = s.testCodePath;
+        if (!targetCfg.testCodePath && s.testCodePath) targetCfg.testCodePath = s.testCodePath;
     }
 
     activate() {

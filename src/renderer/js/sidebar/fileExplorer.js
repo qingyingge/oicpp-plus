@@ -224,10 +224,10 @@ class FileExplorer {
                 const firstItem = document.querySelector('.file-tree .tree-item');
                 if (firstItem) {
                     const p = firstItem.getAttribute('data-path');
-                    const t = firstItem.getAttribute('data-type');
+                    const nodeType = firstItem.getAttribute('data-type');
                     const n = firstItem.querySelector('.tree-item-label')?.textContent || '';
-                    if (p && t) {
-                        this.selectFile({ path: p, type: t, name: n, extension: '' });
+                    if (p && nodeType) {
+                        this.selectFile({ path: p, type: nodeType, name: n, extension: '' });
                     }
                 }
             }

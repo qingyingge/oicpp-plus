@@ -2389,9 +2389,10 @@ function isPathInsideDir(target, dir) {
     if (!target || !dir) return false;
     try {
         const norm = (p) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-        const t = norm(target);
-        const d = norm(dir);
-        return t === d || t.startsWith(`${d}/`);
+        // 局部变量别用 t / d：主进程的 t 是 i18n 的 t，遮蔽后容易误用
+        const targetNorm = norm(target);
+        const dirNorm = norm(dir);
+        return targetNorm === dirNorm || targetNorm.startsWith(`${dirNorm}/`);
     } catch (_) {
         return false;
     }

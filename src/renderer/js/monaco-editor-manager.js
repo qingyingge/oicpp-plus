@@ -5321,12 +5321,12 @@ class MonacoEditorManager {
 
         editor.onMouseDown((e) => {
             try {
-                const t = e?.target;
-                const type = t?.type;
+                const mouseTarget = e?.target;
+                const type = mouseTarget?.type;
                 const L = monaco.editor.MouseTargetType;
                 if (type !== L.GUTTER_GLYPH_MARGIN) return;
-                if (t?.element?.className && /fold/gi.test(t.element.className)) return;
-                const line = t?.position?.lineNumber;
+                if (mouseTarget?.element?.className && /fold/gi.test(mouseTarget.element.className)) return;
+                const line = mouseTarget?.position?.lineNumber;
                 toggleAt(line);
             } catch (_) {}
         });
