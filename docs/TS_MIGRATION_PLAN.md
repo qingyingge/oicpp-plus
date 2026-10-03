@@ -158,9 +158,15 @@ A1 tsconfig → A4 测试改造 → 拆分 → G1 闸门 → 冷段 TS 化
 | editor-lifecycle | 337 | 2 | 6% | 0.09 | 0 |
 | rename | 126 | 1 | 0% | 0.02 | 0 |
 | semantic-hl | 106 | 2 | 0% | 0.26 | 6 |
-| breakpoints | 106 | 0 | — | 0.78 | 0 |
+| breakpoints | 106 | 1 | — | 0.78 | 1 |
 | open-at-pos | 69 | 1 | 20% | 0.00 | 1 |
 | legacy（死代码） | 65 | 2 | — | 0.00 | 0 |
+
+> **段边界口径**：上表按「方法声明行的归属」切分，边界落在方法之间。
+> 特别注意 `getCurrentContent`（5384-5395）虽与 `breakpoints` 段行号相邻，
+> 但**属于活代码** —— 被 `renderer/js/main.js:2249` 与
+> `sidebar/sampleTester.js:2767` 通过 `editorManager.getCurrentContent()` 调用，
+> **不得随 breakpoints 段一起删除**。
 
 ### 3.2 实测结果
 
@@ -171,6 +177,10 @@ A1 tsconfig → A4 测试改造 → 拆分 → G1 闸门 → 冷段 TS 化
 | **E3** | 3 分支贪心着色分组 | ❌ 5 个冲突块 |
 | **E4** | 2 分支交替奇偶分组 | ❌ 6 个冲突块 |
 | **E5** | 4 分支**只新增文件**，主文件不动 | ✅ **4/4 零冲突**，18 个文件全部落地 |
+
+> E1 的行数守恒（9076−697−106−65−634 = 7574）证明**行数层面**无冲突。
+> 但 E5 的方法数检查暴露了另一类问题：区间边界会把边界方法一并带走（见附录 B）。
+> **行数守恒 ≠ 方法守恒**，两者必须分别校验。
 
 ### 3.3 冲突机制（已完全定位）
 
@@ -208,15 +218,21 @@ E2 冲突块原文：
 
 ```
 阶段 S1（4 路并行，零冲突）：agent 各自【新增】拆出文件
-     N1 → mmTheme / N2 → mmKeys, mmDiag, mmBp → N3 → ... → N4 → ...
      每路只写自己的新文件，主文件完全不动
         ↓  顺序 merge，每步 32s 验证
-阶段 S2（1 路，单 agent）：从主文件删除 18 段 + 改写外部转发点
-     主文件 9076 → ~100 行，18 个新文件挂到 index.html
+阶段 S2（1 路，单 agent）：从主文件删除 17 个活段 + legacy 死代码
+     + 改写外部转发点 + 新文件挂到 index.html
 ```
 
 S1 的产物是纯新增文件，可 4 路并行；S2 是唯一有冲突风险的操作，单点执行。
 **拆分总工期从「4 路并行但互相冲突反复 abort」变成「4 路并行准备 + 1 次集成」。**
+
+> **S2 的边界纪律**：段边界必须落在方法声明行之间。
+> `getCurrentContent`（5384-5395）虽与 `breakpoints` 段行号相邻，
+> 但**属于活代码** —— `renderer/js/main.js:2249` 与
+> `sidebar/sampleTester.js:2767` 通过 `editorManager.getCurrentContent()` 调用，
+> **严禁随段删除**。S2 验收必须包含「方法数守恒」检查（§7），
+> 差值与计划移出数不符即驳回。
 
 ---
 
@@ -249,7 +265,14 @@ S1 的产物是纯新增文件，可 4 路并行；S2 是唯一有冲突风险�
 |---|---|---:|---|---|
 | **N1–N4** | 叶子层 TS 化：27 个**零测试依赖**文件（13969 LOC / 1101 报错） | 32/4 = **8.0** | A2, A4 | 各文件 `tsc` 零报错 |
 | **N5–N8** | 温/冷叶子：15 个有测试依赖文件（14176 LOC / 1531 报错） | 33.6/4 = **8.3** | A2, A4 | 同上 |
-| **N9** | 删死代码：`monaco-editor-manager.js:9012-9077` 的 `parseFunctions`/`parseStructsAndClasses`/`removeComments`（零调用点） | 0.5 | — | 减 65 行 |
+| **N9** | 删死代码：`monaco-editor-manager.js:9012-9076` 的 `parseFunctions` / `parseStructsAndClasses` / `removeComments` | 0.5 | — | 减 65 行 |
+
+> **N9 的死代码判定依据**（已实测）：
+> `parseFunctions` 与 `parseStructsAndClasses` 在**全仓库零调用点**
+> （`grep -rn` 仅命中自身定义行 9012 / 9037）；
+> `removeComments` 的 2 处调用（9014 / 9039）**都在这两个死方法内部**，
+> 因此整段 9012-9076 可整体删除，不影响任何活代码。
+> LSP 改造后 `completion` 已改走 `parseFunctionsWithLocations`（6821 行）。
 
 **N1–N4 的 4 包划分**（LPT 均衡，每包报错数 245–304）：
 
@@ -276,7 +299,7 @@ G5: settings/editor(2145行)                                        ← security
 | ID | 任务 | 并发 | 依赖 | 验收 |
 |---|---|---:|---|---|
 | **S1a–S1d** | 阶段 S1：**新增** 18 个拆出文件（每 agent 4–5 个） | **4** | N9 | `node -c` 全通过 |
-| **S2** | 阶段 S2：主文件删除 18 段 + 改写 152 处外部转发 + `index.html` 加 18 个 `<script>` | **1** | S1 | `ci:tests` 35/35 |
+| **S2** | 阶段 S2：主文件删除 17 个活段 + 删 legacy 死代码 + 改写外部转发点 + `index.html` 加 `<script>` | **1** | S1 | `ci:tests` 35/35 |
 | **🚦 G1** | 复测 `churn/行` | 人工 | S2 | 判据见下 |
 
 **G1 判据**：
@@ -355,6 +378,7 @@ churn/行 > 0.5   → 停止，重评，不执行 N10
 | 每 agent 只跑 `tsc --noEmit <自己的文件>` + `ci:tests` | 全量 `tsc` 仅 4.2s，不必省 |
 | **`src/main.js` 全程冻结** | 15 个测试读它文本，并发改动会与 N5–N8 产生测试串扰 |
 | S2 阶段**主文件由单 agent 独占 worktree** | 删除型操作是唯一有冲突风险的动作 |
+| S2 阶段**段边界必须落在方法声明行之间** | `getCurrentContent`（5384）行号贴着 `breakpoints` 段尾，但被 `renderer/main.js:2249` 与 `sampleTester.js:2767` 调用，属活代码 |
 | 每次 merge 后必跑 `node -c` + `ci:tests` | 32s 闭环，不设闸门等于没验证 |
 
 ---
@@ -363,14 +387,25 @@ churn/行 > 0.5   → 停止，重评，不执行 N10
 
 | 检查 | 命令 | 判据 |
 |---|---|---|
-| 语法 | `node -c <file>` | exit 0 |
-| 方法数守恒 | `grep -c "^    \w*("` 合并前后对比 | 差值 = 移出方法数 |
+| 语法 | `node -c <file>` | exit 0（**每个拆出文件都要单独跑**） |
+| 方法数守恒 | `grep -cE "^    (async \|static \|get \|set )*[a-zA-Z_#][a-zA-Z0-9_]*\("` 合并前后对比 | 差值 = 移出方法数；**不符即驳回** |
 | 行数守恒 | `wc -l` | 差值 = 移出行数 |
 | 回归 | `pnpm run ci:tests` | 35/35 PASS |
 | 零逻辑变更 | `git diff -M --stat main..<branch>` | 相似度 ≥95% |
 
 `git diff -M`（rename detection）能自动识别"这段代码被移走了"。
 相似度低说明 agent 顺手改了逻辑，必须驳回。
+
+**方法数守恒是唯一能拦住"误删活代码"的闸门。** E5 实验里曾出现
+「计划移出 64 个方法、实际移出 72 个」的偏差 —— 多出的 8 个全部是
+**段边界溢出**（方法落在被删区间的尾巴上被一并带走）。
+`getCurrentContent` 就是这类边界方法，且它**有外部调用者**，
+误删会让 `renderer/main.js:2249` 在运行时抛 `TypeError`。
+因此：
+
+- S2 的每一步删除都必须记录「预期移出方法数」
+- 合并后立刻比对实际值，**多一个都不能放过**
+- 删除区间的起止行必须逐个方法核对归属，不能只按区间边界切
 
 ---
 
@@ -411,6 +446,27 @@ git merge --no-edit <branch>   # 观察 CONFLICT
 | E3 | 3 贪心着色 | 混合 | ❌ 5 冲突块 |
 | E4 | 2 奇偶交替 | 0 | ❌ 6 冲突块 |
 | E5 | 4 **纯新增** | N/A | ✅ 零冲突，18 文件全部落地 |
+
+**E5 的重要副产物 —— 方法数偏差**：
+
+```
+base1 方法数 188 → 合并后 116
+计划移出       64 个（22+14+14+14）
+实际移出       72 个          ← 多出 8个
+```
+
+多出的 8 个全部是**段边界溢出** —— 方法声明行落在被删区间的尾巴上被一并带走：
+
+| 被误删的方法 | 真实归属 | 外部调用者 |
+|---|---|---|
+| `getCurrentContent` | breakpoints / tab-ops+diff 边界 | **`renderer/main.js:2249`、`sampleTester.js:2767`** |
+| `getCurrentEditor` | groups+open / diag+markers 边界 | — |
+| `getDefaultKeybindings` | semantic-hl / keybindings 边界 | — |
+| `getIncludedFilePaths` | cpp-parser / include-resolution 边界 | — |
+
+**教训**：段边界不能只按行号区间切，必须逐方法核对归属。
+`getCurrentContent` 有真实外部调用者，误删会在运行时抛 `TypeError`，
+而 **`node -c` 与 `git merge` 都发现不了** —— 只有方法数守恒检查能拦住。
 
 **E2 冲突原文**：
 
