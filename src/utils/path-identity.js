@@ -109,6 +109,22 @@ function samePath(a, b) {
         : ca === cb;
 }
 
+// win32 reserves a fixed set of names for devices rather than files:
+// CON, PRN, AUX, NUL, CLOCK$, COM1-COM9, LPT1-LPT9, with or without an
+// extension ("NUL.txt" is still the null device) and with or without the
+// trailing dot/space win32 strips ("CON " is still the console).
+// Such a path never names an entry under root -- reading or writing it
+// reaches the device -- so containment must deny it. canon() cannot notice:
+// realpath() reports ENOENT for it and the ancestor fallback cheerfully
+// re-attaches the literal tail, which would make isInside() answer "inside".
+const RESERVED_DEVICE = /^(CON|PRN|AUX|NUL|CLOCK\$|COM[1-9]|LPT[1-9])([ .].*)?$/i;
+
+function hasReservedDeviceComponent(target) {
+    if (process.platform !== 'win32') return false;
+    const { root } = path.parse(target);
+    return target.slice(root.length).split(/[\\/]+/).some((name) => RESERVED_DEVICE.test(name));
+}
+
 // May `target` be touched, given that it must live inside `root`?
 //
 // Both sides go through canon(), which resolves symlinks -- that is the
@@ -130,6 +146,7 @@ function isInside(target, root) {
     } catch (_) {
         return false; // EACCES / ELOOP / ENAMETOOLONG / bad input: deny
     }
+    if (hasReservedDeviceComponent(t)) return false; // "root\NUL" is the null device
     if (t === r) return true;
     const rel = path.relative(r, t);
     return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
@@ -141,12 +158,27 @@ function isInside(target, root) {
 // are guaranteed to come from the same resolution pass. Case is never
 // touched: folding here loses information and is what made win32 drop
 // files whose walker path differed in case from the typed root.
+//
+// The one place the caller's spelling wins over realpath's: when the two
+// differ only by case they name the same file on win32, and realpath
+// answers with the volume's own case -- so "a/B" would silently become
+// "a/b" in the remote key, and "a/B" and "a/b" are two distinct keys on
+// the remote side. Anything beyond a case difference (a symlink, a short
+// name) still goes through canon(), because there the caller's spelling
+// is not the file.
+//
 // Returns '' when the file is not inside the root.
 function toPosixRel(file, root) {
     if (typeof file !== 'string' || typeof root !== 'string' || !file || !root) return '';
     let rel;
     try {
-        rel = path.relative(canon(root), canon(file));
+        const canonicalRoot = canon(root);
+        const canonicalFile = canon(file);
+        const literal = path.resolve(file);
+        const spelling = process.platform === 'win32' && literal.toLowerCase() === canonicalFile.toLowerCase()
+            ? literal
+            : canonicalFile;
+        rel = path.relative(canonicalRoot, spelling);
     } catch (_) {
         return '';
     }
