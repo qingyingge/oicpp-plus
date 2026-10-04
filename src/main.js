@@ -2766,6 +2766,37 @@ function applyMacWindowButtonPosition(targetWindow) {
     }
 }
 
+// 与 renderer/css/settings.css 中 body 的主题底色保持一致。
+// 作用是消除两类白闪：窗口首帧前用 Electron 默认白底，
+// 以及模态子窗口关闭、主窗口被重新合成时露出窗口底色。
+const THEME_BACKGROUNDS = {
+    light: '#ffffff',
+    'github-light': '#ffffff',
+    'solarized-light': '#fdf6e3',
+    monokai: '#272822',
+    'github-dark': '#0d1117',
+    'solarized-dark': '#002b36',
+    dracula: '#282a36',
+};
+
+function getThemeBackgroundColor(theme) {
+    const key = String(theme || '').toLowerCase();
+    return THEME_BACKGROUNDS[key] || '#1e1e1e';
+}
+
+// 模态子窗口销毁时 Windows 会重新激活父窗口，此过程可能丢弃父窗口已合成的
+// 图层而短暂露出窗口底色。子窗口关闭后主动请求一次全量重绘补上这一帧。
+function repaintMainWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+        mainWindow.setBackgroundColor(getThemeBackgroundColor(settings.theme));
+        if (!mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.invalidate();
+        }
+    } catch (_) {
+    }
+}
+
 function createWindow() {
     loadSettings();
     setLanguage(settings.language || 'zh-cn');
@@ -2790,6 +2821,7 @@ function createWindow() {
         titleBarStyle: 'hidden',
         trafficLightPosition: isMacPlatform ? { x: 1124, y: 8 } : undefined,
         opacity: settings.windowOpacity || 1.0,
+        backgroundColor: getThemeBackgroundColor(settings.theme),
         show: false
     });
 
@@ -7533,13 +7565,20 @@ function openCompilerSettings() {
             webSecurity: true
         },
         title: t('main.compilerSettingsTitle'),
-        icon: getUserIconPath()
+        icon: getUserIconPath(),
+        backgroundColor: getThemeBackgroundColor(settings.theme),
+        show: false
     });
 
     compilerSettingsWindow.loadFile('src/renderer/settings/compiler.html');
 
+    compilerSettingsWindow.once('ready-to-show', () => {
+        compilerSettingsWindow.show();
+    });
+
     compilerSettingsWindow.on('closed', () => {
         compilerSettingsWindow = null;
+        repaintMainWindow();
     });
 }
 
@@ -7567,14 +7606,21 @@ function openEditorSettings() {
             webSecurity: true
         },
         title: t('main.editorSettingsTitle'),
-        icon: getUserIconPath()
+        icon: getUserIconPath(),
+        backgroundColor: getThemeBackgroundColor(settings.theme),
+        show: false
     });
 
     editorSettingsWindow.loadFile('src/renderer/settings/editor.html', { query: { theme: settings.theme } });
 
+    editorSettingsWindow.once('ready-to-show', () => {
+        editorSettingsWindow.show();
+    });
+
     editorSettingsWindow.on('closed', () => {
         logInfo('编辑器设置窗口已关闭');
         editorSettingsWindow = null;
+        repaintMainWindow();
     });
 
     editorSettingsWindow.webContents.on('did-finish-load', () => {
@@ -7607,13 +7653,20 @@ function openCodeTemplates() {
             webSecurity: true
         },
         title: t('main.templateSettingsTitle'),
-        icon: getUserIconPath()
+        icon: getUserIconPath(),
+        backgroundColor: getThemeBackgroundColor(settings.theme),
+        show: false
     });
 
     codeTemplatesWindow.loadFile('src/renderer/settings/templates.html');
 
+    codeTemplatesWindow.once('ready-to-show', () => {
+        codeTemplatesWindow.show();
+    });
+
     codeTemplatesWindow.on('closed', () => {
         codeTemplatesWindow = null;
+        repaintMainWindow();
     });
 }
 
@@ -7638,13 +7691,20 @@ function openBackupSettings() {
             webSecurity: true
         },
         title: t('main.backupSettingsTitle'),
-        icon: getUserIconPath()
+        icon: getUserIconPath(),
+        backgroundColor: getThemeBackgroundColor(settings.theme),
+        show: false
     });
 
     backupSettingsWindow.loadFile('src/renderer/settings/backup.html', { query: { theme: settings.theme } });
 
+    backupSettingsWindow.once('ready-to-show', () => {
+        backupSettingsWindow.show();
+    });
+
     backupSettingsWindow.on('closed', () => {
         backupSettingsWindow = null;
+        repaintMainWindow();
     });
 }
 
@@ -8109,6 +8169,9 @@ function updateSettings(settingsType, newSettings) {
         }
 
         if (newSettings.theme) {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.setBackgroundColor(getThemeBackgroundColor(newSettings.theme));
+            }
             if (compilerSettingsWindow) {
                 compilerSettingsWindow.webContents.send('theme-changed', newSettings.theme);
             }
