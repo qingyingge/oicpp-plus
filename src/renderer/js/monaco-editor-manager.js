@@ -1312,7 +1312,7 @@ class MonacoEditorManager {
                 resolveInlayHint: async (hint, token) => {
                     const original = hint?.__oicppLspInlayHint;
                     const capabilities = this.lspClient?.getServerCapabilities?.();
-                    if (capabilities?.inlayHintProvider?.resolveProvider === false) return hint;
+                    if (capabilities?.inlayHintProvider?.resolveProvider !== true) return hint;
                     if (!original || !this.lspClient || token?.isCancellationRequested) return hint;
                     try {
                         const result = await this.lspClient.request('inlayHint/resolve', original, token);
