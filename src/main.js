@@ -3616,7 +3616,13 @@ function setupIPC() {
         }
     });
 
-    ipcMain.handle('consume-startup-workspace-to-open', () => {
+    // 渲染进程在 init早期就会来取待恢复工作区，早于 'ready-to-show' 里的赋值。
+    // 该 handler 是一次性消费语义，取空即永久丢失，工作区会一直空到用户手动打开文件夹
+    // （实测可空置 60 秒以上，LSP 与样例测试器全程拿不到工作区）。这里等结算后再消费。
+    ipcMain.handle('consume-startup-workspace-to-open', async () => {
+        if (!startupWorkspaceSettled) {
+            await waitForStartupWorkspace(LSP_START_WORKSPACE_WAIT_MS);
+        }
         if (!pendingStartupWorkspaceToOpen) {
             return null;
         }
