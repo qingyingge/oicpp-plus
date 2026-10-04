@@ -1523,11 +1523,13 @@ class MonacoEditorManager {
             const disposable = monaco.languages.registerHoverProvider(language, {
                 provideHover: async (model, position, token) => {
                     try {
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return null;
                         const lspReady = await this._ensureLspDocumentReady(model);
                         if (!lspReady) return null;
                         if (!this.lspClient) return null;
                         const uri = await this.getDocumentUriForModel(model);
                         if (!uri) return null;
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return null;
 
                         const result = await this.lspClient.request('textDocument/hover', {
                             textDocument: { uri },
@@ -1536,6 +1538,11 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
+                        // The editor/tab may have been disposed while clangd was
+                        // answering. Returning content for it makes Monaco keep
+                        // tokenizing a model whose worker entry is already gone,
+                        // which surfaces as an unhandled "Model not found".
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return null;
                         if (!result || !result.contents) return null;
 
                         let contents = [];
