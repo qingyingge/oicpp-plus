@@ -1,0 +1,529 @@
+﻿{
+    "file":  "src/renderer/js/monaco-editor-manager.js",
+    "head":  "32ac0aa",
+    "lines":  9098,
+    "methods":  234,
+    "header":  4,
+    "segments":  [
+                     {
+                         "n":  "lifecycle",
+                         "s":  5,
+                         "e":  364,
+                         "lines":  360,
+                         "methods":  4,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  15,
+                         "inDegree":  0
+                     },
+                     {
+                         "n":  "lsp-providers",
+                         "s":  365,
+                         "e":  2815,
+                         "lines":  2451,
+                         "methods":  56,
+                         "selfContainedPct":  50,
+                         "crossSegmentCalls":  25,
+                         "inDegree":  34
+                     },
+                     {
+                         "n":  "theme+colors",
+                         "s":  2816,
+                         "e":  3512,
+                         "lines":  697,
+                         "methods":  19,
+                         "selfContainedPct":  58,
+                         "crossSegmentCalls":  0,
+                         "inDegree":  17
+                     },
+                     {
+                         "n":  "semantic-hl",
+                         "s":  3513,
+                         "e":  3618,
+                         "lines":  106,
+                         "methods":  3,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  2,
+                         "inDegree":  9
+                     },
+                     {
+                         "n":  "keybindings",
+                         "s":  3619,
+                         "e":  4018,
+                         "lines":  400,
+                         "methods":  15,
+                         "selfContainedPct":  47,
+                         "crossSegmentCalls":  2,
+                         "inDegree":  20
+                     },
+                     {
+                         "n":  "groups+open",
+                         "s":  4019,
+                         "e":  4877,
+                         "lines":  859,
+                         "methods":  9,
+                         "selfContainedPct":  11,
+                         "crossSegmentCalls":  55,
+                         "inDegree":  7
+                     },
+                     {
+                         "n":  "diag+markers",
+                         "s":  4878,
+                         "e":  5301,
+                         "lines":  424,
+                         "methods":  15,
+                         "selfContainedPct":  33,
+                         "crossSegmentCalls":  0,
+                         "inDegree":  8
+                     },
+                     {
+                         "n":  "breakpoints",
+                         "s":  5302,
+                         "e":  5407,
+                         "lines":  106,
+                         "methods":  1,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  0,
+                         "inDegree":  0
+                     },
+                     {
+                         "n":  "path+lang",
+                         "s":  5408,
+                         "e":  5485,
+                         "lines":  78,
+                         "methods":  5,
+                         "selfContainedPct":  20,
+                         "crossSegmentCalls":  0,
+                         "inDegree":  23
+                     },
+                     {
+                         "n":  "tab-ops+diff",
+                         "s":  5486,
+                         "e":  5845,
+                         "lines":  360,
+                         "methods":  10,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  24,
+                         "inDegree":  5
+                     },
+                     {
+                         "n":  "settings-apply",
+                         "s":  5846,
+                         "e":  6064,
+                         "lines":  219,
+                         "methods":  5,
+                         "selfContainedPct":  40,
+                         "crossSegmentCalls":  6,
+                         "inDegree":  8
+                     },
+                     {
+                         "n":  "file-ops",
+                         "s":  6065,
+                         "e":  6214,
+                         "lines":  150,
+                         "methods":  4,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  4,
+                         "inDegree":  2
+                     },
+                     {
+                         "n":  "bulk-apply",
+                         "s":  6215,
+                         "e":  6448,
+                         "lines":  234,
+                         "methods":  7,
+                         "selfContainedPct":  29,
+                         "crossSegmentCalls":  11,
+                         "inDegree":  4
+                     },
+                     {
+                         "n":  "clipboard+fmt",
+                         "s":  6449,
+                         "e":  6697,
+                         "lines":  249,
+                         "methods":  7,
+                         "selfContainedPct":  29,
+                         "crossSegmentCalls":  1,
+                         "inDegree":  9
+                     },
+                     {
+                         "n":  "completion",
+                         "s":  6698,
+                         "e":  7006,
+                         "lines":  309,
+                         "methods":  8,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  5,
+                         "inDegree":  7
+                     },
+                     {
+                         "n":  "rename",
+                         "s":  7007,
+                         "e":  7132,
+                         "lines":  126,
+                         "methods":  2,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  9,
+                         "inDegree":  1
+                     },
+                     {
+                         "n":  "selection-guard",
+                         "s":  7133,
+                         "e":  7399,
+                         "lines":  267,
+                         "methods":  8,
+                         "selfContainedPct":  38,
+                         "crossSegmentCalls":  2,
+                         "inDegree":  4
+                     },
+                     {
+                         "n":  "cpp-parser",
+                         "s":  7400,
+                         "e":  8033,
+                         "lines":  634,
+                         "methods":  23,
+                         "selfContainedPct":  26,
+                         "crossSegmentCalls":  1,
+                         "inDegree":  4
+                     },
+                     {
+                         "n":  "include-resolution",
+                         "s":  8034,
+                         "e":  8964,
+                         "lines":  931,
+                         "methods":  28,
+                         "selfContainedPct":  50,
+                         "crossSegmentCalls":  12,
+                         "inDegree":  12
+                     },
+                     {
+                         "n":  "open-at-pos",
+                         "s":  8965,
+                         "e":  9033,
+                         "lines":  69,
+                         "methods":  2,
+                         "selfContainedPct":  0,
+                         "crossSegmentCalls":  4,
+                         "inDegree":  4
+                     },
+                     {
+                         "n":  "legacy-dead",
+                         "s":  9034,
+                         "e":  9098,
+                         "lines":  65,
+                         "methods":  3,
+                         "selfContainedPct":  67,
+                         "crossSegmentCalls":  0,
+                         "inDegree":  0
+                     }
+                 ],
+    "edges":  [
+                  {
+                      "from":  "groups+open",
+                      "to":  "keybindings",
+                      "calls":  17
+                  },
+                  {
+                      "from":  "tab-ops+diff",
+                      "to":  "path+lang",
+                      "calls":  11
+                  },
+                  {
+                      "from":  "lsp-providers",
+                      "to":  "include-resolution",
+                      "calls":  9
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "path+lang",
+                      "calls":  9
+                  },
+                  {
+                      "from":  "tab-ops+diff",
+                      "to":  "lsp-providers",
+                      "calls":  8
+                  },
+                  {
+                      "from":  "rename",
+                      "to":  "lsp-providers",
+                      "calls":  8
+                  },
+                  {
+                      "from":  "lsp-providers",
+                      "to":  "diag+markers",
+                      "calls":  7
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "theme+colors",
+                      "calls":  7
+                  },
+                  {
+                      "from":  "lifecycle",
+                      "to":  "lsp-providers",
+                      "calls":  5
+                  },
+                  {
+                      "from":  "bulk-apply",
+                      "to":  "theme+colors",
+                      "calls":  5
+                  },
+                  {
+                      "from":  "include-resolution",
+                      "to":  "open-at-pos",
+                      "calls":  4
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "clipboard+fmt",
+                      "calls":  4
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "lsp-providers",
+                      "calls":  4
+                  },
+                  {
+                      "from":  "settings-apply",
+                      "to":  "theme+colors",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "lifecycle",
+                      "to":  "keybindings",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "tab-ops+diff",
+                      "to":  "groups+open",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "include-resolution",
+                      "to":  "cpp-parser",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "completion",
+                      "to":  "lsp-providers",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "lifecycle",
+                      "to":  "settings-apply",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "lsp-providers",
+                      "to":  "clipboard+fmt",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "completion",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "include-resolution",
+                      "to":  "lsp-providers",
+                      "calls":  3
+                  },
+                  {
+                      "from":  "include-resolution",
+                      "to":  "selection-guard",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "completion",
+                      "to":  "include-resolution",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "lifecycle",
+                      "to":  "semantic-hl",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "settings-apply",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "lsp-providers",
+                      "to":  "path+lang",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "selection-guard",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "keybindings",
+                      "to":  "clipboard+fmt",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "file-ops",
+                      "to":  "theme+colors",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "semantic-hl",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "tab-ops+diff",
+                      "to":  "semantic-hl",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "bulk-apply",
+                      "to":  "settings-apply",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "tab-ops+diff",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "open-at-pos",
+                      "to":  "tab-ops+diff",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "settings-apply",
+                      "to":  "bulk-apply",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "semantic-hl",
+                      "to":  "lsp-providers",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "lsp-providers",
+                      "to":  "semantic-hl",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "lifecycle",
+                      "to":  "groups+open",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "lsp-providers",
+                      "to":  "bulk-apply",
+                      "calls":  2
+                  },
+                  {
+                      "from":  "file-ops",
+                      "to":  "groups+open",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "bulk-apply",
+                      "to":  "lsp-providers",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "open-at-pos",
+                      "to":  "groups+open",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "cpp-parser",
+                      "to":  "completion",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "open-at-pos",
+                      "to":  "path+lang",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "bulk-apply",
+                      "to":  "file-ops",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "bulk-apply",
+                      "to":  "semantic-hl",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "rename",
+                      "to":  "completion",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "clipboard+fmt",
+                      "to":  "settings-apply",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "file-ops",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "bulk-apply",
+                      "to":  "completion",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "settings-apply",
+                      "to":  "completion",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "selection-guard",
+                      "to":  "cpp-parser",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "selection-guard",
+                      "to":  "include-resolution",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "rename",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "groups+open",
+                      "to":  "diag+markers",
+                      "calls":  1
+                  },
+                  {
+                      "from":  "file-ops",
+                      "to":  "tab-ops+diff",
+                      "calls":  1
+                  }
+              ],
+    "deadCode":  [
+                     {
+                         "name":  "parseFunctions",
+                         "start":  9034,
+                         "end":  9096,
+                         "internalCalls":  0,
+                         "externalCalls":  0
+                     },
+                     {
+                         "name":  "parseStructsAndClasses",
+                         "start":  9059,
+                         "end":  9089,
+                         "internalCalls":  0,
+                         "externalCalls":  0
+                     },
+                     {
+                         "name":  "removeComments",
+                         "start":  9091,
+                         "end":  9095,
+                         "internalCalls":  0,
+                         "externalCalls":  0
+                     }
+                 ]
+}
