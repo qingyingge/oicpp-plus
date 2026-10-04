@@ -53,6 +53,7 @@ class MonacoEditorManager {
         this._syntaxCheckEnabled = true;
         this._lspCompilerPath = undefined;
         this._lspProviders = new Map();
+        this._lspInlayHintCache = new WeakMap();
         this._clangFormatProviders = new Map();
         this._lspCommandArguments = new Map();
         this._lspProvidersReady = false;
@@ -1282,10 +1283,20 @@ class MonacoEditorManager {
                     const empty = { hints: [], dispose: () => { } };
                     try {
                         if (!model || model.isDisposed?.() || token?.isCancellationRequested) return empty;
+
+                        // Monaco 在滚动、装饰器变化、语义令牌刷新等场景下会反复调用本提供器，
+                        // 而这些场景下文档版本往往没变。命中缓存直接复用，避免把同样的
+                        // range 反复打给 clangd —— 那会让它取消上一批请求并重建 AST。
+                        const cached = this._lspInlayHintCache.get(model);
+                        if (cached && cached.version === model.getVersion?.()) {
+                            return cached.result;
+                        }
+
                         const lspReady = await this._ensureLspDocumentReady(model);
                         if (!lspReady || !this.lspClient || token?.isCancellationRequested) return empty;
                         const uri = await this.getDocumentUriForModel(model);
                         if (!uri || token?.isCancellationRequested) return empty;
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return empty;
                         const result = await this.lspClient.request('textDocument/inlayHint', {
                             textDocument: { uri },
                             range: {
@@ -1300,11 +1311,17 @@ class MonacoEditorManager {
                             }
                         }, token);
                         if (token?.isCancellationRequested) return null;
+                        if (!model || model.isDisposed?.()) return empty;
                         if (!Array.isArray(result)) return empty;
-                        return {
-                            hints: result.map((hint) => this.lspInlayHintToMonaco(hint)).filter(Boolean),
+                        const hints = result.map((hint) => this.lspInlayHintToMonaco(hint)).filter(Boolean);
+                        const payload = {
+                            hints,
+                            // 内容未变时这条结果依然有效，交给空实现即可；真正失效的情形由
+                            // 版本号比对在上面拦掉。
                             dispose: () => { }
                         };
+                        this._lspInlayHintCache.set(model, { version: model.getVersion?.(), result: payload });
+                        return payload;
                     } catch (_) {
                         return empty;
                     }
