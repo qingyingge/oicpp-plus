@@ -120,6 +120,9 @@ class CompareEngineV2 extends EventEmitter {
                                 testMs: msg.testMs
                             });
                         } else if (msg.type === 'fastspawn-load-warning') {
+                            // 每个 worker 都会独立上报一次，一次对拍就是十条同样的告警。
+                            if (this._fastspawnErrorForwarded) return;
+                            this._fastspawnErrorForwarded = true;
                             this.emit('warning', {
                                 testNumber: 0,
                                 type: 'fastspawn_fallback',

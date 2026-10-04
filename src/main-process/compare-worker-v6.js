@@ -6,9 +6,36 @@
  * std/test 优先 fastspawn，加载失败时回退 child_process。
  */
 const { parentPort } = require('worker_threads');
+const fs = require('fs');
+const path = require('path');
+
+// fastspawn.node 在打包配置里位于 asarUnpack，因此它不在 app.asar 内，而被搬到
+// app.asar.unpacked/。worker 里写死相对路径 require('../../fastspawn.node') 命中的是
+// app.asar 根目录，在打包后必然 MODULE_NOT_FOUND。逐个候选探测，开发态与打包态都能命中。
+function loadFastspawn() {
+    const candidates = [path.resolve(__dirname, '..', '..', 'fastspawn.node')];
+    if (process.resourcesPath) {
+        candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'fastspawn.node'));
+    }
+    let lastError = null;
+    for (const candidate of candidates) {
+        try {
+            if (!fs.existsSync(candidate)) continue;
+            return require(candidate);
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError || new Error(`fastspawn.node not found (tried: ${candidates.join(', ')})`);
+}
 
 let fast = null;
-try { fast = require('../../fastspawn.node'); } catch(e) { parentPort.postMessage({ type: 'fastspawn-load-warning', message: e.message }); }
+try {
+    fast = loadFastspawn();
+} catch (e) {
+    // 告警是模块级的，同一个 worker 里只上报一次，避免每次对拍刷屏。
+    parentPort.postMessage({ type: 'fastspawn-load-warning', message: e.message });
+}
 
 const { spawn } = require('child_process');
 const { terminateProcessTree } = require('../utils/process-supervisor');
