@@ -654,6 +654,8 @@ class ClangdLspManager {
                         flagsResult.written ? '' : '(内容未变化)');
                 } else if (flagsResult.reason === 'user-compilation-database') {
                     logInfo('[LSP] 工作区已有 compile_commands.json，保持用户编译配置');
+                } else if (flagsResult.reason === 'no-workspace') {
+                    logWarn('[LSP] 尚无可用工作区，clangd 将缺少 --compile-commands-dir');
                 } else if (flagsResult.reason !== 'no-flags') {
                     logWarn('[LSP] 写入 compile_flags.txt 失败:', flagsResult.reason);
                 } else {
@@ -1788,6 +1790,39 @@ let pendingStartupWorkspaceToOpen = null;
 // while a workspace is already open (e.g. double-clicking a .cpp file in Explorer).
 let currentExternalWorkspacePath = null;
 
+// 启动期工作区解析在 mainWindow 'ready-to-show' 里完成，而渲染进程在此之前就会发
+// lsp-start。等待器让 LSP 启动挂到工作区解析结果上，而不是抢跑。
+let startupWorkspaceSettled = false;
+let startupWorkspaceWaiters = [];
+// 启动期工作区在 'ready-to-show' 里解析，正常几十毫秒内完成；这个上限只用来防止
+// ready-to-show 迟迟不来时把 LSP 启动永久挂住。
+const LSP_START_WORKSPACE_WAIT_MS = 5000;
+function settleStartupWorkspace() {
+    if (startupWorkspaceSettled) return;
+    startupWorkspaceSettled = true;
+    const waiters = startupWorkspaceWaiters;
+    startupWorkspaceWaiters = [];
+    for (const waiter of waiters) waiter(currentExternalWorkspacePath);
+}
+function waitForStartupWorkspace(timeoutMs) {
+    if (startupWorkspaceSettled) return Promise.resolve(currentExternalWorkspacePath);
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (value) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(value);
+        };
+        const timer = setTimeout(() => {
+            const index = startupWorkspaceWaiters.indexOf(finish);
+            if (index >= 0) startupWorkspaceWaiters.splice(index, 1);
+            finish(currentExternalWorkspacePath);
+        }, timeoutMs);
+        startupWorkspaceWaiters.push(finish);
+    });
+}
+
 // ---- IPC 文件 IO 路径校验（H1）：拦截系统/凭据/应用敏感目录 ----
 let _cachedSensitivePrefixes = null;
 function getSensitivePathPrefixes() {
@@ -2808,7 +2843,8 @@ function createWindow() {
 
         mainWindow.webContents.send('settings-loaded', settings);
 
-        (function autoOpenWorkspace() {
+        try {
+            (function autoOpenWorkspace() {
             if (skipAutoOpenWorkspace) {
                 logInfo('[启动] 检测到外部文件打开请求，跳过自动恢复工作区');
                 return;
@@ -2831,7 +2867,10 @@ function createWindow() {
                 currentExternalWorkspacePath = target;
                 logInfo('[启动] 已准备自动恢复工作区:', target);
             }
-        })();
+        }());
+        } finally {
+            settleStartupWorkspace();
+        }
 
         // 先处理已完成更新：它会清除旧的 pendingUpdate。否则 checkPendingUpdate()
         // 会把旧安装包注册到 will-quit，导致下一次退出再次启动已被安装器删除的文件。
@@ -3825,9 +3864,25 @@ function setupIPC() {
         }
     });
 
+    // 渲染进程在启动期工作区解析完成前就会发 lsp-start，它那边的
+    // sidebarManager.panels.files.workspacePath 此时还是空的。空工作区会让 clangd 拿不到
+    // --compile-commands-dir，cwd 也落到安装目录，最终退化成 clangd fallback（无 -std、无
+    // include），诊断因此全部失效。这里先等主进程自己解析出启动工作区再补齐。
+    async function resolveLspStartOptions(options) {
+        const opts = options && typeof options === 'object' ? options : {};
+        if (opts.workspaceRoot) return opts;
+        if (!startupWorkspaceSettled) {
+            await waitForStartupWorkspace(LSP_START_WORKSPACE_WAIT_MS);
+        }
+        const fallback = currentExternalWorkspacePath;
+        if (typeof fallback !== 'string' || !fallback.trim()) return opts;
+        logInfo('[LSP] 渲染进程未提供工作区，回退到已解析的启动工作区:', fallback);
+        return { ...opts, workspaceRoot: fallback, rootUri: opts.rootUri || pathToFileURL(fallback).href };
+    }
+
     ipcMain.handle('lsp-start', async (_event, options = {}) => {
         logInfo('[LSP] 渲染进程请求启动 LSP, options:', JSON.stringify(options));
-        const result = await clangdLspManager.start(options || {});
+        const result = await clangdLspManager.start(await resolveLspStartOptions(options));
         if (result.ok) {
             logInfo('[LSP] 启动成功:', result.clangdPath || 'already running');
         } else {
@@ -3848,7 +3903,7 @@ function setupIPC() {
             return stopResult || { ok: false, error: 'clangd stop failed' };
         }
 
-        const result = await clangdLspManager.start(options || {});
+        const result = await clangdLspManager.start(await resolveLspStartOptions(options));
         if (result.ok) {
             logInfo('[LSP] 重启成功:', result.clangdPath || 'already running');
         } else {

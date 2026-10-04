@@ -100,7 +100,10 @@ function writeCompileFlagsFile({ workspaceRoot, includePaths = [], target = '', 
     if (!flagsText) {
         return { ok: false, reason: 'no-flags', dir: '', filePath: '' };
     }
-    if (!workspaceRoot || hasUserCompilationDatabase(workspaceRoot)) {
+    if (!workspaceRoot) {
+        return { ok: false, reason: 'no-workspace', dir: '', filePath: '' };
+    }
+    if (hasUserCompilationDatabase(workspaceRoot)) {
         return { ok: false, reason: 'user-compilation-database', dir: '', filePath: '' };
     }
 
