@@ -129,7 +129,7 @@ try {
     check('M52: a missing workspace is rejected',
         writeCompileFlagsFile({ workspaceRoot: path.join(root, 'does-not-exist'), includeDirs, target: 'x86_64-w64-mingw32' }).reason === 'invalid-workspace');
     check('M52: no workspace at all is rejected',
-        writeCompileFlagsFile({ workspaceRoot: '', includeDirs, target: 'x86_64-w64-mingw32' }).reason === 'user-compilation-database');
+        writeCompileFlagsFile({ workspaceRoot: '', includeDirs, target: 'x86_64-w64-mingw32' }).reason === 'no-workspace');
 
     // --- L26: 设置页不再有 100ms 人为延迟 ---------------------------------
     const settingsInit = fs.readFileSync(
