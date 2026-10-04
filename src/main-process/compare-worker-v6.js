@@ -40,6 +40,8 @@ try {
 const { spawn } = require('child_process');
 const { terminateProcessTree } = require('../utils/process-supervisor');
 const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
+// 超时 kill 之后等待进程真正退出的上限；超过就放行，把清理失败降级为一条告警。
+const PROCESS_EXIT_GRACE_MS = 5000;
 // 回传给渲染层的诊断数据上限：截断时必须显式标记，否则导出的测试数据会被静默砍掉
 const MAX_CAPTURED_INPUT_BYTES = 1024 * 1024;
 const MAX_CAPTURED_OUTPUT_BYTES = 64 * 1024;
@@ -114,7 +116,20 @@ function waitForResult(proc, timeout) {
             timer = setTimeout(() => {
                 proc._collectors = proc._collectors.filter(c => c !== cb);
                 terminateProcessTree(proc);
-                resolve({ exitCode: -1, timeout: true, error: 'timeout' });
+                // taskkill 返回后目标进程的映像尚未从系统卸载，此刻渲染层去删 exe 会拿到
+                // EPERM/EBUSY。超时是整条对拍里进程存活最久的那一个（退出最晚），所以这里
+                // 必须等到 'close' 才放行，且要有上限，不能让清理被一个赖着不走的进程卡死。
+                if (proc._done) {
+                    resolve({ exitCode: -1, timeout: true, error: 'timeout' });
+                    return;
+                }
+                const giveUp = setTimeout(() => {
+                    resolve({ exitCode: -1, timeout: true, error: 'timeout' });
+                }, PROCESS_EXIT_GRACE_MS);
+                proc._collectors.push((result) => {
+                    clearTimeout(giveUp);
+                    resolve({ ...result, exitCode: -1, timeout: true, error: 'timeout' });
+                });
             }, timeout);
         }
     });

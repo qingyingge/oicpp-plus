@@ -4634,7 +4634,18 @@ function setupIPC() {
             }
 
             if (fs.existsSync(tempPath)) {
-                fs.unlinkSync(tempPath);
+                // Windows 上刚被 taskkill 掉的进程可能还占着 exe 的文件句柄，立即 unlink
+                // 会拿到 EPERM/EBUSY。对这类错误做有限次退避重试，其余错误直接抛。
+                const retryable = new Set(['EPERM', 'EBUSY', 'EACCES']);
+                for (let attempt = 0; ; attempt++) {
+                    try {
+                        fs.unlinkSync(tempPath);
+                        break;
+                    } catch (error) {
+                        if (!retryable.has(error?.code) || attempt >= 5) throw error;
+                        await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+                    }
+                }
             } else {
                 logInfo('临时文件不存在，无需删除:', tempPath);
             }
