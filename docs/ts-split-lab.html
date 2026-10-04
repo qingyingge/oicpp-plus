@@ -11,16 +11,23 @@
 body{background:var(--bg);color:var(--fg);font:13px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:18px 22px 60px}
 h1{font-size:18px;font-weight:650;margin-bottom:3px}
 .sub{color:var(--fnt);font-size:11.5px;margin-bottom:14px}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:12px}
+.mode{background:var(--p);border:1px solid var(--bd);border-radius:8px;padding:11px 13px;cursor:pointer;transition:.12s}
+.mode:hover{border-color:var(--dim)}
+.mode.on{border-color:var(--bl);background:#12243a}
+.mode .t{font-weight:650;font-size:12.5px;margin-bottom:3px}
+.mode .d{color:var(--fnt);font-size:11px;line-height:1.5}
+.mode.on .t{color:var(--bl)}
 .bar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;background:var(--p);border:1px solid var(--bd);border-radius:8px;padding:10px 14px;margin-bottom:12px}
 .bar label{font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:6px}
-.bar input[type=range]{width:120px;accent-color:var(--bl)}
+.bar input[type=range]{width:110px;accent-color:var(--bl)}
 .bar input[type=number]{width:52px;background:var(--p2);border:1px solid var(--bd);color:var(--fg);border-radius:4px;padding:3px 6px;font:inherit;font-size:12px}
 button{background:var(--p2);color:var(--fg);border:1px solid var(--bd);border-radius:6px;padding:6px 12px;font:600 12px inherit;cursor:pointer}
 button:hover{background:#252d3a}
 button.pri{background:var(--bl);color:#06090d;border-color:var(--bl)}
 .grow{flex:1}
-.wrap{display:grid;grid-template-columns:1fr 372px;gap:14px;align-items:start}
-@media(max-width:1080px){.wrap{grid-template-columns:1fr}}
+.wrap{display:grid;grid-template-columns:1fr 380px;gap:14px;align-items:start}
+@media(max-width:1120px){.wrap{grid-template-columns:1fr}}
 .card{background:var(--p);border:1px solid var(--bd);border-radius:8px;padding:13px 15px}
 .card h3{font-size:12.5px;font-weight:600;margin-bottom:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px}
 table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
@@ -31,25 +38,28 @@ tr.excl td{opacity:.34}
 tr:hover td{background:#1a202a}
 .mono{font-family:ui-monospace,Consolas,monospace;font-size:11px}
 .tt{display:inline-block;font-size:9.5px;padding:1px 5px;border-radius:7px;background:#252d3a;color:var(--dim);margin:1px 2px 1px 0;white-space:nowrap}
-.tt.hub{background:#3a2f12;color:var(--amb)}
-select{background:var(--p2);border:1px solid var(--bd);color:var(--fg);border-radius:4px;padding:2px 4px;font:inherit;font-size:11px;width:62px}
+.tt.s{background:#3a2020;color:var(--hot)}
+.tt.l{background:#2a2418;color:var(--amb)}
+select,input[type=text]{background:var(--p2);border:1px solid var(--bd);color:var(--fg);border-radius:4px;padding:2px 4px;font:inherit;font-size:11px}
+select{width:60px}
 .big{font-size:27px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.15}
 .cap{color:var(--fnt);font-size:11px;margin-top:3px}
 .lane{margin-bottom:9px}
 .lane .t{display:flex;font-size:11px;color:var(--dim);margin-bottom:3px}
 .lane .t b{margin-left:auto;color:var(--fg);font-variant-numeric:tabular-nums}
 .bar2{position:relative;height:19px;background:#161b24;border:1px solid var(--bd);border-radius:4px;overflow:hidden;display:flex}
-.bar2 i{display:block;height:100%;border-right:1px solid #0b0e14;position:relative}
+.bar2 i{display:block;height:100%;border-right:1px solid #0b0e14}
 .vio{background:#1e1214;border:1px solid #4a2027;border-radius:7px;padding:9px 11px;font-size:11.5px;margin-top:4px}
 .vio b{color:var(--hot)}
-.vio .mono{color:var(--dim)}
-.okb{background:#101a14;border:1px solid #1f4a30;border-radius:7px;padding:9px 11px;font-size:11.5px;color:var(--ok);margin-top:4px}
-.kpi{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:11px}
-.kpi>div{background:var(--p2);border:1px solid var(--bd);border-radius:6px;padding:9px 11px}
+.okb{background:#101a14;border:1px solid #4a7a30;border-radius:7px;padding:9px 11px;font-size:11.5px;color:var(--ok);margin-top:4px}
+.note{color:var(--fnt);font-size:11px;margin-top:9px;line-height:1.7}
+.note b{color:var(--dim)}
 #exp{margin-top:12px}
-textarea{width:100%;height:130px;background:#0d1117;color:var(--dim);border:1px solid var(--bd);border-radius:6px;padding:9px;font:11px ui-monospace,Consolas,monospace;resize:vertical}
-.hint{color:var(--fnt);font-size:11px;margin-top:8px;line-height:1.7}
-.hint b{color:var(--dim)}
+textarea{width:100%;height:120px;background:#0d1117;color:var(--dim);border:1px solid var(--bd);border-radius:6px;padding:9px;font:11px ui-monospace,Consolas,monospace;resize:vertical}
+details{margin-top:5px}
+summary{cursor:pointer;color:var(--amb);font-size:10.5px;outline:none}
+.lit{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--amb);background:#1c1810;padding:1px 5px;border-radius:3px;display:inline-block;margin:2px}
+.st{font-family:ui-monospace,Consolas,monospace;font-size:10.5px;color:var(--hot);display:block;margin:2px 0}
 </style>
 </head>
 <body>
@@ -57,29 +67,30 @@ textarea{width:100%;height:130px;background:#0d1117;color:var(--dim);border:1px 
 <h1>自己拆 · TS 迁移并行分组</h1>
 <div class="sub" id="meta"></div>
 
+<div class="modes" id="modes"></div>
+
 <div class="bar">
   <label>槽位 <input type="range" id="nlanes" min="1" max="8" value="4"><b id="nlanesV" style="width:14px">4</b></label>
-  <label>解锁天数 <input type="number" id="unlock" value="3" min="0" step="0.5"></label>
+  <label>解锁天数 <input type="number" id="unlock" value="0" min="0" step="0.5"></label>
   <label>k 系数 <input type="range" id="k" min="0.5" max="3" step="0.25" value="1"><b id="kV" style="width:30px">1.00</b></label>
-  <span style="width:12px"></span>
-  <button class="pri" id="bAuto">约束感知均衡</button>
-  <button id="bLpt">无视约束 LPT</button>
-  <button id="bOne">全部串行</button>
+  <span style="width:10px"></span>
+  <button class="pri" id="bAuto">按当前模式自动均衡</button>
+  <button id="bSerial">全部串行</button>
   <button id="bClr">清空</button>
   <span class="grow"></span>
-  <input type="text" id="q" placeholder="过滤文件 / 测试名" style="background:var(--p2);border:1px solid var(--bd);color:var(--fg);border-radius:6px;padding:5px 10px;font:inherit;font-size:12px;width:170px">
+  <input type="text" id="q" placeholder="过滤文件 / 测试名 / 字面量" style="padding:5px 10px;width:190px">
 </div>
 
 <div class="wrap">
   <div class="card" style="padding:0;overflow:hidden">
-    <div style="max-height:74vh;overflow:auto">
+    <div style="max-height:76vh;overflow:auto">
       <table><thead><tr>
-        <th data-s="f" style="width:34%">文件</th>
+        <th data-s="f" style="width:31%">文件</th>
         <th class="n" data-s="loc">LOC</th>
         <th class="n" data-s="loose">loose</th>
-        <th class="n" data-s="strict">strict</th>
         <th class="n" data-s="eff">eff</th>
-        <th>被哪些测试读取</th>
+        <th style="width:15%">承重断言</th>
+        <th>被哪些测试读</th>
         <th>槽位</th>
       </tr></thead><tbody id="tb"></tbody></table>
     </div>
@@ -88,25 +99,28 @@ textarea{width:100%;height:130px;background:#0d1117;color:var(--dim);border:1px 
   <div>
     <div class="card" style="margin-bottom:12px">
       <h3>结果</h3>
-      <div class="kpi">
-        <div><div class="big" id="cp">—</div><div class="cap">关键路径 · eff</div></div>
-        <div><div class="big" id="days">—</div><div class="cap">日历天（k=1）</div></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:11px">
+        <div style="background:var(--p2);border:1px solid var(--bd);border-radius:6px;padding:9px 11px">
+          <div class="big" id="cp">—</div><div class="cap">关键路径 · eff</div></div>
+        <div style="background:var(--p2);border:1px solid var(--bd);border-radius:6px;padding:9px 11px">
+          <div class="big" id="days">—</div><div class="cap">日历天（k=1）</div></div>
       </div>
       <div id="lanes"></div>
-      <div class="hint">串行基准 <b id="serial"></b> eff。日历 = 解锁天数 + 关键路径 × k。</div>
+      <div class="note" id="baseline"></div>
     </div>
     <div class="card">
-      <h3>约束校验</h3>
+      <h3>当前模式下的冲突</h3>
       <div id="vio"></div>
-      <div class="hint">
-        <b>规则：</b>若两个文件被<b>同一个测试</b>读取，且被分到<b>不同槽位</b> → 冲突（两个 agent 会同时改那个测试文件）。<br>
-        <b>不是</b>连通分量说了算 —— 只有真正共读同一测试的两个文件才互斥。传递路径不算。
-      </div>
+      <div class="note" id="model"></div>
     </div>
-    <div class="card" id="exp" style="display:none">
-      <h3>导出</h3>
+    <div class="card" id="exp">
+      <h3>导出 · 可直接贴进 agent prompt</h3>
       <textarea id="expt" spellcheck="false"></textarea>
-      <div style="margin-top:7px"><button id="bCopy">复制</button></div>
+      <div style="margin-top:7px;display:flex;gap:7px">
+        <button id="bCopy">复制分组</button>
+        <button id="bCopyLit">生成禁改字面量清单</button>
+      </div>
+      <textarea id="litout" spellcheck="false" style="margin-top:8px;display:none"></textarea>
     </div>
   </div>
 </div>
@@ -115,19 +129,72 @@ textarea{width:100%;height:130px;background:#0d1117;color:var(--dim);border:1px 
 <script>
 if (!window.TS_BASELINE) {
   document.body.innerHTML = '<div style="padding:40px;font:14px sans-serif;color:#d5dce6;background:#0b0e14">'+
-    '<h2>缺少数据文件</h2><p>先运行：<code>powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\ts-migration-baseline.ps1</code></p></div>';
+    '<h2>缺少数据文件</h2><p>先运行：</p><pre style="background:#161b22;padding:12px;border-radius:6px">'+
+    'powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\ts-migration-baseline.ps1\n'+
+    'node scripts\\ts-migration-coupling.js</pre></div>';
   throw new Error('ts-migration-baseline.js missing');
 }
+
 const DATA = window.TS_BASELINE;
-const F = DATA.files, T = DATA.tests;
-let lane = {}, sortKey='eff', sortDir=-1, NL=4;
+const F = DATA.files, T = DATA.tests, CP = DATA.coupling || {};
+let lane = {}, sortKey='eff', sortDir=-1, NL=4, MODE='annotate';
 
 const short = f => f.replace('src/renderer/js/sidebar/','sb/').replace('src/renderer/js/settings/','js/')
   .replace('src/renderer/settings/','set/').replace('src/renderer/js/','js/')
   .replace('src/main-process/','mp/').replace('src/utils/','u/').replace('src/renderer/','r/').replace('src/','');
-const TDEG = {}; for(const f of F) if(f.tests.length) TDEG[f.f]=f.tests.length;
+const rel2short = Object.fromEntries(F.map(f=>[f.f, short(f.f)]));
+const cpl = f => CP[f] || {literals:[], structural:[]};
+const active = () => F.filter(f=>typeof lane[f.f]==='number' && lane[f.f]<NL && !f.frozen);
 
-function active(){ return F.filter(f=>typeof lane[f.f]==='number' && lane[f.f]<NL && !f.frozen); }
+/* ---- coupling models -----------------------------------------------------
+ * A annotate : annotation-only work. Measured: adding JSDoc or a plain
+ *              statement to a file that ALL THREE big tests read breaks 0 of
+ *              69 assertions. Only rewriting an asserted literal breaks one.
+ *              => no cross-file constraint.
+ * B structural: only files carrying structural assertions (method-body regex /
+ *              occurrence counts) are at risk, and only against the test that
+ *              owns them. Union those per test.
+ * C co-read  : the plan's original rule -- any two files read by the same test
+ *              are mutually exclusive. Upper bound / pessimistic.
+ * ------------------------------------------------------------------------ */
+const MODES = [
+  { id:'annotate', t:'注解式改动（推荐）', d:'只加 JSDoc / @ts-ignore。实测跨文件零冲突，唯一约束是别改那几个被断言的字面量。' },
+  { id:'structural', t:'含结构性改动', d:'只把带方法体正则 / 次数断言的文件按同一测试合并。比注解式保守，仍不需要拆测试。' },
+  { id:'coread', t:'文件级共读（原方案）', d:'任何被同一测试读取的两个文件都互斥。最保守，也是 TS_MIGRATION_PLAN.md 原本采用的规则。' },
+];
+
+function groups(){
+  const pool = F.filter(f=>!f.frozen);
+  if (MODE==='annotate') return pool.map(f=>[f]);
+  const keep = new Set();
+  for (const f of pool){
+    const c = cpl(f.f);
+    const risky = MODE==='coread' ? (c.literals.length + c.structural.length > 0)
+                                  : (c.structural.length > 0);
+    if (risky) keep.add(f.f);
+  }
+  const par={};
+  const find=x=>par[x] ? (par[x]===x ? par[x] : (par[x]=find(par[x]))) : (par[x]=x);
+  const uni=(a,b)=>{a=find(a);b=find(b);if(a!==b)par[b]=a;};
+  pool.forEach(f=>{ if(par[f.f]===undefined) par[f.f]=f.f; });
+  for (const t in T){
+    const fs = T[t].filter(f=>par[f]!==undefined && keep.has(f));
+    for (let i=1;i<fs.length;i++) uni(fs[0],fs[i]);
+  }
+  const g={}; pool.forEach(f=>{const r=find(f.f);(g[r]=g[r]||[]).push(f)});
+  return Object.values(g);
+}
+
+function lptUnits(units){
+  const bins=[]; for(let i=0;i<NL;i++) bins.push([]);
+  const tot=u=>u.reduce((s,f)=>s+f.eff,0);
+  const sum=()=>bins.map(b=>b.reduce((s,f)=>s+f.eff,0));
+  units.slice().sort((a,b)=>tot(b)-tot(a)).forEach(u=>{
+    let m=0; for(let i=1;i<NL;i++) if(sum()[i]<sum()[m]) m=i;
+    bins[m].push(...u);
+  });
+  return bins;
+}
 
 function calc(){
   const ls=[]; for(let i=0;i<NL;i++) ls.push([]);
@@ -137,55 +204,70 @@ function calc(){
   const k=+document.getElementById('k').value, un=+document.getElementById('unlock').value;
   document.getElementById('cp').textContent = cp.toFixed(2);
   document.getElementById('days').textContent = (un+cp*k).toFixed(1);
-  const serialAll = F.filter(f=>!f.frozen).reduce((s,f)=>s+f.eff,0);
-  const serialNoM = serialAll - (F.find(f=>f.f==='src/renderer/js/monaco-editor-manager.js')||{eff:0}).eff;
-  document.getElementById('serial').innerHTML =
-    `全量串行 <b>${serialAll.toFixed(1)}</b>（含 monaco ${serialAll-serialNoM>0?(serialAll-serialNoM).toFixed(1):'0'}）· 不含 monaco ${serialNoM.toFixed(1)} · 降幅 <b>${cp?(serialAll/cp).toFixed(2)+'×':'—'}</b>`;
   const mx=Math.max(cp,1);
   document.getElementById('lanes').innerHTML = ls.map((a,i)=>
     `<div class="lane"><div class="t">${a.length?'':'（空）'}槽 ${i+1} <b>${sums[i].toFixed(2)}</b></div>`+
-    `<div class="bar2">${a.length?a.map(f=>`<i style="width:${f.eff/mx*100}%;background:hsl(${(F.indexOf(f)*37)%360} 55% 55%)" title="${short(f.f)} ${f.eff}"></i>`).join(''):''}</div></div>`).join('');
-  check(ls);
-}
+    `<div class="bar2">${a.map(f=>`<i style="width:${f.eff/mx*100}%;background:hsl(${(F.indexOf(f)*37)%360} 55% 55%)" title="${rel2short[f.f]} ${f.eff}"></i>`).join('')}</div></div>`).join('');
 
-function check(ls){
-  const out=[];
-  for(const t in T){
-    const fs=T[t].filter(f=>lane[f]!==undefined && lane[f]!=='x' && !F.find(x=>x.f===f).frozen);
-    const byL={}; fs.forEach(f=>{(byL[lane[f]]=byL[lane[f]]||[]).push(f)});
+  const serialAll = F.filter(f=>!f.frozen).reduce((s,f)=>s+f.eff,0);
+  document.getElementById('baseline').innerHTML =
+    `全量串行 <b>${serialAll.toFixed(1)}</b> eff → 降幅 <b>${cp?(serialAll/cp).toFixed(2):'—'}×</b>。日历 = 解锁天数 + 关键路径 × k。`;
+
+  // annotate mode: measured 0 failures across 8 tests when injecting JSDoc, so
+  // there is no cross-file constraint at all -- the constraint is per-literal
+  // and is surfaced in the table + the export, not as lane conflicts.
+  const risky = new Set();
+  if (MODE==='structural') groups().forEach(g=>{ if(g.length>1) g.forEach(f=>risky.add(f.f)); });
+  if (MODE==='coread')    groups().forEach(g=>{ if(g.length>1) g.forEach(f=>risky.add(f.f)); });
+  const bad=[];
+  active().forEach(f=>{ if(risky.has(f.f) && f.tests.length) bad.push(f); });
+  const boxes=[];
+  for (const t in T){
+    const fs=bad.filter(f=>f.tests.includes(t));
+    const byL={}; fs.forEach(f=>(byL[lane[f.f]]=byL[lane[f.f]]||[]).push(f));
     const ks=Object.keys(byL);
-    if(ks.length>1){
+    if (ks.length>1){
       const pairs=[];
-      for(let i=0;i<ks.length;i++)for(let j=i+1;j<ks.length;j++)
+      for(let i=0;i<ks.length;i++) for(let j=i+1;j<ks.length;j++)
         byL[ks[i]].forEach(a=>byL[ks[j]].forEach(b=>pairs.push([a,b])));
-      out.push({t,ks,pairs});
+      boxes.push({t,ks,pairs});
     }
   }
-  const n=out.reduce((s,o)=>s+o.pairs.length,0);
+  const n=boxes.reduce((s,o)=>s+o.pairs.length,0);
   document.getElementById('vio').innerHTML = n===0
-    ? '<div class="okb">无冲突 — 当前分组可直接开工</div>'
-    : out.map(o=>`<div class="vio"><b>${o.t}</b> 横跨槽 ${o.ks.sort().join(' / ')} — ${o.pairs.length} 对文件互斥<br>`+
-      o.pairs.slice(0,6).map(p=>`<span class="mono">${short(p[0])}</span> ↔ <span class="mono">${short(p[1])}</span>`).join('<br>')+
-      (o.pairs.length>6?`<br>…另 ${o.pairs.length-6} 对`:'')+'</div>').join('');
-  document.getElementById('vio').dataset.n=n;
+    ? '<div class="okb">零冲突 — 当前分组可直接开工</div>'
+    : boxes.map(o=>`<div class="vio"><b>${o.t}</b> 横跨槽 ${o.ks.sort().join(' / ')} — ${o.pairs.length} 对互斥<br>`+
+      o.pairs.slice(0,8).map(p=>`<span class="mono">${rel2short[p[0].f]}</span> ↔ <span class="mono">${rel2short[p[1].f]}</span>`).join('<br>')+
+      (o.pairs.length>8?`<br>…另 ${o.pairs.length-8} 对`:'')+'</div>').join('');
+  document.getElementById('model').innerHTML = MODES.find(m=>m.id===MODE).d;
 }
 
 function render(){
   const q=document.getElementById('q').value.trim().toLowerCase();
-  let rows=F.filter(f=>!q||f.f.toLowerCase().includes(q)||f.tests.some(t=>t.includes(q)));
-  rows=rows.slice().sort((a,b)=>sortDir*(a[sortKey]-b[sortKey])||a.f.localeCompare(b.f));
+  let rows=F.filter(f=>!q || f.f.toLowerCase().includes(q) || f.tests.some(t=>t.includes(q))
+                 || cpl(f.f).literals.some(l=>l.lit.toLowerCase().includes(q)));
+  rows=rows.slice().sort((a,b)=>sortDir*(a[sortKey]-b[sortKey]) || a.f.localeCompare(b.f));
   document.getElementById('tb').innerHTML=rows.map(f=>{
-    const L=lane[f.f];
-    const ex=f.frozen||L==='x';
-    const tags=f.tests.length?f.tests.map(t=>`<span class="tt ${f.tests.length>1?'hub':''}">${t}</span>`).join(''):'<span style="color:var(--fnt)">—</span>';
-    const opts=`<option value="" ${L===undefined?'selected':''}>—</option>`
-      +[0,1,2,3,4,5,6,7].slice(0,NL).map(i=>`<option value="${i}" ${L==i?'selected':''}>${i+1}</option>`).join('')
-      +`<option value="x" ${L==='x'?'selected':''}>不做</option>`;
+    const L=lane[f.f], c=cpl(f.f), ex=f.frozen||L==='x';
+    let badge='<span style="color:#3f4a5a">—</span>';
+    if (c.literals.length || c.structural.length){
+      badge = `<span class="tt l">${c.literals.length} 字面量</span>` +
+              (c.structural.length?`<span class="tt s">${c.structural.length} 结构</span>`:'');
+      if (c.literals.length)
+        badge += `<details><summary>展开 ${c.literals.length} 条被断言的字符串</summary><div>`+
+          c.literals.map(l=>`<span class="lit" title="${l.test}">${l.lit.replace(/</g,'&lt;')}</span>`).join('')+`</div></details>`;
+      if (c.structural.length)
+        badge += `<details><summary>展开 ${c.structural.length} 条结构断言</summary><div>`+
+          c.structural.map(s=>`<span class="st">${s.test} · ${s.kind}<br>${s.detail}</span>`).join('')+`</div></details>`;
+    }
+    const opts=`<option value="" ${L===undefined?'selected':''}>—</option>`+
+      [0,1,2,3,4,5,6,7].slice(0,NL).map(i=>`<option value="${i}" ${L==i?'selected':''}>${i+1}</option>`).join('')+
+      `<option value="x" ${L==='x'?'selected':''}>不做</option>`;
     return `<tr class="${ex?'excl':''}">
-      <td class="mono">${short(f.f)}${f.frozen?' <span style="color:var(--amb)">冻结</span>':''}</td>
-      <td class="n">${f.loc}</td><td class="n">${f.loose}</td><td class="n">${f.strict}</td>
-      <td class="n"><b>${f.eff.toFixed(2)}</b></td>
-      <td>${tags}</td>
+      <td class="mono">${rel2short[f.f]}${f.frozen?' <span style="color:var(--amb)">冻结</span>':''}</td>
+      <td class="n">${f.loc}</td><td class="n">${f.loose}</td><td class="n"><b>${f.eff.toFixed(2)}</b></td>
+      <td>${badge}</td>
+      <td>${f.tests.length?f.tests.map(t=>`<span class="tt">${t}</span>`).join(''):'<span style="color:#3f4a5a">—</span>'}</td>
       <td><select data-f="${f.f}" ${f.frozen?'disabled':''}>${opts}</select></td></tr>`;
   }).join('');
   document.querySelectorAll('#tb select').forEach(s=>s.onchange=()=>{
@@ -194,78 +276,62 @@ function render(){
   calc();
 }
 
-function lpt(items){
-  const bins=[]; for(let i=0;i<NL;i++) bins.push([]);
-  const sum=()=>bins.map(b=>b.reduce((s,f)=>s+f.eff,0));
-  items.slice().sort((a,b)=>b.eff-a.eff).forEach(f=>{
-    let m=0; for(let i=1;i<NL;i++) if(sum()[i]<sum()[m]) m=i;
-    bins[m].push(f);
-  });
-  return bins;
-}
-function union(){
-  const par={};
-  const find=x=>par[x] ? (par[x]===x ? par[x] : (par[x]=find(par[x]))) : (par[x]=x);
-  const uni=(a,b)=>{a=find(a);b=find(b);if(a!==b)par[b]=a;};
-  const pool=F.filter(f=>!f.frozen);
-  pool.forEach(f=>{ if(par[f.f]===undefined) par[f.f]=f.f; });
-  for(const t in T){
-    const fs=T[t].filter(f=>par[f]!==undefined);   // T[t] 是路径字符串数组，不是对象
-    for(let i=1;i<fs.length;i++) uni(fs[0],fs[i]);
-  }
-  const g={}; pool.forEach(f=>{const r=find(f.f);(g[r]=g[r]||[]).push(f)});
-  return Object.keys(g).map(k=>g[k]);
-}
-function auto(constraintAware){
-  lane={};
-  const bins = constraintAware ? lptGroups(union()) : lpt(F.filter(f=>!f.frozen));
-  bins.forEach((b,i)=>b.forEach(f=>lane[f.f]=i));
-  render();
-}
-// LPT where each group is ATOMIC (never split across lanes)
-function lptGroups(groups){
-  const bins=[]; for(let i=0;i<NL;i++) bins.push([]);
-  const sum=()=>bins.map(b=>b.reduce((s,f)=>s+f.eff,0));
-  const tot=g=>g.reduce((s,f)=>s+f.eff,0);
-  groups.slice().sort((a,b)=>tot(b)-tot(a)).forEach(g=>{
-    let m=0; for(let i=1;i<NL;i++) if(sum()[i]<sum()[m]) m=i;
-    bins[m].push(...g);
-  });
-  return bins;
-}
+function auto(){ lane={}; lptUnits(groups()).forEach((b,i)=>b.forEach(f=>lane[f.f]=i)); render(); }
 
 document.getElementById('meta').innerHTML =
- `HEAD ${DATA.meta.head} · tsc ${DATA.meta.tsc} · 无 @types · ${F.length} 个文件（已排除 0 报错） · `+
- `loose 合计 ${F.reduce((s,f)=>s+f.loose,0)} · <span class="mono">${DATA.meta.formula}</span><br>`+
- `<span style="color:var(--amb)">${DATA.meta.caveat}</span>`;
+ `HEAD ${DATA.meta.head} · ${DATA.meta.tsc} · 无 @types · ${F.length} 个文件有报错 · loose 合计 ${F.reduce((s,f)=>s+f.loose,0)} · 生成于 ${DATA.meta.generated}`;
+
+document.getElementById('modes').innerHTML = MODES.map(m=>
+  `<div class="mode${m.id===MODE?' on':''}" data-m="${m.id}"><div class="t">${m.t}</div><div class="d">${m.d}</div></div>`).join('');
+document.querySelectorAll('.mode').forEach(el=>el.onclick=()=>{
+  MODE=el.dataset.m;
+  document.querySelectorAll('.mode').forEach(x=>x.classList.toggle('on',x.dataset.m===MODE));
+  auto();
+});
 
 document.querySelectorAll('th[data-s]').forEach(th=>th.onclick=()=>{
   const s=th.dataset.s; if(sortKey===s)sortDir*=-1; else{sortKey=s;sortDir=-1} render();
 });
 document.getElementById('nlanes').oninput=e=>{NL=+e.target.value;document.getElementById('nlanesV').textContent=NL;
-  Object.keys(lane).forEach(f=>{if(lane[f]!=='x'&&lane[f]>=NL)lane[f]=NL-1});render();};
+  Object.keys(lane).forEach(f=>{if(lane[f]!=='x'&&lane[f]>=NL)lane[f.f=0]});
+  Object.keys(lane).forEach(f=>{if(lane[f]!=='x'&&lane[f]>=NL)lane[f]=NL-1}); render();};
 document.getElementById('k').oninput=e=>{document.getElementById('kV').textContent=(+e.target.value).toFixed(2);calc()};
 document.getElementById('unlock').oninput=calc;
 document.getElementById('q').oninput=render;
-document.getElementById('bAuto').onclick=()=>auto(true);
-document.getElementById('bLpt').onclick=()=>auto(false);
-document.getElementById('bOne').onclick=()=>{F.filter(f=>!f.frozen).forEach(f=>lane[f.f]=0);render()};
+document.getElementById('bAuto').onclick=auto;
+document.getElementById('bSerial').onclick=()=>{F.filter(f=>!f.frozen).forEach(f=>lane[f.f]=0);render()};
 document.getElementById('bClr').onclick=()=>{lane={};render()};
 document.getElementById('bCopy').onclick=()=>{const t=document.getElementById('expt');t.select();document.execCommand('copy')};
+document.getElementById('bCopyLit').onclick=()=>{
+  const t=document.getElementById('litout');
+  const keep=Object.keys(lane).filter(k=>lane[k]!=='x'&&typeof lane[k]==='number'&&!F.find(f=>f.f===k).frozen);
+  const blocks=keep.map(f=>{const c=CP[f]||{literals:[],structural:[]};
+    const lines=[`${rel2short[f]}`]
+      .concat(c.literals.map(l=>`  [${l.test}]  ${l.lit}`))
+      .concat(c.structural.map(s=>`  ! ${s.kind}  (${s.test}) ${s.detail}`));
+    return lines.join('\n');
+  }).filter(b=>b.split('\n').length>1);
+  t.style.display='block';
+  t.value = blocks.length
+    ? '=== 禁改清单：以下字符串被回归测试按字面量/结构断言，改动会直接让 CI 变红 ===\n\n'
+      + blocks.join('\n\n')
+      + '\n\n其余文件的注解式改动不会触发任何断言（已实测）。'
+    : '当前分组里没有任何带承重断言的文件 —— 整个分组对回归测试是安全的。';
+  t.select(); document.execCommand('copy');
+};
 
-document.getElementById('exp').style.display='block';
 setInterval(()=>{
   const ls=[];for(let i=0;i<NL;i++)ls.push([]);
   active().forEach(f=>ls[lane[f.f]].push(f));
   const cp=Math.max(0,...ls.map(a=>a.reduce((s,f)=>s+f.eff,0)));
   document.getElementById('expt').value=
-`## 并行分组（关键路径 ${cp.toFixed(2)} eff）
+`## 并行分组（模式：${MODES.find(m=>m.id===MODE).t}，关键路径 ${cp.toFixed(2)} eff）
 
 `+ls.map((a,i)=>a.length?`### 槽 ${i+1} — ${a.reduce((s,f)=>s+f.eff,0).toFixed(2)} eff\n`+
-  a.map(f=>`- \`${f.f}\` — ${f.loc} LOC / ${f.loose} loose${f.tests.length?' / '+f.tests.join(', '):''}`).join('\n'):'').filter(Boolean).join('\n\n');
+  a.map(f=>`- \`${f.f}\` — ${f.loc} LOC / ${f.loose} loose`).join('\n'):'').filter(Boolean).join('\n\n');
 },400);
 
-auto(true);
+auto();
 </script>
 </body>
 </html>
