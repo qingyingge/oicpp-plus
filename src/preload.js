@@ -184,210 +184,222 @@ const normalizeMarkdownMath = (input) => {
     return lines.join('\n');
 };
 
-try {
-    TurndownService = require('turndown');
-    turndownInstance = new TurndownService({
-        headingStyle: 'atx',
-        hr: '---',
-        bulletListMarker: '-',
-        codeBlockStyle: 'fenced',
-        fence: '```',
-        emDelimiter: '*',
-        strongDelimiter: '**',
-        linkStyle: 'inlined',
-    });
+// markdown-it / highlight.js / katex / turndown 合计 300ms+ 的同步 require，
+// 放在 preload 顶层会阻塞每个渲染进程（含各设置窗口）的首帧绘制。
+// 改为首次真正调用渲染/转换 API 时才初始化。
+function ensureTurndown() {
+    if (turndownInstance) return turndownInstance;
+    try {
+        TurndownService = require('turndown');
+        turndownInstance = new TurndownService({
+            headingStyle: 'atx',
+            hr: '---',
+            bulletListMarker: '-',
+            codeBlockStyle: 'fenced',
+            fence: '```',
+            emDelimiter: '*',
+            strongDelimiter: '**',
+            linkStyle: 'inlined',
+        });
 
-    turndownInstance.addRule('taskListItem', {
-        filter: function (node) {
-            return node.nodeName === 'LI' && 
-                   node.classList.contains('task-list-item');
-        },
-        replacement: function (content, node) {
-            const checkbox = node.querySelector('input[type="checkbox"]');
-            const checked = checkbox && checkbox.checked;
-            const prefix = checked ? '- [x] ' : '- [ ] ';
-            return prefix + content.trim().replace(/^\[[ x]\]\s*/i, '') + '\n';
-        }
-    });
+        turndownInstance.addRule('taskListItem', {
+            filter: function (node) {
+                return node.nodeName === 'LI' && 
+                       node.classList.contains('task-list-item');
+            },
+            replacement: function (content, node) {
+                const checkbox = node.querySelector('input[type="checkbox"]');
+                const checked = checkbox && checkbox.checked;
+                const prefix = checked ? '- [x] ' : '- [ ] ';
+                return prefix + content.trim().replace(/^\[[ x]\]\s*/i, '') + '\n';
+            }
+        });
 
-    turndownInstance.addRule('fencedCodeBlock', {
-        filter: function (node) {
-            return (
-                node.nodeName === 'PRE' &&
-                node.firstChild &&
-                node.firstChild.nodeName === 'CODE'
-            );
-        },
-        replacement: function (content, node, options) {
-            const code = node.firstChild;
-            const className = code.getAttribute('class') || '';
-            const langMatch = className.match(/language-(\S+)/);
-            const lang = langMatch ? langMatch[1] : '';
-            const fence = options.fence;
+        turndownInstance.addRule('fencedCodeBlock', {
+            filter: function (node) {
+                return (
+                    node.nodeName === 'PRE' &&
+                    node.firstChild &&
+                    node.firstChild.nodeName === 'CODE'
+                );
+            },
+            replacement: function (content, node, options) {
+                const code = node.firstChild;
+                const className = code.getAttribute('class') || '';
+                const langMatch = className.match(/language-(\S+)/);
+                const lang = langMatch ? langMatch[1] : '';
+                const fence = options.fence;
             
-            return '\n\n' + fence + lang + '\n' + code.textContent + '\n' + fence + '\n\n';
-        }
-    });
+                return '\n\n' + fence + lang + '\n' + code.textContent + '\n' + fence + '\n\n';
+            }
+        });
 
-    turndownInstance.addRule('hljsCodeBlock', {
-        filter: function (node) {
-            return (
-                node.nodeName === 'PRE' &&
-                node.classList.contains('hljs')
-            );
-        },
-        replacement: function (content, node, options) {
-            const codeText = node.textContent || '';
-            return '\n\n```\n' + codeText + '\n```\n\n';
-        }
-    });
-    turndownInstance.addRule('ignoreCopyButton', {
-        filter: function (node) {
-            return node.nodeName === 'BUTTON' && 
-                   node.classList.contains('copy-code-btn');
-        },
-        replacement: function () {
-            return '';
-        }
-    });
-
-    turndownInstance.addRule('codeBlockWrapper', {
-        filter: function (node) {
-            return node.nodeName === 'DIV' && 
-                   node.classList.contains('code-block-wrapper');
-        },
-        replacement: function (content, node, options) {
-            const pre = node.querySelector('pre');
-            if (pre) {
-                const codeText = pre.textContent || '';
+        turndownInstance.addRule('hljsCodeBlock', {
+            filter: function (node) {
+                return (
+                    node.nodeName === 'PRE' &&
+                    node.classList.contains('hljs')
+                );
+            },
+            replacement: function (content, node, options) {
+                const codeText = node.textContent || '';
                 return '\n\n```\n' + codeText + '\n```\n\n';
             }
-            return content;
-        }
-    });
-
-} catch (e) {
-    console.error('Failed to initialize Turndown:', e);
-}
-
-try {
-    const MarkdownIt = require('markdown-it');
-    const mk = require('@iktakahiro/markdown-it-katex');
-    const taskLists = require('markdown-it-task-lists');
-    const imageFigures = require('markdown-it-image-figures');
-    const hljs = require('highlight.js');
-
-    md = new MarkdownIt({
-        html: false,
-        linkify: true,
-        typographer: true,
-        highlight: function (str, lang) {
-            if (lang && hljs.getLanguage(lang)) {
-                try {
-                    return '<pre class="hljs"><code>' +
-                           hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
-                           '</code></pre>';
-                } catch (__) {}
+        });
+        turndownInstance.addRule('ignoreCopyButton', {
+            filter: function (node) {
+                return node.nodeName === 'BUTTON' && 
+                       node.classList.contains('copy-code-btn');
+            },
+            replacement: function () {
+                return '';
             }
-            return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
-        }
-    })
-    .use(mk, {
-        throwOnError: false,
-        strict: 'ignore'
-    })
-    .use(taskLists)
-    .use(imageFigures, {
-        figcaption: true
-    });
+        });
 
-    const defaultFence = md.renderer.rules.fence || function(tokens, idx, options, env, self) {
-        return self.renderToken(tokens, idx, options);
-    };
-
-    // 无语言标注的代码块自动探测时的候选语言：highlightAuto 对全部注册语言
-    // 逐个试匹配是 markdown 渲染里最贵的分支，限定到常用集合可大幅降低单次按键成本
-    const AUTO_DETECT_LANGUAGES = ['cpp', 'c', 'python', 'javascript', 'java', 'bash', 'json', 'xml', 'sql', 'go', 'rust', 'csharp'];
-
-    md.renderer.rules.fence = function (tokens, idx, options, env, self) {
-        const token = tokens[idx];
-        const code = token.content;
-        const lang = token.info.trim();
-        
-        let highlighted;
-        try {
-            if (lang && hljs.getLanguage(lang)) {
-                highlighted = '<pre class="hljs"><code>' +
-                              hljs.highlight(code, { language: lang, ignoreIllegals: true }).value +
-                              '</code></pre>';
-            } else {
-                highlighted = '<pre class="hljs"><code>' +
-                              hljs.highlightAuto(code, AUTO_DETECT_LANGUAGES).value +
-                              '</code></pre>';
-            }
-        } catch (__) {
-            highlighted = '<pre class="hljs"><code>' + md.utils.escapeHtml(code) + '</code></pre>';
-        }
-        const encodedCode = encodeURIComponent(code);
-
-        return `<div class="code-block-wrapper" style="position: relative;">
-            <button class="copy-code-btn" type="button" data-code="${encodedCode}"
-                    style="position: absolute; top: 5px; right: 5px; z-index: 10; padding: 4px 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; color: inherit; cursor: pointer; font-size: 12px;">
-                Copy
-            </button>
-            ${highlighted}
-        </div>`;
-    };
-
-} catch (e) {
-    console.error('Failed to initialize markdown-it:', e);
-}
-
-if (md) {
-    const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
-        return self.renderToken(tokens, idx, options);
-    };
-
-    md.renderer.rules.image = function (tokens, idx, options, env, self) {
-        const token = tokens[idx];
-        const srcIndex = token.attrIndex('src');
-        if (srcIndex >= 0) {
-            let src = token.attrs[srcIndex][1];
-            const filePath = env && env.filePath;
-            if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
-                if (filePath) {
-                    if (path.isAbsolute(src)) {
-                        token.attrs[srcIndex][1] = '';
-                        return defaultImageRender(tokens, idx, options, env, self);
-                    }
-                    const dir = path.dirname(filePath);
-                    if (!path.isAbsolute(src)) {
-                        const resolved = path.resolve(dir, src);
-                        const relative = path.relative(dir, resolved);
-                        if (relative.startsWith('..') || path.isAbsolute(relative)) {
-                            token.attrs[srcIndex][1] = '';
-                            return defaultImageRender(tokens, idx, options, env, self);
-                        }
-                        src = resolved;
-                    }
-                    src = src.replace(/\\/g, '/');
-                    if (!src.startsWith('/')) {
-                        src = '/' + src;
-                    }
-                    token.attrs[srcIndex][1] = `file://${src}`;
+        turndownInstance.addRule('codeBlockWrapper', {
+            filter: function (node) {
+                return node.nodeName === 'DIV' && 
+                       node.classList.contains('code-block-wrapper');
+            },
+            replacement: function (content, node, options) {
+                const pre = node.querySelector('pre');
+                if (pre) {
+                    const codeText = pre.textContent || '';
+                    return '\n\n```\n' + codeText + '\n```\n\n';
                 }
+                return content;
             }
-        }
-        return defaultImageRender(tokens, idx, options, env, self);
-    };
+        });
+
+    } catch (e) {
+        console.error('Failed to initialize Turndown:', e);
+    }
+    return turndownInstance;
+}
+
+function ensureMarkdown() {
+    if (md) return md;
+    try {
+        const MarkdownIt = require('markdown-it');
+        const mk = require('@iktakahiro/markdown-it-katex');
+        const taskLists = require('markdown-it-task-lists');
+        const imageFigures = require('markdown-it-image-figures');
+        const hljs = require('highlight.js');
+
+        md = new MarkdownIt({
+            html: false,
+            linkify: true,
+            typographer: true,
+            highlight: function (str, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    try {
+                        return '<pre class="hljs"><code>' +
+                               hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+                               '</code></pre>';
+                    } catch (__) {}
+                }
+                return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
+            }
+        })
+        .use(mk, {
+            throwOnError: false,
+            strict: 'ignore'
+        })
+        .use(taskLists)
+        .use(imageFigures, {
+            figcaption: true
+        });
+
+        const defaultFence = md.renderer.rules.fence || function(tokens, idx, options, env, self) {
+            return self.renderToken(tokens, idx, options);
+        };
+
+        // 无语言标注的代码块自动探测时的候选语言：highlightAuto 对全部注册语言
+        // 逐个试匹配是 markdown 渲染里最贵的分支，限定到常用集合可大幅降低单次按键成本
+        const AUTO_DETECT_LANGUAGES = ['cpp', 'c', 'python', 'javascript', 'java', 'bash', 'json', 'xml', 'sql', 'go', 'rust', 'csharp'];
+
+        md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+            const token = tokens[idx];
+            const code = token.content;
+            const lang = token.info.trim();
+        
+            let highlighted;
+            try {
+                if (lang && hljs.getLanguage(lang)) {
+                    highlighted = '<pre class="hljs"><code>' +
+                                  hljs.highlight(code, { language: lang, ignoreIllegals: true }).value +
+                                  '</code></pre>';
+                } else {
+                    highlighted = '<pre class="hljs"><code>' +
+                                  hljs.highlightAuto(code, AUTO_DETECT_LANGUAGES).value +
+                                  '</code></pre>';
+                }
+            } catch (__) {
+                highlighted = '<pre class="hljs"><code>' + md.utils.escapeHtml(code) + '</code></pre>';
+            }
+            const encodedCode = encodeURIComponent(code);
+
+            return `<div class="code-block-wrapper" style="position: relative;">
+                <button class="copy-code-btn" type="button" data-code="${encodedCode}"
+                        style="position: absolute; top: 5px; right: 5px; z-index: 10; padding: 4px 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; color: inherit; cursor: pointer; font-size: 12px;">
+                    Copy
+                </button>
+                ${highlighted}
+            </div>`;
+        };
+
+    } catch (e) {
+        console.error('Failed to initialize markdown-it:', e);
+    }
+
+    if (md) {
+            const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
+                return self.renderToken(tokens, idx, options);
+            };
+
+            md.renderer.rules.image = function (tokens, idx, options, env, self) {
+                const token = tokens[idx];
+                const srcIndex = token.attrIndex('src');
+                if (srcIndex >= 0) {
+                    let src = token.attrs[srcIndex][1];
+                    const filePath = env && env.filePath;
+                    if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
+                        if (filePath) {
+                            if (path.isAbsolute(src)) {
+                                token.attrs[srcIndex][1] = '';
+                                return defaultImageRender(tokens, idx, options, env, self);
+                            }
+                            const dir = path.dirname(filePath);
+                            if (!path.isAbsolute(src)) {
+                                const resolved = path.resolve(dir, src);
+                                const relative = path.relative(dir, resolved);
+                                if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                                    token.attrs[srcIndex][1] = '';
+                                    return defaultImageRender(tokens, idx, options, env, self);
+                                }
+                                src = resolved;
+                            }
+                            src = src.replace(/\\/g, '/');
+                            if (!src.startsWith('/')) {
+                                src = '/' + src;
+                            }
+                            token.attrs[srcIndex][1] = `file://${src}`;
+                        }
+                    }
+                }
+                return defaultImageRender(tokens, idx, options, env, self);
+            };
+    }
+    return md;
 }
 
 contextBridge.exposeInMainWorld('markdownAPI', {
     render: (text, filePath) => {
-        if (!md) return text;
+        const renderer = ensureMarkdown();
+        if (!renderer) return text;
         try {
             const normalizedText = normalizeMarkdownMath(text || '');
-            return md.render(normalizedText, { filePath });
+            return renderer.render(normalizedText, { filePath });
         } catch (err) {
             console.error('Markdown render error:', err);
             return text;
@@ -397,12 +409,13 @@ contextBridge.exposeInMainWorld('markdownAPI', {
 
 contextBridge.exposeInMainWorld('turndownAPI', {
     toMarkdown: (html) => {
-        if (!turndownInstance) {
+        const instance = ensureTurndown();
+        if (!instance) {
             console.warn('Turndown not initialized, returning plain text');
             return htmlToPlainText(html);
         }
         try {
-            return turndownInstance.turndown(html);
+            return instance.turndown(html);
         } catch (err) {
             console.error('Turndown error:', err);
             return htmlToPlainText(html);
