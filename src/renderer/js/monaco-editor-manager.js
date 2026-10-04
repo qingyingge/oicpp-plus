@@ -6514,11 +6514,9 @@ class MonacoEditorManager {
         if (!text && window.electronAPI && typeof window.electronAPI.clipboardReadText === 'function') {
             try {
                 const result = await window.electronAPI.clipboardReadText();
-                if (result && result.success && result.text) {
+                if (typeof result === 'string' && result) {
                     logInfo('使用IPC API读取剪贴板成功');
-                    return result.text;
-                } else {
-                    logWarn('IPC API读取失败:', result ? result.error : '未知错误');
+                    return result;
                 }
             } catch (ipcErr) {
                 logWarn('IPC剪贴板读取失败:', ipcErr);

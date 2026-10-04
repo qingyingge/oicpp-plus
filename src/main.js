@@ -10457,14 +10457,17 @@ ipcMain.handle('clipboard-write-text', async (event, text) => {
     }
 });
 
+// 直接返回纯文本。历史上这里返回 { success, text } 包装对象，渲染进程侧收到的是
+// 主进程抛出的 'An object could not be cloned' —— 说明该结构化返回值没能通过
+// 主→渲染的结构化克隆通道。剪贴板内容本身没有附加元数据的必要，收敛成 string 可彻底
+// 绕开序列化路径，失败时返回空串由渲染进程走 navigator.clipboard 回退。
 ipcMain.handle('clipboard-read-text', async (event) => {
     try {
         const { clipboard } = require('electron');
-        const text = clipboard.readText();
-        return { success: true, text };
+        return clipboard.readText() || '';
     } catch (error) {
         logError('主进程剪贴板读取失败:', error);
-        return { success: false, error: error.message };
+        return '';
     }
 });
 

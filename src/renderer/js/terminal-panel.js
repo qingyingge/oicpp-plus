@@ -840,7 +840,7 @@ class IntegratedTerminalPanel {
         if (!text) {
             try {
                 const result = await window.electronAPI?.clipboardReadText?.();
-                text = result?.success ? String(result.text || '') : '';
+                text = typeof result === 'string' ? result : '';
             } catch (_) { }
         }
 
