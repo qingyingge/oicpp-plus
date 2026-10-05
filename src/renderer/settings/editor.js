@@ -206,7 +206,7 @@ class EditorSettings {
                 return;
             }
             const key = match[1];
-            let value = match[2].trim();
+            let value = /** @type {any} */ (match[2].trim());
             if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
                 value = value.slice(1, -1);
             }
@@ -254,13 +254,13 @@ class EditorSettings {
         const normalized = this.normalizeClangFormatStyle(style || this.settings.clangFormatStyle || this.getDefaultClangFormatStyle());
         const rawTextOverride = Object.prototype.hasOwnProperty.call(options || {}, 'rawText') ? options.rawText : undefined;
         const mapValue = (id, value) => {
-            const element = document.getElementById(id);
+            const element = /** @type {any} */ (document.getElementById(id));
             if (element) {
                 element.value = String(value);
             }
         };
         const mapChecked = (id, value) => {
-            const element = document.getElementById(id);
+            const element = /** @type {any} */ (document.getElementById(id));
             if (element) {
                 element.checked = !!value;
             }
@@ -279,30 +279,30 @@ class EditorSettings {
         mapChecked('clang-format-align-assignments', normalized.AlignConsecutiveAssignments);
         mapChecked('clang-format-align-declarations', normalized.AlignConsecutiveDeclarations);
 
-        const rawTextArea = document.getElementById('clang-format-raw-text');
+        const rawTextArea = /** @type {any} */ (document.getElementById('clang-format-raw-text'));
         if (rawTextArea && rawTextOverride !== undefined) {
             rawTextArea.value = String(rawTextOverride || '');
         }
     }
 
     collectClangFormatStyleFromUI() {
-        const rawTextArea = document.getElementById('clang-format-raw-text');
+        const rawTextArea = /** @type {any} */ (document.getElementById('clang-format-raw-text'));
         if (this._clangFormatControlsDirty && !this._clangFormatRawDirty) {
             return this.normalizeClangFormatStyle({
-                BasedOnStyle: document.getElementById('clang-format-based-on-style')?.value || 'LLVM',
-                IndentWidth: parseInt(document.getElementById('clang-format-indent-width')?.value, 10) || 4,
-                TabWidth: parseInt(document.getElementById('clang-format-tab-width')?.value, 10) || 4,
-                UseTab: document.getElementById('clang-format-use-tab')?.value || 'Never',
-                ColumnLimit: parseInt(document.getElementById('clang-format-column-limit')?.value, 10) || 0,
-                BreakBeforeBraces: document.getElementById('clang-format-break-before-braces')?.value || 'Attach',
+                BasedOnStyle: /** @type {any} */ (document.getElementById('clang-format-based-on-style'))?.value || 'LLVM',
+                IndentWidth: parseInt(/** @type {any} */ (document.getElementById('clang-format-indent-width'))?.value, 10) || 4,
+                TabWidth: parseInt(/** @type {any} */ (document.getElementById('clang-format-tab-width'))?.value, 10) || 4,
+                UseTab: /** @type {any} */ (document.getElementById('clang-format-use-tab'))?.value || 'Never',
+                ColumnLimit: parseInt(/** @type {any} */ (document.getElementById('clang-format-column-limit'))?.value, 10) || 0,
+                BreakBeforeBraces: /** @type {any} */ (document.getElementById('clang-format-break-before-braces'))?.value || 'Attach',
                 AllowShortIfStatementsOnASingleLine: 'Never',
                 AllowShortFunctionsOnASingleLine: 'Empty',
-                IndentCaseLabels: !!document.getElementById('clang-format-indent-case-labels')?.checked,
-                PointerAlignment: document.getElementById('clang-format-pointer-alignment')?.value || 'Left',
-                SpaceBeforeParens: document.getElementById('clang-format-space-before-parens')?.value || 'ControlStatements',
-                SortIncludes: !!document.getElementById('clang-format-sort-includes')?.checked,
-                AlignConsecutiveAssignments: !!document.getElementById('clang-format-align-assignments')?.checked,
-                AlignConsecutiveDeclarations: !!document.getElementById('clang-format-align-declarations')?.checked
+                IndentCaseLabels: !!/** @type {any} */ (document.getElementById('clang-format-indent-case-labels'))?.checked,
+                PointerAlignment: /** @type {any} */ (document.getElementById('clang-format-pointer-alignment'))?.value || 'Left',
+                SpaceBeforeParens: /** @type {any} */ (document.getElementById('clang-format-space-before-parens'))?.value || 'ControlStatements',
+                SortIncludes: !!/** @type {any} */ (document.getElementById('clang-format-sort-includes'))?.checked,
+                AlignConsecutiveAssignments: !!/** @type {any} */ (document.getElementById('clang-format-align-assignments'))?.checked,
+                AlignConsecutiveDeclarations: !!/** @type {any} */ (document.getElementById('clang-format-align-declarations'))?.checked
             });
         }
 
@@ -312,7 +312,7 @@ class EditorSettings {
         }
 
         const readNumber = (id, fallback) => {
-            const element = document.getElementById(id);
+            const element = /** @type {any} */ (document.getElementById(id));
             if (!element) {
                 return fallback;
             }
@@ -320,11 +320,11 @@ class EditorSettings {
             return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
         };
         const readCheckbox = (id, fallback) => {
-            const element = document.getElementById(id);
+            const element = /** @type {any} */ (document.getElementById(id));
             return element ? !!element.checked : fallback;
         };
         const readValue = (id, fallback) => {
-            const element = document.getElementById(id);
+            const element = /** @type {any} */ (document.getElementById(id));
             return element && element.value ? element.value : fallback;
         };
 
@@ -390,7 +390,7 @@ class EditorSettings {
                 this.showMessage(window.i18n.t('settings.saveNotSupported'), 'error');
                 return;
             }
-            const rawTextArea = document.getElementById('clang-format-raw-text');
+            const rawTextArea = /** @type {any} */ (document.getElementById('clang-format-raw-text'));
             const style = this.collectClangFormatStyleFromUI();
             const content = (this._clangFormatRawDirty && !this._clangFormatControlsDirty && rawTextArea && String(rawTextArea.value || '').trim())
                 ? String(rawTextArea.value)
@@ -421,7 +421,7 @@ class EditorSettings {
             this.settings.clangFormatRaw = this.generateClangFormatText(style);
             this._clangFormatControlsDirty = true;
             this._clangFormatRawDirty = false;
-            const rawTextArea = document.getElementById('clang-format-raw-text');
+            const rawTextArea = /** @type {any} */ (document.getElementById('clang-format-raw-text'));
             if (rawTextArea) {
                 rawTextArea.value = this.settings.clangFormatRaw;
             }
@@ -444,7 +444,7 @@ class EditorSettings {
         ];
 
         bindingIds.forEach((id) => {
-            const element = document.getElementById(id);
+            const element = /** @type {any} */ (document.getElementById(id));
             if (!element) {
                 return;
             }
@@ -452,7 +452,7 @@ class EditorSettings {
             element.addEventListener(eventName, updateFromControls);
         });
 
-        const rawTextArea = document.getElementById('clang-format-raw-text');
+        const rawTextArea = /** @type {any} */ (document.getElementById('clang-format-raw-text'));
         if (rawTextArea) {
             rawTextArea.addEventListener('input', () => {
                 this._clangFormatRawDirty = true;
@@ -461,12 +461,12 @@ class EditorSettings {
             });
         }
 
-        const importBtn = document.getElementById('import-clang-format');
+        const importBtn = /** @type {any} */ (document.getElementById('import-clang-format'));
         if (importBtn) {
             importBtn.addEventListener('click', () => this.importClangFormatFromFile());
         }
 
-        const applyBtn = document.getElementById('apply-clang-format-text');
+        const applyBtn = /** @type {any} */ (document.getElementById('apply-clang-format-text'));
         if (applyBtn) {
             applyBtn.addEventListener('click', () => {
                 const rawText = String(rawTextArea?.value || '');
@@ -474,12 +474,12 @@ class EditorSettings {
             });
         }
 
-        const saveBtn = document.getElementById('save-clang-format-file');
+        const saveBtn = /** @type {any} */ (document.getElementById('save-clang-format-file'));
         if (saveBtn) {
             saveBtn.addEventListener('click', () => this.saveClangFormatToFile());
         }
 
-        const resetBtn = document.getElementById('reset-clang-format');
+        const resetBtn = /** @type {any} */ (document.getElementById('reset-clang-format'));
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 const defaults = this.getDefaultClangFormatStyle();
@@ -729,7 +729,7 @@ class EditorSettings {
     }
 
     getCurrentThemeFromUI() {
-        const themeSelect = document.getElementById('editor-theme');
+        const themeSelect = /** @type {any} */ (document.getElementById('editor-theme'));
         return this.normalizeThemeKey(themeSelect?.value || this.settings.theme || 'dark');
     }
 
@@ -789,10 +789,10 @@ class EditorSettings {
         const normalized = this.normalizeSyntaxColors(colors, theme);
         const normalizedStyles = this.getEffectiveSyntaxStyles();
         Object.keys(normalized).forEach((key) => {
-            const colorInput = document.getElementById(`syntax-color-${key}`);
-            const textInput = document.getElementById(`syntax-color-${key}-text`);
-            const boldInput = document.getElementById(`syntax-style-${key}-bold`);
-            const italicInput = document.getElementById(`syntax-style-${key}-italic`);
+            const colorInput = /** @type {any} */ (document.getElementById(`syntax-color-${key}`));
+            const textInput = /** @type {any} */ (document.getElementById(`syntax-color-${key}-text`));
+            const boldInput = /** @type {any} */ (document.getElementById(`syntax-style-${key}-bold`));
+            const italicInput = /** @type {any} */ (document.getElementById(`syntax-style-${key}-italic`));
             if (colorInput) {
                 colorInput.value = normalized[key];
             }
@@ -813,20 +813,20 @@ class EditorSettings {
         const defaults = this.getDefaultSyntaxColors(theme);
         const result = { ...defaults };
         this.getSyntaxTokenKeys().forEach((key) => {
-            const textInput = document.getElementById(`syntax-color-${key}-text`);
-            const colorInput = document.getElementById(`syntax-color-${key}`);
+            const textInput = /** @type {any} */ (document.getElementById(`syntax-color-${key}-text`));
+            const colorInput = /** @type {any} */ (document.getElementById(`syntax-color-${key}`));
             const raw = textInput?.value || colorInput?.value;
             result[key] = this.normalizeHexColor(raw, defaults[key]);
         });
         return result;
     }
 
-    getSyntaxStylesFromUI() {
+    getSyntaxStylesFromUI(theme) {
         const defaults = this.getDefaultSyntaxFontStyles();
         const result = JSON.parse(JSON.stringify(defaults));
         this.getSyntaxTokenKeys().forEach((key) => {
-            const boldInput = document.getElementById(`syntax-style-${key}-bold`);
-            const italicInput = document.getElementById(`syntax-style-${key}-italic`);
+            const boldInput = /** @type {any} */ (document.getElementById(`syntax-style-${key}-bold`));
+            const italicInput = /** @type {any} */ (document.getElementById(`syntax-style-${key}-italic`));
             if (boldInput) {
                 result[key].bold = !!boldInput.checked;
             }
@@ -838,7 +838,7 @@ class EditorSettings {
     }
 
     updateSyntaxPreview(colors = null, theme = this.getCurrentThemeFromUI(), styles = null) {
-        const preview = document.getElementById('syntax-color-preview');
+        const preview = /** @type {any} */ (document.getElementById('syntax-color-preview'));
         if (!preview) {
             return;
         }
@@ -851,8 +851,8 @@ class EditorSettings {
             preview.style.setProperty(`--syntax-${key}-style`, normalizedStyles[key]?.italic ? 'italic' : 'normal');
         });
 
-        const fontSelect = document.getElementById('editor-font');
-        const fontSizeInput = document.getElementById('editor-font-size');
+        const fontSelect = /** @type {any} */ (document.getElementById('editor-font'));
+        const fontSizeInput = /** @type {any} */ (document.getElementById('editor-font-size'));
         if (fontSelect && fontSelect.value) {
             preview.style.fontFamily = fontSelect.value;
         }
@@ -865,10 +865,10 @@ class EditorSettings {
     bindSyntaxColorControls() {
         const defaults = this.getDefaultSyntaxColors(this.getCurrentThemeFromUI());
         const bindColorPair = (key) => {
-            const colorInput = document.getElementById(`syntax-color-${key}`);
-            const textInput = document.getElementById(`syntax-color-${key}-text`);
-            const boldInput = document.getElementById(`syntax-style-${key}-bold`);
-            const italicInput = document.getElementById(`syntax-style-${key}-italic`);
+            const colorInput = /** @type {any} */ (document.getElementById(`syntax-color-${key}`));
+            const textInput = /** @type {any} */ (document.getElementById(`syntax-color-${key}-text`));
+            const boldInput = /** @type {any} */ (document.getElementById(`syntax-style-${key}-bold`));
+            const italicInput = /** @type {any} */ (document.getElementById(`syntax-style-${key}-italic`));
             if (!colorInput || !textInput) {
                 return;
             }
@@ -958,7 +958,7 @@ class EditorSettings {
 
         Object.keys(defaults).forEach(bindColorPair);
 
-        const resetBtn = document.getElementById('reset-syntax-colors');
+        const resetBtn = /** @type {any} */ (document.getElementById('reset-syntax-colors'));
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 const currentTheme = this.getCurrentThemeFromUI();
@@ -1019,7 +1019,7 @@ class EditorSettings {
                 sections.forEach(section => section.classList.remove('active'));
                 
                 const targetId = item.getAttribute('data-target');
-                const targetSection = document.getElementById(targetId);
+                const targetSection = /** @type {any} */ (document.getElementById(targetId));
                 if (targetSection) {
                     targetSection.classList.add('active');
                 }
@@ -1028,7 +1028,7 @@ class EditorSettings {
     }
 
     setupEventListeners() {
-        const saveBtn = document.getElementById('save-settings');
+        const saveBtn = /** @type {any} */ (document.getElementById('save-settings'));
         logInfo('保存按钮元素:', saveBtn);
         if (saveBtn) {
             saveBtn.addEventListener('click', () => {
@@ -1042,24 +1042,24 @@ class EditorSettings {
             this.revertPreviewToLoadedSettings();
         });
 
-        document.getElementById('cancel-settings').addEventListener('click', () => {
+        /** @type {any} */ (document.getElementById('cancel-settings')).addEventListener('click', () => {
             this.cancelAndClose();
         });
 
-        const resetBtn = document.getElementById('reset-settings');
+        const resetBtn = /** @type {any} */ (document.getElementById('reset-settings'));
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 this.resetSettings();
             });
         }
-        const resetKeybindingBtn = document.getElementById('reset-keybindings');
+        const resetKeybindingBtn = /** @type {any} */ (document.getElementById('reset-keybindings'));
         if (resetKeybindingBtn) {
             resetKeybindingBtn.addEventListener('click', () => {
                 this.resetKeybindingsToDefault();
             });
         }
 
-        const closeFontDialogBtn = document.getElementById('close-font-dialog');
+        const closeFontDialogBtn = /** @type {any} */ (document.getElementById('close-font-dialog'));
         if (closeFontDialogBtn) {
             closeFontDialogBtn.addEventListener('click', () => {
                 this.closeFontDialog();
@@ -1070,8 +1070,8 @@ class EditorSettings {
         this.bindSyntaxColorControls();
         this.bindClangFormatControls();
 
-        const autoSaveCheckbox = document.getElementById('editor-auto-save-enabled');
-        const autoSaveIntervalInput = document.getElementById('editor-auto-save-interval');
+        const autoSaveCheckbox = /** @type {any} */ (document.getElementById('editor-auto-save-enabled'));
+        const autoSaveIntervalInput = /** @type {any} */ (document.getElementById('editor-auto-save-interval'));
         if (autoSaveCheckbox && autoSaveIntervalInput) {
             autoSaveCheckbox.addEventListener('change', (e) => {
                 this.toggleAutoSaveInterval(autoSaveIntervalInput, e.target.checked);
@@ -1082,43 +1082,43 @@ class EditorSettings {
             });
         }
 
-        const autoOpenLastWorkspaceCheckbox = document.getElementById('editor-auto-open-last-workspace');
+        const autoOpenLastWorkspaceCheckbox = /** @type {any} */ (document.getElementById('editor-auto-open-last-workspace'));
         if (autoOpenLastWorkspaceCheckbox) {
             autoOpenLastWorkspaceCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const receiveBetaUpdatesCheckbox = document.getElementById('editor-receive-beta-updates');
+        const receiveBetaUpdatesCheckbox = /** @type {any} */ (document.getElementById('editor-receive-beta-updates'));
         if (receiveBetaUpdatesCheckbox) {
             receiveBetaUpdatesCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const autoCompletionCheckbox = document.getElementById('editor-auto-completion');
+        const autoCompletionCheckbox = /** @type {any} */ (document.getElementById('editor-auto-completion'));
         if (autoCompletionCheckbox) {
             autoCompletionCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const unifiedPreprocessorCheckbox = document.getElementById('editor-unified-preprocessor-color');
+        const unifiedPreprocessorCheckbox = /** @type {any} */ (document.getElementById('editor-unified-preprocessor-color'));
         if (unifiedPreprocessorCheckbox) {
             unifiedPreprocessorCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const tabSizeInput = document.getElementById('editor-tab-size');
+        const tabSizeInput = /** @type {any} */ (document.getElementById('editor-tab-size'));
         if (tabSizeInput) {
             tabSizeInput.addEventListener('input', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const opacityInput = document.getElementById('editor-opacity');
-        const opacityValue = document.getElementById('editor-opacity-value');
+        const opacityInput = /** @type {any} */ (document.getElementById('editor-opacity'));
+        const opacityValue = /** @type {any} */ (document.getElementById('editor-opacity-value'));
         if (opacityInput && opacityValue) {
             opacityInput.addEventListener('input', (e) => {
                 const transparency = Math.max(0, Math.min(0.8, parseFloat(e.target.value) || 0));
@@ -1134,15 +1134,15 @@ class EditorSettings {
             });
         }
 
-        const glassEffectCheckbox = document.getElementById('editor-glass-effect-enabled');
+        const glassEffectCheckbox = /** @type {any} */ (document.getElementById('editor-glass-effect-enabled'));
         if (glassEffectCheckbox) {
             glassEffectCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const browseBgBtn = document.getElementById('browse-bg-image');
-        const bgImageInput = document.getElementById('editor-bg-image');
+        const browseBgBtn = /** @type {any} */ (document.getElementById('browse-bg-image'));
+        const bgImageInput = /** @type {any} */ (document.getElementById('editor-bg-image'));
         if (browseBgBtn && bgImageInput) {
             browseBgBtn.addEventListener('click', async () => {
                 if (!window.electronAPI?.showOpenDialog) {
@@ -1170,7 +1170,7 @@ class EditorSettings {
             });
         }
 
-        const clearBgBtn = document.getElementById('clear-bg-image');
+        const clearBgBtn = /** @type {any} */ (document.getElementById('clear-bg-image'));
         if (clearBgBtn && bgImageInput) {
             clearBgBtn.addEventListener('click', () => {
                 bgImageInput.value = '';
@@ -1214,7 +1214,7 @@ class EditorSettings {
     }
 
     setupRealTimePreview() {
-        const fontSizeInput = document.getElementById('editor-font-size');
+        const fontSizeInput = /** @type {any} */ (document.getElementById('editor-font-size'));
         logInfo('字体大小输入框元素:', fontSizeInput);
         if (fontSizeInput) {
             fontSizeInput.addEventListener('input', (e) => {
@@ -1228,7 +1228,7 @@ class EditorSettings {
             logError('未找到字体大小输入框元素');
         }
 
-        const lineHeightInput = document.getElementById('editor-line-height');
+        const lineHeightInput = /** @type {any} */ (document.getElementById('editor-line-height'));
         if (lineHeightInput) {
             lineHeightInput.addEventListener('input', () => {
                 this.updatePreview();
@@ -1236,7 +1236,7 @@ class EditorSettings {
             });
         }
 
-        const fontSelect = document.getElementById('editor-font');
+        const fontSelect = /** @type {any} */ (document.getElementById('editor-font'));
         if (fontSelect) {
             fontSelect.addEventListener('change', (e) => {
                 logInfo('字体选择变化:', { oldValue: this.settings.font, newValue: e.target.value });
@@ -1246,7 +1246,7 @@ class EditorSettings {
             });
         }
 
-        const themeSelect = document.getElementById('editor-theme');
+        const themeSelect = /** @type {any} */ (document.getElementById('editor-theme'));
         if (themeSelect) {
             themeSelect.addEventListener('change', () => {
                 const previousTheme = this.settings.theme || 'dark';
@@ -1281,7 +1281,7 @@ class EditorSettings {
     }
 
     renderKeybindingsUI() {
-        const container = document.getElementById('keybindings-list');
+        const container = /** @type {any} */ (document.getElementById('keybindings-list'));
         if (!container) return;
         const defaults = this.getDefaultKeybindings();
         const current = this.normalizeKeybindings(this.settings.keybindings);
@@ -1318,7 +1318,7 @@ class EditorSettings {
     }
 
     updateKeybindingTranslations() {
-        const container = document.getElementById('keybindings-list');
+        const container = /** @type {any} */ (document.getElementById('keybindings-list'));
         if (!container) return;
 
         container.querySelectorAll('.keybinding-row').forEach((row) => {
@@ -1348,7 +1348,7 @@ class EditorSettings {
 
     updatePreview() {
         const currentSettings = this.collectSettings();
-        const preview = document.querySelector('.settings-preview');
+        const preview = /** @type {any} */ (document.querySelector('.settings-preview'));
         if (preview) {
             preview.style.fontFamily = currentSettings.font;
             preview.style.fontSize = currentSettings.fontSize + 'px';
@@ -1360,7 +1360,7 @@ class EditorSettings {
         }
 
         const codeExamples = document.querySelectorAll('.code-example, pre, code');
-        codeExamples.forEach(element => {
+        codeExamples.forEach((/** @type {any} */ element) => {
             element.style.fontFamily = currentSettings.font;
             element.style.fontSize = currentSettings.fontSize + 'px';
             if (currentSettings.lineHeight && currentSettings.lineHeight > 0) {
@@ -1443,7 +1443,7 @@ class EditorSettings {
                 const clangFormatRaw = typeof allSettings.clangFormatRaw === 'string' && allSettings.clangFormatRaw.trim()
                     ? allSettings.clangFormatRaw
                     : this.generateClangFormatText(clangFormatStyle);
-                this.settings = {
+                /** @type {any} */ this.settings = {
                     language: allSettings.language || 'zh-cn',
                     font: allSettings.font || 'Consolas',
                     fontSize: allSettings.fontSize || 14,
@@ -1491,7 +1491,7 @@ class EditorSettings {
                 logInfo('编辑器设置加载完成:', this.settings);
             } else {
                 logWarn('无法从主进程加载设置，使用默认设置');
-                this.settings = {
+                /** @type {any} */ this.settings = {
                     font: 'Consolas',
                     fontSize: 14,
                     terminalFontSize: 14,
@@ -1523,7 +1523,7 @@ class EditorSettings {
             }
         } catch (error) {
             logError('加载编辑器设置失败:', error);
-            this.settings = {
+            /** @type {any} */ this.settings = {
                 font: 'Consolas',
                 fontSize: 14,
                     terminalFontSize: 14,
@@ -1558,7 +1558,7 @@ class EditorSettings {
     async loadSystemFonts() {
         logInfo('开始加载系统字体');
 
-        const fontSelect = document.getElementById('editor-font');
+        const fontSelect = /** @type {any} */ (document.getElementById('editor-font'));
         if (!fontSelect) {
             logError('找不到字体选择器元素');
             return;
@@ -1632,22 +1632,22 @@ class EditorSettings {
     }
 
     closeFontDialog() {
-        const dialog = document.getElementById('font-download-dialog');
+        const dialog = /** @type {any} */ (document.getElementById('font-download-dialog'));
         if (dialog) {
             dialog.style.display = 'none';
         }
     }
 
     collectSettings() {
-        const fontSelect = document.getElementById('editor-font');
-        const themeSelect = document.getElementById('editor-theme');
-        const fontSizeInput = document.getElementById('editor-font-size');
-        const terminalFontSizeInput = document.getElementById('editor-terminal-font-size');
-        const lineHeightInput = document.getElementById('editor-line-height');
+        const fontSelect = /** @type {any} */ (document.getElementById('editor-font'));
+        const themeSelect = /** @type {any} */ (document.getElementById('editor-theme'));
+        const fontSizeInput = /** @type {any} */ (document.getElementById('editor-font-size'));
+        const terminalFontSizeInput = /** @type {any} */ (document.getElementById('editor-terminal-font-size'));
+        const lineHeightInput = /** @type {any} */ (document.getElementById('editor-line-height'));
 
         const newSettings = {};
 
-        const languageSelect = document.getElementById('editor-language');
+        const languageSelect = /** @type {any} */ (document.getElementById('editor-language'));
         if (languageSelect) {
             const langValue = languageSelect.value;
             if (langValue) newSettings.language = langValue;
@@ -1657,19 +1657,19 @@ class EditorSettings {
         if (themeSelect) newSettings.theme = themeSelect.value;
         if (fontSizeInput) newSettings.fontSize = parseInt(fontSizeInput.value, 10);
         if (terminalFontSizeInput) newSettings.terminalFontSize = parseInt(terminalFontSizeInput.value, 10);
-        const terminalStartupCommandInput = document.getElementById('editor-terminal-startup-command');
+        const terminalStartupCommandInput = /** @type {any} */ (document.getElementById('editor-terminal-startup-command'));
         if (terminalStartupCommandInput) newSettings.terminalStartupCommand = terminalStartupCommandInput.value.trim();
         if (lineHeightInput) {
             const parsedLineHeight = parseInt(lineHeightInput.value, 10);
             newSettings.lineHeight = !Number.isNaN(parsedLineHeight) && parsedLineHeight > 0 ? parsedLineHeight : 0;
         }
-        const foldingCheckbox = document.getElementById('editor-folding');
+        const foldingCheckbox = /** @type {any} */ (document.getElementById('editor-folding'));
         if (foldingCheckbox) newSettings.foldingEnabled = !!foldingCheckbox.checked;
-        const stickyScrollCheckbox = document.getElementById('editor-sticky-scroll');
+        const stickyScrollCheckbox = /** @type {any} */ (document.getElementById('editor-sticky-scroll'));
         if (stickyScrollCheckbox) newSettings.stickyScrollEnabled = !!stickyScrollCheckbox.checked;
-        const ligaturesCheckbox = document.getElementById('editor-font-ligatures');
+        const ligaturesCheckbox = /** @type {any} */ (document.getElementById('editor-font-ligatures'));
         if (ligaturesCheckbox) newSettings.fontLigaturesEnabled = !!ligaturesCheckbox.checked;
-        const tabSizeInput = document.getElementById('editor-tab-size');
+        const tabSizeInput = /** @type {any} */ (document.getElementById('editor-tab-size'));
         if (tabSizeInput) {
             const parsedTabSize = parseInt(tabSizeInput.value, 10);
             if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
@@ -1678,36 +1678,36 @@ class EditorSettings {
         }
 
         const clangFormatStyle = this.collectClangFormatStyleFromUI();
-        const clangFormatRawTextArea = document.getElementById('clang-format-raw-text');
+        const clangFormatRawTextArea = /** @type {any} */ (document.getElementById('clang-format-raw-text'));
         const clangFormatRawText = clangFormatRawTextArea && String(clangFormatRawTextArea.value || '').trim()
             ? String(clangFormatRawTextArea.value)
             : this.generateClangFormatText(clangFormatStyle);
         newSettings.clangFormatStyle = clangFormatStyle;
         newSettings.clangFormatRaw = clangFormatRawText;
 
-        const syntaxCheckCheckbox = document.getElementById('editor-syntax-check-enabled');
+        const syntaxCheckCheckbox = /** @type {any} */ (document.getElementById('editor-syntax-check-enabled'));
         if (syntaxCheckCheckbox) {
             newSettings.syntaxCheckEnabled = !!syntaxCheckCheckbox.checked;
         }
 
-        const autoCompletionCheckbox = document.getElementById('editor-auto-completion');
+        const autoCompletionCheckbox = /** @type {any} */ (document.getElementById('editor-auto-completion'));
         if (autoCompletionCheckbox) {
             newSettings.enableAutoCompletion = !!autoCompletionCheckbox.checked;
         }
 
-        const autoSaveCheckbox = document.getElementById('editor-auto-save-enabled');
+        const autoSaveCheckbox = /** @type {any} */ (document.getElementById('editor-auto-save-enabled'));
         if (autoSaveCheckbox) {
             newSettings.autoSave = !!autoSaveCheckbox.checked;
         }
-        const autoOpenLastWorkspaceCheckbox = document.getElementById('editor-auto-open-last-workspace');
+        const autoOpenLastWorkspaceCheckbox = /** @type {any} */ (document.getElementById('editor-auto-open-last-workspace'));
         if (autoOpenLastWorkspaceCheckbox) {
             newSettings.autoOpenLastWorkspace = !!autoOpenLastWorkspaceCheckbox.checked;
         }
-        const receiveBetaUpdatesCheckbox = document.getElementById('editor-receive-beta-updates');
+        const receiveBetaUpdatesCheckbox = /** @type {any} */ (document.getElementById('editor-receive-beta-updates'));
         if (receiveBetaUpdatesCheckbox) {
             newSettings.receiveBetaUpdates = !!receiveBetaUpdatesCheckbox.checked;
         }
-        const autoSaveIntervalInput = document.getElementById('editor-auto-save-interval');
+        const autoSaveIntervalInput = /** @type {any} */ (document.getElementById('editor-auto-save-interval'));
         if (autoSaveIntervalInput) {
             const parsedInterval = parseInt(autoSaveIntervalInput.value, 10);
             if (!Number.isNaN(parsedInterval) && parsedInterval > 0) {
@@ -1715,18 +1715,18 @@ class EditorSettings {
             }
         }
 
-        const opacityInput = document.getElementById('editor-opacity');
+        const opacityInput = /** @type {any} */ (document.getElementById('editor-opacity'));
         if (opacityInput) {
             const transparency = Math.max(0, Math.min(0.8, parseFloat(opacityInput.value) || 0));
             newSettings.windowOpacity = 1 - transparency;
         }
 
-        const glassEffectCheckbox = document.getElementById('editor-glass-effect-enabled');
+        const glassEffectCheckbox = /** @type {any} */ (document.getElementById('editor-glass-effect-enabled'));
         if (glassEffectCheckbox) {
             newSettings.glassEffectEnabled = !!glassEffectCheckbox.checked;
         }
 
-        const bgImageInput = document.getElementById('editor-bg-image');
+        const bgImageInput = /** @type {any} */ (document.getElementById('editor-bg-image'));
         if (bgImageInput) {
             newSettings.backgroundImage = bgImageInput.value;
         }
@@ -1739,7 +1739,7 @@ class EditorSettings {
         this.setSyntaxStyleOverride(syntaxFontStyles);
         newSettings.syntaxColorsByTheme = syntaxColorsByTheme;
         newSettings.syntaxFontStyles = this.normalizeSyntaxFontStyles(this.settings.syntaxFontStyles);
-        const unifiedPreprocessorCheckbox = document.getElementById('editor-unified-preprocessor-color');
+        const unifiedPreprocessorCheckbox = /** @type {any} */ (document.getElementById('editor-unified-preprocessor-color'));
         if (unifiedPreprocessorCheckbox) {
             newSettings.unifiedPreprocessorColor = !!unifiedPreprocessorCheckbox.checked;
         }
@@ -1748,7 +1748,7 @@ class EditorSettings {
         const editableKeys = new Set(this.getEditableKeybindingKeys());
         const keybindingInputs = document.querySelectorAll('[data-keybinding-key]');
         const keybindings = this.normalizeKeybindings(this.settings.keybindings);
-        keybindingInputs.forEach((input) => {
+        keybindingInputs.forEach((/** @type {any} */ input) => {
             const key = input.dataset.keybindingKey;
             if (!key) return;
             if (!editableKeys.has(key)) return;
@@ -1868,39 +1868,39 @@ class EditorSettings {
     }
 
     updateUI() {
-        const fontSelect = document.getElementById('editor-font');
-        const fontSizeInput = document.getElementById('editor-font-size');
-        const terminalFontSizeInput = document.getElementById('editor-terminal-font-size');
-        const lineHeightInput = document.getElementById('editor-line-height');
-        const themeSelect = document.getElementById('editor-theme');
-        const foldingCheckbox = document.getElementById('editor-folding');
-        const stickyScrollCheckbox = document.getElementById('editor-sticky-scroll');
-        const ligaturesCheckbox = document.getElementById('editor-font-ligatures');
-        const tabSizeInput = document.getElementById('editor-tab-size');
-        const clangFormatBasedOnStyleSelect = document.getElementById('clang-format-based-on-style');
-        const clangFormatUseTabSelect = document.getElementById('clang-format-use-tab');
-        const clangFormatIndentWidthInput = document.getElementById('clang-format-indent-width');
-        const clangFormatTabWidthInput = document.getElementById('clang-format-tab-width');
-        const clangFormatColumnLimitInput = document.getElementById('clang-format-column-limit');
-        const clangFormatBreakBeforeBracesSelect = document.getElementById('clang-format-break-before-braces');
-        const clangFormatPointerAlignmentSelect = document.getElementById('clang-format-pointer-alignment');
-        const clangFormatSpaceBeforeParensSelect = document.getElementById('clang-format-space-before-parens');
-        const clangFormatIndentCaseLabelsCheckbox = document.getElementById('clang-format-indent-case-labels');
-        const clangFormatSortIncludesCheckbox = document.getElementById('clang-format-sort-includes');
-        const clangFormatAlignAssignmentsCheckbox = document.getElementById('clang-format-align-assignments');
-        const clangFormatAlignDeclarationsCheckbox = document.getElementById('clang-format-align-declarations');
-        const clangFormatRawTextArea = document.getElementById('clang-format-raw-text');
-        const autoCompletionCheckbox = document.getElementById('editor-auto-completion');
-        const syntaxCheckCheckbox = document.getElementById('editor-syntax-check-enabled');
-        const autoSaveCheckbox = document.getElementById('editor-auto-save-enabled');
-        const autoSaveIntervalInput = document.getElementById('editor-auto-save-interval');
-        const autoOpenLastWorkspaceCheckbox = document.getElementById('editor-auto-open-last-workspace');
-        const receiveBetaUpdatesCheckbox = document.getElementById('editor-receive-beta-updates');
-        const opacityInput = document.getElementById('editor-opacity');
-        const opacityValue = document.getElementById('editor-opacity-value');
-        const glassEffectCheckbox = document.getElementById('editor-glass-effect-enabled');
-        const bgImageInput = document.getElementById('editor-bg-image');
-        const unifiedPreprocessorCheckbox = document.getElementById('editor-unified-preprocessor-color');
+        const fontSelect = /** @type {any} */ (document.getElementById('editor-font'));
+        const fontSizeInput = /** @type {any} */ (document.getElementById('editor-font-size'));
+        const terminalFontSizeInput = /** @type {any} */ (document.getElementById('editor-terminal-font-size'));
+        const lineHeightInput = /** @type {any} */ (document.getElementById('editor-line-height'));
+        const themeSelect = /** @type {any} */ (document.getElementById('editor-theme'));
+        const foldingCheckbox = /** @type {any} */ (document.getElementById('editor-folding'));
+        const stickyScrollCheckbox = /** @type {any} */ (document.getElementById('editor-sticky-scroll'));
+        const ligaturesCheckbox = /** @type {any} */ (document.getElementById('editor-font-ligatures'));
+        const tabSizeInput = /** @type {any} */ (document.getElementById('editor-tab-size'));
+        const clangFormatBasedOnStyleSelect = /** @type {any} */ (document.getElementById('clang-format-based-on-style'));
+        const clangFormatUseTabSelect = /** @type {any} */ (document.getElementById('clang-format-use-tab'));
+        const clangFormatIndentWidthInput = /** @type {any} */ (document.getElementById('clang-format-indent-width'));
+        const clangFormatTabWidthInput = /** @type {any} */ (document.getElementById('clang-format-tab-width'));
+        const clangFormatColumnLimitInput = /** @type {any} */ (document.getElementById('clang-format-column-limit'));
+        const clangFormatBreakBeforeBracesSelect = /** @type {any} */ (document.getElementById('clang-format-break-before-braces'));
+        const clangFormatPointerAlignmentSelect = /** @type {any} */ (document.getElementById('clang-format-pointer-alignment'));
+        const clangFormatSpaceBeforeParensSelect = /** @type {any} */ (document.getElementById('clang-format-space-before-parens'));
+        const clangFormatIndentCaseLabelsCheckbox = /** @type {any} */ (document.getElementById('clang-format-indent-case-labels'));
+        const clangFormatSortIncludesCheckbox = /** @type {any} */ (document.getElementById('clang-format-sort-includes'));
+        const clangFormatAlignAssignmentsCheckbox = /** @type {any} */ (document.getElementById('clang-format-align-assignments'));
+        const clangFormatAlignDeclarationsCheckbox = /** @type {any} */ (document.getElementById('clang-format-align-declarations'));
+        const clangFormatRawTextArea = /** @type {any} */ (document.getElementById('clang-format-raw-text'));
+        const autoCompletionCheckbox = /** @type {any} */ (document.getElementById('editor-auto-completion'));
+        const syntaxCheckCheckbox = /** @type {any} */ (document.getElementById('editor-syntax-check-enabled'));
+        const autoSaveCheckbox = /** @type {any} */ (document.getElementById('editor-auto-save-enabled'));
+        const autoSaveIntervalInput = /** @type {any} */ (document.getElementById('editor-auto-save-interval'));
+        const autoOpenLastWorkspaceCheckbox = /** @type {any} */ (document.getElementById('editor-auto-open-last-workspace'));
+        const receiveBetaUpdatesCheckbox = /** @type {any} */ (document.getElementById('editor-receive-beta-updates'));
+        const opacityInput = /** @type {any} */ (document.getElementById('editor-opacity'));
+        const opacityValue = /** @type {any} */ (document.getElementById('editor-opacity-value'));
+        const glassEffectCheckbox = /** @type {any} */ (document.getElementById('editor-glass-effect-enabled'));
+        const bgImageInput = /** @type {any} */ (document.getElementById('editor-bg-image'));
+        const unifiedPreprocessorCheckbox = /** @type {any} */ (document.getElementById('editor-unified-preprocessor-color'));
 
         // Populate language selector
         this.populateLanguageSelector();
@@ -1933,7 +1933,7 @@ class EditorSettings {
             logInfo('终端字号已更新:', terminalFontSizeInput.value);
         }
 
-        const terminalStartupCommandInput = document.getElementById('editor-terminal-startup-command');
+        const terminalStartupCommandInput = /** @type {any} */ (document.getElementById('editor-terminal-startup-command'));
         if (terminalStartupCommandInput) {
             terminalStartupCommandInput.value = this.settings.terminalStartupCommand || '';
             logInfo('终端启动命令已更新:', terminalStartupCommandInput.value);
@@ -2032,7 +2032,7 @@ class EditorSettings {
         const normalizedKeybindings = this.normalizeKeybindings(this.settings.keybindings);
         const defaultKeybindings = this.getDefaultKeybindings();
         const keybindingInputs = document.querySelectorAll('[data-keybinding-key]');
-        keybindingInputs.forEach((input) => {
+        keybindingInputs.forEach((/** @type {any} */ input) => {
             const key = input.dataset.keybindingKey;
             if (!key) return;
             input.value = normalizedKeybindings[key] || defaultKeybindings[key] || '';
@@ -2040,7 +2040,7 @@ class EditorSettings {
     }
 
     async populateLanguageSelector() {
-        const langSelect = document.getElementById('editor-language');
+        const langSelect = /** @type {any} */ (document.getElementById('editor-language'));
         if (!langSelect) return;
 
         try {
@@ -2078,7 +2078,7 @@ class EditorSettings {
     }
 
     showMessage(message, type = 'info') {
-        const existingToast = document.querySelector('.message-toast');
+        const existingToast = /** @type {any} */ (document.querySelector('.message-toast'));
         if (existingToast) {
             existingToast.remove();
         }

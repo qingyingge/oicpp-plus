@@ -27,4 +27,5 @@ interface Window {
   getElectronModule: () => any;
   __electronRequireAvailable: boolean;
   process: any;
+  fontDetector: any;
 }
