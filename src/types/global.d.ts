@@ -20,7 +20,6 @@ interface Window {
   monaco: any;
   require: (moduleName: string) => any;
   i18n: any;
-  electronAPI: any;
   electronIPC: any;
   electron: any;
   markdownAPI: any;
