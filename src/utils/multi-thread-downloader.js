@@ -13,7 +13,7 @@ const CANCELLED_CODE = 'DOWNLOAD_CANCELLED';
 const RANGE_UNSUPPORTED_CODE = 'RANGE_UNSUPPORTED';
 const cancelledError = () => {
     const err = new Error(t('downloader.cancelled'));
-    err.code = CANCELLED_CODE;
+    (/** @type {any} */ (err)).code = CANCELLED_CODE;
     return err;
 };
 const isCancelledError = (error) => error?.code === CANCELLED_CODE;
@@ -22,7 +22,7 @@ function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const isHttps = urlObj.protocol === 'https:';
-        const client = isHttps ? https : http;
+        const client = /** @type {any} */ (isHttps ? https : http);
 
         const requestOptions = {
             hostname: urlObj.hostname,
@@ -146,7 +146,7 @@ class MultiThreadDownloader {
                     const err = new Error(t('downloader.chunkNotPartial', { index: chunkIndex, status: response.status }));
                     // 标记为「Range 不可用」，供 download() 识别后降级到单线程，
                     // 而不是直接让整次下载失败
-                    err.code = RANGE_UNSUPPORTED_CODE;
+                    (/** @type {any} */ (err)).code = RANGE_UNSUPPORTED_CODE;
                     throw err;
                 }
 
@@ -304,7 +304,7 @@ class MultiThreadDownloader {
                             rs.on('end', () => {
                                 if (settled) return;
                                 settled = true;
-                                res();
+                                res(undefined);
                             });
                             // 背压：write 返回 false 时等 drain 再推进
                             rs.on('data', (piece) => {
@@ -325,7 +325,7 @@ class MultiThreadDownloader {
                 })();
 
                 writer.on('error', reject);
-                writer.on('finish', resolve);
+                writer.on('finish', () => resolve(undefined));
                 // 全部写完后必须 end()，否则 'finish' 永不触发（曾因此挂起）
                 pipeline.then(() => writer.end(), reject);
             });
@@ -466,7 +466,7 @@ class MultiThreadDownloader {
                                 validateOutputSize();
                                 // 校验通过才落到目标路径：原子替换，原有文件在此之前完好
                                 fs.renameSync(partialFile, outputFile);
-                                resolve();
+                                resolve(undefined);
                             } catch (validateError) {
                                 reject(validateError);
                             }
@@ -536,7 +536,7 @@ class MultiThreadDownloader {
         }
         if (actual !== expectedSize) {
             const error = new Error(t('downloader.incompleteSize', { actual, expected: expectedSize }));
-            error.code = 'SIZE_MISMATCH';
+            (/** @type {any} */ (error)).code = 'SIZE_MISMATCH';
             throw error;
         }
     }
@@ -550,7 +550,7 @@ class MultiThreadDownloader {
             const ok = await this.verifyFile(outputFile, expectedMd5);
             if (ok === false) {
                 const error = new Error(t('downloader.failed', { message: 'MD5 mismatch' }));
-                error.code = 'MD5_MISMATCH';
+                (/** @type {any} */ (error)).code = 'MD5_MISMATCH';
                 throw error;
             }
         }
@@ -768,7 +768,5 @@ class MultiThreadDownloader {
     }
 }
 
+Object.assign(MultiThreadDownloader, { CANCELLED_CODE, RANGE_UNSUPPORTED_CODE, isCancelledError });
 module.exports = MultiThreadDownloader;
-module.exports.CANCELLED_CODE = CANCELLED_CODE;
-module.exports.RANGE_UNSUPPORTED_CODE = RANGE_UNSUPPORTED_CODE;
-module.exports.isCancelledError = isCancelledError;
