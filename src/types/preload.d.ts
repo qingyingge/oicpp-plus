@@ -48,7 +48,7 @@ interface ElectronAPI {
   compileFile(options: any): any;
   formatCppCode(options: any): any;
   runExecutable(options: any): any;
-  runProgram(executablePath: any, input: any, timeLimit: any, memoryLimit: any): any;
+  runProgram(executablePathOrOptions: any, input?: any, timeLimit?: any, memoryLimit?: any): any;
   runInteractive(options: any): any;
   startCompare(config: any): any;
   stopCompare(): any;
