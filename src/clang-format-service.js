@@ -43,7 +43,7 @@ function buildClangFormatArgs({
     startLine,
     endLine,
     inputFilePath
-} = {}) {
+} = /** @type {any} */ ({})) {
     const args = [];
     if (typeof filePath === 'string' && filePath.trim() && !inputFilePath) {
         args.push(`--assume-filename=${filePath}`);
@@ -82,7 +82,7 @@ function formatCodeWithClangFormat({
     endLine,
     timeoutMs = CLANG_FORMAT_TIMEOUT_MS,
     spawnImpl = spawn
-} = {}) {
+} = /** @type {any} */ ({})) {
     if (!executablePath || typeof executablePath !== 'string') {
         return Promise.reject(new Error('clang-format executable is unavailable'));
     }

@@ -284,7 +284,7 @@ function ensureMarkdown() {
         const mk = require('@iktakahiro/markdown-it-katex');
         const taskLists = require('markdown-it-task-lists');
         const imageFigures = require('markdown-it-image-figures');
-        const hljs = require('highlight.js');
+        const hljs = /** @type {any} */ (require('highlight.js'));
 
         md = new MarkdownIt({
             html: false,
@@ -423,9 +423,7 @@ contextBridge.exposeInMainWorld('turndownAPI', {
     }
 });
 
-if (globalThis.__oicppPreloadInitialized) {
-    return;
-}
+if (!globalThis.__oicppPreloadInitialized) {
 globalThis.__oicppPreloadInitialized = true;
 
 try {
@@ -977,3 +975,4 @@ contextBridge.exposeInMainWorld('logWarn', (...args) => safeSendLog('warn', args
 contextBridge.exposeInMainWorld('logError', (...args) => safeSendLog('error', args));
 contextBridge.exposeInMainWorld('logwarn', (...args) => safeSendLog('warn', args));
 contextBridge.exposeInMainWorld('logerror', (...args) => safeSendLog('error', args));
+}
