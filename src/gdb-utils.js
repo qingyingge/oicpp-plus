@@ -12,10 +12,10 @@ Token.CloseBrace = 2;
 Token.Equal      = 3;
 Token.String     = 4;
 Token.Comma      = 5;
-Token.prototype.extractString = function (s) {
+(/** @type {any} */ (Token.prototype)).extractString = function (s) {
     return s.substring(this.start, this.end);
 };
-Token.prototype.trim = function (s) {
+(/** @type {any} */ (Token.prototype)).trim = function (s) {
     while (this.start < s.length && (s[this.start] === ' ' || s[this.start] === '\t' || s[this.start] === '\n')) {
         this.start++;
     }
@@ -212,8 +212,8 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
         const token = res.token;
         position = res.pos;
         tokenRealEnd = token.end;
-        token.trim(value);
-        const str = token.extractString(value);
+        (/** @type {any} */ (token)).trim(value);
+        const str = (/** @type {any} */ (token)).extractString(value);
         if (str.startsWith('members of ')) {
             const nlPos = str.indexOf('\n');
             if (nlPos === -1) {
@@ -226,7 +226,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                 const colonPos = str.lastIndexOf(':', nlPos);
                 if (colonPos === -1) return false;
                 token.start += nlPos + 2;
-                token.trim(value);
+                (/** @type {any} */ (token)).trim(value);
             }
         }
         const reRepeatedChar = /.+[ \t](<repeats[ \t][0-9]+[ \t]times>)$/;
@@ -239,7 +239,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                     const commaEnd = expandedToken.end;
                     const nextRes = getNextToken(value, position);
                     if (nextRes.success) {
-                        const expandedStr = nextRes.token.extractString(value);
+                        const expandedStr = (/** @type {any} */ (nextRes.token)).extractString(value);
                         if (expandedStr && expandedStr[0] !== '"' && expandedStr[0] !== "'") {
                             token.end = commaEnd;
                             position = commaEnd;
@@ -280,14 +280,14 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                                     token.end = expandedToken.end;
                                     tokenRealEnd = expandedToken.end;
                                     tokenValue = new Token(token.start, token.end - 1, Token.String);
-                                    pythonToStringValue = tokenValue.extractString(value);
+                                    pythonToStringValue = (/** @type {any} */ (tokenValue)).extractString(value);
                                 } else {
                                     while (expandedToken.end >= 0) {
                                         if (value[expandedToken.end] === ',') {
                                             token.end = expandedToken.end;
                                             tokenRealEnd = expandedToken.end;
                                             tokenValue = new Token(token.start, expandedToken.end, Token.String);
-                                            pythonToStringValue = tokenValue.extractString(value);
+                                            pythonToStringValue = (/** @type {any} */ (tokenValue)).extractString(value);
                                             break;
                                         }
                                         expandedToken.end--;
@@ -304,7 +304,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                             token.end = firstCloseBrace;
                             tokenRealEnd = firstCloseBrace;
                             tokenValue = new Token(token.start, firstCloseBrace, Token.String);
-                            pythonToStringValue = tokenValue.extractString(value);
+                            pythonToStringValue = (/** @type {any} */ (tokenValue)).extractString(value);
                             if (!pythonToStringValue) return false;
                         }
                     }
@@ -324,12 +324,12 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                 } else {
                     if (tokenName.type !== Token.Undefined) {
                         if (tokenValue.type !== Token.Undefined) {
-                            const child = addChild(watchObj, tokenName.extractString(value), tokenValue.extractString(value));
+                            const child = addChild(watchObj, (/** @type {any} */ (tokenName)).extractString(value), (/** @type {any} */ (tokenValue)).extractString(value));
                             if (!child.children || child.children.length === 0) {
                                 parseGDBWatchValue(child, child.value);
                             }
                         } else {
-                            const child = addChild(watchObj, `[${addedChildren}]`, tokenName.extractString(value));
+                            const child = addChild(watchObj, `[${addedChildren}]`, (/** @type {any} */ (tokenName)).extractString(value));
                             if (!child.children || child.children.length === 0) {
                                 parseGDBWatchValue(child, child.value);
                             }
@@ -340,8 +340,8 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                     } else {
                         const nextRes = getNextToken(value, position);
                         if (nextRes.success) {
-                            nextRes.token.trim(value);
-                            const nextStr = nextRes.token.extractString(value);
+                            (/** @type {any} */ (nextRes.token)).trim(value);
+                            const nextStr = (/** @type {any} */ (nextRes.token)).extractString(value);
                             if (!((nextRes.token.type === Token.String && isLikelyName(nextStr)) ||
                                   nextRes.token.type === Token.CloseBrace)) {
                                 break;
@@ -360,7 +360,7 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                     if (tokenName.type === Token.Undefined) {
                         childName = `[${addedChildren}]`;
                     } else {
-                        childName = tokenName.extractString(value);
+                        childName = (/** @type {any} */ (tokenName)).extractString(value);
                     }
                     if (tokenValue.type !== Token.Undefined) {
                         val = value.substring(tokenValue.start, token.start).trim();
@@ -380,12 +380,12 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
                 if (!lastWasClosingBrace) {
                     if (tokenName.type !== Token.Undefined) {
                         if (tokenValue.type !== Token.Undefined) {
-                            const child = addChild(watchObj, tokenName.extractString(value), tokenValue.extractString(value));
+                            const child = addChild(watchObj, (/** @type {any} */ (tokenName)).extractString(value), (/** @type {any} */ (tokenValue)).extractString(value));
                             if (!child.children || child.children.length === 0) {
                                 parseGDBWatchValue(child, child.value);
                             }
                         } else {
-                            const child = addChild(watchObj, `[${addedChildren}]`, tokenName.extractString(value));
+                            const child = addChild(watchObj, `[${addedChildren}]`, (/** @type {any} */ (tokenName)).extractString(value));
                             if (!child.children || child.children.length === 0) {
                                 parseGDBWatchValue(child, child.value);
                             }
@@ -405,12 +405,12 @@ function parseGDBWatchValueRecursive(watchObj, value, start, length) {
     }
     if (tokenName.type !== Token.Undefined) {
         if (tokenValue.type !== Token.Undefined) {
-            const child = addChild(watchObj, tokenName.extractString(value), tokenValue.extractString(value));
+            const child = addChild(watchObj, (/** @type {any} */ (tokenName)).extractString(value), (/** @type {any} */ (tokenValue)).extractString(value));
             if (!child.children || child.children.length === 0) {
                 parseGDBWatchValue(child, child.value);
             }
         } else {
-            const child = addChild(watchObj, `[${addedChildren}]`, tokenName.extractString(value));
+            const child = addChild(watchObj, `[${addedChildren}]`, (/** @type {any} */ (tokenName)).extractString(value));
             if (!child.children || child.children.length === 0) {
                 parseGDBWatchValue(child, child.value);
             }
