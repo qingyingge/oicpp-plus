@@ -28,7 +28,8 @@
     "ci:tests": "node scripts/ci-check.js --only tests",
     "ci:fast": "node scripts/ci-check.js --skip tests",
     "ci:strict": "node scripts/ci-check.js --strict",
-    "ci:verbose": "node scripts/ci-check.js --verbose"
+    "ci:verbose": "node scripts/ci-check.js --verbose",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "electron": "^44.5.1",
@@ -37,6 +38,7 @@
     "icojs": "^1.0.1",
     "monaco-editor-webpack-plugin": "^7.1.1",
     "sharp": "^0.35.5",
+    "typescript": "7.0.2",
     "webpack": "^5.111.1",
     "webpack-cli": "^7.2.3"
   },

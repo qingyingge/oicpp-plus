@@ -1324,7 +1324,36 @@ function runFastspawnSyntaxCheck() {
   }
 }
 
+// T3: TypeScript 报错数 ratchet（路线甲基线，允许只减不增）
+// 基线 5396 = scripts/ts-migration-baseline.ps1 在 HEAD b7d4f4c、tsc 7.0.2、
+// node_modules 下无 @types/* 条件下实测。装上 @types 或换 tsc 版本后必须重跑基线脚本，
+// 并同步更新这里与 docs/ts-migration-baseline.js 的 meta。
+const TS_ERROR_BASELINE = 5396;
+function runTypecheckRatchet() {
+  console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
+  const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
+  if (!fileExists(tscBin)) {
+    fail('typescript is not installed (pnpm add -D typescript)');
+    return;
+  }
+  let out = '';
+  try {
+    out = execSync(`node "${tscBin}" --noEmit`, { encoding: 'utf8', timeout: 300000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (err) {
+    out = `${err.stdout || ''}${err.stderr || ''}`;
+  }
+  const count = out.split(/\r?\n/).filter((l) => /error TS\d+/.test(l)).length;
+  if (count > TS_ERROR_BASELINE) {
+    fail(`${count} tsc errors (baseline ${TS_ERROR_BASELINE}, +${count - TS_ERROR_BASELINE}) — do not grow the error count`);
+  } else if (count === 0) {
+    ok('tsc --noEmit: 0 errors');
+  } else {
+    ok(`${count} tsc errors (baseline ${TS_ERROR_BASELINE}${count < TS_ERROR_BASELINE ? `, ${TS_ERROR_BASELINE - count} cleared — lower the baseline` : ''})`);
+  }
+}
+
 runFastspawnSyntaxCheck();
+runTypecheckRatchet();
 
 if (skipTests) {
   info('regression tests skipped (--skip tests)');
