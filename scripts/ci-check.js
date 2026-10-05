@@ -1325,10 +1325,10 @@ function runFastspawnSyntaxCheck() {
 }
 
 // T3: TypeScript 报错数 ratchet（路线甲基线，允许只减不增）
-// 基线 5396 = scripts/ts-migration-baseline.ps1 在 HEAD b7d4f4c、tsc 7.0.2、
-// node_modules 下无 @types/* 条件下实测。装上 @types 或换 tsc 版本后必须重跑基线脚本，
-// 并同步更新这里与 docs/ts-migration-baseline.js 的 meta。
-const TS_ERROR_BASELINE = 5396;
+// 基线 1395 = scripts/ts-migration-baseline.ps1 在 HEAD 3c97f83、tsc 7.0.2、
+// 已含 src/types/global.d.ts 条件下实测（global.d.ts 前的原始基线是 5396）。
+// 装上 @types 或换 tsc 版本后必须重跑基线脚本，并同步更新这里。
+const TS_ERROR_BASELINE = 1395;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

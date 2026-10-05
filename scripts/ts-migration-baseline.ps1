@@ -45,7 +45,9 @@ $flags = @(
 # bite immediately and are hard to see.
 function Get-ErrCounts {
   param([string]$StrictFlag, [string[]]$FileList)
-  $out = & tsc @flags --strict $StrictFlag @FileList 2>&1
+  # tsconfig.json 已在仓库根目录，直接 project 模式跑；显式 flags 与 tsconfig 重复，
+  # 只用 --strict 覆盖档位。文件列表模式会因 TS5112（有 tsconfig 又传文件）直接报错。
+  $out = & tsc --noEmit --strict $StrictFlag 2>&1
   $map = @{}
   foreach ($line in $out) {
     if ("$line" -match '^(.+?)\(\d+,\d+\): error TS\d+:') {
