@@ -109,7 +109,7 @@ function methodBody(name) {
 
 {
     const body = methodBody('setupEventListeners');
-    const bindings = (body.match(/getElementById\('close-install-dialog'\)/g) || []).length;
+    const bindings = (body.match(/getElementById\('close-install-dialog'\)|elCtl\('close-install-dialog'\)/g) || []).length;
     const addListeners = (body.match(/closeBtn\.addEventListener|closeDialogBtn\.addEventListener/g) || []).length;
     check('#close-install-dialog 只查询一次', bindings === 1, `${bindings} 次`);
     check('#close-install-dialog 只绑定一次', addListeners === 1, `${addListeners} 处 addEventListener`);
