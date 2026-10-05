@@ -68,9 +68,9 @@ class MonacoEditorManager {
 
         document.addEventListener('settings-applied', (evt) => {
             try {
-                this.loadKeybindingsFromSettings(evt?.detail || {});
-                this.updateFormatterSettings(evt?.detail || {});
-                this.updateClangFormatSettings(evt?.detail || {});
+                this.loadKeybindingsFromSettings((/** @type {any} */ (evt))?.detail || {});
+                this.updateFormatterSettings((/** @type {any} */ (evt))?.detail || {});
+                this.updateClangFormatSettings((/** @type {any} */ (evt))?.detail || {});
             } catch (e) {
                 logWarn('应用快捷键设置失败:', e);
             }
@@ -3514,7 +3514,7 @@ class MonacoEditorManager {
         return new Promise((resolve) => {
             const checkMonaco = () => {
                 if (typeof monaco !== 'undefined') {
-                    resolve();
+                    resolve(undefined);
                 } else {
                     setTimeout(checkMonaco, 100);
                 }
@@ -4043,20 +4043,20 @@ class MonacoEditorManager {
             return this.groupContainers.get(groupId);
         }
 
-        const legacy = document.getElementById('editor-area');
+        const legacy = /** @type {any} */ (document.getElementById('editor-area'));
         if (legacy) {
             return legacy;
         }
 
         if (groupId) {
-            const fallback = document.querySelector(`.editor-area[data-group-id="${groupId}"]`);
+            const fallback = /** @type {any} */ (document.querySelector(`.editor-area[data-group-id="${groupId}"]`));
             if (fallback) {
                 this.groupContainers.set(groupId, fallback);
                 return fallback;
             }
         }
 
-        const defaultArea = document.querySelector('.editor-area');
+        const defaultArea = /** @type {any} */ (document.querySelector('.editor-area'));
         if (defaultArea) {
             const defaultId = defaultArea.dataset.groupId || 'group-1';
             this.groupContainers.set(defaultId, defaultArea);
@@ -4363,8 +4363,6 @@ class MonacoEditorManager {
                 roundedSelection: false,
                 renderWhitespace: 'none',
                 renderControlCharacters: false,
-                selectionHighlight: true,
-                selectionClipboard: true,
                 folding: foldingEnabled,
                 foldingStrategy: 'auto',
                 foldingHighlight: true,
@@ -4641,10 +4639,10 @@ class MonacoEditorManager {
             }, 100);
             
             monacoContainer.addEventListener('click', (e) => {
-                const findWidget = e.target.closest('.find-widget');
-                const suggestionWidget = e.target.closest('.suggest-widget');
-                const contextMenu = e.target.closest('.context-view');
-                const parameterHints = e.target.closest('.parameter-hints-widget');
+                const findWidget = /** @type {any} */ (e.target).closest('.find-widget');
+                const suggestionWidget = /** @type {any} */ (e.target).closest('.suggest-widget');
+                const contextMenu = /** @type {any} */ (e.target).closest('.context-view');
+                const parameterHints = /** @type {any} */ (e.target).closest('.parameter-hints-widget');
                 
                 if (findWidget || suggestionWidget || contextMenu || parameterHints) {
                     return;
@@ -5949,7 +5947,7 @@ class MonacoEditorManager {
         }
     }
 
-    updateFormatterSettings(settings = {}) {
+    updateFormatterSettings(settings = /** @type {any} */ ({})) {
         if (!settings || typeof settings !== 'object') {
             return;
         }
@@ -6032,7 +6030,7 @@ class MonacoEditorManager {
         return normalized;
     }
 
-    updateClangFormatSettings(settings = {}) {
+    updateClangFormatSettings(settings = /** @type {any} */ ({})) {
         if (!settings || typeof settings !== 'object') {
             return;
         }
@@ -6109,7 +6107,7 @@ class MonacoEditorManager {
     }
 
     addWheelZoomListenerToEditorArea(editor) {
-    const editorArea = document.querySelector('.editor-groups');
+    const editorArea = /** @type {any} */ (document.querySelector('.editor-groups'));
         if (!editorArea || editorArea.hasGlobalWheelZoomListener) {
             return;
         }
@@ -6287,7 +6285,7 @@ class MonacoEditorManager {
                 
                 try {
                     editor.updateOptions(updateOptions); 
-                    const editorContainer = document.querySelector(`[data-tab-id="${fileName}"]`);
+                    const editorContainer = /** @type {any} */ (document.querySelector(`[data-tab-id="${fileName}"]`));
                     if (editorContainer) {
                         this.addWheelZoomListener(editor, editorContainer);
                     }
@@ -6845,7 +6843,7 @@ class MonacoEditorManager {
                 return;
             }
 
-            let overlay = document.getElementById('oicpp-func-picker');
+            let overlay = /** @type {any} */ (document.getElementById('oicpp-func-picker'));
             if (!overlay) {
                 overlay = document.createElement('div');
                 overlay.id = 'oicpp-func-picker';
@@ -7192,7 +7190,7 @@ class MonacoEditorManager {
                         clearHover();
                         return;
                     }
-                    if (MouseTargetType && e.target && ![MouseTargetType.CONTENT_TEXT, MouseTargetType.CONTENT_EMPTY].includes(e.target.type)) {
+                    if (MouseTargetType && e.target && ![MouseTargetType.CONTENT_TEXT, MouseTargetType.CONTENT_EMPTY].includes(/** @type {any} */ (e.target).type)) {
                         clearHover();
                         return;
                     }
@@ -7559,7 +7557,7 @@ class MonacoEditorManager {
 
             if (stringDelimiter) {
                 if (ch === '\\') {
-                    if (ch !== '\n') chars[i] = ' ';
+                    if ((/** @type {string} */ (ch)) !== '\n') chars[i] = ' ';
                     if (i + 1 < chars.length && chars[i + 1] !== '\n') chars[i + 1] = ' ';
                     i += 2;
                     continue;
