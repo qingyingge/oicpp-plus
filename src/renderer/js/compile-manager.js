@@ -44,7 +44,7 @@ class CompilerManager {
     }
 
     createCompileOutputWindow() {
-        let existingWindow = document.querySelector('.compile-output-window');
+        let existingWindow = /** @type {any} */ (document.querySelector('.compile-output-window'));
         if (existingWindow) {
             existingWindow.remove();
         }
@@ -89,7 +89,7 @@ class CompilerManager {
             <div class="compile-output-resizer" data-i18n-title="panel.dragResize" title="拖拽调整高度"></div>
         `;
 
-        const editorContainer = document.querySelector('.editor-container');
+        const editorContainer = /** @type {any} */ (document.querySelector('.editor-container'));
         if (editorContainer) {
             editorContainer.appendChild(this.compileOutput);
         } else {

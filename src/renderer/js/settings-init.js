@@ -115,7 +115,7 @@
                 document.body.style.backgroundPosition = 'center';
                 document.body.classList.add('has-custom-bg');
 
-                let styleEl = document.getElementById('custom-bg-style');
+                let styleEl = /** @type {any} */ (document.getElementById('custom-bg-style'));
                 if (!styleEl) {
                     styleEl = document.createElement('style');
                     styleEl.id = 'custom-bg-style';
@@ -206,7 +206,7 @@
             } else {
                 document.body.style.backgroundImage = '';
                 document.body.classList.remove('has-custom-bg');
-                const styleEl = document.getElementById('custom-bg-style');
+                const styleEl = /** @type {any} */ (document.getElementById('custom-bg-style'));
                 if (styleEl) styleEl.remove();
             }
         }

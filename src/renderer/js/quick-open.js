@@ -2,10 +2,10 @@
     let allFiles = [];
     let indexedRoot = '';
     let indexDirty = true;
-    const overlay = document.getElementById('quick-open-overlay');
-    const input = document.getElementById('quick-open-input');
-    const results = document.getElementById('quick-open-results');
-    const titleTrigger = document.getElementById('titlebar-quickopen');
+    const overlay = /** @type {any} */ (document.getElementById('quick-open-overlay'));
+    const input = /** @type {any} */ (document.getElementById('quick-open-input'));
+    const results = /** @type {any} */ (document.getElementById('quick-open-results'));
+    const titleTrigger = /** @type {any} */ (document.getElementById('titlebar-quickopen'));
     let activeIndex = -1;
 
     if (!overlay || !input || !results) return;
@@ -170,7 +170,7 @@
     }
 
     document.addEventListener('keydown', async (e) => {
-        const isInEditor = e.target.closest?.('.monaco-editor');
+        const isInEditor = /** @type {any} */ (e.target).closest?.('.monaco-editor');
         if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
             e.preventDefault();
             const ok = await ensureIndex();

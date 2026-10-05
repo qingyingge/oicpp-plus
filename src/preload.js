@@ -49,7 +49,7 @@ const showToast = (message, type = 'info', durationMs = 1200) => {
         const dur = Number.isFinite(durationMs) ? durationMs : 1200;
 
         const ensure = () => {
-            const existing = document.querySelector('.message-toast');
+            const existing = /** @type {any} */ (document.querySelector('.message-toast'));
             if (existing) return existing;
             const div = document.createElement('div');
             div.className = 'message-toast info';
