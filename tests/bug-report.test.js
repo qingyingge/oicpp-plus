@@ -156,8 +156,8 @@ if (report) {
     // L28: compiler.js testlib-path 元素空值保护
     const l28 = report.find((i) => i.id === 'L28');
     if (l28) {
-        const testBlock = /async testTestlib\(\) \{[\s\S]*?\}/.exec(compilerSource);
-        const setBlock = /async setTestlibPath\(path\) \{[\s\S]*?\}/.exec(compilerSource);
+        const testBlock = /async testTestlib\(\) \{[\s\S]*?if \(!testlibPathInput\)/.exec(compilerSource);
+        const setBlock = /async setTestlibPath\(path\) \{[\s\S]*?if \(testlibPathInput\)/.exec(compilerSource);
         check('L28 testTestlib null-checks #testlib-path', !!(testBlock && testBlock[0].includes('if (!testlibPathInput)')));
         check('L28 setTestlibPath null-checks #testlib-path', !!(setBlock && setBlock[0].includes('if (testlibPathInput)')));
     }
