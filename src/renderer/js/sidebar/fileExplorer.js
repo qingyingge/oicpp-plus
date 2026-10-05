@@ -180,7 +180,7 @@ class FileExplorer {
                 activeElement.closest?.('.editor-terminal-container')
             ));
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTypingElement = tag === 'input' || tag === 'textarea' || !!activeElement?.isContentEditable;
+            const isTypingElement = tag === 'input' || tag === 'textarea' || !!(/** @type {any} */ (activeElement))?.isContentEditable;
             if (isInEditor || isInTerminal || isTypingElement) {
                 return;
             }
@@ -669,7 +669,7 @@ class FileExplorer {
         const item = document.createElement('div');
         item.className = 'tree-item';
         item.dataset.path = file.path;
-        item.__oicppFile = file;
+        (/** @type {any} */ (item)).__oicppFile = file;
         this._treeItemsByPath.set(file.path, item);
         if (file.type === 'folder') {
             item.dataset.type = 'folder';
@@ -1432,7 +1432,7 @@ class FileExplorer {
                             } catch (e) {
                                 logWarn('[文件管理器] 拖拽移动后同步样例配置失败:', e);
                             }
-                            resolve();
+                            resolve(undefined);
                         }
                     };
 
@@ -1664,8 +1664,8 @@ class FileExplorer {
                     window.electronIPC.send('create-file', filePath, defaultContent);
 
                     const handleFileCreated = (event, createdPath, error) => {
-                        if (!handleFileCreated._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
-                            handleFileCreated._handled = true;
+                        if (!(/** @type {any} */ (handleFileCreated))._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
+                            (/** @type {any} */ (handleFileCreated))._handled = true;
                             if (error) {
                                 logError('创建文件失败:', error);
                                 this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
@@ -1981,7 +1981,7 @@ class FileExplorer {
                             }
                         }
                         window.electronIPC.ipcRenderer.removeListener('file-deleted', handleFileDeleted);
-                        resolve();
+                        resolve(undefined);
                     }
                 };
 

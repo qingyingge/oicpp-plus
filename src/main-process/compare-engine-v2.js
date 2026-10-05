@@ -93,7 +93,7 @@ class CompareEngineV2 extends EventEmitter {
                         worker.removeListener('message', handler);
                         worker.removeListener('error', onWorkerError);
                         worker.removeListener('exit', onWorkerExit);
-                        resolve();
+                        resolve(undefined);
                     };
                     const handler = (msg) => {
                         // 上一轮遗留的迟到消息：不再计入本轮状态，也不再向上广播

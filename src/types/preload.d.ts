@@ -151,7 +151,7 @@ interface ElectronAPI {
   lspStart(options: any): any;
   lspStop(): any;
   lspRestart(options: any): any;
-  lspRequest(method: any, params: any, requestId: any): any;
+  lspRequest(method: any, params: any, requestId?: any): any;
   lspCancel(requestId: any): any;
   lspApplyEditResult(requestId: any, result: any): any;
   lspNotify(method: any, params: any): any;

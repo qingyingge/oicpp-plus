@@ -10,6 +10,10 @@ declare function logerror(...args: any[]): void;
 // Monaco AMD loader 注入
 declare const monaco: any;
 declare const DebugPanel: any;
+declare const OICPPApp: any;
+declare const MonacoEditorManager: any;
+declare const CompilerManager: any;
+declare const TabManager: any;
 declare function require(moduleName: string): any;
 
 interface Window {

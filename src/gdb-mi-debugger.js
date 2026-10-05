@@ -343,14 +343,14 @@ class GDBDebugger extends EventEmitter {
             await this._miRequest('-gdb-exit', { timeoutMs: MI_INTERRUPT_TIMEOUT_MS }).catch(() => { });
         } finally {
             await new Promise((resolve) => {
-                if (processRef.exitCode !== null || processRef.signalCode !== null) return resolve();
+                if (processRef.exitCode !== null || processRef.signalCode !== null) return resolve(undefined);
                 let settled = false;
                 const finish = () => {
                     if (settled) return;
                     settled = true;
                     clearTimeout(timer);
                     processRef.removeListener('exit', onExit);
-                    resolve();
+                    resolve(undefined);
                 };
                 const onExit = () => finish();
                 const timer = setTimeout(finish, MI_INTERRUPT_TIMEOUT_MS);

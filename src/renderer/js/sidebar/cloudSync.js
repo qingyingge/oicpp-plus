@@ -197,7 +197,7 @@ class CloudSyncPanel {
             if (currentPanel !== 'cloud') return;
             const activeElement = document.activeElement;
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTyping = tag === 'input' || tag === 'textarea' || !!activeElement?.isContentEditable;
+            const isTyping = tag === 'input' || tag === 'textarea' || !!(/** @type {any} */ (activeElement))?.isContentEditable;
             if (isTyping) return;
 
             const target = this.getPrimarySelection();

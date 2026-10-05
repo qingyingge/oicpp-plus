@@ -231,7 +231,7 @@ class I18nManager {
             document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
                 const key = el.getAttribute('data-i18n-placeholder');
                 if (key) {
-                    el.placeholder = this.t(key);
+                    (/** @type {any} */ (el)).placeholder = this.t(key);
                 }
             });
 
@@ -239,7 +239,7 @@ class I18nManager {
             document.querySelectorAll('[data-i18n-title]').forEach(el => {
                 const key = el.getAttribute('data-i18n-title');
                 if (key) {
-                    el.title = this.t(key);
+                    (/** @type {any} */ (el)).title = this.t(key);
                 }
             });
 
@@ -270,12 +270,13 @@ class I18nManager {
                     if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
                         for (const node of mutation.addedNodes) {
                             if (node.nodeType === 1) { // Element
-                                if (node.hasAttribute && (
-                                    node.hasAttribute('data-i18n') ||
-                                    node.hasAttribute('data-i18n-placeholder') ||
-                                    node.hasAttribute('data-i18n-title') ||
-                                    node.hasAttribute('data-i18n-aria-label') ||
-                                    node.querySelector('[data-i18n],[data-i18n-placeholder],[data-i18n-title],[data-i18n-aria-label]')
+                                const elem = /** @type {any} */ (node);
+                                if (elem.hasAttribute && (
+                                    elem.hasAttribute('data-i18n') ||
+                                    elem.hasAttribute('data-i18n-placeholder') ||
+                                    elem.hasAttribute('data-i18n-title') ||
+                                    elem.hasAttribute('data-i18n-aria-label') ||
+                                    elem.querySelector('[data-i18n],[data-i18n-placeholder],[data-i18n-title],[data-i18n-aria-label]')
                                 )) {
                                     needsTranslate = true;
                                     break;

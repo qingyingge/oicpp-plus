@@ -715,7 +715,7 @@ class CompilerManager {
 
         const panes = this.compileOutput.querySelectorAll('.compile-pane');
         panes.forEach((p) => {
-            const isActive = p.dataset.pane === target;
+            const isActive = /** @type {any} */ (p).dataset.pane === target;
             p.classList.toggle('active', isActive);
             if (isActive) {
                 p.removeAttribute('aria-hidden');
@@ -740,14 +740,14 @@ class CompilerManager {
         const shouldShowAnalysis = analysisEnabled && this.analysisAvailable;
         const toolbar = this.compileOutput?.querySelector('.compile-output-toolbar');
         if (toolbar) {
-            toolbar.style.display = analysisEnabled ? '' : 'none';
+            (/** @type {any} */ (toolbar)).style.display = analysisEnabled ? '' : 'none';
         }
         const analysisBtn = this.tabButtons.find((btn) => btn.dataset.pane === 'analysis');
         if (analysisBtn) {
             analysisBtn.style.display = shouldShowAnalysis ? '' : 'none';
         }
         if (this.analysisHint) {
-            this.analysisHint.style.display = shouldShowAnalysis ? '' : 'none';
+            (/** @type {any} */ (this.analysisHint)).style.display = shouldShowAnalysis ? '' : 'none';
         }
 
         if (!shouldShowAnalysis && this.activePane === 'analysis') {
@@ -762,10 +762,10 @@ class CompilerManager {
 
     setAnalysisEmptyState(isEmpty) {
         if (this.analysisEmptyState) {
-            this.analysisEmptyState.style.display = isEmpty ? '' : 'none';
+            (/** @type {any} */ (this.analysisEmptyState)).style.display = isEmpty ? '' : 'none';
         }
         if (this.analysisList) {
-            this.analysisList.style.display = isEmpty ? 'none' : 'block';
+            (/** @type {any} */ (this.analysisList)).style.display = isEmpty ? 'none' : 'block';
         }
         this.analysisHasContent = !isEmpty;
         this.analysisAvailable = !isEmpty;

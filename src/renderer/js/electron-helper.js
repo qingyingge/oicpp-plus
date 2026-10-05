@@ -15,7 +15,7 @@
         throw new Error(`Module '${module}' is not available in renderer process`);
     };
 
-    window.require.__electronHelper = true;
+    (/** @type {any} */ (window.require)).__electronHelper = true;
 
     logInfo('Electron Helper: require函数已设置');
 })();

@@ -166,7 +166,7 @@ class Logger {
             if (v instanceof Error) return JSON.stringify(serializeError(v), null, 2);
             if (typeof v === 'string') return v;
             if (typeof v === 'object' && v && v.error instanceof Error && Object.keys(v).length === 1) {
-                return redactString(JSON.stringify({ error: serializeError(v.error) }, null, 2));
+                return JSON.stringify({ error: serializeError(v.error) }, null, 2);
             }
             try { return JSON.stringify(v, redactingReplacer, 2); } catch (_) { return String(v); }
         };
