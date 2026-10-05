@@ -28,4 +28,6 @@ interface Window {
   __electronRequireAvailable: boolean;
   process: any;
   fontDetector: any;
+  // 渲染层各 manager 单例（window.X = ... 在各自文件里赋值）
+  [key: string]: any;
 }
