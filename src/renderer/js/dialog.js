@@ -30,8 +30,8 @@ class DialogManager {
     }
 
     resetDialogState() {
-        const overlay = /** @type {any} */ (document.getElementById('dialog-overlay'));
-        const container = /** @type {any} */ (document.getElementById('dialog-container'));
+        const overlay = (document.getElementById('dialog-overlay'));
+        const container = (document.getElementById('dialog-container'));
         if (overlay) {
             overlay.dataset.closeOnBackdrop = '0';
         }
@@ -63,8 +63,8 @@ class DialogManager {
     showInputDialog(title, defaultValue = '', placeholder = '', options = {}) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
-            const overlay = /** @type {any} */ (document.getElementById('dialog-overlay'));
-            const container = /** @type {any} */ (document.getElementById('dialog-container'));
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
 
             container.innerHTML = `
                 <div class="dialog-header">
@@ -82,7 +82,7 @@ class DialogManager {
 
             overlay.style.display = 'flex';
 
-            const input = /** @type {any} */ (document.getElementById('dialog-input'));
+            const input = (document.getElementById('dialog-input'));
 
             setTimeout(() => {
                 if (input) {
@@ -129,8 +129,8 @@ class DialogManager {
     showConfirmDialog(title, message) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
-            const overlay = /** @type {any} */ (document.getElementById('dialog-overlay'));
-            const container = /** @type {any} */ (document.getElementById('dialog-container'));
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
 
             container.innerHTML = `
                 <div class="dialog-header">
@@ -158,8 +158,8 @@ class DialogManager {
     showActionDialog(title, message, actions = []) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
-            const overlay = /** @type {any} */ (document.getElementById('dialog-overlay'));
-            const container = /** @type {any} */ (document.getElementById('dialog-container'));
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
 
             const buttonsHtml = (actions || []).map((action) => {
                 const safeId = this.escapeHtml(String(action.id ?? ''));
@@ -194,8 +194,8 @@ class DialogManager {
         return new Promise((resolve) => {
             this.resetDialogState();
 
-            const overlay = /** @type {any} */ (document.getElementById('dialog-overlay'));
-            const container = /** @type {any} */ (document.getElementById('dialog-container'));
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
             if (!overlay || !container) {
                 resolve(false);
                 return;
@@ -249,8 +249,8 @@ class DialogManager {
         return new Promise((resolve) => {
             this.resetDialogState();
 
-            const overlay = /** @type {any} */ (document.getElementById('dialog-overlay'));
-            const container = /** @type {any} */ (document.getElementById('dialog-container'));
+            const overlay = (document.getElementById('dialog-overlay'));
+            const container = (document.getElementById('dialog-container'));
             if (!overlay || !container) {
                 resolve(false);
                 return;
@@ -302,7 +302,7 @@ class DialogManager {
     confirmDialog() {
         if (!this.currentDialog) return;
 
-        const input = /** @type {any} */ (document.getElementById('dialog-input'));
+        const input = (document.getElementById('dialog-input'));
         const result = input ? input.value : true;
 
         this.currentDialog.resolve(result);
@@ -323,7 +323,7 @@ class DialogManager {
     }
 
     hideDialog() {
-        const overlay = /** @type {any} */ (document.getElementById('dialog-overlay'));
+        const overlay = (document.getElementById('dialog-overlay'));
         const pending = this.currentDialog;
         this.currentDialog = null;
         try {

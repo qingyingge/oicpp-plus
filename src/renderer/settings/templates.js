@@ -36,7 +36,7 @@ class TemplatesSettings {
                 sections.forEach(section => section.classList.remove('active'));
                 
                 const targetId = item.getAttribute('data-target');
-                const targetSection = /** @type {any} */ (document.getElementById(targetId));
+                const targetSection = (document.getElementById(targetId));
                 if (targetSection) {
                     targetSection.classList.add('active');
                 }
@@ -90,28 +90,28 @@ class TemplatesSettings {
         const isMac = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || '');
         const modKey = (e) => (isMac ? e.metaKey : e.ctrlKey);
 
-        const saveBtn = /** @type {any} */ (document.getElementById('save-settings'));
+        const saveBtn = (document.getElementById('save-settings'));
         if (saveBtn) {
             saveBtn.addEventListener('click', () => {
                 this.saveSettings();
             });
         }
         
-        const cancelBtn = /** @type {any} */ (document.getElementById('cancel-settings'));
+        const cancelBtn = (document.getElementById('cancel-settings'));
         if (cancelBtn) {
             cancelBtn.addEventListener('click', () => {
                 this.closeWindow();
             });
         }
         
-        const resetBtn = /** @type {any} */ (document.getElementById('reset-settings'));
+        const resetBtn = (document.getElementById('reset-settings'));
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 this.resetSettings();
             });
         }
         
-        const previewBtn = /** @type {any} */ (document.getElementById('preview-template'));
+        const previewBtn = (document.getElementById('preview-template'));
         if (previewBtn) {
             previewBtn.addEventListener('click', () => {
                 this.showPreview();
@@ -119,27 +119,27 @@ class TemplatesSettings {
         }
 
         // 打开片段添加弹窗
-        const addBtn = /** @type {any} */ (document.getElementById('add-snippet'));
+        const addBtn = (document.getElementById('add-snippet'));
         if (addBtn) {
             addBtn.addEventListener('click', () => this.openSnippetDialog(-1));
         }
 
         // 关闭片段弹窗
-        const closeSnippetDialogBtn = /** @type {any} */ (document.getElementById('close-snippet-dialog'));
+        const closeSnippetDialogBtn = (document.getElementById('close-snippet-dialog'));
         if (closeSnippetDialogBtn) {
             closeSnippetDialogBtn.addEventListener('click', () => {
                 this.closeSnippetDialog();
             });
         }
 
-        const cancelSnippetBtn = /** @type {any} */ (document.getElementById('cancel-snippet-btn'));
+        const cancelSnippetBtn = (document.getElementById('cancel-snippet-btn'));
         if (cancelSnippetBtn) {
             cancelSnippetBtn.addEventListener('click', () => {
                 this.closeSnippetDialog();
             });
         }
 
-        const confirmSnippetBtn = /** @type {any} */ (document.getElementById('confirm-snippet-btn'));
+        const confirmSnippetBtn = (document.getElementById('confirm-snippet-btn'));
         if (confirmSnippetBtn) {
             confirmSnippetBtn.addEventListener('click', () => {
                 this.confirmSnippetDialog();
@@ -147,7 +147,7 @@ class TemplatesSettings {
         }
 
         // 点击弹窗遮罩关闭
-        const snippetDialog = /** @type {any} */ (document.getElementById('snippet-dialog'));
+        const snippetDialog = (document.getElementById('snippet-dialog'));
         if (snippetDialog) {
             snippetDialog.addEventListener('click', (e) => {
                 if (e.target === snippetDialog) {
@@ -157,7 +157,7 @@ class TemplatesSettings {
         }
 
         // 弹窗内 Ctrl/Cmd+Enter 确认
-        const snippetDialogContent = /** @type {any} */ (document.getElementById('snippet-dialog-content'));
+        const snippetDialogContent = (document.getElementById('snippet-dialog-content'));
         if (snippetDialogContent) {
             snippetDialogContent.addEventListener('keydown', (e) => {
                 if (modKey(e) && e.key === 'Enter') {
@@ -167,14 +167,14 @@ class TemplatesSettings {
             });
         }
         
-        const closePreviewBtn = /** @type {any} */ (document.getElementById('close-preview'));
+        const closePreviewBtn = (document.getElementById('close-preview'));
         if (closePreviewBtn) {
             closePreviewBtn.addEventListener('click', () => {
                 this.closePreview();
             });
         }
         
-        const previewDialog = /** @type {any} */ (document.getElementById('preview-dialog'));
+        const previewDialog = (document.getElementById('preview-dialog'));
         if (previewDialog) {
             previewDialog.addEventListener('click', (e) => {
                 if (e.target === previewDialog) {
@@ -183,10 +183,10 @@ class TemplatesSettings {
             });
         }
         
-        const cppTemplateTextarea = /** @type {any} */ (document.getElementById('cpp-template'));
+        const cppTemplateTextarea = (document.getElementById('cpp-template'));
         if (cppTemplateTextarea) {
             cppTemplateTextarea.addEventListener('input', (e) => {
-                this.settings.cppTemplate = /** @type {any} */ (e.target).value;
+                this.settings.cppTemplate = (e.target).value;
                 logInfo('模板内容已更新');
             });
             
@@ -199,12 +199,12 @@ class TemplatesSettings {
                 
                 if (e.key === 'Tab') {
                     e.preventDefault();
-                    const start = /** @type {any} */ (e.target).selectionStart;
-                    const end = /** @type {any} */ (e.target).selectionEnd;
-                    const value = /** @type {any} */ (e.target).value;
+                    const start = (e.target).selectionStart;
+                    const end = (e.target).selectionEnd;
+                    const value = (e.target).value;
                     
-                    /** @type {any} */ (e.target).value = value.substring(0, start) + '    ' + value.substring(end);
-                    /** @type {any} */ (e.target).selectionStart = /** @type {any} */ (e.target).selectionEnd = start + 4;
+                    (e.target).value = value.substring(0, start) + '    ' + value.substring(end);
+                    (e.target).selectionStart = (e.target).selectionEnd = start + 4;
                 }
             });
         }
@@ -264,7 +264,7 @@ class TemplatesSettings {
     updateUI() {
         logInfo('更新UI界面');
         
-        const cppTemplateTextarea = /** @type {any} */ (document.getElementById('cpp-template'));
+        const cppTemplateTextarea = (document.getElementById('cpp-template'));
         if (cppTemplateTextarea) {
             cppTemplateTextarea.value = this.settings.cppTemplate;
             logInfo('模板内容已加载到编辑器');
@@ -278,7 +278,7 @@ class TemplatesSettings {
         try {
             logInfo('保存设置中...');
             
-            const cppTemplateTextarea = /** @type {any} */ (document.getElementById('cpp-template'));
+            const cppTemplateTextarea = (document.getElementById('cpp-template'));
             if (!cppTemplateTextarea) {
                 throw new Error(window.i18n.t('templates.editorNotFound'));
             }
@@ -330,7 +330,7 @@ class TemplatesSettings {
                 this.snippets = [];
                 this.renderSnippets();
                 
-                const cppTemplateTextarea = /** @type {any} */ (document.getElementById('cpp-template'));
+                const cppTemplateTextarea = (document.getElementById('cpp-template'));
                 if (cppTemplateTextarea) {
                     cppTemplateTextarea.value = defaultTemplate;
                 }
@@ -360,12 +360,12 @@ class TemplatesSettings {
 
     // 打开片段添加/编辑弹窗
     openSnippetDialog(editIndex = -1) {
-        const dialog = /** @type {any} */ (document.getElementById('snippet-dialog'));
+        const dialog = (document.getElementById('snippet-dialog'));
         if (!dialog) return;
 
-        const kwEl = /** @type {any} */ (document.getElementById('snippet-dialog-keyword'));
-        const descEl = /** @type {any} */ (document.getElementById('snippet-dialog-desc'));
-        const contentEl = /** @type {any} */ (document.getElementById('snippet-dialog-content'));
+        const kwEl = (document.getElementById('snippet-dialog-keyword'));
+        const descEl = (document.getElementById('snippet-dialog-desc'));
+        const contentEl = (document.getElementById('snippet-dialog-content'));
 
         // 如果是编辑模式，加载已有数据
         if (editIndex >= 0 && editIndex < this.snippets.length) {
@@ -390,14 +390,14 @@ class TemplatesSettings {
     }
 
     updateSnippetDialogLabels(editIndex = null) {
-        const dialog = /** @type {any} */ (document.getElementById('snippet-dialog'));
+        const dialog = (document.getElementById('snippet-dialog'));
         const resolvedEditIndex = editIndex === null && dialog
             ? parseInt(dialog.getAttribute('data-edit-index'), 10)
             : editIndex;
         const isEditing = Number.isFinite(resolvedEditIndex) && resolvedEditIndex >= 0;
 
-        const titleEl = /** @type {any} */ (document.getElementById('snippet-dialog-title'));
-        const confirmBtn = /** @type {any} */ (document.getElementById('confirm-snippet-btn'));
+        const titleEl = (document.getElementById('snippet-dialog-title'));
+        const confirmBtn = (document.getElementById('confirm-snippet-btn'));
         if (titleEl) {
             titleEl.textContent = window.i18n.t(isEditing ? 'templates.snippetDialogEditTitle' : 'templates.snippetDialogTitle');
         }
@@ -407,16 +407,16 @@ class TemplatesSettings {
     }
 
     closeSnippetDialog() {
-        const dialog = /** @type {any} */ (document.getElementById('snippet-dialog'));
+        const dialog = (document.getElementById('snippet-dialog'));
         if (dialog) {
             dialog.style.display = 'none';
         }
     }
 
     confirmSnippetDialog() {
-        const kwEl = /** @type {any} */ (document.getElementById('snippet-dialog-keyword'));
-        const descEl = /** @type {any} */ (document.getElementById('snippet-dialog-desc'));
-        const contentEl = /** @type {any} */ (document.getElementById('snippet-dialog-content'));
+        const kwEl = (document.getElementById('snippet-dialog-keyword'));
+        const descEl = (document.getElementById('snippet-dialog-desc'));
+        const contentEl = (document.getElementById('snippet-dialog-content'));
         const keyword = (kwEl?.value || '').trim();
         const description = (descEl?.value || '').trim() || window.i18n.t('templates.defaultDesc');
         const content = (contentEl?.value || '').trim();
@@ -432,7 +432,7 @@ class TemplatesSettings {
             return;
         }
 
-        const dialog = /** @type {any} */ (document.getElementById('snippet-dialog'));
+        const dialog = (document.getElementById('snippet-dialog'));
         const editIndex = dialog ? parseInt(dialog.getAttribute('data-edit-index'), 10) : -1;
 
         if (Number.isFinite(editIndex) && editIndex >= 0 && editIndex < this.snippets.length) {
@@ -456,7 +456,7 @@ class TemplatesSettings {
     }
 
     renderSnippets() {
-        const list = /** @type {any} */ (document.getElementById('snippets-list'));
+        const list = (document.getElementById('snippets-list'));
         if (!list) return;
 
         if (!this.snippets || this.snippets.length === 0) {
@@ -525,7 +525,7 @@ class TemplatesSettings {
     showPreview() {
         logInfo('显示模板预览');
         
-        const cppTemplateTextarea = /** @type {any} */ (document.getElementById('cpp-template'));
+        const cppTemplateTextarea = (document.getElementById('cpp-template'));
         if (!cppTemplateTextarea) {
             this.showMessage(window.i18n.t('templates.templateNotFound'), 'error');
             return;
@@ -533,12 +533,12 @@ class TemplatesSettings {
         
         const templateContent = cppTemplateTextarea.value || window.i18n.t('templates.templateEmpty');
         
-        const previewContent = /** @type {any} */ (document.getElementById('preview-content'));
+        const previewContent = (document.getElementById('preview-content'));
         if (previewContent) {
             previewContent.textContent = templateContent;
         }
         
-        const previewDialog = /** @type {any} */ (document.getElementById('preview-dialog'));
+        const previewDialog = (document.getElementById('preview-dialog'));
         if (previewDialog) {
             previewDialog.style.display = 'block';
         }
@@ -547,7 +547,7 @@ class TemplatesSettings {
     closePreview() {
         logInfo('关闭模板预览');
         
-        const previewDialog = /** @type {any} */ (document.getElementById('preview-dialog'));
+        const previewDialog = (document.getElementById('preview-dialog'));
         if (previewDialog) {
             previewDialog.style.display = 'none';
         }
@@ -556,7 +556,7 @@ class TemplatesSettings {
     showMessage(message, type = 'info') {
         logInfo(`显示消息: [${type}] ${message}`);
         
-        const existingToast = /** @type {any} */ (document.querySelector('.message-toast'));
+        const existingToast = (document.querySelector('.message-toast'));
         if (existingToast) {
             existingToast.remove();
         }

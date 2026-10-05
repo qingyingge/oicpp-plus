@@ -32,25 +32,25 @@ class SidebarManager {
         const sidebarIcons = document.querySelectorAll('.sidebar-icon');
         logInfo('setupEventListeners: 找到', sidebarIcons.length, '个侧边栏图标');
         sidebarIcons.forEach((icon, index) => {
-            logInfo('绑定事件监听器到图标', index, '面板名:', (/** @type {any} */ (icon)).dataset.panel);
-            (/** @type {any} */ (icon)).tabIndex = 0;
+            logInfo('绑定事件监听器到图标', index, '面板名:', ((icon)).dataset.panel);
+            ((icon)).tabIndex = 0;
             icon.setAttribute('role', 'button');
             icon.addEventListener('click', (e) => {
                 e.preventDefault();
-                (/** @type {any} */ (icon)).focus({ preventScroll: true });
-                const panelName = (/** @type {any} */ (e.currentTarget)).dataset.panel;
+                ((icon)).focus({ preventScroll: true });
+                const panelName = ((e.currentTarget)).dataset.panel;
                 logInfo('图标被点击，面板名:', panelName);
                 this.showPanel(panelName);
             });
             icon.addEventListener('keydown', (e) => {
-                if ((/** @type {any} */ (e)).key !== 'Enter' && (/** @type {any} */ (e)).key !== ' ') return;
+                if (((e)).key !== 'Enter' && ((e)).key !== ' ') return;
                 e.preventDefault();
                 e.stopPropagation();
-                this.showPanel((/** @type {any} */ (icon)).dataset.panel);
+                this.showPanel(((icon)).dataset.panel);
             });
         });
 
-        const sidebarIconsContainer = /** @type {any} */ (document.querySelector('.sidebar-icons'));
+        const sidebarIconsContainer = (document.querySelector('.sidebar-icons'));
         if (sidebarIconsContainer) {
             sidebarIconsContainer.addEventListener('dblclick', (e) => {
                 e.preventDefault();
@@ -63,7 +63,7 @@ class SidebarManager {
 
     setupActiveFileListener() {
         window.addEventListener('oicpp:active-file-changed', (event) => {
-            const filePath = (/** @type {any} */ (event))?.detail?.filePath;
+            const filePath = ((event))?.detail?.filePath;
             const isCloudFile = typeof filePath === 'string' && /^cloud:/i.test(filePath);
             this.updateCloudPanelLocks();
             if (isCloudFile && ['debug', 'samples', 'compare'].includes(this.currentPanel)) {
@@ -85,10 +85,10 @@ class SidebarManager {
     }
 
     setupResizer() {
-        const sidebar = /** @type {any} */ (document.querySelector('.sidebar'));
-        const resizer = /** @type {any} */ (document.querySelector('.sidebar-resizer'));
-        const mainContainer = /** @type {any} */ (document.querySelector('.main-container'));
-        const sidebarPanel = /** @type {any} */ (document.querySelector('.sidebar-panel'));
+        const sidebar = (document.querySelector('.sidebar'));
+        const resizer = (document.querySelector('.sidebar-resizer'));
+        const mainContainer = (document.querySelector('.main-container'));
+        const sidebarPanel = (document.querySelector('.sidebar-panel'));
 
         if (!sidebar || !resizer || !mainContainer || !sidebarPanel) return;
 
@@ -181,8 +181,8 @@ class SidebarManager {
         }
 
         setTimeout(() => {
-            const welcomeContainer = /** @type {any} */ (document.getElementById('welcome-container'));
-            const editorArea = /** @type {any} */ (document.querySelector('.editor-area'));
+            const welcomeContainer = (document.getElementById('welcome-container'));
+            const editorArea = (document.querySelector('.editor-area'));
 
             const isWelcomeVisible = welcomeContainer &&
                 (welcomeContainer.style.display === 'block' ||
@@ -216,7 +216,7 @@ class SidebarManager {
     }
 
     hideForWelcome() {
-        const sidebar = this.sidebar || /** @type {any} */ (document.querySelector('.sidebar'));
+        const sidebar = this.sidebar || (document.querySelector('.sidebar'));
         if (sidebar) {
             if (sidebar.classList.contains('hidden')) return;
             try {
@@ -229,7 +229,7 @@ class SidebarManager {
     }
 
     showForEditor() {
-        const sidebar = this.sidebar || /** @type {any} */ (document.querySelector('.sidebar'));
+        const sidebar = this.sidebar || (document.querySelector('.sidebar'));
         if (sidebar) {
             sidebar.classList.remove('hidden');
             try {
@@ -307,8 +307,8 @@ class SidebarManager {
     }
 
     checkResizeStatus() {
-        const welcomeContainer = /** @type {any} */ (document.getElementById('welcome-container'));
-        const editorArea = /** @type {any} */ (document.querySelector('.editor-area'));
+        const welcomeContainer = (document.getElementById('welcome-container'));
+        const editorArea = (document.querySelector('.editor-area'));
         const isWelcomeVisible = welcomeContainer && welcomeContainer.style.display === 'block';
         const isEditorVisible = editorArea && editorArea.style.display !== 'none';
         const isResizerEnabled = this.resizer && this.resizer.style.display !== 'none';
@@ -436,7 +436,7 @@ class SidebarManager {
         const icons = document.querySelectorAll('.sidebar-icon');
         icons.forEach(icon => {
             icon.classList.remove('active');
-            if ((/** @type {any} */ (icon)).dataset.panel === panelName) {
+            if (((icon)).dataset.panel === panelName) {
                 icon.classList.add('active');
             }
         });
@@ -482,9 +482,9 @@ class SidebarManager {
         fileButtons.forEach((btn, index) => {
             // 新建文件、新建文件夹、批量删除在无工作区时禁用；刷新始终可用
             if (index === 0 || index === 1 || index === 3) {
-                (/** @type {any} */ (btn)).disabled = !hasWorkspace;
-                (/** @type {any} */ (btn)).style.opacity = hasWorkspace ? '1' : '0.5';
-                (/** @type {any} */ (btn)).style.cursor = hasWorkspace ? 'pointer' : 'not-allowed';
+                ((btn)).disabled = !hasWorkspace;
+                ((btn)).style.opacity = hasWorkspace ? '1' : '0.5';
+                ((btn)).style.cursor = hasWorkspace ? 'pointer' : 'not-allowed';
             }
         });
     }
@@ -506,7 +506,7 @@ class SidebarManager {
         const locked = this.isCloudFileActive();
         const lockTargets = ['debug', 'samples', 'compare'];
         lockTargets.forEach(panel => {
-            const icon = /** @type {any} */ (document.querySelector(`.sidebar-icon[data-panel="${panel}"]`));
+            const icon = (document.querySelector(`.sidebar-icon[data-panel="${panel}"]`));
             if (!icon) return;
             if (locked) {
                 icon.classList.add('disabled');
@@ -522,8 +522,8 @@ class SidebarManager {
 
     setCloudPanelVisible(visible) {
         const show = false; // OICPP-Plus: 云服务已禁用（无独立服务，避免依赖原作者服务器）
-        const icon = /** @type {any} */ (document.querySelector('.sidebar-icon.cloud-sync-icon'));
-        const panel = /** @type {any} */ (document.getElementById('cloud-panel'));
+        const icon = (document.querySelector('.sidebar-icon.cloud-sync-icon'));
+        const panel = (document.getElementById('cloud-panel'));
         if (icon) {
             icon.style.display = show ? 'flex' : 'none';
             icon.style.visibility = show ? 'visible' : 'hidden';

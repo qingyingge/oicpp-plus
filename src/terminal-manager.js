@@ -494,7 +494,7 @@ class IntegratedTerminalManager {
         const preflight = this._runShellPreflight(shellPath, [], cwd, env);
         if (!preflight.ok) {
             const err = new Error(t('terminal.preflightFailed', { error: preflight.detail }));
-            (/** @type {any} */ (err)).code = 'SHELL_PREFLIGHT_FAILED';
+            ((err)).code = 'SHELL_PREFLIGHT_FAILED';
             throw err;
         }
 
@@ -571,7 +571,7 @@ class IntegratedTerminalManager {
         if (!this.isAvailable()) {
             const status = this.getStatus();
             const err = new Error(`${status.reason}: ${status.detail}`);
-            (/** @type {any} */ (err)).code = 'TERMINAL_UNAVAILABLE';
+            ((err)).code = 'TERMINAL_UNAVAILABLE';
             throw err;
         }
 
@@ -590,7 +590,7 @@ class IntegratedTerminalManager {
 
         if (shellCandidates.length === 0) {
             const err = new Error(t('terminal.shellUnavailable'));
-            (/** @type {any} */ (err)).code = 'SHELL_UNAVAILABLE';
+            ((err)).code = 'SHELL_UNAVAILABLE';
             throw err;
         }
 
@@ -598,7 +598,7 @@ class IntegratedTerminalManager {
             if (!this._isInteractiveFallbackAvailable()) {
                 const status = this.getStatus();
                 const err = new Error(`${status.reason}: ${status.detail}`);
-                (/** @type {any} */ (err)).code = 'TERMINAL_REQUIRES_PTY';
+                ((err)).code = 'TERMINAL_REQUIRES_PTY';
                 throw err;
             }
             const fallbackErrors = [];
@@ -620,7 +620,7 @@ class IntegratedTerminalManager {
 
             const errorDetail = fallbackErrors.join(' || ') || t('terminal.unknownError');
             const err = new Error(t('terminal.fallbackStartFailed', { error: errorDetail }));
-            (/** @type {any} */ (err)).code = 'PROCESS_FALLBACK_FAILED';
+            ((err)).code = 'PROCESS_FALLBACK_FAILED';
             throw err;
         }
 
@@ -700,7 +700,7 @@ class IntegratedTerminalManager {
                 ptyTrace,
                 fallbackTrace
             }));
-            (/** @type {any} */ (err)).code = 'SHELL_SPAWN_FAILED';
+            ((err)).code = 'SHELL_SPAWN_FAILED';
             throw err;
         }
 

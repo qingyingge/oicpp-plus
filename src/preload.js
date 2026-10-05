@@ -49,7 +49,7 @@ const showToast = (message, type = 'info', durationMs = 1200) => {
         const dur = Number.isFinite(durationMs) ? durationMs : 1200;
 
         const ensure = () => {
-            const existing = /** @type {any} */ (document.querySelector('.message-toast'));
+            const existing = (document.querySelector('.message-toast'));
             if (existing) return existing;
             const div = document.createElement('div');
             div.className = 'message-toast info';
@@ -284,7 +284,7 @@ function ensureMarkdown() {
         const mk = require('@iktakahiro/markdown-it-katex');
         const taskLists = require('markdown-it-task-lists');
         const imageFigures = require('markdown-it-image-figures');
-        const hljs = /** @type {any} */ (require('highlight.js'));
+        const hljs = (require('highlight.js'));
 
         md = new MarkdownIt({
             html: false,

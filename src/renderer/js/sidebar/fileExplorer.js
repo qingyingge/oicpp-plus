@@ -126,7 +126,7 @@ class FileExplorer {
         } catch (error) {
             logWarn('refocusSelectedFile 定位选中项失败', error);
         }
-        const fileTree = /** @type {any} */ (document.querySelector('#file-tree'));
+        const fileTree = (document.querySelector('#file-tree'));
         if (fileTree) {
             fileTree.setAttribute('tabindex', '0');
             fileTree.focus();
@@ -140,7 +140,7 @@ class FileExplorer {
     applyTheme(theme) {
         logInfo('文件管理器应用主题:', theme);
 
-        const fileTree = /** @type {any} */ (document.getElementById('file-tree'));
+        const fileTree = (document.getElementById('file-tree'));
         if (fileTree) {
             fileTree.classList.remove('theme-light', 'theme-dark');
             fileTree.classList.add(`theme-${theme}`);
@@ -154,7 +154,7 @@ class FileExplorer {
             item.setAttribute('data-theme', theme);
         });
 
-        const emptyState = /** @type {any} */ (document.querySelector('.empty-state'));
+        const emptyState = (document.querySelector('.empty-state'));
         if (emptyState) {
             emptyState.classList.remove('theme-light', 'theme-dark');
             emptyState.classList.add(`theme-${theme}`);
@@ -180,7 +180,7 @@ class FileExplorer {
                 activeElement.closest?.('.editor-terminal-container')
             ));
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTypingElement = tag === 'input' || tag === 'textarea' || !!(/** @type {any} */ (activeElement))?.isContentEditable;
+            const isTypingElement = tag === 'input' || tag === 'textarea' || !!((activeElement))?.isContentEditable;
             if (isInEditor || isInTerminal || isTypingElement) {
                 return;
             }
@@ -221,7 +221,7 @@ class FileExplorer {
             }
 
             if (!this.getPrimarySelection()) {
-                const firstItem = /** @type {any} */ (document.querySelector('.file-tree .tree-item'));
+                const firstItem = (document.querySelector('.file-tree .tree-item'));
                 if (firstItem) {
                     const p = firstItem.getAttribute('data-path');
                     const nodeType = firstItem.getAttribute('data-type');
@@ -319,8 +319,8 @@ class FileExplorer {
 
     isFileExplorerFocused() {
         const activeElement = document.activeElement;
-        const filesPanel = /** @type {any} */ (document.querySelector('#files-panel'));
-        const fileTree = /** @type {any} */ (document.querySelector('#file-tree'));
+        const filesPanel = (document.querySelector('#files-panel'));
+        const fileTree = (document.querySelector('#file-tree'));
 
         const isInFilesPanel = activeElement && filesPanel && (
             filesPanel.contains(activeElement) || activeElement === filesPanel
@@ -351,7 +351,7 @@ class FileExplorer {
     }
 
     showEmptyState() {
-        const fileTree = /** @type {any} */ (document.querySelector('.file-tree'));
+        const fileTree = (document.querySelector('.file-tree'));
         if (!fileTree) return;
         this._treeItemsByPath.clear();
         this._clearDragState(fileTree);
@@ -456,7 +456,7 @@ class FileExplorer {
     }
 
     renderFileTree() {
-        const fileTree = /** @type {any} */ (document.querySelector('.file-tree'));
+        const fileTree = (document.querySelector('.file-tree'));
         if (!fileTree) return;
 
         if (!this.hasWorkspace) {
@@ -507,7 +507,7 @@ class FileExplorer {
 
     async _restoreExpandedFolders() {
         if (!this.expandedFolders || this.expandedFolders.size === 0) return;
-        const fileTree = /** @type {any} */ (document.querySelector('.file-tree'));
+        const fileTree = (document.querySelector('.file-tree'));
         if (!fileTree) return;
         const paths = Array.from(this.expandedFolders).sort((a, b) => a.length - b.length);
         for (const path of paths) {
@@ -581,7 +581,7 @@ class FileExplorer {
     applySelectionStyles() {
         try {
             const selectedPaths = new Set(this.selectedFiles.keys());
-            const fileTree = /** @type {any} */ (document.querySelector('.file-tree'));
+            const fileTree = (document.querySelector('.file-tree'));
             if (!fileTree) return;
             fileTree.querySelectorAll('.tree-item').forEach(item => {
                 const isSelected = selectedPaths.has(item.dataset?.path);
@@ -595,7 +595,7 @@ class FileExplorer {
     async refreshFolder(path) {
         try {
             if (!path || !this.expandedFolders.has(path)) return;
-            const fileTree = /** @type {any} */ (document.querySelector('.file-tree'));
+            const fileTree = (document.querySelector('.file-tree'));
             const item = this._queryItemByPath(path, fileTree);
             if (!item) return;
             const files = await this._readDirectory(path);
@@ -669,7 +669,7 @@ class FileExplorer {
         const item = document.createElement('div');
         item.className = 'tree-item';
         item.dataset.path = file.path;
-        (/** @type {any} */ (item)).__oicppFile = file;
+        ((item)).__oicppFile = file;
         this._treeItemsByPath.set(file.path, item);
         if (file.type === 'folder') {
             item.dataset.type = 'folder';
@@ -1340,7 +1340,7 @@ class FileExplorer {
 
             try {
                 const dragData = JSON.parse(e.dataTransfer.getData('text/plain'));
-                const targetItem = /** @type {any} */ (e.target).closest('.tree-item');
+                const targetItem = (e.target).closest('.tree-item');
 
                 let targetPath;
                 if (targetItem) {
@@ -1484,7 +1484,7 @@ class FileExplorer {
         this.selectedFile = this.getPrimarySelection();
 
         if (focus) {
-            const target = item || /** @type {any} */ (document.querySelector('#file-tree'));
+            const target = item || (document.querySelector('#file-tree'));
             if (target) {
                 target.setAttribute('tabindex', '0');
                 target.focus();
@@ -1497,7 +1497,7 @@ class FileExplorer {
 
 
     clearSelection() {
-        const fileTree = /** @type {any} */ (document.querySelector('.file-tree'));
+        const fileTree = (document.querySelector('.file-tree'));
         const selected = fileTree?.querySelectorAll('.tree-item.selected') || [];
         selected.forEach(item => item.classList.remove('selected'));
         this.selectedFiles.clear();
@@ -1664,8 +1664,8 @@ class FileExplorer {
                     window.electronIPC.send('create-file', filePath, defaultContent);
 
                     const handleFileCreated = (event, createdPath, error) => {
-                        if (!(/** @type {any} */ (handleFileCreated))._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
-                            (/** @type {any} */ (handleFileCreated))._handled = true;
+                        if (!((handleFileCreated))._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
+                            ((handleFileCreated))._handled = true;
                             if (error) {
                                 logError('创建文件失败:', error);
                                 this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));

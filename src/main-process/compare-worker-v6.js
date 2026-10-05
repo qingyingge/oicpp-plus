@@ -69,7 +69,7 @@ function outputsEqual(left, right) {
 
 function spawnProcess(exePath, args, cwd) {
     return new Promise((resolve) => {
-        const proc = /** @type {any} */ (spawn(exePath, args || [], {
+        const proc = (spawn(exePath, args || [], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
             detached: process.platform !== 'win32',

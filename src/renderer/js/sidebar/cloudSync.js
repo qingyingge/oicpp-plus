@@ -15,13 +15,13 @@ class CloudSyncPanel {
     }
 
     init() {
-        this.treeEl = /** @type {any} */ (document.getElementById('cloud-tree'));
-        this.summaryEl = /** @type {any} */ (document.getElementById('cloud-summary'));
-        this.remainingEl = /** @type {any} */ (document.getElementById('cloud-remaining'));
-        this.quotaHelpBtn = /** @type {any} */ (document.getElementById('cloud-quota-help-btn'));
-        this.uploadProgressEl = /** @type {any} */ (document.getElementById('cloud-upload-progress'));
-        this.uploadProgressTextEl = /** @type {any} */ (document.getElementById('cloud-upload-progress-text'));
-        this.uploadProgressFillEl = /** @type {any} */ (document.getElementById('cloud-upload-progress-fill'));
+        this.treeEl = (document.getElementById('cloud-tree'));
+        this.summaryEl = (document.getElementById('cloud-summary'));
+        this.remainingEl = (document.getElementById('cloud-remaining'));
+        this.quotaHelpBtn = (document.getElementById('cloud-quota-help-btn'));
+        this.uploadProgressEl = (document.getElementById('cloud-upload-progress'));
+        this.uploadProgressTextEl = (document.getElementById('cloud-upload-progress-text'));
+        this.uploadProgressFillEl = (document.getElementById('cloud-upload-progress-fill'));
         this.bindQuotaHelpAction();
         this.bindHeaderActions();
         this.setupTreeEvents();
@@ -44,7 +44,7 @@ class CloudSyncPanel {
     }
 
     bindHeaderActions() {
-        const panel = /** @type {any} */ (document.getElementById('cloud-panel'));
+        const panel = (document.getElementById('cloud-panel'));
         if (!panel) return;
         panel.querySelectorAll('.icon-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -74,7 +74,7 @@ class CloudSyncPanel {
     setupTreeEvents() {
         if (!this.treeEl) return;
         this.treeEl.addEventListener('click', (e) => {
-            const item = /** @type {any} */ (e.target).closest('.tree-item');
+            const item = (e.target).closest('.tree-item');
             if (!item) return;
             const path = item.dataset.path;
             const type = item.dataset.kind;
@@ -89,7 +89,7 @@ class CloudSyncPanel {
         });
 
         this.treeEl.addEventListener('dblclick', (e) => {
-            const item = /** @type {any} */ (e.target).closest('.tree-item');
+            const item = (e.target).closest('.tree-item');
             if (!item) return;
             const path = item.dataset.path;
             const type = item.dataset.kind;
@@ -106,7 +106,7 @@ class CloudSyncPanel {
         this.treeEl.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const item = /** @type {any} */ (e.target).closest('.tree-item');
+            const item = (e.target).closest('.tree-item');
             if (!item) {
                 this.clearSelection();
                 this.showEmptyAreaContextMenu(e);
@@ -140,7 +140,7 @@ class CloudSyncPanel {
         };
 
         this.treeEl.addEventListener('dragstart', (e) => {
-            const item = /** @type {any} */ (e.target).closest('.tree-item');
+            const item = (e.target).closest('.tree-item');
             if (!item) return;
             const path = item.dataset.path;
             const type = item.dataset.kind;
@@ -153,7 +153,7 @@ class CloudSyncPanel {
         });
 
         this.treeEl.addEventListener('dragend', (e) => {
-            const item = /** @type {any} */ (e.target).closest('.tree-item');
+            const item = (e.target).closest('.tree-item');
             if (item) item.classList.remove('dragging');
             clearDragState();
         });
@@ -161,7 +161,7 @@ class CloudSyncPanel {
         this.treeEl.addEventListener('dragover', (e) => {
             e.preventDefault();
             clearDragState();
-            const item = /** @type {any} */ (e.target).closest('.tree-item');
+            const item = (e.target).closest('.tree-item');
             if (!item) {
                 this.treeEl.classList.add('drag-over-root');
                 return;
@@ -181,7 +181,7 @@ class CloudSyncPanel {
             try { payload = JSON.parse(data); } catch (_) { return; }
             if (!payload?.path || !payload?.type) return;
 
-            const item = /** @type {any} */ (e.target).closest('.tree-item');
+            const item = (e.target).closest('.tree-item');
             let targetFolder = '/';
             if (item && item.dataset.kind === 'folder') {
                 targetFolder = item.dataset.path;
@@ -197,7 +197,7 @@ class CloudSyncPanel {
             if (currentPanel !== 'cloud') return;
             const activeElement = document.activeElement;
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTyping = tag === 'input' || tag === 'textarea' || !!(/** @type {any} */ (activeElement))?.isContentEditable;
+            const isTyping = tag === 'input' || tag === 'textarea' || !!((activeElement))?.isContentEditable;
             if (isTyping) return;
 
             const target = this.getPrimarySelection();

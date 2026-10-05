@@ -29,7 +29,7 @@ class CodeComparer {
     setupActiveFileListener() {
         try {
             window.addEventListener('oicpp:active-file-changed', (e) => {
-                const filePath = (/** @type {any} */ (e))?.detail?.filePath;
+                const filePath = ((e))?.detail?.filePath;
                 if (!filePath || typeof filePath !== 'string') return;
                 if (!this.isSupportedCodeFile(filePath)) return;
                 this.setActiveTaskKey(filePath, { syncTestCodePath: true });
@@ -141,14 +141,14 @@ class CodeComparer {
         task.config.generatorPath = this.generatorPath || '';
         task.config.useTestlib = !!this.useTestlib;
         task.config.spjPath = this.spjPath || '';
-        const freopenInputEl = /** @type {any} */ (document.getElementById('compare-freopen-input-file'));
-        const freopenOutputEl = /** @type {any} */ (document.getElementById('compare-freopen-output-file'));
+        const freopenInputEl = (document.getElementById('compare-freopen-input-file'));
+        const freopenOutputEl = (document.getElementById('compare-freopen-output-file'));
         task.config.freopenInputFile = this.normalizeFreopenFileName(freopenInputEl?.value || this.freopenInputFile || '');
         task.config.freopenOutputFile = this.normalizeFreopenFileName(freopenOutputEl?.value || this.freopenOutputFile || '');
 
-        const compareCountEl = /** @type {any} */ (document.getElementById('compare-count'));
-        const timeLimitEl = /** @type {any} */ (document.getElementById('time-limit'));
-        const threadCountEl = /** @type {any} */ (document.getElementById('compare-threads'));
+        const compareCountEl = (document.getElementById('compare-count'));
+        const timeLimitEl = (document.getElementById('time-limit'));
+        const threadCountEl = (document.getElementById('compare-threads'));
         const compareCount = parseInt(compareCountEl?.value);
         const timeLimit = parseInt(timeLimitEl?.value);
         const threadCount = parseInt(threadCountEl?.value);
@@ -209,8 +209,8 @@ class CodeComparer {
                 const settings = await window.electronAPI.getAllSettings();
                 const hasCompiler = settings && settings.compilerPath;
 
-                const noCompilerMessage = /** @type {any} */ (document.getElementById('no-compiler-message'));
-                const compareFileSection = /** @type {any} */ (document.getElementById('compare-file-section'));
+                const noCompilerMessage = (document.getElementById('no-compiler-message'));
+                const compareFileSection = (document.getElementById('compare-file-section'));
 
                 if (hasCompiler) {
                     noCompilerMessage.style.display = 'none';
@@ -245,9 +245,9 @@ class CodeComparer {
         // 初始态也走一次，避免进度标签在首次对拍前残留 HTML 里的英文字面量
         setTimeout(() => this.updateProgress(0, 0), 0);
 
-        const stdCodeBrowse = /** @type {any} */ (document.getElementById('std-code-browse'));
-        const testCodeBrowse = /** @type {any} */ (document.getElementById('test-code-browse'));
-        const generatorBrowse = /** @type {any} */ (document.getElementById('generator-browse'));
+        const stdCodeBrowse = (document.getElementById('std-code-browse'));
+        const testCodeBrowse = (document.getElementById('test-code-browse'));
+        const generatorBrowse = (document.getElementById('generator-browse'));
 
         if (stdCodeBrowse) {
             stdCodeBrowse.addEventListener('click', () => this.browseStandardCode());
@@ -259,13 +259,13 @@ class CodeComparer {
             generatorBrowse.addEventListener('click', () => this.browseGenerator());
         }
 
-        const startBtn = /** @type {any} */ (document.getElementById('compare-start-btn'));
-        const stopBtn = /** @type {any} */ (document.getElementById('compare-stop-btn'));
-        const resetBtn = /** @type {any} */ (document.getElementById('compare-reset-btn'));
-        const exportBtn = /** @type {any} */ (document.getElementById('export-btn'));
-        const inputExpandBtn = /** @type {any} */ (document.getElementById('input-expand-btn'));
-        const stdOutputExpandBtn = /** @type {any} */ (document.getElementById('std-output-expand-btn'));
-        const testOutputExpandBtn = /** @type {any} */ (document.getElementById('test-output-expand-btn'));
+        const startBtn = (document.getElementById('compare-start-btn'));
+        const stopBtn = (document.getElementById('compare-stop-btn'));
+        const resetBtn = (document.getElementById('compare-reset-btn'));
+        const exportBtn = (document.getElementById('export-btn'));
+        const inputExpandBtn = (document.getElementById('input-expand-btn'));
+        const stdOutputExpandBtn = (document.getElementById('std-output-expand-btn'));
+        const testOutputExpandBtn = (document.getElementById('test-output-expand-btn'));
 
         if (startBtn) {
             startBtn.addEventListener('click', () => this.startComparison());
@@ -289,17 +289,17 @@ class CodeComparer {
             testOutputExpandBtn.addEventListener('click', () => this.toggleErrorOutputExpand('test'));
         }
 
-        const useTestlibCheckbox = /** @type {any} */ (document.getElementById('compare-use-testlib'));
-        const spjBrowseBtn = /** @type {any} */ (document.getElementById('compare-spj-browse'));
-        const compareCountInput = /** @type {any} */ (document.getElementById('compare-count'));
-        const threadCountInput = /** @type {any} */ (document.getElementById('compare-threads'));
-        const timeLimitInput = /** @type {any} */ (document.getElementById('time-limit'));
-        const freopenInputInput = /** @type {any} */ (document.getElementById('compare-freopen-input-file'));
-        const freopenOutputInput = /** @type {any} */ (document.getElementById('compare-freopen-output-file'));
+        const useTestlibCheckbox = (document.getElementById('compare-use-testlib'));
+        const spjBrowseBtn = (document.getElementById('compare-spj-browse'));
+        const compareCountInput = (document.getElementById('compare-count'));
+        const threadCountInput = (document.getElementById('compare-threads'));
+        const timeLimitInput = (document.getElementById('time-limit'));
+        const freopenInputInput = (document.getElementById('compare-freopen-input-file'));
+        const freopenOutputInput = (document.getElementById('compare-freopen-output-file'));
 
         if (useTestlibCheckbox) {
             useTestlibCheckbox.addEventListener('change', (e) => {
-                this.useTestlib = /** @type {any} */ (e.target).checked;
+                this.useTestlib = (e.target).checked;
                 const task = this.getActiveTask();
                 if (task) {
                     task.config.useTestlib = !!this.useTestlib;
@@ -336,8 +336,8 @@ class CodeComparer {
 
         if (freopenInputInput) {
             freopenInputInput.addEventListener('change', (e) => {
-                const normalized = this.normalizeFreopenFileName(/** @type {any} */ (e.target).value);
-                /** @type {any} */ (e.target).value = normalized;
+                const normalized = this.normalizeFreopenFileName((e.target).value);
+                (e.target).value = normalized;
                 this.freopenInputFile = normalized;
                 const task = this.getActiveTask();
                 if (!task) return;
@@ -347,8 +347,8 @@ class CodeComparer {
 
         if (freopenOutputInput) {
             freopenOutputInput.addEventListener('change', (e) => {
-                const normalized = this.normalizeFreopenFileName(/** @type {any} */ (e.target).value);
-                /** @type {any} */ (e.target).value = normalized;
+                const normalized = this.normalizeFreopenFileName((e.target).value);
+                (e.target).value = normalized;
                 this.freopenOutputFile = normalized;
                 const task = this.getActiveTask();
                 if (!task) return;
@@ -409,8 +409,8 @@ class CodeComparer {
                     spjPath: this.spjPath,
                     freopenInputFile: this.freopenInputFile,
                     freopenOutputFile: this.freopenOutputFile,
-                    compareCount: parseInt(/** @type {any} */ (document.getElementById('compare-count'))?.value) || 100,
-                    timeLimit: parseInt(/** @type {any} */ (document.getElementById('time-limit'))?.value) || 1000
+                    compareCount: parseInt((document.getElementById('compare-count'))?.value) || 100,
+                    timeLimit: parseInt((document.getElementById('time-limit'))?.value) || 1000
                 };
 
                 this.setActiveTaskKey(this.testCodePath, { syncTestCodePath: true });
@@ -465,7 +465,7 @@ class CodeComparer {
 
             if (!result.canceled && result.filePaths.length > 0) {
                 this.spjPath = result.filePaths[0];
-                const spjPathInput = /** @type {any} */ (document.getElementById('compare-spj-path'));
+                const spjPathInput = (document.getElementById('compare-spj-path'));
                 if (spjPathInput) {
                     spjPathInput.value = this.spjPath;
                 }
@@ -481,7 +481,7 @@ class CodeComparer {
     }
 
     updateFilePath(elementId, filePath) {
-        const element = /** @type {any} */ (document.getElementById(elementId));
+        const element = (document.getElementById(elementId));
         if (element) {
             const value = (filePath && String(filePath).trim()) ? String(filePath) : (window.i18n.t('compare.noFileSelected'));
             element.textContent = value;
@@ -500,31 +500,31 @@ class CodeComparer {
         this.updateFilePath('test-code-path', task.config.testCodePath || '');
         this.updateFilePath('generator-path', task.config.generatorPath || '');
 
-        const compareCountInput = /** @type {any} */ (document.getElementById('compare-count'));
+        const compareCountInput = (document.getElementById('compare-count'));
         if (compareCountInput && Number.isFinite(task.config.compareCount)) {
             compareCountInput.value = String(task.config.compareCount);
         }
-        const threadCountInput = /** @type {any} */ (document.getElementById('compare-threads'));
+        const threadCountInput = (document.getElementById('compare-threads'));
         if (threadCountInput && Number.isFinite(task.config.threadCount)) {
             threadCountInput.value = String(task.config.threadCount);
         }
-        const timeLimitInput = /** @type {any} */ (document.getElementById('time-limit'));
+        const timeLimitInput = (document.getElementById('time-limit'));
         if (timeLimitInput && Number.isFinite(task.config.timeLimit)) {
             timeLimitInput.value = String(task.config.timeLimit);
         }
-        const useTestlibCheckbox = /** @type {any} */ (document.getElementById('compare-use-testlib'));
+        const useTestlibCheckbox = (document.getElementById('compare-use-testlib'));
         if (useTestlibCheckbox) {
             useTestlibCheckbox.checked = !!task.config.useTestlib;
         }
-        const spjPathInput = /** @type {any} */ (document.getElementById('compare-spj-path'));
+        const spjPathInput = (document.getElementById('compare-spj-path'));
         if (spjPathInput) {
             spjPathInput.value = task.config.spjPath || '';
         }
-        const freopenInputInput = /** @type {any} */ (document.getElementById('compare-freopen-input-file'));
+        const freopenInputInput = (document.getElementById('compare-freopen-input-file'));
         if (freopenInputInput) {
             freopenInputInput.value = task.config.freopenInputFile || '';
         }
-        const freopenOutputInput = /** @type {any} */ (document.getElementById('compare-freopen-output-file'));
+        const freopenOutputInput = (document.getElementById('compare-freopen-output-file'));
         if (freopenOutputInput) {
             freopenOutputInput.value = task.config.freopenOutputFile || '';
         }
@@ -591,17 +591,17 @@ class CodeComparer {
             return;
         }
 
-        const compareCountEl = /** @type {any} */ (document.getElementById('compare-count'));
+        const compareCountEl = (document.getElementById('compare-count'));
         let compareCount = parseInt(compareCountEl?.value) || task.config.compareCount || 100;
         compareCount = Math.max(1, Math.min(compareCount, MAX_COMPARE_COUNT));
         if (compareCountEl && Number(compareCountEl.value) !== compareCount) {
             compareCountEl.value = String(compareCount);
         }
-        const timeLimit = parseInt(/** @type {any} */ (document.getElementById('time-limit')).value);
+        const timeLimit = parseInt((document.getElementById('time-limit')).value);
         const effectiveTimeLimit = Number.isFinite(timeLimit) ? timeLimit : (task.config.timeLimit || 1000);
         const { cpuThreads, maxParallel } = await this.getMaxParallelThreads();
         this.maxParallelThreads = maxParallel;
-        const requestedThreadsRaw = parseInt(/** @type {any} */ (document.getElementById('compare-threads'))?.value);
+        const requestedThreadsRaw = parseInt((document.getElementById('compare-threads'))?.value);
         const requestedThreads = Number.isFinite(requestedThreadsRaw) ? Math.max(1, requestedThreadsRaw) : 1;
 
         task.config.compareCount = compareCount;
@@ -1432,8 +1432,8 @@ class CodeComparer {
         try {
             const { cpuThreads, maxParallel } = await this.getMaxParallelThreads();
             this.maxParallelThreads = maxParallel;
-            const input = /** @type {any} */ (document.getElementById('compare-threads'));
-            const hint = /** @type {any} */ (document.getElementById('compare-threads-hint'));
+            const input = (document.getElementById('compare-threads'));
+            const hint = (document.getElementById('compare-threads-hint'));
             if (input) {
                 input.max = String(maxParallel);
                 const current = parseInt(input.value);
@@ -1479,15 +1479,15 @@ class CodeComparer {
         task.state.errorResult = null;
         task.state.warningMessage = null;
         task.state.mode = 'idle';
-        const progressFill = /** @type {any} */ (document.getElementById('progress-fill'));
+        const progressFill = (document.getElementById('progress-fill'));
         if (progressFill) progressFill.style.width = '0%';
         this.renderTask(task);
     }
 
     updateUIForTask(task) {
-        const startBtn = /** @type {any} */ (document.getElementById('compare-start-btn'));
-        const stopBtn = /** @type {any} */ (document.getElementById('compare-stop-btn'));
-        const resetBtn = /** @type {any} */ (document.getElementById('compare-reset-btn'));
+        const startBtn = (document.getElementById('compare-start-btn'));
+        const stopBtn = (document.getElementById('compare-stop-btn'));
+        const resetBtn = (document.getElementById('compare-reset-btn'));
 
         const running = !!task?.state?.isRunning && (task?.state?.mode === 'running' || task?.state?.mode === 'stopping');
 
@@ -1497,7 +1497,7 @@ class CodeComparer {
     }
 
     updateStatusText(text) {
-        const statusText = /** @type {any} */ (document.getElementById('status-text'));
+        const statusText = (document.getElementById('status-text'));
         if (statusText) statusText.textContent = text;
     }
 
@@ -1512,8 +1512,8 @@ class CodeComparer {
     // 只表示「已完成 N 组 / 共 M 组」，不表示当前正在跑第几组，
     // 避免与状态栏的「第 i 组测试」（由 nextIndex 分配）语义混淆、并行时互相矛盾
     updateProgress(completedTests, totalTests) {
-        const progressLabel = /** @type {any} */ (document.getElementById('current-test'));
-        const progressFill = /** @type {any} */ (document.getElementById('progress-fill'));
+        const progressLabel = (document.getElementById('current-test'));
+        const progressFill = (document.getElementById('progress-fill'));
 
         if (progressLabel) {
             progressLabel.textContent = window.i18n.t('compare.progressGroup', { current: completedTests, total: totalTests });
@@ -1532,7 +1532,7 @@ class CodeComparer {
     }
 
     showStatus() {
-        const statusSection = /** @type {any} */ (document.getElementById('compare-status'));
+        const statusSection = (document.getElementById('compare-status'));
         if (statusSection) {
             statusSection.style.display = 'block';
         }
@@ -1541,24 +1541,24 @@ class CodeComparer {
     }
 
     hideStatus() {
-        const statusSection = /** @type {any} */ (document.getElementById('compare-status'));
+        const statusSection = (document.getElementById('compare-status'));
         if (statusSection) {
             statusSection.style.display = 'none';
         }
     }
 
     showError(errorResult) {
-        const errorSection = /** @type {any} */ (document.getElementById('compare-result'));
-        const errorTitle = /** @type {any} */ (document.getElementById('error-title'));
-        const errorTestNum = /** @type {any} */ (document.getElementById('error-test-num'));
-        const inputDiff = /** @type {any} */ (document.getElementById('input-diff'));
-        const stdOutputDiff = /** @type {any} */ (document.getElementById('std-output-diff'));
-        const testOutputDiff = /** @type {any} */ (document.getElementById('test-output-diff'));
-        const stdOutputDiffLabel = /** @type {any} */ (document.getElementById('std-output-diff-label'));
-        const testOutputDiffLabel = /** @type {any} */ (document.getElementById('test-output-diff-label'));
-        const inputExpandBtn = /** @type {any} */ (document.getElementById('input-expand-btn'));
-        const stdOutputExpandBtn = /** @type {any} */ (document.getElementById('std-output-expand-btn'));
-        const testOutputExpandBtn = /** @type {any} */ (document.getElementById('test-output-expand-btn'));
+        const errorSection = (document.getElementById('compare-result'));
+        const errorTitle = (document.getElementById('error-title'));
+        const errorTestNum = (document.getElementById('error-test-num'));
+        const inputDiff = (document.getElementById('input-diff'));
+        const stdOutputDiff = (document.getElementById('std-output-diff'));
+        const testOutputDiff = (document.getElementById('test-output-diff'));
+        const stdOutputDiffLabel = (document.getElementById('std-output-diff-label'));
+        const testOutputDiffLabel = (document.getElementById('test-output-diff-label'));
+        const inputExpandBtn = (document.getElementById('input-expand-btn'));
+        const stdOutputExpandBtn = (document.getElementById('std-output-expand-btn'));
+        const testOutputExpandBtn = (document.getElementById('test-output-expand-btn'));
 
         this.updateErrorOutputExpandButton(inputExpandBtn, errorResult, 'input');
         this.updateErrorOutputExpandButton(stdOutputExpandBtn, errorResult, 'std');
@@ -1803,7 +1803,7 @@ class CodeComparer {
     }
 
     hideError() {
-        const errorSection = /** @type {any} */ (document.getElementById('compare-result'));
+        const errorSection = (document.getElementById('compare-result'));
         if (errorSection) {
             errorSection.style.display = 'none';
         }
@@ -1818,8 +1818,8 @@ class CodeComparer {
     }
 
     showComplete(completedCount, warningMessage = null, stopped = false) {
-        const completeSection = /** @type {any} */ (document.getElementById('compare-complete'));
-        const completedTests = /** @type {any} */ (document.getElementById('completed-tests'));
+        const completeSection = (document.getElementById('compare-complete'));
+        const completedTests = (document.getElementById('completed-tests'));
         const completeInfo = completeSection?.querySelector('.complete-info span');
 
         if (completeSection) {
@@ -1843,7 +1843,7 @@ class CodeComparer {
     }
 
     hideComplete() {
-        const completeSection = /** @type {any} */ (document.getElementById('compare-complete'));
+        const completeSection = (document.getElementById('compare-complete'));
         if (completeSection) {
             completeSection.style.display = 'none';
         }

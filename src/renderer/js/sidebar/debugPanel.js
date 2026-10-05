@@ -20,7 +20,7 @@ class DebugPanel {
     }
 
     _mount() {
-        const host = /** @type {any} */ (document.querySelector('#debug-panel .debug-content'));
+        const host = (document.querySelector('#debug-panel .debug-content'));
         if (!host) return;
         host.innerHTML = '';
         const wrap = document.createElement('div');
@@ -108,8 +108,8 @@ class DebugPanel {
             el.addEventListener('click', () => {
                 const arrow = el.querySelector('.expand-arrow');
                 const content = el.nextElementSibling;
-                const hidden = (/** @type {any} */ (content)).style.display === 'none';
-                (/** @type {any} */ (content)).style.display = hidden ? 'block' : 'none';
+                const hidden = ((content)).style.display === 'none';
+                ((content)).style.display = hidden ? 'block' : 'none';
                 arrow.textContent = hidden ? '▼' : '▶';
             });
         });
@@ -139,13 +139,13 @@ class DebugPanel {
 
         if (this.root) {
             this.root.addEventListener('click', (ev) => {
-                const toggleBtn = /** @type {any} */ (ev.target).closest('.expand-toggle-btn');
+                const toggleBtn = (ev.target).closest('.expand-toggle-btn');
                 if (toggleBtn && this.root.contains(toggleBtn)) {
                     this._handleToggleButtonClick(toggleBtn, ev);
                     return;
                 }
 
-                const removeBtn = /** @type {any} */ (ev.target).closest('.remove-watch-btn');
+                const removeBtn = (ev.target).closest('.remove-watch-btn');
                 if (removeBtn && this.root.contains(removeBtn)) {
                     this._handleRemoveWatchClick(removeBtn, ev);
                     return;
@@ -248,7 +248,7 @@ class DebugPanel {
     _setToolbarEnabled(enabled) {
         if (!this.root) return;
         ['#dbg-continue', '#dbg-step-over', '#dbg-step-into', '#dbg-step-out', '#dbg-stop', '#dbg-add-watch', '#dbg-start']
-            .forEach(sel => { const el = this.root.querySelector(sel); if (el) (/** @type {any} */ (el)).disabled = !enabled; });
+            .forEach(sel => { const el = this.root.querySelector(sel); if (el) ((el)).disabled = !enabled; });
     }
 
     _handleVariableExpanded(payload) {
@@ -350,7 +350,7 @@ class DebugPanel {
         container.appendChild(frag);
     }
 
-    _renderVariableNode({ scope, rootName, data = /** @type {any} */ ({}), path = [], isRoot = false }) {
+    _renderVariableNode({ scope, rootName, data = ({}), path = [], isRoot = false }) {
         scope = this._normalizeScope(scope);
         const nodeKey = this._makeNodeKey(scope, rootName, path);
         const item = document.createElement('div');
@@ -366,7 +366,7 @@ class DebugPanel {
         const header = document.createElement('div');
         header.className = 'variable-header';
         item.appendChild(header);
-        (/** @type {any} */ (item)).__variableData = data;
+        ((item)).__variableData = data;
 
         const hasChildren = Array.isArray(data?.children) && data.children.length > 0;
         const numericCount = Number(data?.elementCount);

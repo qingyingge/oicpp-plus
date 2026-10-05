@@ -13,7 +13,7 @@ const CANCELLED_CODE = 'DOWNLOAD_CANCELLED';
 const RANGE_UNSUPPORTED_CODE = 'RANGE_UNSUPPORTED';
 const cancelledError = () => {
     const err = new Error(t('downloader.cancelled'));
-    (/** @type {any} */ (err)).code = CANCELLED_CODE;
+    ((err)).code = CANCELLED_CODE;
     return err;
 };
 const isCancelledError = (error) => error?.code === CANCELLED_CODE;
@@ -22,7 +22,7 @@ function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const isHttps = urlObj.protocol === 'https:';
-        const client = /** @type {any} */ (isHttps ? https : http);
+        const client = (isHttps ? https : http);
 
         const requestOptions = {
             hostname: urlObj.hostname,
@@ -146,7 +146,7 @@ class MultiThreadDownloader {
                     const err = new Error(t('downloader.chunkNotPartial', { index: chunkIndex, status: response.status }));
                     // 标记为「Range 不可用」，供 download() 识别后降级到单线程，
                     // 而不是直接让整次下载失败
-                    (/** @type {any} */ (err)).code = RANGE_UNSUPPORTED_CODE;
+                    ((err)).code = RANGE_UNSUPPORTED_CODE;
                     throw err;
                 }
 
@@ -536,7 +536,7 @@ class MultiThreadDownloader {
         }
         if (actual !== expectedSize) {
             const error = new Error(t('downloader.incompleteSize', { actual, expected: expectedSize }));
-            (/** @type {any} */ (error)).code = 'SIZE_MISMATCH';
+            ((error)).code = 'SIZE_MISMATCH';
             throw error;
         }
     }
@@ -550,7 +550,7 @@ class MultiThreadDownloader {
             const ok = await this.verifyFile(outputFile, expectedMd5);
             if (ok === false) {
                 const error = new Error(t('downloader.failed', { message: 'MD5 mismatch' }));
-                (/** @type {any} */ (error)).code = 'MD5_MISMATCH';
+                ((error)).code = 'MD5_MISMATCH';
                 throw error;
             }
         }

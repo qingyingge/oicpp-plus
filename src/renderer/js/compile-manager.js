@@ -44,7 +44,7 @@ class CompilerManager {
     }
 
     createCompileOutputWindow() {
-        let existingWindow = /** @type {any} */ (document.querySelector('.compile-output-window'));
+        let existingWindow = (document.querySelector('.compile-output-window'));
         if (existingWindow) {
             existingWindow.remove();
         }
@@ -89,7 +89,7 @@ class CompilerManager {
             <div class="compile-output-resizer" data-i18n-title="panel.dragResize" title="拖拽调整高度"></div>
         `;
 
-        const editorContainer = /** @type {any} */ (document.querySelector('.editor-container'));
+        const editorContainer = (document.querySelector('.editor-container'));
         if (editorContainer) {
             editorContainer.appendChild(this.compileOutput);
         } else {
@@ -715,7 +715,7 @@ class CompilerManager {
 
         const panes = this.compileOutput.querySelectorAll('.compile-pane');
         panes.forEach((p) => {
-            const isActive = /** @type {any} */ (p).dataset.pane === target;
+            const isActive = (p).dataset.pane === target;
             p.classList.toggle('active', isActive);
             if (isActive) {
                 p.removeAttribute('aria-hidden');
@@ -740,14 +740,14 @@ class CompilerManager {
         const shouldShowAnalysis = analysisEnabled && this.analysisAvailable;
         const toolbar = this.compileOutput?.querySelector('.compile-output-toolbar');
         if (toolbar) {
-            (/** @type {any} */ (toolbar)).style.display = analysisEnabled ? '' : 'none';
+            ((toolbar)).style.display = analysisEnabled ? '' : 'none';
         }
         const analysisBtn = this.tabButtons.find((btn) => btn.dataset.pane === 'analysis');
         if (analysisBtn) {
             analysisBtn.style.display = shouldShowAnalysis ? '' : 'none';
         }
         if (this.analysisHint) {
-            (/** @type {any} */ (this.analysisHint)).style.display = shouldShowAnalysis ? '' : 'none';
+            ((this.analysisHint)).style.display = shouldShowAnalysis ? '' : 'none';
         }
 
         if (!shouldShowAnalysis && this.activePane === 'analysis') {
@@ -762,10 +762,10 @@ class CompilerManager {
 
     setAnalysisEmptyState(isEmpty) {
         if (this.analysisEmptyState) {
-            (/** @type {any} */ (this.analysisEmptyState)).style.display = isEmpty ? '' : 'none';
+            ((this.analysisEmptyState)).style.display = isEmpty ? '' : 'none';
         }
         if (this.analysisList) {
-            (/** @type {any} */ (this.analysisList)).style.display = isEmpty ? 'none' : 'block';
+            ((this.analysisList)).style.display = isEmpty ? 'none' : 'block';
         }
         this.analysisHasContent = !isEmpty;
         this.analysisAvailable = !isEmpty;

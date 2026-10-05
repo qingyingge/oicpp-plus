@@ -20,9 +20,9 @@ i18next.init({
 
 const instance = {
     /** @type {(key: string, params?: any) => string} */
-    t: (key, params) => /** @type {any} */ (i18next).t(key, params),
-    getCurrentLanguage: () => /** @type {any} */ (i18next).language,
-    setLanguage: (lang) => /** @type {any} */ (i18next).changeLanguage(lang),
+    t: (key, params) => (i18next).t(key, params),
+    getCurrentLanguage: () => (i18next).language,
+    setLanguage: (lang) => (i18next).changeLanguage(lang),
     getAvailableLanguages: () => [
         { code: 'zh-cn', name: '中文（简体）', nameEn: 'Chinese (Simplified)' },
         { code: 'en', name: 'English', nameEn: 'English' }
