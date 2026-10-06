@@ -1,6 +1,36 @@
 const MAX_PERSISTED_OUTPUT_BYTES = 1024 * 1024;
 const MAX_RUNTIME_OUTPUT_CHARS = 64 * 1024;
 
+const resizeBoundResizers = new WeakSet();
+const elButton = (id) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLButtonElement ? el : null;
+};
+const elInput = (id) => {
+    const el = document.getElementById(id);
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el;
+    return null;
+};
+const stCheckbox = (id) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLInputElement && el.type === 'checkbox' ? el : null;
+};
+const htmlOf = (el) => (el instanceof HTMLElement ? el : null);
+const toTextArea = (el) => (el instanceof HTMLTextAreaElement ? el : null);
+const stEvtValue = (e) => {
+    const target = e && e.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return target.value;
+    return '';
+};
+const setEvtValue = (e, v) => {
+    const target = e && e.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) target.value = v;
+};
+const evtChecked = (e) => {
+    const target = e && e.target;
+    return target instanceof HTMLInputElement ? target.checked : false;
+};
+
 class SampleTester {
     constructor() {
         this.samples = [];
@@ -301,14 +331,14 @@ class SampleTester {
         const globalUseTestlib = (document.getElementById('global-use-testlib'));
         if (globalUseTestlib) {
             globalUseTestlib.addEventListener('change', (e) => {
-                this.updateGlobalSetting('useTestlib', (e.target).checked);
+                this.updateGlobalSetting('useTestlib', evtChecked(e));
             });
         }
 
         const globalUseInteractive = (document.getElementById('global-use-interactive'));
         if (globalUseInteractive) {
             globalUseInteractive.addEventListener('change', (e) => {
-                this.updateGlobalSetting('useInteractive', (e.target).checked);
+                this.updateGlobalSetting('useInteractive', evtChecked(e));
                 this.updateGlobalSettingsUI();
             });
         }
@@ -330,15 +360,15 @@ class SampleTester {
         const globalSpjPath = (document.getElementById('global-spj-path'));
         if (globalSpjPath) {
             globalSpjPath.addEventListener('change', (e) => {
-                this.updateGlobalSetting('spjPath', (e.target).value);
+                this.updateGlobalSetting('spjPath', stEvtValue(e));
             });
         }
 
         const globalFreopenInputFile = (document.getElementById('global-freopen-input-file'));
         if (globalFreopenInputFile) {
             globalFreopenInputFile.addEventListener('change', (e) => {
-                const normalized = this.normalizeFreopenFileName((e.target).value);
-                (e.target).value = normalized;
+                const normalized = this.normalizeFreopenFileName(stEvtValue(e));
+                setEvtValue(e, normalized);
                 this.updateGlobalSetting('freopenInputFile', normalized);
             });
         }
@@ -346,8 +376,8 @@ class SampleTester {
         const globalFreopenOutputFile = (document.getElementById('global-freopen-output-file'));
         if (globalFreopenOutputFile) {
             globalFreopenOutputFile.addEventListener('change', (e) => {
-                const normalized = this.normalizeFreopenFileName((e.target).value);
-                (e.target).value = normalized;
+                const normalized = this.normalizeFreopenFileName(stEvtValue(e));
+                setEvtValue(e, normalized);
                 this.updateGlobalSetting('freopenOutputFile', normalized);
             });
         }
@@ -355,8 +385,8 @@ class SampleTester {
         const globalTimeLimit = (document.getElementById('global-time-limit'));
         if (globalTimeLimit) {
             globalTimeLimit.addEventListener('change', (e) => {
-                const parsed = this.sanitizeTimeLimit((e.target).value, this.globalSettings.defaultTimeLimit);
-                (e.target).value = parsed;
+                const parsed = this.sanitizeTimeLimit(stEvtValue(e), this.globalSettings.defaultTimeLimit);
+                setEvtValue(e, parsed);
                 this.updateGlobalSetting('defaultTimeLimit', parsed);
             });
         }
@@ -364,8 +394,8 @@ class SampleTester {
         const globalMemoryLimit = (document.getElementById('global-memory-limit'));
         if (globalMemoryLimit) {
             globalMemoryLimit.addEventListener('change', (e) => {
-                const parsed = this.sanitizeMemoryLimit((e.target).value, this.globalSettings.defaultMemoryLimit);
-                (e.target).value = parsed;
+                const parsed = this.sanitizeMemoryLimit(stEvtValue(e), this.globalSettings.defaultMemoryLimit);
+                setEvtValue(e, parsed);
                 this.updateGlobalSetting('defaultMemoryLimit', parsed);
             });
         }
@@ -394,7 +424,7 @@ class SampleTester {
         const summaryEl = (document.getElementById('samples-summary'));
         if (summaryEl) {
             summaryEl.addEventListener('click', (event) => {
-                const pill = (event.target).closest('.summary-pill[data-status]');
+                const pill = (event.target instanceof Element ? event.target : null)?.closest('.summary-pill[data-status]');
                 if (!pill) return;
                 const status = pill.getAttribute('data-status');
                 this.toggleStatusFilter(status);
@@ -444,8 +474,8 @@ class SampleTester {
     setupGlobalSettingsResizer() {
         const resizer = (document.getElementById('global-settings-resizer'));
         const settings = (document.getElementById('global-settings'));
-        if (!resizer || !settings || resizer.__oicppResizeBound) return;
-        resizer.__oicppResizeBound = true;
+        if (!resizer || !settings || resizeBoundResizers.has(resizer)) return;
+        resizeBoundResizers.add(resizer);
 
         let dragState = null;
         const finishDrag = () => {
@@ -813,8 +843,8 @@ class SampleTester {
         const noFileMessage = (document.getElementById('no-file-message'));
         const noSamplesMessage = (document.getElementById('no-samples-message'));
         const samplesList = (document.getElementById('samples-list'));
-        const addBtn = (document.getElementById('add-sample-btn'));
-        const runAllBtn = (document.getElementById('run-all-samples-btn'));
+        const addBtn = elButton('add-sample-btn');
+        const runAllBtn = elButton('run-all-samples-btn');
         const globalSettings = (document.getElementById('global-settings'));
         const globalSettingsResizer = (document.getElementById('global-settings-resizer'));
 
@@ -965,17 +995,28 @@ class SampleTester {
     applyDynamicTranslations() {
         const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
         document.querySelectorAll('.sample-title').forEach((el) => {
-            const id = el.closest('.sample-group')?.dataset.sampleId || '';
+            const group = el.closest('.sample-group');
+            const id = (group instanceof HTMLElement ? group.dataset.sampleId : '') || '';
             el.textContent = t('tester.testGroup', { i: id }, `Test ${id}`);
         });
         document.querySelectorAll('.sample-run-btn').forEach((el) => {
+            if (!(el instanceof HTMLElement)) return;
             el.textContent = t('tester.run', null, 'Run');
             el.title = t('tester.runSample', null, 'Run Sample');
         });
-        document.querySelectorAll('.sample-delete-btn').forEach((el) => el.title = t('tester.deleteSample', null, 'Delete Sample'));
-        document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => el.textContent = t(el.dataset.i18n, null, el.textContent));
-        document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => el.placeholder = t(el.dataset.i18nPlaceholder, null, el.placeholder));
+        document.querySelectorAll('.sample-delete-btn').forEach((el) => {
+            if (el instanceof HTMLElement) el.title = t('tester.deleteSample', null, 'Delete Sample');
+        });
+        document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => {
+            if (el instanceof HTMLElement) el.textContent = t(el.dataset.i18n, null, el.textContent);
+        });
+        document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+            if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+                el.placeholder = t(el.dataset.i18nPlaceholder, null, el.placeholder);
+            }
+        });
         document.querySelectorAll('.sample-io-group .file-btn').forEach((el) => {
+            if (!(el instanceof HTMLElement)) return;
             const key = el.classList.contains('switch-btn') ? 'tester.manualInput' : 'tester.readFromFile';
             el.textContent = t(key, null, el.textContent.trim());
             el.title = t(key, null, el.title);
@@ -1729,6 +1770,7 @@ class SampleTester {
         const expandedElements = document.querySelectorAll('.sample-group.expanded');
         const ids = [];
         expandedElements.forEach((element) => {
+            if (!(element instanceof HTMLElement)) return;
             const sampleId = parseInt(element.dataset.sampleId, 10);
             if (Number.isFinite(sampleId)) {
                 ids.push(sampleId);
@@ -2020,7 +2062,7 @@ class SampleTester {
         const sample = this.samples.find(s => s.id === id);
         if (!sample) return;
 
-        const button = (document.getElementById(`run-btn-${id}`));
+        const button = elButton(`run-btn-${id}`);
         if (!button || button.disabled) return;
 
         await this.autoSaveCurrentFile();
@@ -2075,14 +2117,14 @@ class SampleTester {
 
         await this.autoSaveCurrentFile();
 
-        const runAllBtn = (document.getElementById('run-all-samples-btn'));
+        const runAllBtn = elButton('run-all-samples-btn');
         if (runAllBtn) {
             runAllBtn.disabled = true;
             runAllBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" style="animation: spin 1s linear infinite;"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.416" stroke-dashoffset="31.416" stroke-linecap="round"/></svg>';
         }
 
         runSamples.forEach(sample => {
-            const button = (document.getElementById(`run-btn-${sample.id}`));
+            const button = elButton(`run-btn-${sample.id}`);
             if (button) {
                 button.disabled = true;
                 button.classList.add('running');
@@ -2263,7 +2305,7 @@ class SampleTester {
             }
 
             runSamples.forEach(sample => {
-                const button = (document.getElementById(`run-btn-${sample.id}`));
+                const button = elButton(`run-btn-${sample.id}`);
                 if (button) {
                     button.disabled = false;
                     button.textContent = window.i18n.t('tester.run');
@@ -3084,15 +3126,17 @@ class SampleTester {
     }
 
     updateSampleResult(id, result, sample = null) {
-        const stderrTextarea = (document.getElementById(`stderr-${id}`));
+        const stderrTextarea = toTextArea(document.getElementById(`stderr-${id}`));
         if (stderrTextarea) {
             stderrTextarea.value = result?.stderr || '';
-            stderrTextarea.closest('.stderr-output-group').style.display = result?.stderr ? '' : 'none';
+            const stderrGroup = stderrTextarea.closest('.stderr-output-group');
+            if (stderrGroup instanceof HTMLElement) stderrGroup.style.display = result?.stderr ? '' : 'none';
         }
-        const spjOutputTextarea = (document.getElementById(`spj-output-${id}`));
+        const spjOutputTextarea = toTextArea(document.getElementById(`spj-output-${id}`));
         if (spjOutputTextarea) {
             spjOutputTextarea.value = result?.spjOutput || '';
-            spjOutputTextarea.closest('.spj-output-group').style.display = result?.spjOutput ? '' : 'none';
+            const spjGroup = spjOutputTextarea.closest('.spj-output-group');
+            if (spjGroup instanceof HTMLElement) spjGroup.style.display = result?.spjOutput ? '' : 'none';
         }
         const element = (document.querySelector(`[data-sample-id="${id}"]`));
         if (!element) return;
@@ -3110,9 +3154,9 @@ class SampleTester {
         statusContainer.innerHTML = statusBadge;
 
         const outputContainer = element.querySelector('.program-output-container');
-        const outputTextarea = element.querySelector('.program-output');
-        const diffInfo = element.querySelector('.diff-info');
-        const expandBtn = element.querySelector('.expand-output-btn');
+        const outputTextarea = toTextArea(element.querySelector('.program-output'));
+        const diffInfo = htmlOf(element.querySelector('.diff-info'));
+        const expandBtn = htmlOf(element.querySelector('.expand-output-btn'));
         const truncated = this.isOutputTruncated(result);
         const isExpanded = !!result.outputExpanded;
 
@@ -3151,7 +3195,7 @@ class SampleTester {
 
                     outputTextarea.style.display = 'none';
 
-                    let highlightDiv = outputContainer.querySelector('.highlighted-output');
+                    let highlightDiv = htmlOf(outputContainer.querySelector('.highlighted-output'));
                     if (!highlightDiv) {
                         highlightDiv = document.createElement('div');
                         highlightDiv.className = 'highlighted-output';
@@ -3168,7 +3212,7 @@ class SampleTester {
                     diffInfo.style.display = 'none';
                 }
 
-                const highlightDiv = outputContainer.querySelector('.highlighted-output');
+                const highlightDiv = htmlOf(outputContainer.querySelector('.highlighted-output'));
                 if (highlightDiv) {
                     highlightDiv.style.display = 'none';
                 }
@@ -3177,7 +3221,7 @@ class SampleTester {
             }
         }
 
-        const outputControls = element.querySelector('.output-controls');
+        const outputControls = htmlOf(element.querySelector('.output-controls'));
         if (outputControls) {
             const hasOutput = !!(result.rawOutput || result.output);
             outputControls.style.display = hasOutput ? 'flex' : 'none';
@@ -3620,15 +3664,15 @@ class SampleTester {
     }
 
     updateGlobalSettingsUI() {
-        const globalUseTestlib = (document.getElementById('global-use-testlib'));
-        const globalUseInteractive = (document.getElementById('global-use-interactive'));
-        const globalSpjPath = (document.getElementById('global-spj-path'));
-        const globalGraderPath = (document.getElementById('global-grader-path'));
-        const globalGraderGroup = (document.getElementById('global-grader-group'));
-        const globalFreopenInputFile = (document.getElementById('global-freopen-input-file'));
-        const globalFreopenOutputFile = (document.getElementById('global-freopen-output-file'));
-        const globalTimeLimit = (document.getElementById('global-time-limit'));
-        const globalMemoryLimit = (document.getElementById('global-memory-limit'));
+        const globalUseTestlib = stCheckbox('global-use-testlib');
+        const globalUseInteractive = stCheckbox('global-use-interactive');
+        const globalSpjPath = elInput('global-spj-path');
+        const globalGraderPath = elInput('global-grader-path');
+        const globalGraderGroup = htmlOf(document.getElementById('global-grader-group'));
+        const globalFreopenInputFile = elInput('global-freopen-input-file');
+        const globalFreopenOutputFile = elInput('global-freopen-output-file');
+        const globalTimeLimit = elInput('global-time-limit');
+        const globalMemoryLimit = elInput('global-memory-limit');
 
         if (globalUseTestlib) {
             globalUseTestlib.checked = this.globalSettings.useTestlib;
@@ -3654,10 +3698,10 @@ class SampleTester {
             globalFreopenOutputFile.value = this.globalSettings.freopenOutputFile || '';
         }
         if (globalTimeLimit) {
-            globalTimeLimit.value = this.sanitizeTimeLimit(this.globalSettings.defaultTimeLimit, 1000);
+            globalTimeLimit.value = String(this.sanitizeTimeLimit(this.globalSettings.defaultTimeLimit, 1000));
         }
         if (globalMemoryLimit) {
-            globalMemoryLimit.value = this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0);
+            globalMemoryLimit.value = String(this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0));
         }
     }
 
@@ -3690,7 +3734,7 @@ class SampleTester {
             if (!result.canceled && result.filePaths.length > 0) {
                 const spjPath = result.filePaths[0];
                 this.globalSettings.spjPath = spjPath;
-                (document.getElementById('global-spj-path')).value = spjPath;
+                elInput('global-spj-path').value = spjPath;
                 this.updateSpjFileDisplay(spjPath);
                 this.saveGlobalSettings();
             }
@@ -3701,7 +3745,7 @@ class SampleTester {
 
     clearGlobalSpjFile() {
         this.globalSettings.spjPath = '';
-        (document.getElementById('global-spj-path')).value = '';
+        elInput('global-spj-path').value = '';
         this.updateSpjFileDisplay('');
         this.saveGlobalSettings();
     }
@@ -3720,7 +3764,7 @@ class SampleTester {
             if (!result.canceled && result.filePaths.length > 0) {
                 const graderPath = result.filePaths[0];
                 this.globalSettings.graderPath = graderPath;
-                (document.getElementById('global-grader-path')).value = graderPath;
+                elInput('global-grader-path').value = graderPath;
                 this.updateGraderFileDisplay(graderPath);
                 this.saveGlobalSettings();
             }
@@ -3731,7 +3775,7 @@ class SampleTester {
 
     clearGlobalGraderFile() {
         this.globalSettings.graderPath = '';
-        (document.getElementById('global-grader-path')).value = '';
+        elInput('global-grader-path').value = '';
         this.updateGraderFileDisplay('');
         this.saveGlobalSettings();
     }
