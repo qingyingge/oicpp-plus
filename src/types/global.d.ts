@@ -16,6 +16,26 @@ declare const CompilerManager: any;
 declare const TabManager: any;
 declare function require(moduleName: string): any;
 
+interface OicppVarData {
+  name?: string;
+  type?: string;
+  value?: string;
+  expression?: string;
+  backendName?: string;
+  varObjectName?: string;
+  chunkSize?: number;
+  elementCount?: number;
+  numchild?: string | number;
+  canExpand?: boolean;
+  isPlaceholder?: boolean;
+  children?: OicppVarData[];
+  [key: string]: unknown;
+}
+
+interface HTMLDivElement {
+  __variableData?: OicppVarData;
+}
+
 interface Window {
   logInfo: (...args: any[]) => void;
   logWarn: (...args: any[]) => void;

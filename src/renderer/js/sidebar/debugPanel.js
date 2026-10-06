@@ -108,8 +108,9 @@ class DebugPanel {
             el.addEventListener('click', () => {
                 const arrow = el.querySelector('.expand-arrow');
                 const content = el.nextElementSibling;
-                const hidden = ((content)).style.display === 'none';
-                ((content)).style.display = hidden ? 'block' : 'none';
+                if (!(content instanceof HTMLElement)) return;
+                const hidden = content.style.display === 'none';
+                content.style.display = hidden ? 'block' : 'none';
                 arrow.textContent = hidden ? '▼' : '▶';
             });
         });
@@ -139,13 +140,15 @@ class DebugPanel {
 
         if (this.root) {
             this.root.addEventListener('click', (ev) => {
-                const toggleBtn = (ev.target).closest('.expand-toggle-btn');
+                if (!(ev.target instanceof Element)) return;
+                const target = ev.target;
+                const toggleBtn = target.closest('.expand-toggle-btn');
                 if (toggleBtn && this.root.contains(toggleBtn)) {
                     this._handleToggleButtonClick(toggleBtn, ev);
                     return;
                 }
 
-                const removeBtn = (ev.target).closest('.remove-watch-btn');
+                const removeBtn = target.closest('.remove-watch-btn');
                 if (removeBtn && this.root.contains(removeBtn)) {
                     this._handleRemoveWatchClick(removeBtn, ev);
                     return;
@@ -248,7 +251,7 @@ class DebugPanel {
     _setToolbarEnabled(enabled) {
         if (!this.root) return;
         ['#dbg-continue', '#dbg-step-over', '#dbg-step-into', '#dbg-step-out', '#dbg-stop', '#dbg-add-watch', '#dbg-start']
-            .forEach(sel => { const el = this.root.querySelector(sel); if (el) ((el)).disabled = !enabled; });
+            .forEach(sel => { const el = this.root.querySelector(sel); if (el instanceof HTMLButtonElement) el.disabled = !enabled; });
     }
 
     _handleVariableExpanded(payload) {
@@ -350,6 +353,9 @@ class DebugPanel {
         container.appendChild(frag);
     }
 
+    /**
+     * @param {{ scope: string, rootName: string, data?: OicppVarData, path?: (string|number)[], isRoot?: boolean }} params
+     */
     _renderVariableNode({ scope, rootName, data = ({}), path = [], isRoot = false }) {
         scope = this._normalizeScope(scope);
         const nodeKey = this._makeNodeKey(scope, rootName, path);
@@ -366,7 +372,7 @@ class DebugPanel {
         const header = document.createElement('div');
         header.className = 'variable-header';
         item.appendChild(header);
-        ((item)).__variableData = data;
+        item.__variableData = data;
 
         const hasChildren = Array.isArray(data?.children) && data.children.length > 0;
         const numericCount = Number(data?.elementCount);
