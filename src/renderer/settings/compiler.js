@@ -69,7 +69,7 @@ class CompilerSettings {
                 sections.forEach(section => section.classList.remove('active'));
                 
                 const targetId = item.getAttribute('data-target');
-                const targetSection = elCtl(targetId);
+                const targetSection = elById(targetId);
                 if (targetSection) {
                     targetSection.classList.add('active');
                 }
@@ -227,7 +227,7 @@ class CompilerSettings {
             });
         }
         
-        const installDialog = elCtl('install-dialog');
+        const installDialog = elById('install-dialog');
         if (installDialog) {
             installDialog.addEventListener('click', (e) => {
                 if (e.target === installDialog) {
@@ -502,7 +502,7 @@ class CompilerSettings {
 
 
     showInstallDialog() {
-        const dialog = elCtl('install-dialog');
+        const dialog = elById('install-dialog');
         if (dialog) {
             dialog.style.display = 'block';
         }
@@ -511,14 +511,14 @@ class CompilerSettings {
     }
 
     closeInstallDialog() {
-        const dialog = elCtl('install-dialog');
+        const dialog = elById('install-dialog');
         if (dialog) {
             dialog.style.display = 'none';
         }
     }
 
     async loadAvailableCompilers() {
-        const compilerList = elCtl('compiler-list');
+        const compilerList = elById('compiler-list');
         if (!compilerList) return;
         if (this._compilerListAbort) {
             this._compilerListAbort.abort();
@@ -1251,7 +1251,7 @@ class CompilerSettings {
             return;
         }
         const testlibPath = testlibPathInput.value;
-        const resultDiv = elCtl('testlib-test-result');
+        const resultDiv = elById('testlib-test-result');
 
         const renderTestResult = (type, message) => {
             if (!resultDiv) return;
@@ -1293,7 +1293,7 @@ class CompilerSettings {
     }
     
     showTestlibInstallDialog() {
-        const dialog = elCtl('testlib-install-dialog');
+        const dialog = elById('testlib-install-dialog');
         if (dialog) {
             dialog.style.display = 'flex';
             this.loadAvailableTestlibs();
@@ -1301,14 +1301,14 @@ class CompilerSettings {
     }
     
     closeTestlibInstallDialog() {
-        const dialog = elCtl('testlib-install-dialog');
+        const dialog = elById('testlib-install-dialog');
         if (dialog) {
             dialog.style.display = 'none';
         }
     }
     
     async loadAvailableTestlibs() {
-        const testlibList = elCtl('testlib-list');
+        const testlibList = elById('testlib-list');
         if (!testlibList) return;
         if (this._testlibListAbort) {
             this._testlibListAbort.abort();
