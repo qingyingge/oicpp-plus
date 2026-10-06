@@ -68,9 +68,10 @@ class MonacoEditorManager {
 
         document.addEventListener('settings-applied', (evt) => {
             try {
-                this.loadKeybindingsFromSettings(((evt))?.detail || {});
-                this.updateFormatterSettings(((evt))?.detail || {});
-                this.updateClangFormatSettings(((evt))?.detail || {});
+                const detail = evt instanceof CustomEvent ? evt.detail : {};
+                this.loadKeybindingsFromSettings(detail || {});
+                this.updateFormatterSettings(detail || {});
+                this.updateClangFormatSettings(detail || {});
             } catch (e) {
                 logWarn('应用快捷键设置失败:', e);
             }
@@ -4056,8 +4057,8 @@ class MonacoEditorManager {
             }
         }
 
-        const defaultArea = (document.querySelector('.editor-area'));
-        if (defaultArea) {
+        const defaultArea = document.querySelector('.editor-area');
+        if (defaultArea instanceof HTMLElement) {
             const defaultId = defaultArea.dataset.groupId || 'group-1';
             this.groupContainers.set(defaultId, defaultArea);
             if (!this.groupActiveTab.has(defaultId)) {
@@ -4639,10 +4640,12 @@ class MonacoEditorManager {
             }, 100);
             
             monacoContainer.addEventListener('click', (e) => {
-                const findWidget = (e.target).closest('.find-widget');
-                const suggestionWidget = (e.target).closest('.suggest-widget');
-                const contextMenu = (e.target).closest('.context-view');
-                const parameterHints = (e.target).closest('.parameter-hints-widget');
+                if (!(e.target instanceof Element)) return;
+                const target = e.target;
+                const findWidget = target.closest('.find-widget');
+                const suggestionWidget = target.closest('.suggest-widget');
+                const contextMenu = target.closest('.context-view');
+                const parameterHints = target.closest('.parameter-hints-widget');
                 
                 if (findWidget || suggestionWidget || contextMenu || parameterHints) {
                     return;
@@ -5947,6 +5950,9 @@ class MonacoEditorManager {
         }
     }
 
+    /**
+     * @param {Record<string, unknown>} settings
+     */
     updateFormatterSettings(settings = ({})) {
         if (!settings || typeof settings !== 'object') {
             return;
@@ -6030,6 +6036,9 @@ class MonacoEditorManager {
         return normalized;
     }
 
+    /**
+     * @param {Record<string, unknown>} settings
+     */
     updateClangFormatSettings(settings = ({})) {
         if (!settings || typeof settings !== 'object') {
             return;
@@ -6107,8 +6116,8 @@ class MonacoEditorManager {
     }
 
     addWheelZoomListenerToEditorArea(editor) {
-    const editorArea = (document.querySelector('.editor-groups'));
-        if (!editorArea || editorArea.hasGlobalWheelZoomListener) {
+    const editorArea = document.querySelector('.editor-groups');
+        if (!(editorArea instanceof HTMLElement) || editorArea.hasGlobalWheelZoomListener) {
             return;
         }
                 

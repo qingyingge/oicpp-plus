@@ -36,6 +36,12 @@ interface HTMLDivElement {
   __variableData?: OicppVarData;
 }
 
+interface HTMLElement {
+  hasGlobalWheelZoomListener?: boolean;
+  _input?: HTMLInputElement;
+  _list?: HTMLDivElement;
+}
+
 interface Window {
   logInfo: (...args: any[]) => void;
   logWarn: (...args: any[]) => void;
