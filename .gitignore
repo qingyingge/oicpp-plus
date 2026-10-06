@@ -31,6 +31,8 @@ fastspawn.node
 
 # opencode 工具配置
 .opencode/
+AGENTS.local.md
+opencode-rag.json
 
 # 操作系统/编辑器
 .DS_Store
