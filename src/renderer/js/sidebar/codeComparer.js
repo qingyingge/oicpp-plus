@@ -1,4 +1,13 @@
 const MAX_COMPARE_COUNT = 100000;
+const ccInput = (id) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLInputElement ? el : null;
+};
+const ccButton = (id) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLButtonElement ? el : null;
+};
+const ccEvt = (e) => (e.target instanceof HTMLInputElement ? e.target : null);
 
 class CodeComparer {
     constructor() {
@@ -29,7 +38,7 @@ class CodeComparer {
     setupActiveFileListener() {
         try {
             window.addEventListener('oicpp:active-file-changed', (e) => {
-                const filePath = ((e))?.detail?.filePath;
+                const filePath = e instanceof CustomEvent ? e.detail?.filePath : undefined;
                 if (!filePath || typeof filePath !== 'string') return;
                 if (!this.isSupportedCodeFile(filePath)) return;
                 this.setActiveTaskKey(filePath, { syncTestCodePath: true });
@@ -141,14 +150,14 @@ class CodeComparer {
         task.config.generatorPath = this.generatorPath || '';
         task.config.useTestlib = !!this.useTestlib;
         task.config.spjPath = this.spjPath || '';
-        const freopenInputEl = (document.getElementById('compare-freopen-input-file'));
-        const freopenOutputEl = (document.getElementById('compare-freopen-output-file'));
+        const freopenInputEl = ccInput('compare-freopen-input-file');
+        const freopenOutputEl = ccInput('compare-freopen-output-file');
         task.config.freopenInputFile = this.normalizeFreopenFileName(freopenInputEl?.value || this.freopenInputFile || '');
         task.config.freopenOutputFile = this.normalizeFreopenFileName(freopenOutputEl?.value || this.freopenOutputFile || '');
 
-        const compareCountEl = (document.getElementById('compare-count'));
-        const timeLimitEl = (document.getElementById('time-limit'));
-        const threadCountEl = (document.getElementById('compare-threads'));
+        const compareCountEl = ccInput('compare-count');
+        const timeLimitEl = ccInput('time-limit');
+        const threadCountEl = ccInput('compare-threads');
         const compareCount = parseInt(compareCountEl?.value);
         const timeLimit = parseInt(timeLimitEl?.value);
         const threadCount = parseInt(threadCountEl?.value);
@@ -259,9 +268,9 @@ class CodeComparer {
             generatorBrowse.addEventListener('click', () => this.browseGenerator());
         }
 
-        const startBtn = (document.getElementById('compare-start-btn'));
-        const stopBtn = (document.getElementById('compare-stop-btn'));
-        const resetBtn = (document.getElementById('compare-reset-btn'));
+        const startBtn = ccButton('compare-start-btn');
+        const stopBtn = ccButton('compare-stop-btn');
+        const resetBtn = ccButton('compare-reset-btn');
         const exportBtn = (document.getElementById('export-btn'));
         const inputExpandBtn = (document.getElementById('input-expand-btn'));
         const stdOutputExpandBtn = (document.getElementById('std-output-expand-btn'));
@@ -289,17 +298,17 @@ class CodeComparer {
             testOutputExpandBtn.addEventListener('click', () => this.toggleErrorOutputExpand('test'));
         }
 
-        const useTestlibCheckbox = (document.getElementById('compare-use-testlib'));
+        const useTestlibCheckbox = ccInput('compare-use-testlib');
         const spjBrowseBtn = (document.getElementById('compare-spj-browse'));
-        const compareCountInput = (document.getElementById('compare-count'));
-        const threadCountInput = (document.getElementById('compare-threads'));
-        const timeLimitInput = (document.getElementById('time-limit'));
-        const freopenInputInput = (document.getElementById('compare-freopen-input-file'));
-        const freopenOutputInput = (document.getElementById('compare-freopen-output-file'));
+        const compareCountInput = ccInput('compare-count');
+        const threadCountInput = ccInput('compare-threads');
+        const timeLimitInput = ccInput('time-limit');
+        const freopenInputInput = ccInput('compare-freopen-input-file');
+        const freopenOutputInput = ccInput('compare-freopen-output-file');
 
         if (useTestlibCheckbox) {
             useTestlibCheckbox.addEventListener('change', (e) => {
-                this.useTestlib = (e.target).checked;
+                this.useTestlib = ccEvt(e)?.checked ?? false;
                 const task = this.getActiveTask();
                 if (task) {
                     task.config.useTestlib = !!this.useTestlib;
@@ -336,8 +345,9 @@ class CodeComparer {
 
         if (freopenInputInput) {
             freopenInputInput.addEventListener('change', (e) => {
-                const normalized = this.normalizeFreopenFileName((e.target).value);
-                (e.target).value = normalized;
+                const target = ccEvt(e);
+                const normalized = this.normalizeFreopenFileName(target?.value ?? '');
+                if (target) target.value = normalized;
                 this.freopenInputFile = normalized;
                 const task = this.getActiveTask();
                 if (!task) return;
@@ -347,8 +357,9 @@ class CodeComparer {
 
         if (freopenOutputInput) {
             freopenOutputInput.addEventListener('change', (e) => {
-                const normalized = this.normalizeFreopenFileName((e.target).value);
-                (e.target).value = normalized;
+                const target = ccEvt(e);
+                const normalized = this.normalizeFreopenFileName(target?.value ?? '');
+                if (target) target.value = normalized;
                 this.freopenOutputFile = normalized;
                 const task = this.getActiveTask();
                 if (!task) return;
@@ -409,8 +420,8 @@ class CodeComparer {
                     spjPath: this.spjPath,
                     freopenInputFile: this.freopenInputFile,
                     freopenOutputFile: this.freopenOutputFile,
-                    compareCount: parseInt((document.getElementById('compare-count'))?.value) || 100,
-                    timeLimit: parseInt((document.getElementById('time-limit'))?.value) || 1000
+                    compareCount: parseInt(ccInput('compare-count')?.value ?? '') || 100,
+                    timeLimit: parseInt(ccInput('time-limit')?.value ?? '') || 1000
                 };
 
                 this.setActiveTaskKey(this.testCodePath, { syncTestCodePath: true });
@@ -465,7 +476,7 @@ class CodeComparer {
 
             if (!result.canceled && result.filePaths.length > 0) {
                 this.spjPath = result.filePaths[0];
-                const spjPathInput = (document.getElementById('compare-spj-path'));
+                const spjPathInput = ccInput('compare-spj-path');
                 if (spjPathInput) {
                     spjPathInput.value = this.spjPath;
                 }
@@ -500,31 +511,31 @@ class CodeComparer {
         this.updateFilePath('test-code-path', task.config.testCodePath || '');
         this.updateFilePath('generator-path', task.config.generatorPath || '');
 
-        const compareCountInput = (document.getElementById('compare-count'));
+        const compareCountInput = ccInput('compare-count');
         if (compareCountInput && Number.isFinite(task.config.compareCount)) {
             compareCountInput.value = String(task.config.compareCount);
         }
-        const threadCountInput = (document.getElementById('compare-threads'));
+        const threadCountInput = ccInput('compare-threads');
         if (threadCountInput && Number.isFinite(task.config.threadCount)) {
             threadCountInput.value = String(task.config.threadCount);
         }
-        const timeLimitInput = (document.getElementById('time-limit'));
+        const timeLimitInput = ccInput('time-limit');
         if (timeLimitInput && Number.isFinite(task.config.timeLimit)) {
             timeLimitInput.value = String(task.config.timeLimit);
         }
-        const useTestlibCheckbox = (document.getElementById('compare-use-testlib'));
+        const useTestlibCheckbox = ccInput('compare-use-testlib');
         if (useTestlibCheckbox) {
             useTestlibCheckbox.checked = !!task.config.useTestlib;
         }
-        const spjPathInput = (document.getElementById('compare-spj-path'));
+        const spjPathInput = ccInput('compare-spj-path');
         if (spjPathInput) {
             spjPathInput.value = task.config.spjPath || '';
         }
-        const freopenInputInput = (document.getElementById('compare-freopen-input-file'));
+        const freopenInputInput = ccInput('compare-freopen-input-file');
         if (freopenInputInput) {
             freopenInputInput.value = task.config.freopenInputFile || '';
         }
-        const freopenOutputInput = (document.getElementById('compare-freopen-output-file'));
+        const freopenOutputInput = ccInput('compare-freopen-output-file');
         if (freopenOutputInput) {
             freopenOutputInput.value = task.config.freopenOutputFile || '';
         }
@@ -591,17 +602,17 @@ class CodeComparer {
             return;
         }
 
-        const compareCountEl = (document.getElementById('compare-count'));
+        const compareCountEl = ccInput('compare-count');
         let compareCount = parseInt(compareCountEl?.value) || task.config.compareCount || 100;
         compareCount = Math.max(1, Math.min(compareCount, MAX_COMPARE_COUNT));
         if (compareCountEl && Number(compareCountEl.value) !== compareCount) {
             compareCountEl.value = String(compareCount);
         }
-        const timeLimit = parseInt((document.getElementById('time-limit')).value);
+        const timeLimit = parseInt(ccInput('time-limit')?.value ?? '');
         const effectiveTimeLimit = Number.isFinite(timeLimit) ? timeLimit : (task.config.timeLimit || 1000);
         const { cpuThreads, maxParallel } = await this.getMaxParallelThreads();
         this.maxParallelThreads = maxParallel;
-        const requestedThreadsRaw = parseInt((document.getElementById('compare-threads'))?.value);
+        const requestedThreadsRaw = parseInt(ccInput('compare-threads')?.value ?? '');
         const requestedThreads = Number.isFinite(requestedThreadsRaw) ? Math.max(1, requestedThreadsRaw) : 1;
 
         task.config.compareCount = compareCount;
@@ -1432,7 +1443,7 @@ class CodeComparer {
         try {
             const { cpuThreads, maxParallel } = await this.getMaxParallelThreads();
             this.maxParallelThreads = maxParallel;
-            const input = (document.getElementById('compare-threads'));
+            const input = ccInput('compare-threads');
             const hint = (document.getElementById('compare-threads-hint'));
             if (input) {
                 input.max = String(maxParallel);
@@ -1485,9 +1496,9 @@ class CodeComparer {
     }
 
     updateUIForTask(task) {
-        const startBtn = (document.getElementById('compare-start-btn'));
-        const stopBtn = (document.getElementById('compare-stop-btn'));
-        const resetBtn = (document.getElementById('compare-reset-btn'));
+        const startBtn = ccButton('compare-start-btn');
+        const stopBtn = ccButton('compare-stop-btn');
+        const resetBtn = ccButton('compare-reset-btn');
 
         const running = !!task?.state?.isRunning && (task?.state?.mode === 'running' || task?.state?.mode === 'stopping');
 
