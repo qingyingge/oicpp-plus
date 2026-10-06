@@ -1,3 +1,8 @@
+const sbQs = (selector) => {
+    const el = document.querySelector(selector);
+    return el instanceof HTMLElement ? el : null;
+};
+
 class SidebarManager {
     constructor() {
         this.currentPanel = 'files';
@@ -32,21 +37,23 @@ class SidebarManager {
         const sidebarIcons = document.querySelectorAll('.sidebar-icon');
         logInfo('setupEventListeners: 找到', sidebarIcons.length, '个侧边栏图标');
         sidebarIcons.forEach((icon, index) => {
-            logInfo('绑定事件监听器到图标', index, '面板名:', ((icon)).dataset.panel);
-            ((icon)).tabIndex = 0;
+            if (!(icon instanceof HTMLElement)) return;
+            logInfo('绑定事件监听器到图标', index, '面板名:', icon.dataset.panel);
+            icon.tabIndex = 0;
             icon.setAttribute('role', 'button');
             icon.addEventListener('click', (e) => {
                 e.preventDefault();
-                ((icon)).focus({ preventScroll: true });
-                const panelName = ((e.currentTarget)).dataset.panel;
+                icon.focus({ preventScroll: true });
+                const currentTarget = e.currentTarget;
+                const panelName = currentTarget instanceof HTMLElement ? currentTarget.dataset.panel : undefined;
                 logInfo('图标被点击，面板名:', panelName);
                 this.showPanel(panelName);
             });
             icon.addEventListener('keydown', (e) => {
-                if (((e)).key !== 'Enter' && ((e)).key !== ' ') return;
+                if (e.key !== 'Enter' && e.key !== ' ') return;
                 e.preventDefault();
                 e.stopPropagation();
-                this.showPanel(((icon)).dataset.panel);
+                this.showPanel(icon.dataset.panel);
             });
         });
 
@@ -63,7 +70,8 @@ class SidebarManager {
 
     setupActiveFileListener() {
         window.addEventListener('oicpp:active-file-changed', (event) => {
-            const filePath = ((event))?.detail?.filePath;
+            const detail = event instanceof CustomEvent ? event.detail : undefined;
+            const filePath = detail?.filePath;
             const isCloudFile = typeof filePath === 'string' && /^cloud:/i.test(filePath);
             this.updateCloudPanelLocks();
             if (isCloudFile && ['debug', 'samples', 'compare'].includes(this.currentPanel)) {
@@ -85,10 +93,10 @@ class SidebarManager {
     }
 
     setupResizer() {
-        const sidebar = (document.querySelector('.sidebar'));
-        const resizer = (document.querySelector('.sidebar-resizer'));
-        const mainContainer = (document.querySelector('.main-container'));
-        const sidebarPanel = (document.querySelector('.sidebar-panel'));
+        const sidebar = sbQs('.sidebar');
+        const resizer = sbQs('.sidebar-resizer');
+        const mainContainer = sbQs('.main-container');
+        const sidebarPanel = sbQs('.sidebar-panel');
 
         if (!sidebar || !resizer || !mainContainer || !sidebarPanel) return;
 
@@ -182,7 +190,7 @@ class SidebarManager {
 
         setTimeout(() => {
             const welcomeContainer = (document.getElementById('welcome-container'));
-            const editorArea = (document.querySelector('.editor-area'));
+            const editorArea = sbQs('.editor-area');
 
             const isWelcomeVisible = welcomeContainer &&
                 (welcomeContainer.style.display === 'block' ||
@@ -216,7 +224,7 @@ class SidebarManager {
     }
 
     hideForWelcome() {
-        const sidebar = this.sidebar || (document.querySelector('.sidebar'));
+        const sidebar = this.sidebar || sbQs('.sidebar');
         if (sidebar) {
             if (sidebar.classList.contains('hidden')) return;
             try {
@@ -229,7 +237,7 @@ class SidebarManager {
     }
 
     showForEditor() {
-        const sidebar = this.sidebar || (document.querySelector('.sidebar'));
+        const sidebar = this.sidebar || sbQs('.sidebar');
         if (sidebar) {
             sidebar.classList.remove('hidden');
             try {
@@ -284,7 +292,7 @@ class SidebarManager {
         this.sidebarPanel.style.display = '';
 
         const currentWidth = parseInt(this.sidebar.style.width, 10);
-        const rememberedWidth = parseInt(this.savedWidth, 10);
+        const rememberedWidth = Number(this.savedWidth);
         const storedWidth = parseInt(localStorage.getItem('sidebar-width'), 10);
         const width = [currentWidth, rememberedWidth, storedWidth]
             .find(candidate => Number.isFinite(candidate) && candidate >= 200) || 350;
@@ -308,7 +316,7 @@ class SidebarManager {
 
     checkResizeStatus() {
         const welcomeContainer = (document.getElementById('welcome-container'));
-        const editorArea = (document.querySelector('.editor-area'));
+        const editorArea = sbQs('.editor-area');
         const isWelcomeVisible = welcomeContainer && welcomeContainer.style.display === 'block';
         const isEditorVisible = editorArea && editorArea.style.display !== 'none';
         const isResizerEnabled = this.resizer && this.resizer.style.display !== 'none';
@@ -435,8 +443,9 @@ class SidebarManager {
 
         const icons = document.querySelectorAll('.sidebar-icon');
         icons.forEach(icon => {
+            if (!(icon instanceof HTMLElement)) return;
             icon.classList.remove('active');
-            if (((icon)).dataset.panel === panelName) {
+            if (icon.dataset.panel === panelName) {
                 icon.classList.add('active');
             }
         });
@@ -480,11 +489,12 @@ class SidebarManager {
         const hasWorkspace = fileExplorer && fileExplorer.hasWorkspace;
 
         fileButtons.forEach((btn, index) => {
+            if (!(btn instanceof HTMLButtonElement)) return;
             // 新建文件、新建文件夹、批量删除在无工作区时禁用；刷新始终可用
             if (index === 0 || index === 1 || index === 3) {
-                ((btn)).disabled = !hasWorkspace;
-                ((btn)).style.opacity = hasWorkspace ? '1' : '0.5';
-                ((btn)).style.cursor = hasWorkspace ? 'pointer' : 'not-allowed';
+                btn.disabled = !hasWorkspace;
+                btn.style.opacity = hasWorkspace ? '1' : '0.5';
+                btn.style.cursor = hasWorkspace ? 'pointer' : 'not-allowed';
             }
         });
     }
@@ -522,7 +532,7 @@ class SidebarManager {
 
     setCloudPanelVisible(visible) {
         const show = false; // OICPP-Plus: 云服务已禁用（无独立服务，避免依赖原作者服务器）
-        const icon = (document.querySelector('.sidebar-icon.cloud-sync-icon'));
+        const icon = sbQs('.sidebar-icon.cloud-sync-icon');
         const panel = (document.getElementById('cloud-panel'));
         if (icon) {
             icon.style.display = show ? 'flex' : 'none';
