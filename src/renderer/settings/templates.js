@@ -1,5 +1,8 @@
 const { ipcRenderer } = require('electron');
 
+const tplArea = (id) => { const el = document.getElementById(id); return el instanceof HTMLTextAreaElement ? el : null; };
+const tplInput = (id) => { const el = document.getElementById(id); return el instanceof HTMLInputElement ? el : null; };
+
 class TemplatesSettings {
     constructor() {
         this.settings = {
@@ -183,10 +186,10 @@ class TemplatesSettings {
             });
         }
         
-        const cppTemplateTextarea = (document.getElementById('cpp-template'));
+        const cppTemplateTextarea = tplArea('cpp-template');
         if (cppTemplateTextarea) {
             cppTemplateTextarea.addEventListener('input', (e) => {
-                this.settings.cppTemplate = (e.target).value;
+                this.settings.cppTemplate = cppTemplateTextarea.value;
                 logInfo('模板内容已更新');
             });
             
@@ -199,12 +202,12 @@ class TemplatesSettings {
                 
                 if (e.key === 'Tab') {
                     e.preventDefault();
-                    const start = (e.target).selectionStart;
-                    const end = (e.target).selectionEnd;
-                    const value = (e.target).value;
+                    const start = cppTemplateTextarea.selectionStart;
+                    const end = cppTemplateTextarea.selectionEnd;
+                    const value = cppTemplateTextarea.value;
                     
-                    (e.target).value = value.substring(0, start) + '    ' + value.substring(end);
-                    (e.target).selectionStart = (e.target).selectionEnd = start + 4;
+                    cppTemplateTextarea.value = value.substring(0, start) + '    ' + value.substring(end);
+                    cppTemplateTextarea.selectionStart = cppTemplateTextarea.selectionEnd = start + 4;
                 }
             });
         }
@@ -264,7 +267,7 @@ class TemplatesSettings {
     updateUI() {
         logInfo('更新UI界面');
         
-        const cppTemplateTextarea = (document.getElementById('cpp-template'));
+        const cppTemplateTextarea = tplArea('cpp-template');
         if (cppTemplateTextarea) {
             cppTemplateTextarea.value = this.settings.cppTemplate;
             logInfo('模板内容已加载到编辑器');
@@ -278,7 +281,7 @@ class TemplatesSettings {
         try {
             logInfo('保存设置中...');
             
-            const cppTemplateTextarea = (document.getElementById('cpp-template'));
+            const cppTemplateTextarea = tplArea('cpp-template');
             if (!cppTemplateTextarea) {
                 throw new Error(window.i18n.t('templates.editorNotFound'));
             }
@@ -330,7 +333,7 @@ class TemplatesSettings {
                 this.snippets = [];
                 this.renderSnippets();
                 
-                const cppTemplateTextarea = (document.getElementById('cpp-template'));
+                const cppTemplateTextarea = tplArea('cpp-template');
                 if (cppTemplateTextarea) {
                     cppTemplateTextarea.value = defaultTemplate;
                 }
@@ -363,9 +366,9 @@ class TemplatesSettings {
         const dialog = (document.getElementById('snippet-dialog'));
         if (!dialog) return;
 
-        const kwEl = (document.getElementById('snippet-dialog-keyword'));
-        const descEl = (document.getElementById('snippet-dialog-desc'));
-        const contentEl = (document.getElementById('snippet-dialog-content'));
+        const kwEl = tplInput('snippet-dialog-keyword');
+        const descEl = tplInput('snippet-dialog-desc');
+        const contentEl = tplArea('snippet-dialog-content');
 
         // 如果是编辑模式，加载已有数据
         if (editIndex >= 0 && editIndex < this.snippets.length) {
@@ -373,7 +376,7 @@ class TemplatesSettings {
             if (kwEl) kwEl.value = item.keyword || '';
             if (descEl) descEl.value = item.description || '';
             if (contentEl) contentEl.value = item.content || '';
-            dialog.setAttribute('data-edit-index', editIndex);
+            dialog.setAttribute('data-edit-index', String(editIndex));
         } else {
             if (kwEl) kwEl.value = '';
             if (descEl) descEl.value = '';
@@ -414,9 +417,9 @@ class TemplatesSettings {
     }
 
     confirmSnippetDialog() {
-        const kwEl = (document.getElementById('snippet-dialog-keyword'));
-        const descEl = (document.getElementById('snippet-dialog-desc'));
-        const contentEl = (document.getElementById('snippet-dialog-content'));
+        const kwEl = tplInput('snippet-dialog-keyword');
+        const descEl = tplInput('snippet-dialog-desc');
+        const contentEl = tplArea('snippet-dialog-content');
         const keyword = (kwEl?.value || '').trim();
         const description = (descEl?.value || '').trim() || window.i18n.t('templates.defaultDesc');
         const content = (contentEl?.value || '').trim();
@@ -507,9 +510,10 @@ class TemplatesSettings {
 
         list.replaceChildren(...rows);
         list.querySelectorAll('button[data-action]').forEach((button) => {
+            if (!(button instanceof HTMLButtonElement)) return;
             button.addEventListener('click', () => {
                 const row = button.closest('.snippet-row');
-                const index = parseInt(row?.dataset.index || '-1', 10);
+                const index = parseInt(row instanceof HTMLElement ? (row.dataset.index || '-1') : '-1', 10);
                 if (Number.isNaN(index) || index < 0) return;
 
                 if (button.dataset.action === 'delete') {
@@ -525,7 +529,7 @@ class TemplatesSettings {
     showPreview() {
         logInfo('显示模板预览');
         
-        const cppTemplateTextarea = (document.getElementById('cpp-template'));
+        const cppTemplateTextarea = tplArea('cpp-template');
         if (!cppTemplateTextarea) {
             this.showMessage(window.i18n.t('templates.templateNotFound'), 'error');
             return;
