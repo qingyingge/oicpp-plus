@@ -1,7 +1,12 @@
-/** @type {(id: string) => HTMLInputElement | null} */
+/** @type {(id: string) => HTMLElement | null} */
 const elById = (id) => {
     const el = document.getElementById(id);
     return el instanceof HTMLElement ? el : null;
+};
+/** @type {(id: string) => HTMLSelectElement | null} */
+const elSelect = (id) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLSelectElement ? el : null;
 };
 const elInputLike = (id) => {
     const el = document.getElementById(id);
@@ -221,16 +226,17 @@ class EditorSettings {
                 return;
             }
             const key = match[1];
-            let value = (match[2].trim());
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                value = value.slice(1, -1);
-            }
+            const text = (match[2].trim());
+            const value = (text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))
+                ? text.slice(1, -1)
+                : text;
             if (/^(true|false)$/i.test(value)) {
-                value = value.toLowerCase() === 'true';
+                parsed[key] = value.toLowerCase() === 'true';
             } else if (/^-?\d+$/.test(value)) {
-                value = parseInt(value, 10);
+                parsed[key] = parseInt(value, 10);
+            } else {
+                parsed[key] = value;
             }
-            parsed[key] = value;
         });
         return parsed;
     }
@@ -269,13 +275,13 @@ class EditorSettings {
         const normalized = this.normalizeClangFormatStyle(style || this.settings.clangFormatStyle || this.getDefaultClangFormatStyle());
         const rawTextOverride = Object.prototype.hasOwnProperty.call(options || {}, 'rawText') ? options.rawText : undefined;
         const mapValue = (id, value) => {
-            const element = elById(id);
+            const element = elInputLike(id);
             if (element) {
                 element.value = String(value);
             }
         };
         const mapChecked = (id, value) => {
-            const element = elById(id);
+            const element = elCheckbox(id);
             if (element) {
                 element.checked = !!value;
             }
@@ -294,14 +300,14 @@ class EditorSettings {
         mapChecked('clang-format-align-assignments', normalized.AlignConsecutiveAssignments);
         mapChecked('clang-format-align-declarations', normalized.AlignConsecutiveDeclarations);
 
-        const rawTextArea = elById('clang-format-raw-text');
+        const rawTextArea = elInputLike('clang-format-raw-text');
         if (rawTextArea && rawTextOverride !== undefined) {
             rawTextArea.value = String(rawTextOverride || '');
         }
     }
 
     collectClangFormatStyleFromUI() {
-        const rawTextArea = elById('clang-format-raw-text');
+        const rawTextArea = elInputLike('clang-format-raw-text');
         if (this._clangFormatControlsDirty && !this._clangFormatRawDirty) {
             return this.normalizeClangFormatStyle({
                 BasedOnStyle: elInputLike('clang-format-based-on-style')?.value || 'LLVM',
@@ -327,7 +333,7 @@ class EditorSettings {
         }
 
         const readNumber = (id, fallback) => {
-            const element = elById(id);
+            const element = elInputLike(id);
             if (!element) {
                 return fallback;
             }
@@ -335,11 +341,11 @@ class EditorSettings {
             return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
         };
         const readCheckbox = (id, fallback) => {
-            const element = elById(id);
+            const element = elCheckbox(id);
             return element ? !!element.checked : fallback;
         };
         const readValue = (id, fallback) => {
-            const element = elById(id);
+            const element = elInputLike(id);
             return element && element.value ? element.value : fallback;
         };
 
@@ -405,7 +411,7 @@ class EditorSettings {
                 this.showMessage(window.i18n.t('settings.saveNotSupported'), 'error');
                 return;
             }
-            const rawTextArea = elById('clang-format-raw-text');
+            const rawTextArea = elInputLike('clang-format-raw-text');
             const style = this.collectClangFormatStyleFromUI();
             const content = (this._clangFormatRawDirty && !this._clangFormatControlsDirty && rawTextArea && String(rawTextArea.value || '').trim())
                 ? String(rawTextArea.value)
@@ -436,7 +442,7 @@ class EditorSettings {
             this.settings.clangFormatRaw = this.generateClangFormatText(style);
             this._clangFormatControlsDirty = true;
             this._clangFormatRawDirty = false;
-            const rawTextArea = elById('clang-format-raw-text');
+            const rawTextArea = elInputLike('clang-format-raw-text');
             if (rawTextArea) {
                 rawTextArea.value = this.settings.clangFormatRaw;
             }
@@ -463,11 +469,11 @@ class EditorSettings {
             if (!element) {
                 return;
             }
-            const eventName = element.tagName === 'INPUT' && element.type === 'number' ? 'input' : 'change';
+            const eventName = element instanceof HTMLInputElement && element.type === 'number' ? 'input' : 'change';
             element.addEventListener(eventName, updateFromControls);
         });
 
-        const rawTextArea = elById('clang-format-raw-text');
+        const rawTextArea = elInputLike('clang-format-raw-text');
         if (rawTextArea) {
             rawTextArea.addEventListener('input', () => {
                 this._clangFormatRawDirty = true;
@@ -744,7 +750,7 @@ class EditorSettings {
     }
 
     getCurrentThemeFromUI() {
-        const themeSelect = elById('editor-theme');
+        const themeSelect = elSelect('editor-theme');
         return this.normalizeThemeKey(themeSelect?.value || this.settings.theme || 'dark');
     }
 
@@ -804,10 +810,10 @@ class EditorSettings {
         const normalized = this.normalizeSyntaxColors(colors, theme);
         const normalizedStyles = this.getEffectiveSyntaxStyles();
         Object.keys(normalized).forEach((key) => {
-            const colorInput = elById(`syntax-color-${key}`);
-            const textInput = elById(`syntax-color-${key}-text`);
-            const boldInput = elById(`syntax-style-${key}-bold`);
-            const italicInput = elById(`syntax-style-${key}-italic`);
+            const colorInput = elInputLike(`syntax-color-${key}`);
+            const textInput = elInputLike(`syntax-color-${key}-text`);
+            const boldInput = elCheckbox(`syntax-style-${key}-bold`);
+            const italicInput = elCheckbox(`syntax-style-${key}-italic`);
             if (colorInput) {
                 colorInput.value = normalized[key];
             }
@@ -828,8 +834,8 @@ class EditorSettings {
         const defaults = this.getDefaultSyntaxColors(theme);
         const result = { ...defaults };
         this.getSyntaxTokenKeys().forEach((key) => {
-            const textInput = elById(`syntax-color-${key}-text`);
-            const colorInput = elById(`syntax-color-${key}`);
+            const textInput = elInputLike(`syntax-color-${key}-text`);
+            const colorInput = elInputLike(`syntax-color-${key}`);
             const raw = textInput?.value || colorInput?.value;
             result[key] = this.normalizeHexColor(raw, defaults[key]);
         });
@@ -840,8 +846,8 @@ class EditorSettings {
         const defaults = this.getDefaultSyntaxFontStyles();
         const result = JSON.parse(JSON.stringify(defaults));
         this.getSyntaxTokenKeys().forEach((key) => {
-            const boldInput = elById(`syntax-style-${key}-bold`);
-            const italicInput = elById(`syntax-style-${key}-italic`);
+            const boldInput = elCheckbox(`syntax-style-${key}-bold`);
+            const italicInput = elCheckbox(`syntax-style-${key}-italic`);
             if (boldInput) {
                 result[key].bold = !!boldInput.checked;
             }
@@ -866,8 +872,8 @@ class EditorSettings {
             preview.style.setProperty(`--syntax-${key}-style`, normalizedStyles[key]?.italic ? 'italic' : 'normal');
         });
 
-        const fontSelect = elById('editor-font');
-        const fontSizeInput = elById('editor-font-size');
+        const fontSelect = elSelect('editor-font');
+        const fontSizeInput = elInputLike('editor-font-size');
         if (fontSelect && fontSelect.value) {
             preview.style.fontFamily = fontSelect.value;
         }
@@ -880,10 +886,10 @@ class EditorSettings {
     bindSyntaxColorControls() {
         const defaults = this.getDefaultSyntaxColors(this.getCurrentThemeFromUI());
         const bindColorPair = (key) => {
-            const colorInput = elById(`syntax-color-${key}`);
-            const textInput = elById(`syntax-color-${key}-text`);
-            const boldInput = elById(`syntax-style-${key}-bold`);
-            const italicInput = elById(`syntax-style-${key}-italic`);
+            const colorInput = elInputLike(`syntax-color-${key}`);
+            const textInput = elInputLike(`syntax-color-${key}-text`);
+            const boldInput = elCheckbox(`syntax-style-${key}-bold`);
+            const italicInput = elCheckbox(`syntax-style-${key}-italic`);
             if (!colorInput || !textInput) {
                 return;
             }
@@ -947,7 +953,7 @@ class EditorSettings {
             });
 
             textInput.addEventListener('keydown', (event) => {
-                if (event.key === 'Enter') {
+                if (event instanceof KeyboardEvent && event.key === 'Enter') {
                     event.preventDefault();
                     commitTextColor(colorInput.value);
                     textInput.blur();
@@ -1085,11 +1091,11 @@ class EditorSettings {
         this.bindSyntaxColorControls();
         this.bindClangFormatControls();
 
-        const autoSaveCheckbox = elById('editor-auto-save-enabled');
-        const autoSaveIntervalInput = elById('editor-auto-save-interval');
+        const autoSaveCheckbox = elCheckbox('editor-auto-save-enabled');
+        const autoSaveIntervalInput = elInputLike('editor-auto-save-interval');
         if (autoSaveCheckbox && autoSaveIntervalInput) {
             autoSaveCheckbox.addEventListener('change', (e) => {
-                this.toggleAutoSaveInterval(autoSaveIntervalInput, e.target.checked);
+                this.toggleAutoSaveInterval(autoSaveIntervalInput, autoSaveCheckbox.checked);
                 this.notifyMainWindowPreview();
             });
             autoSaveIntervalInput.addEventListener('input', () => {
@@ -1097,46 +1103,46 @@ class EditorSettings {
             });
         }
 
-        const autoOpenLastWorkspaceCheckbox = elById('editor-auto-open-last-workspace');
+        const autoOpenLastWorkspaceCheckbox = elCheckbox('editor-auto-open-last-workspace');
         if (autoOpenLastWorkspaceCheckbox) {
             autoOpenLastWorkspaceCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const receiveBetaUpdatesCheckbox = elById('editor-receive-beta-updates');
+        const receiveBetaUpdatesCheckbox = elCheckbox('editor-receive-beta-updates');
         if (receiveBetaUpdatesCheckbox) {
             receiveBetaUpdatesCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const autoCompletionCheckbox = elById('editor-auto-completion');
+        const autoCompletionCheckbox = elCheckbox('editor-auto-completion');
         if (autoCompletionCheckbox) {
             autoCompletionCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const unifiedPreprocessorCheckbox = elById('editor-unified-preprocessor-color');
+        const unifiedPreprocessorCheckbox = elCheckbox('editor-unified-preprocessor-color');
         if (unifiedPreprocessorCheckbox) {
             unifiedPreprocessorCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const tabSizeInput = elById('editor-tab-size');
+        const tabSizeInput = elInputLike('editor-tab-size');
         if (tabSizeInput) {
             tabSizeInput.addEventListener('input', () => {
                 this.notifyMainWindowPreview();
             });
         }
 
-        const opacityInput = elById('editor-opacity');
+        const opacityInput = elInputLike('editor-opacity');
         const opacityValue = elById('editor-opacity-value');
         if (opacityInput && opacityValue) {
             opacityInput.addEventListener('input', (e) => {
-                const transparency = Math.max(0, Math.min(0.8, parseFloat(e.target.value) || 0));
+                const transparency = Math.max(0, Math.min(0.8, parseFloat(opacityInput.value) || 0));
                 const windowOpacity = 1 - transparency;
                 opacityValue.textContent = Math.round(transparency * 100) + '%';
                 // 实时预览透明度
@@ -1149,7 +1155,7 @@ class EditorSettings {
             });
         }
 
-        const glassEffectCheckbox = elById('editor-glass-effect-enabled');
+        const glassEffectCheckbox = elCheckbox('editor-glass-effect-enabled');
         if (glassEffectCheckbox) {
             glassEffectCheckbox.addEventListener('change', () => {
                 this.notifyMainWindowPreview();
@@ -1157,7 +1163,7 @@ class EditorSettings {
         }
 
         const browseBgBtn = elById('browse-bg-image');
-        const bgImageInput = elById('editor-bg-image');
+        const bgImageInput = elInputLike('editor-bg-image');
         if (browseBgBtn && bgImageInput) {
             browseBgBtn.addEventListener('click', async () => {
                 if (!window.electronAPI?.showOpenDialog) {
@@ -1229,11 +1235,11 @@ class EditorSettings {
     }
 
     setupRealTimePreview() {
-        const fontSizeInput = elById('editor-font-size');
+        const fontSizeInput = elInputLike('editor-font-size');
         logInfo('字体大小输入框元素:', fontSizeInput);
         if (fontSizeInput) {
             fontSizeInput.addEventListener('input', (e) => {
-                const newFontSize = parseInt(e.target.value, 10);
+                const newFontSize = parseInt(fontSizeInput.value, 10);
                 logInfo('字体大小输入变化:', { oldValue: this.settings.fontSize, newValue: newFontSize });
                 this.updatePreview();
                 this.updateSyntaxPreview();
@@ -1243,7 +1249,7 @@ class EditorSettings {
             logError('未找到字体大小输入框元素');
         }
 
-        const lineHeightInput = elById('editor-line-height');
+        const lineHeightInput = elInputLike('editor-line-height');
         if (lineHeightInput) {
             lineHeightInput.addEventListener('input', () => {
                 this.updatePreview();
@@ -1251,17 +1257,17 @@ class EditorSettings {
             });
         }
 
-        const fontSelect = elById('editor-font');
+        const fontSelect = elSelect('editor-font');
         if (fontSelect) {
             fontSelect.addEventListener('change', (e) => {
-                logInfo('字体选择变化:', { oldValue: this.settings.font, newValue: e.target.value });
+                logInfo('字体选择变化:', { oldValue: this.settings.font, newValue: fontSelect.value });
                 this.updatePreview();
                 this.updateSyntaxPreview();
                 this.notifyMainWindowPreview();
             });
         }
 
-        const themeSelect = elById('editor-theme');
+        const themeSelect = elSelect('editor-theme');
         if (themeSelect) {
             themeSelect.addEventListener('change', () => {
                 const previousTheme = this.settings.theme || 'dark';
@@ -1337,6 +1343,7 @@ class EditorSettings {
         if (!container) return;
 
         container.querySelectorAll('.keybinding-row').forEach((row) => {
+            if (!(row instanceof HTMLElement)) return;
             const item = this.keybindingSchema.find((entry) => entry.key === row.dataset.keybindingKey);
             if (!item) return;
 
@@ -1363,8 +1370,8 @@ class EditorSettings {
 
     updatePreview() {
         const currentSettings = this.collectSettings();
-        const preview = (document.querySelector('.settings-preview'));
-        if (preview) {
+        const preview = document.querySelector('.settings-preview');
+        if (preview instanceof HTMLElement) {
             preview.style.fontFamily = currentSettings.font;
             preview.style.fontSize = currentSettings.fontSize + 'px';
             if (currentSettings.lineHeight && currentSettings.lineHeight > 0) {
@@ -1376,6 +1383,7 @@ class EditorSettings {
 
         const codeExamples = document.querySelectorAll('.code-example, pre, code');
         codeExamples.forEach((element) => {
+            if (!(element instanceof HTMLElement)) return;
             element.style.fontFamily = currentSettings.font;
             element.style.fontSize = currentSettings.fontSize + 'px';
             if (currentSettings.lineHeight && currentSettings.lineHeight > 0) {
@@ -1493,6 +1501,9 @@ class EditorSettings {
                     foldingEnabled: allSettings.foldingEnabled !== false,
                     stickyScrollEnabled: allSettings.stickyScrollEnabled !== false,
                     enableAutoCompletion: allSettings.enableAutoCompletion !== false,
+                    wordWrap: allSettings.wordWrap === true,
+                    bracketMatching: allSettings.bracketMatching !== false,
+                    highlightCurrentLine: allSettings.highlightCurrentLine !== false,
                     autoSave: allSettings.autoSave !== false,
                     autoSaveInterval: typeof allSettings.autoSaveInterval === 'number' ? allSettings.autoSaveInterval : 60000,
                     autoOpenLastWorkspace: allSettings.autoOpenLastWorkspace !== false,
@@ -1525,6 +1536,9 @@ class EditorSettings {
                     foldingEnabled: true,
                     fontLigaturesEnabled: true,
                     enableAutoCompletion: true,
+                    wordWrap: false,
+                    bracketMatching: true,
+                    highlightCurrentLine: true,
                     autoSave: true,
                     autoSaveInterval: 60000,
                     autoOpenLastWorkspace: true,
@@ -1557,6 +1571,9 @@ class EditorSettings {
                 foldingEnabled: true,
                 fontLigaturesEnabled: true,
                 enableAutoCompletion: true,
+                wordWrap: false,
+                bracketMatching: true,
+                highlightCurrentLine: true,
                 autoSave: true,
                 autoSaveInterval: 60000,
                 autoOpenLastWorkspace: true,
@@ -1573,7 +1590,7 @@ class EditorSettings {
     async loadSystemFonts() {
         logInfo('开始加载系统字体');
 
-        const fontSelect = elById('editor-font');
+        const fontSelect = elSelect('editor-font');
         if (!fontSelect) {
             logError('找不到字体选择器元素');
             return;
@@ -1654,15 +1671,15 @@ class EditorSettings {
     }
 
     collectSettings() {
-        const fontSelect = elById('editor-font');
-        const themeSelect = elById('editor-theme');
-        const fontSizeInput = elById('editor-font-size');
-        const terminalFontSizeInput = elById('editor-terminal-font-size');
-        const lineHeightInput = elById('editor-line-height');
+        const fontSelect = elSelect('editor-font');
+        const themeSelect = elSelect('editor-theme');
+        const fontSizeInput = elInputLike('editor-font-size');
+        const terminalFontSizeInput = elInputLike('editor-terminal-font-size');
+        const lineHeightInput = elInputLike('editor-line-height');
 
         const newSettings = {};
 
-        const languageSelect = elById('editor-language');
+        const languageSelect = elSelect('editor-language');
         if (languageSelect) {
             const langValue = languageSelect.value;
             if (langValue) newSettings.language = langValue;
@@ -1672,19 +1689,19 @@ class EditorSettings {
         if (themeSelect) newSettings.theme = themeSelect.value;
         if (fontSizeInput) newSettings.fontSize = parseInt(fontSizeInput.value, 10);
         if (terminalFontSizeInput) newSettings.terminalFontSize = parseInt(terminalFontSizeInput.value, 10);
-        const terminalStartupCommandInput = elById('editor-terminal-startup-command');
+        const terminalStartupCommandInput = elInputLike('editor-terminal-startup-command');
         if (terminalStartupCommandInput) newSettings.terminalStartupCommand = terminalStartupCommandInput.value.trim();
         if (lineHeightInput) {
             const parsedLineHeight = parseInt(lineHeightInput.value, 10);
             newSettings.lineHeight = !Number.isNaN(parsedLineHeight) && parsedLineHeight > 0 ? parsedLineHeight : 0;
         }
-        const foldingCheckbox = elById('editor-folding');
+        const foldingCheckbox = elCheckbox('editor-folding');
         if (foldingCheckbox) newSettings.foldingEnabled = !!foldingCheckbox.checked;
-        const stickyScrollCheckbox = elById('editor-sticky-scroll');
+        const stickyScrollCheckbox = elCheckbox('editor-sticky-scroll');
         if (stickyScrollCheckbox) newSettings.stickyScrollEnabled = !!stickyScrollCheckbox.checked;
-        const ligaturesCheckbox = elById('editor-font-ligatures');
+        const ligaturesCheckbox = elCheckbox('editor-font-ligatures');
         if (ligaturesCheckbox) newSettings.fontLigaturesEnabled = !!ligaturesCheckbox.checked;
-        const tabSizeInput = elById('editor-tab-size');
+        const tabSizeInput = elInputLike('editor-tab-size');
         if (tabSizeInput) {
             const parsedTabSize = parseInt(tabSizeInput.value, 10);
             if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
@@ -1693,36 +1710,36 @@ class EditorSettings {
         }
 
         const clangFormatStyle = this.collectClangFormatStyleFromUI();
-        const clangFormatRawTextArea = elById('clang-format-raw-text');
+        const clangFormatRawTextArea = elInputLike('clang-format-raw-text');
         const clangFormatRawText = clangFormatRawTextArea && String(clangFormatRawTextArea.value || '').trim()
             ? String(clangFormatRawTextArea.value)
             : this.generateClangFormatText(clangFormatStyle);
         newSettings.clangFormatStyle = clangFormatStyle;
         newSettings.clangFormatRaw = clangFormatRawText;
 
-        const syntaxCheckCheckbox = elById('editor-syntax-check-enabled');
+        const syntaxCheckCheckbox = elCheckbox('editor-syntax-check-enabled');
         if (syntaxCheckCheckbox) {
             newSettings.syntaxCheckEnabled = !!syntaxCheckCheckbox.checked;
         }
 
-        const autoCompletionCheckbox = elById('editor-auto-completion');
+        const autoCompletionCheckbox = elCheckbox('editor-auto-completion');
         if (autoCompletionCheckbox) {
             newSettings.enableAutoCompletion = !!autoCompletionCheckbox.checked;
         }
 
-        const autoSaveCheckbox = elById('editor-auto-save-enabled');
+        const autoSaveCheckbox = elCheckbox('editor-auto-save-enabled');
         if (autoSaveCheckbox) {
             newSettings.autoSave = !!autoSaveCheckbox.checked;
         }
-        const autoOpenLastWorkspaceCheckbox = elById('editor-auto-open-last-workspace');
+        const autoOpenLastWorkspaceCheckbox = elCheckbox('editor-auto-open-last-workspace');
         if (autoOpenLastWorkspaceCheckbox) {
             newSettings.autoOpenLastWorkspace = !!autoOpenLastWorkspaceCheckbox.checked;
         }
-        const receiveBetaUpdatesCheckbox = elById('editor-receive-beta-updates');
+        const receiveBetaUpdatesCheckbox = elCheckbox('editor-receive-beta-updates');
         if (receiveBetaUpdatesCheckbox) {
             newSettings.receiveBetaUpdates = !!receiveBetaUpdatesCheckbox.checked;
         }
-        const autoSaveIntervalInput = elById('editor-auto-save-interval');
+        const autoSaveIntervalInput = elInputLike('editor-auto-save-interval');
         if (autoSaveIntervalInput) {
             const parsedInterval = parseInt(autoSaveIntervalInput.value, 10);
             if (!Number.isNaN(parsedInterval) && parsedInterval > 0) {
@@ -1730,18 +1747,18 @@ class EditorSettings {
             }
         }
 
-        const opacityInput = elById('editor-opacity');
+        const opacityInput = elInputLike('editor-opacity');
         if (opacityInput) {
             const transparency = Math.max(0, Math.min(0.8, parseFloat(opacityInput.value) || 0));
             newSettings.windowOpacity = 1 - transparency;
         }
 
-        const glassEffectCheckbox = elById('editor-glass-effect-enabled');
+        const glassEffectCheckbox = elCheckbox('editor-glass-effect-enabled');
         if (glassEffectCheckbox) {
             newSettings.glassEffectEnabled = !!glassEffectCheckbox.checked;
         }
 
-        const bgImageInput = elById('editor-bg-image');
+        const bgImageInput = elInputLike('editor-bg-image');
         if (bgImageInput) {
             newSettings.backgroundImage = bgImageInput.value;
         }
@@ -1754,7 +1771,7 @@ class EditorSettings {
         this.setSyntaxStyleOverride(syntaxFontStyles);
         newSettings.syntaxColorsByTheme = syntaxColorsByTheme;
         newSettings.syntaxFontStyles = this.normalizeSyntaxFontStyles(this.settings.syntaxFontStyles);
-        const unifiedPreprocessorCheckbox = elById('editor-unified-preprocessor-color');
+        const unifiedPreprocessorCheckbox = elCheckbox('editor-unified-preprocessor-color');
         if (unifiedPreprocessorCheckbox) {
             newSettings.unifiedPreprocessorColor = !!unifiedPreprocessorCheckbox.checked;
         }
@@ -1764,6 +1781,7 @@ class EditorSettings {
         const keybindingInputs = document.querySelectorAll('[data-keybinding-key]');
         const keybindings = this.normalizeKeybindings(this.settings.keybindings);
         keybindingInputs.forEach((input) => {
+            if (!(input instanceof HTMLInputElement)) return;
             const key = input.dataset.keybindingKey;
             if (!key) return;
             if (!editableKeys.has(key)) return;
@@ -1883,39 +1901,39 @@ class EditorSettings {
     }
 
     updateUI() {
-        const fontSelect = elById('editor-font');
-        const fontSizeInput = elById('editor-font-size');
-        const terminalFontSizeInput = elById('editor-terminal-font-size');
-        const lineHeightInput = elById('editor-line-height');
-        const themeSelect = elById('editor-theme');
-        const foldingCheckbox = elById('editor-folding');
-        const stickyScrollCheckbox = elById('editor-sticky-scroll');
-        const ligaturesCheckbox = elById('editor-font-ligatures');
-        const tabSizeInput = elById('editor-tab-size');
-        const clangFormatBasedOnStyleSelect = elById('clang-format-based-on-style');
-        const clangFormatUseTabSelect = elById('clang-format-use-tab');
-        const clangFormatIndentWidthInput = elById('clang-format-indent-width');
-        const clangFormatTabWidthInput = elById('clang-format-tab-width');
-        const clangFormatColumnLimitInput = elById('clang-format-column-limit');
-        const clangFormatBreakBeforeBracesSelect = elById('clang-format-break-before-braces');
-        const clangFormatPointerAlignmentSelect = elById('clang-format-pointer-alignment');
-        const clangFormatSpaceBeforeParensSelect = elById('clang-format-space-before-parens');
-        const clangFormatIndentCaseLabelsCheckbox = elById('clang-format-indent-case-labels');
-        const clangFormatSortIncludesCheckbox = elById('clang-format-sort-includes');
-        const clangFormatAlignAssignmentsCheckbox = elById('clang-format-align-assignments');
-        const clangFormatAlignDeclarationsCheckbox = elById('clang-format-align-declarations');
-        const clangFormatRawTextArea = elById('clang-format-raw-text');
-        const autoCompletionCheckbox = elById('editor-auto-completion');
-        const syntaxCheckCheckbox = elById('editor-syntax-check-enabled');
-        const autoSaveCheckbox = elById('editor-auto-save-enabled');
-        const autoSaveIntervalInput = elById('editor-auto-save-interval');
-        const autoOpenLastWorkspaceCheckbox = elById('editor-auto-open-last-workspace');
-        const receiveBetaUpdatesCheckbox = elById('editor-receive-beta-updates');
-        const opacityInput = elById('editor-opacity');
+        const fontSelect = elSelect('editor-font');
+        const fontSizeInput = elInputLike('editor-font-size');
+        const terminalFontSizeInput = elInputLike('editor-terminal-font-size');
+        const lineHeightInput = elInputLike('editor-line-height');
+        const themeSelect = elSelect('editor-theme');
+        const foldingCheckbox = elCheckbox('editor-folding');
+        const stickyScrollCheckbox = elCheckbox('editor-sticky-scroll');
+        const ligaturesCheckbox = elCheckbox('editor-font-ligatures');
+        const tabSizeInput = elInputLike('editor-tab-size');
+        const clangFormatBasedOnStyleSelect = elSelect('clang-format-based-on-style');
+        const clangFormatUseTabSelect = elSelect('clang-format-use-tab');
+        const clangFormatIndentWidthInput = elInputLike('clang-format-indent-width');
+        const clangFormatTabWidthInput = elInputLike('clang-format-tab-width');
+        const clangFormatColumnLimitInput = elInputLike('clang-format-column-limit');
+        const clangFormatBreakBeforeBracesSelect = elSelect('clang-format-break-before-braces');
+        const clangFormatPointerAlignmentSelect = elSelect('clang-format-pointer-alignment');
+        const clangFormatSpaceBeforeParensSelect = elSelect('clang-format-space-before-parens');
+        const clangFormatIndentCaseLabelsCheckbox = elCheckbox('clang-format-indent-case-labels');
+        const clangFormatSortIncludesCheckbox = elCheckbox('clang-format-sort-includes');
+        const clangFormatAlignAssignmentsCheckbox = elCheckbox('clang-format-align-assignments');
+        const clangFormatAlignDeclarationsCheckbox = elCheckbox('clang-format-align-declarations');
+        const clangFormatRawTextArea = elInputLike('clang-format-raw-text');
+        const autoCompletionCheckbox = elCheckbox('editor-auto-completion');
+        const syntaxCheckCheckbox = elCheckbox('editor-syntax-check-enabled');
+        const autoSaveCheckbox = elCheckbox('editor-auto-save-enabled');
+        const autoSaveIntervalInput = elInputLike('editor-auto-save-interval');
+        const autoOpenLastWorkspaceCheckbox = elCheckbox('editor-auto-open-last-workspace');
+        const receiveBetaUpdatesCheckbox = elCheckbox('editor-receive-beta-updates');
+        const opacityInput = elInputLike('editor-opacity');
         const opacityValue = elById('editor-opacity-value');
-        const glassEffectCheckbox = elById('editor-glass-effect-enabled');
-        const bgImageInput = elById('editor-bg-image');
-        const unifiedPreprocessorCheckbox = elById('editor-unified-preprocessor-color');
+        const glassEffectCheckbox = elCheckbox('editor-glass-effect-enabled');
+        const bgImageInput = elInputLike('editor-bg-image');
+        const unifiedPreprocessorCheckbox = elCheckbox('editor-unified-preprocessor-color');
 
         // Populate language selector
         this.populateLanguageSelector();
@@ -1939,16 +1957,16 @@ class EditorSettings {
         }
 
         if (fontSizeInput && this.settings.fontSize) {
-            fontSizeInput.value = this.settings.fontSize;
+            fontSizeInput.value = String(this.settings.fontSize);
             logInfo('字体大小已更新:', fontSizeInput.value);
         }
 
         if (terminalFontSizeInput && this.settings.terminalFontSize) {
-            terminalFontSizeInput.value = this.settings.terminalFontSize;
+            terminalFontSizeInput.value = String(this.settings.terminalFontSize);
             logInfo('终端字号已更新:', terminalFontSizeInput.value);
         }
 
-        const terminalStartupCommandInput = elById('editor-terminal-startup-command');
+        const terminalStartupCommandInput = elInputLike('editor-terminal-startup-command');
         if (terminalStartupCommandInput) {
             terminalStartupCommandInput.value = this.settings.terminalStartupCommand || '';
             logInfo('终端启动命令已更新:', terminalStartupCommandInput.value);
@@ -1956,7 +1974,7 @@ class EditorSettings {
 
         if (lineHeightInput) {
             const lh = Number.isFinite(this.settings.lineHeight) ? this.settings.lineHeight : 0;
-            lineHeightInput.value = lh > 0 ? lh : '';
+            lineHeightInput.value = lh > 0 ? String(lh) : '';
         }
 
         if (themeSelect && this.settings.theme) {
@@ -1982,15 +2000,15 @@ class EditorSettings {
         }
         if (tabSizeInput) {
             const tabSize = Number.isFinite(this.settings.tabSize) ? this.settings.tabSize : 4;
-            tabSizeInput.value = tabSize;
+            tabSizeInput.value = String(tabSize);
         }
 
         const clangFormatStyle = this.normalizeClangFormatStyle(this.settings.clangFormatStyle);
         if (clangFormatBasedOnStyleSelect) clangFormatBasedOnStyleSelect.value = clangFormatStyle.BasedOnStyle;
         if (clangFormatUseTabSelect) clangFormatUseTabSelect.value = clangFormatStyle.UseTab;
-        if (clangFormatIndentWidthInput) clangFormatIndentWidthInput.value = clangFormatStyle.IndentWidth;
-        if (clangFormatTabWidthInput) clangFormatTabWidthInput.value = clangFormatStyle.TabWidth;
-        if (clangFormatColumnLimitInput) clangFormatColumnLimitInput.value = clangFormatStyle.ColumnLimit;
+        if (clangFormatIndentWidthInput) clangFormatIndentWidthInput.value = String(clangFormatStyle.IndentWidth);
+        if (clangFormatTabWidthInput) clangFormatTabWidthInput.value = String(clangFormatStyle.TabWidth);
+        if (clangFormatColumnLimitInput) clangFormatColumnLimitInput.value = String(clangFormatStyle.ColumnLimit);
         if (clangFormatBreakBeforeBracesSelect) clangFormatBreakBeforeBracesSelect.value = clangFormatStyle.BreakBeforeBraces;
         if (clangFormatPointerAlignmentSelect) clangFormatPointerAlignmentSelect.value = clangFormatStyle.PointerAlignment;
         if (clangFormatSpaceBeforeParensSelect) clangFormatSpaceBeforeParensSelect.value = clangFormatStyle.SpaceBeforeParens;
@@ -2016,7 +2034,7 @@ class EditorSettings {
         }
         if (autoSaveIntervalInput) {
             const intervalMs = Number.isFinite(this.settings.autoSaveInterval) && this.settings.autoSaveInterval > 0 ? this.settings.autoSaveInterval : 60000;
-            autoSaveIntervalInput.value = Math.max(1, Math.round(intervalMs / 1000));
+            autoSaveIntervalInput.value = String(Math.max(1, Math.round(intervalMs / 1000)));
             this.toggleAutoSaveInterval(autoSaveIntervalInput, autoSaveEnabled);
         }
 
@@ -2032,7 +2050,7 @@ class EditorSettings {
         if (opacityInput && opacityValue) {
             const opacity = typeof this.settings.windowOpacity === 'number' ? this.settings.windowOpacity : 1.0;
             const transparency = Math.max(0, Math.min(0.8, 1 - opacity));
-            opacityInput.value = transparency;
+            opacityInput.value = String(transparency);
             opacityValue.textContent = Math.round(transparency * 100) + '%';
         }
 
@@ -2048,6 +2066,7 @@ class EditorSettings {
         const defaultKeybindings = this.getDefaultKeybindings();
         const keybindingInputs = document.querySelectorAll('[data-keybinding-key]');
         keybindingInputs.forEach((input) => {
+            if (!(input instanceof HTMLInputElement)) return;
             const key = input.dataset.keybindingKey;
             if (!key) return;
             input.value = normalizedKeybindings[key] || defaultKeybindings[key] || '';
@@ -2055,7 +2074,7 @@ class EditorSettings {
     }
 
     async populateLanguageSelector() {
-        const langSelect = elById('editor-language');
+        const langSelect = elSelect('editor-language');
         if (!langSelect) return;
 
         try {
@@ -2079,7 +2098,7 @@ class EditorSettings {
 
             if (!this._languageSelectorListenerBound) {
                 langSelect.addEventListener('change', async (e) => {
-                    const newLang = e.target.value;
+                    const newLang = langSelect.value;
                     if (newLang && window.i18n) {
                         await window.i18n.setLanguage(newLang);
                         this.settings.language = newLang;
