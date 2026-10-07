@@ -792,7 +792,7 @@ class ClangdLspManager {
         });
         this.pendingApplyEdits.clear();
 
-        await new Promise((resolve) => {
+        await /** @type {Promise<void>} */ (new Promise((resolve) => {
             let settled = false;
             const finish = () => {
                 if (settled) return;
@@ -816,7 +816,7 @@ class ClangdLspManager {
                 clearTimeout(timeout);
                 finish();
             }
-        });
+        }));
 
         logInfo('[LSP] clangd 已停止');
         return { ok: true };
@@ -6505,7 +6505,7 @@ function setupIPC() {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
                         throw new Error(t('error.sevenZipUnavailable'));
                     }
-                    await new Promise((resolve, reject) => {
+                    await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
                         const { spawn } = require('child_process');
                         const args = ['x', '-y', `-o${versionDir}`, tempFile];
                         const proc = spawn(sevenBinPath, args, { windowsHide: true });
@@ -6516,7 +6516,7 @@ function setupIPC() {
                             else reject(new Error(t('error.sevenZipFailed', { code, stderr: stderr || '' })));
                         });
                         proc.on('error', (err) => reject(err));
-                    });
+                    }));
                 } else {
                     throw new Error(t('error.unsupportedFileFormat', { ext: fileExtension }));
                 }
@@ -6904,7 +6904,7 @@ function setupIPC() {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
                         throw new Error(t('error.sevenZipUnavailable'));
                     }
-                    await new Promise((resolve, reject) => {
+                    await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
                         const { spawn } = require('child_process');
                         const args = ['x', '-y', `-o${versionDir}`, tempFile];
                         const proc = spawn(sevenBinPath, args, { windowsHide: true });
@@ -6915,7 +6915,7 @@ function setupIPC() {
                             else reject(new Error(t('error.sevenZipFailed', { code, stderr: stderr || '' })));
                         });
                         proc.on('error', (err) => reject(err));
-                    });
+                    }));
                 } else {
                     throw new Error(t('error.unsupportedFileFormat', { ext: fileExtension }));
                 }
@@ -10100,7 +10100,10 @@ async function syncSettingsFromCloud() {
     return { success: true, info };
 }
 
-function scheduleAutoSettingsBackup() {
+/**
+ * @param {string} [_reason]
+ */
+function scheduleAutoSettingsBackup(_reason) {
     return;
 }
 
@@ -10245,7 +10248,11 @@ function listClientLogFiles() {
     }
 }
 
-async function sendHeartbeat() {
+/**
+ * @param {string} [_phase]
+ * @param {string} [_username]
+ */
+async function sendHeartbeat(_phase, _username) {
     return null;
 }
 
@@ -10748,12 +10755,12 @@ async function killImageWindows(imageName) {
     if (process.platform !== 'win32') return;
     try {
         const { spawn } = require('child_process');
-        await new Promise((resolve) => {
+        await /** @type {Promise<void>} */ (new Promise((resolve) => {
             const p = spawn('taskkill', ['/F', '/IM', imageName], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 1500);
             p.on('close', () => { clearTimeout(to); resolve(); });
             p.on('error', () => { clearTimeout(to); resolve(); });
-        });
+        }));
     } catch (_) { }
 }
 
@@ -10769,12 +10776,12 @@ async function killByExePathWindows(exePath) {
         }
         const escaped = sanitized.replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '${escaped}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
-        await new Promise((resolve) => {
+        await /** @type {Promise<void>} */ (new Promise((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 2000);
             p.on('close', () => { clearTimeout(to); resolve(); });
             p.on('error', () => { clearTimeout(to); resolve(); });
-        });
+        }));
     } catch (_) { }
 }
 
@@ -10790,12 +10797,12 @@ async function killConsolePauserForTargetWindows(targetExePath) {
         }
         const escaped = sanitized.replace(/`/g, '``').replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match 'consolepauser\\.exe$' -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
-        await new Promise((resolve) => {
+        await /** @type {Promise<void>} */ (new Promise((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 2000);
             p.on('close', () => { clearTimeout(to); resolve(); });
             p.on('error', () => { clearTimeout(to); resolve(); });
-        });
+        }));
     } catch (_) { }
 }
 
@@ -10923,7 +10930,7 @@ async function startDebugSession(filePath, options = {}) {
                     }
                 });
 
-                await new Promise((resolve) => {
+                await /** @type {Promise<void>} */ (new Promise((resolve) => {
                     let settled = false;
                     const done = () => {
                         if (settled) return;
@@ -10939,7 +10946,7 @@ async function startDebugSession(filePath, options = {}) {
                         done();
                     });
                     setTimeout(done, 2000); // 2秒超时
-                });
+                }));
 
                 if (!hasDebugInfo) {
                     logWarn('[主进程] 警告：可执行文件可能不包含调试信息');
