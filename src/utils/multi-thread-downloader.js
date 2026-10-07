@@ -771,4 +771,5 @@ class MultiThreadDownloader {
 }
 
 Object.assign(MultiThreadDownloader, { CANCELLED_CODE, RANGE_UNSUPPORTED_CODE, isCancelledError });
-module.exports = MultiThreadDownloader;
+/** @typedef {typeof MultiThreadDownloader & { CANCELLED_CODE: string, RANGE_UNSUPPORTED_CODE: string, isCancelledError: (error: any) => boolean }} MultiThreadDownloaderExports */
+module.exports = /** @type {MultiThreadDownloaderExports} */ (MultiThreadDownloader);

@@ -40,6 +40,7 @@ interface HTMLElement {
   hasGlobalWheelZoomListener?: boolean;
   _input?: HTMLInputElement;
   _list?: HTMLDivElement;
+  __hideTimer?: NodeJS.Timeout;
 }
 
 interface Window {
