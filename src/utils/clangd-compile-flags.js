@@ -93,8 +93,11 @@ function buildCompileFlagsText({ includePaths = [], target = '', compileFlags = 
 
     return lines.length > 0 ? lines.join('\r\n') + '\r\n' : '';
 }
-// 落盘 compile_flags.txt；内容没变时不重写，避免每次启动都动用户工作区。
-// 已有文件但内容与探测结果不一致时覆盖——编译器换了版本/路径后必须跟着更新。
+/**
+ * 落盘 compile_flags.txt；内容没变时不重写，避免每次启动都动用户工作区。
+ * 已有文件但内容与探测结果不一致时覆盖——编译器换了版本/路径后必须跟着更新。
+ * @param {{ workspaceRoot?: string, includePaths?: string[], target?: string, compileFlags?: string[] }} opts
+ */
 function writeCompileFlagsFile({ workspaceRoot, includePaths = [], target = '', compileFlags = [] } = ({})) {
     const flagsText = buildCompileFlagsText({ includePaths, target, compileFlags });
     if (!flagsText) {
