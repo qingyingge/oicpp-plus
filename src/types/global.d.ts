@@ -13,7 +13,6 @@ declare const DebugPanel: any;
 declare const OICPPApp: any;
 declare const MonacoEditorManager: any;
 declare const CompilerManager: any;
-declare const TabManager: any;
 declare function require(moduleName: string): any;
 
 interface OicppVarData {

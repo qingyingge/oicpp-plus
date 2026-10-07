@@ -50,7 +50,7 @@ class TabManager {
             this.cacheDOM();
         }
 
-        const groupElements = Array.from(document.querySelectorAll('.editor-group'));
+        const groupElements = Array.from(/** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('.editor-group')));
         if (groupElements.length === 0 && this.editorGroupsElement) {
             const defaultGroup = document.createElement('div');
             defaultGroup.className = 'editor-group';
@@ -83,10 +83,10 @@ class TabManager {
 
             const tabBar = groupEl.querySelector('.tab-bar');
             const editorArea = groupEl.querySelector('.editor-area');
-            if (tabBar) {
+            if (tabBar instanceof HTMLElement) {
                 tabBar.dataset.groupId = groupId;
             }
-            if (editorArea) {
+            if (editorArea instanceof HTMLElement) {
                 editorArea.dataset.groupId = groupId;
                 this.bindEditorAreaDnD(editorArea);
             }
@@ -1948,7 +1948,10 @@ class TabManager {
         const tabs = document.querySelectorAll('.tab');
         tabs.forEach(tab => {
             tab.addEventListener('click', (e) => {
-                if (!e.target.classList.contains('tab-close')) {
+                if (e.target instanceof Element && e.target.classList.contains('tab-close')) {
+                    return;
+                }
+                if (tab instanceof HTMLElement) {
                     this.activateTab(tab.dataset.file).catch(logError);
                 }
             });
@@ -1958,15 +1961,17 @@ class TabManager {
         closeBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                const tab = e.target.closest('.tab');
-                this.closeTab(tab.dataset.file);
+                const tab = e.target instanceof Element ? e.target.closest('.tab') : null;
+                if (tab instanceof HTMLElement) {
+                    this.closeTab(tab.dataset.file);
+                }
             });
         });
 
 
         document.addEventListener('mouseup', (e) => {
-            if (e.button === 1 && e.target.closest('.tab')) {
-                const tab = e.target.closest('.tab');
+            const tab = e.target instanceof Element ? e.target.closest('.tab') : null;
+            if (e.button === 1 && tab instanceof HTMLElement) {
                 this.closeTab(tab.dataset.file);
             }
         });
@@ -2895,6 +2900,9 @@ class TabManager {
         return container;
     }
 
+    /**
+     * @param {{ filePath?: string, tabId?: string, zoom?: string, inline?: boolean }} opts
+     */
     buildPdfViewerSrc({ filePath, tabId, zoom, inline = false } = {}) {
         if (!filePath && !inline) {
             return '';
@@ -3462,7 +3470,7 @@ class TabManager {
     /**
      * 打开内置浏览器标签页
      * @param {object} options
-     * @param {string} options.url - 要打开的 URL
+     * @param {string} [options.url] - 要打开的 URL
      * @param {string} [options.groupId] - 目标分组 ID
      * @param {string} [options.title] - 标签标题
      */
@@ -3826,7 +3834,7 @@ class TabManager {
                 logWarn('关闭欢迎页面失败:', e);
             }
         }
-        let openOptions = {};
+        let openOptions = /** @type {{ filePath?: string, pdfBase64?: string, groupId?: string, targetGroupId?: string, viewType?: string, isTempFile?: boolean }} */ ({});
         let pdfBase64 = null;
         if (filePath && typeof filePath === 'object' && !Array.isArray(filePath)) {
             openOptions = filePath;
@@ -4126,7 +4134,9 @@ class TabManager {
         logInfo(`同步标签页DOM: ${fileName}`);
 
         const allTabs = document.querySelectorAll('.tab');
-        for (const tabEl of allTabs) {
+        for (const tabElRaw of allTabs) {
+            if (!(tabElRaw instanceof HTMLElement)) continue;
+            const tabEl = tabElRaw;
             const tabLabel = tabEl.querySelector('.tab-label');
             const datasetFileName = typeof tabEl.dataset?.file === 'string' ? tabEl.dataset.file : '';
             const labelText = tabLabel?.querySelector?.('.tab-label-text')?.textContent || tabLabel?.textContent || '';
@@ -4166,14 +4176,15 @@ class TabManager {
         tab.appendChild(closeBtn);
 
         tab.addEventListener('click', (e) => {
-            if (!e.target.classList.contains('tab-close')) {
-                const uniqueKey = tab.dataset.uniqueKey;
-                logInfo('标签页点击:', fileName, 'DOM uniqueKey:', uniqueKey);
-                if (uniqueKey && this.tabs.has(uniqueKey)) {
-                    this.activateTabByUniqueKey(uniqueKey).catch(logError);
-                } else {
-                    this.activateTab(fileName).catch(logError);
-                }
+            if (e.target instanceof Element && e.target.classList.contains('tab-close')) {
+                return;
+            }
+            const uniqueKey = tab.dataset.uniqueKey;
+            logInfo('标签页点击:', fileName, 'DOM uniqueKey:', uniqueKey);
+            if (uniqueKey && this.tabs.has(uniqueKey)) {
+                this.activateTabByUniqueKey(uniqueKey).catch(logError);
+            } else {
+                this.activateTab(fileName).catch(logError);
             }
         });
 
@@ -4764,7 +4775,7 @@ class TabManager {
             return;
         }
 
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'none';
         }
         welcomeContainer.style.display = 'block';
@@ -4800,7 +4811,7 @@ class TabManager {
 
     showWelcomeContent() {
         const editorArea = document.querySelector('.editor-area');
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'none';
         }
 
@@ -4962,7 +4973,7 @@ class TabManager {
             welcomeContainer.style.display = 'none';
         }
 
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'block';
         }
 
@@ -5080,14 +5091,15 @@ class TabManager {
         input.click();
 
         input.addEventListener('change', (e) => {
-            const files = e.target.files;
-            if (files.length > 0) {
+            const inputEl = /** @type {HTMLInputElement} */ (e.target);
+            const files = inputEl.files;
+            if (files && files.length > 0) {
                 const file = files[0];
                 const fileName = file.name;
 
                 const reader = new FileReader();
-                reader.onload = (e) => {
-                    const content = e.target.result;
+                reader.onload = (re) => {
+                    const content = /** @type {string} */ (re.target?.result);
                     this.openFile(fileName, content);
                 };
                 reader.readAsText(file);
@@ -5107,14 +5119,15 @@ class TabManager {
         input.click();
 
         input.addEventListener('change', (e) => {
-            const files = e.target.files;
+            const inputEl = /** @type {HTMLInputElement} */ (e.target);
+            const files = inputEl.files || [];
             const fileNames = Array.from(files).map(file => file.webkitRelativePath.split('/').pop());
 
             fileNames.forEach(fileName => {
                 const file = Array.from(files).find(f => f.webkitRelativePath.endsWith(fileName));
                 const reader = new FileReader();
-                reader.onload = (e) => {
-                    const content = e.target.result;
+                reader.onload = (re) => {
+                    const content = /** @type {string} */ (re.target?.result);
                     this.openFile(fileName, content);
                 };
                 reader.readAsText(file);
@@ -5161,7 +5174,9 @@ void hello() {
         }
 
         const fileName = this.generateNewFileName();
-        let tabId = tabData.tabId;
+        const tabData = /** @type {{ tabId?: string, fileName?: string } | null} */ (null);
+        const uniqueKey = /** @type {string | null} */ (null);
+        let tabId = tabData?.tabId;
         if (!tabId && uniqueKey) {
             try {
                 if (this.monacoEditorManager && this.monacoEditorManager.generateTabId) {
@@ -5547,7 +5562,7 @@ void hello() {
         }
 
         const editorArea = document.querySelector('.editor-area');
-        if (editorArea) {
+        if (editorArea instanceof HTMLElement) {
             editorArea.style.display = 'block';
             editorArea.innerHTML = '';
         }
