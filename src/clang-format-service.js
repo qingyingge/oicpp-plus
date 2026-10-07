@@ -35,6 +35,17 @@ function serializeClangFormatStyle(style) {
     throw new Error('clang-format style must be an object, preset name, or file');
 }
 
+/**
+ * @param {{
+ *   filePath?: string,
+ *   style?: any,
+ *   styleFilePath?: string,
+ *   fallbackStyle?: string,
+ *   startLine?: number,
+ *   endLine?: number,
+ *   inputFilePath?: string,
+ * }} opts
+ */
 function buildClangFormatArgs({
     filePath,
     style,
@@ -71,6 +82,20 @@ function buildClangFormatArgs({
     return args;
 }
 
+/**
+ * @param {{
+ *   executablePath?: string,
+ *   content?: string,
+ *   filePath?: string,
+ *   style?: any,
+ *   styleRaw?: any,
+ *   fallbackStyle?: string,
+ *   startLine?: number,
+ *   endLine?: number,
+ *   timeoutMs?: number,
+ *   spawnImpl?: typeof spawn,
+ * }} opts
+ */
 function formatCodeWithClangFormat({
     executablePath,
     content,
