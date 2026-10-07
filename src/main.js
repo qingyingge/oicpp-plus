@@ -29,6 +29,9 @@ const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
 
+// 业务错误：Error 之上携带 code/errno/syscall/path（Node 风格）或 lspCode（LSP 风格）
+/** @typedef {NodeJS.ErrnoException & { lspCode?: string }} OicppError */
+
 const APP_VERSION = '1.5.4';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
@@ -843,7 +846,7 @@ class ClangdLspManager {
                     method: '$/cancelRequest',
                     params: { id }
                 });
-                const error = new Error(`LSP request timed out: ${method}`);
+                /** @type {OicppError} */ const error = new Error(`LSP request timed out: ${method}`);
                 error.code = 'ETIMEDOUT';
                 reject(error);
             }, LSP_REQUEST_TIMEOUT_MS);
@@ -879,7 +882,7 @@ class ClangdLspManager {
                 const oldest = this.canceledIds.values().next().value;
                 this.canceledIds.delete(oldest);
             }
-            const error = new Error(`LSP request cancelled: ${entry.method || requestId}`);
+            /** @type {OicppError} */ const error = new Error(`LSP request cancelled: ${entry.method || requestId}`);
             error.code = 'ECANCELED';
             entry.reject(error);
         }
@@ -1114,7 +1117,7 @@ class ClangdLspManager {
                     || /cancel+ed/i.test(String(errorText));
                 const logLine = '[LSP] 请求失败, id=' + message.id + ', 方法=' + (entry.method || '?') + ', ' + errorText;
                 if (cancelled) logInfo(logLine); else logWarn(logLine);
-                const error = new Error(errorText || 'clangd error');
+                /** @type {OicppError} */ const error = new Error(errorText || 'clangd error');
                 error.lspCode = message.error?.code;
                 entry.reject(error);
             } else {
@@ -3408,7 +3411,7 @@ function createCompetitiveCompanionServer(port, tagLabel) {
         } catch (_) { }
     });
 
-    server.on('error', (err) => {
+    server.on('error', /** @param {OicppError} err */ (err) => {
         if (err && err.code === 'EADDRINUSE') {
             try { logWarn(`[${label}] 端口 ${port} 被占用，可能被其他工具占用（如 cph）。可在 Competitive Companion 中添加 http://127.0.0.1:${port}/ 作为自定义端口。`); } catch (_) { }
             return;
@@ -8866,7 +8869,7 @@ async function compileFile(options) {
             }
         });
 
-        compiler.on('error', (error) => {
+        compiler.on('error', /** @param {OicppError} error */ (error) => {
             clearTimeout(compilationTimeout);
             logError('编译进程启动失败:', error);
             logError('错误代码:', error.code);
@@ -9076,7 +9079,7 @@ async function runExecutable(options) {
             child.once('error', () => detachedRunProcesses.delete(child));
 
             child.unref(); // 允许父进程退出而不等待子进程
-            child.on('error', (error) => {
+            child.on('error', /** @param {OicppError} error */ (error) => {
                 try {
                     let diag = { message: error.message, code: error.code, errno: error.errno, syscall: error.syscall };
                     try {
