@@ -11,18 +11,25 @@ const { t } = require('../lang');
 const CANCELLED_CODE = 'DOWNLOAD_CANCELLED';
 // 服务器忽略 Range 返回整个文件时抛这个码，由 download() 捕获后降级单线程
 const RANGE_UNSUPPORTED_CODE = 'RANGE_UNSUPPORTED';
-const cancelledError = () => {
-    const err = new Error(t('downloader.cancelled'));
-    ((err)).code = CANCELLED_CODE;
-    return err;
-};
+
+/** 带业务错误码的 Error，调用方用 error.code 判断取消/降级等状态，而非匹配 message 文本。 */
+class DownloadError extends Error {
+    /** @param {string} message @param {string} code */
+    constructor(message, code) {
+        super(message);
+        this.code = code;
+        this.name = 'DownloadError';
+    }
+}
+
+const cancelledError = () => new DownloadError(t('downloader.cancelled'), CANCELLED_CODE);
 const isCancelledError = (error) => error?.code === CANCELLED_CODE;
 
 function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
         const isHttps = urlObj.protocol === 'https:';
-        const client = (isHttps ? https : http);
+        const client = /** @type {typeof http} */ (isHttps ? https : http);
 
         const requestOptions = {
             hostname: urlObj.hostname,
@@ -143,10 +150,9 @@ class MultiThreadDownloader {
                     // 服务器忽略了 Range 并回整个文件：写盘得到的是「整个文件」而非分片，
                     // 合并后会静默产出损坏结果（原先只 logWarn 就继续）。
                     // 必须拒绝，让调用方回退到单线程路径。
-                    const err = new Error(t('downloader.chunkNotPartial', { index: chunkIndex, status: response.status }));
+                    const err = new DownloadError(t('downloader.chunkNotPartial', { index: chunkIndex, status: response.status }), RANGE_UNSUPPORTED_CODE);
                     // 标记为「Range 不可用」，供 download() 识别后降级到单线程，
                     // 而不是直接让整次下载失败
-                    ((err)).code = RANGE_UNSUPPORTED_CODE;
                     throw err;
                 }
 
@@ -535,9 +541,7 @@ class MultiThreadDownloader {
             throw new Error(t('downloader.incompleteSize', { actual: 0, expected: expectedSize }));
         }
         if (actual !== expectedSize) {
-            const error = new Error(t('downloader.incompleteSize', { actual, expected: expectedSize }));
-            ((error)).code = 'SIZE_MISMATCH';
-            throw error;
+            throw new DownloadError(t('downloader.incompleteSize', { actual, expected: expectedSize }), 'SIZE_MISMATCH');
         }
     }
 
@@ -549,9 +553,7 @@ class MultiThreadDownloader {
         if (expectedMd5) {
             const ok = await this.verifyFile(outputFile, expectedMd5);
             if (ok === false) {
-                const error = new Error(t('downloader.failed', { message: 'MD5 mismatch' }));
-                ((error)).code = 'MD5_MISMATCH';
-                throw error;
+                throw new DownloadError(t('downloader.failed', { message: 'MD5 mismatch' }), 'MD5_MISMATCH');
             }
         }
     }
