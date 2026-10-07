@@ -49,7 +49,7 @@ interface Window {
   logwarn: (...args: any[]) => void;
   logerror: (...args: any[]) => void;
   monaco: any;
-  require: (moduleName: string) => any;
+  require: ((moduleName: string) => any) & { __electronHelper?: boolean };
   i18n: any;
   electronIPC: any;
   electron: any;

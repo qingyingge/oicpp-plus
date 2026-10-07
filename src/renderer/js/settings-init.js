@@ -84,14 +84,16 @@
 
             const editorElements = document.querySelectorAll('.monaco-editor, .monaco-editor-container');
             editorElements.forEach(element => {
-                if (settings.font) ((element)).style.fontFamily = fontFamily;
-                if (settings.fontSize) ((element)).style.fontSize = fontSize + 'px';
+                if (!(element instanceof HTMLElement)) return;
+                if (settings.font) element.style.fontFamily = fontFamily;
+                if (settings.fontSize) element.style.fontSize = fontSize + 'px';
             });
 
             const breadcrumbEls = document.querySelectorAll('.folder-picker-breadcrumb');
             breadcrumbEls.forEach(el => {
-                if (settings.fontSize) ((el)).style.fontSize = fontSize + 'px';
-                if (settings.font) ((el)).style.fontFamily = fontFamily;
+                if (!(el instanceof HTMLElement)) return;
+                if (settings.fontSize) el.style.fontSize = fontSize + 'px';
+                if (settings.font) el.style.fontFamily = fontFamily;
             });
 
             document.documentElement.style.setProperty('--editor-font-family', fontFamily);

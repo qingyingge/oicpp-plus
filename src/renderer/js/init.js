@@ -38,8 +38,8 @@ async function setUserIconPath() {
     try {
         const userIconPath = await window.electronAPI.getUserIconPath();
         const appIcon = document.getElementById('app-icon');
-        if (appIcon) {
-            ((appIcon)).src = userIconPath;
+        if (appIcon instanceof HTMLImageElement) {
+            appIcon.src = userIconPath;
         }
     } catch (error) {
         logWarn('无法加载用户目录中的图标，使用默认图标:', error);
