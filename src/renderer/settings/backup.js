@@ -110,8 +110,8 @@ class BackupSettings {
 
     updateUI() {
         const autoBackupCheckbox = document.getElementById('auto-backup-settings');
-        if (autoBackupCheckbox) {
-            ((autoBackupCheckbox)).checked = this.settings.autoBackupSettings === true;
+        if (autoBackupCheckbox instanceof HTMLInputElement) {
+            autoBackupCheckbox.checked = this.settings.autoBackupSettings === true;
         }
     }
 
@@ -180,7 +180,7 @@ class BackupSettings {
     collectSettings() {
         const autoBackupCheckbox = document.getElementById('auto-backup-settings');
         return {
-            autoBackupSettings: !!((autoBackupCheckbox))?.checked
+            autoBackupSettings: (autoBackupCheckbox instanceof HTMLInputElement) ? !!autoBackupCheckbox.checked : false
         };
     }
 
