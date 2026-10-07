@@ -19,6 +19,18 @@ function tryLoadPty(moduleId) {
     }
 }
 
+/**
+ * 创建带业务错误码的 Error。调用方用 error.code 判断失败类型，而非匹配 message 文本。
+ * @param {string} message
+ * @param {string} code
+ * @returns {Error & { code: string }}
+ */
+function errorWithCode(message, code) {
+    const err = /** @type {Error & { code: string }} */ (new Error(message));
+    err.code = code;
+    return err;
+}
+
 function resolvePackagedNodePtyCandidates() {
     const candidates = [];
 
@@ -493,9 +505,7 @@ class IntegratedTerminalManager {
         const args = this._resolveProcessFallbackArgs(shellPath, requestedArgs);
         const preflight = this._runShellPreflight(shellPath, [], cwd, env);
         if (!preflight.ok) {
-            const err = new Error(t('terminal.preflightFailed', { error: preflight.detail }));
-            ((err)).code = 'SHELL_PREFLIGHT_FAILED';
-            throw err;
+            throw errorWithCode(t('terminal.preflightFailed', { error: preflight.detail }), 'SHELL_PREFLIGHT_FAILED');
         }
 
         const spawnSpec = this._resolveProcessFallbackSpawnSpec(shellPath, args);
@@ -570,8 +580,7 @@ class IntegratedTerminalManager {
     createSession(options = {}) {
         if (!this.isAvailable()) {
             const status = this.getStatus();
-            const err = new Error(`${status.reason}: ${status.detail}`);
-            ((err)).code = 'TERMINAL_UNAVAILABLE';
+            const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_UNAVAILABLE');
             throw err;
         }
 
@@ -589,16 +598,14 @@ class IntegratedTerminalManager {
         const spawnEnv = this._buildSpawnEnv();
 
         if (shellCandidates.length === 0) {
-            const err = new Error(t('terminal.shellUnavailable'));
-            ((err)).code = 'SHELL_UNAVAILABLE';
+            const err = errorWithCode(t('terminal.shellUnavailable'), 'SHELL_UNAVAILABLE');
             throw err;
         }
 
         if (!pty) {
             if (!this._isInteractiveFallbackAvailable()) {
                 const status = this.getStatus();
-                const err = new Error(`${status.reason}: ${status.detail}`);
-                ((err)).code = 'TERMINAL_REQUIRES_PTY';
+                const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_REQUIRES_PTY');
                 throw err;
             }
             const fallbackErrors = [];
@@ -619,8 +626,7 @@ class IntegratedTerminalManager {
             }
 
             const errorDetail = fallbackErrors.join(' || ') || t('terminal.unknownError');
-            const err = new Error(t('terminal.fallbackStartFailed', { error: errorDetail }));
-            ((err)).code = 'PROCESS_FALLBACK_FAILED';
+            const err = errorWithCode(t('terminal.fallbackStartFailed', { error: errorDetail }), 'PROCESS_FALLBACK_FAILED');
             throw err;
         }
 
@@ -694,14 +700,12 @@ class IntegratedTerminalManager {
             const fallbackTrace = fallbackErrors.length > 0
                 ? `; ${t('terminal.fallbackAttempts', { attempts: fallbackErrors.join(' || ') })}`
                 : '';
-            const err = new Error(t('terminal.shellSpawnFailed', {
+            throw errorWithCode(t('terminal.shellSpawnFailed', {
                 error: detail,
                 candidates: attempted,
                 ptyTrace,
                 fallbackTrace
-            }));
-            ((err)).code = 'SHELL_SPAWN_FAILED';
-            throw err;
+            }), 'SHELL_SPAWN_FAILED');
         }
 
         const sessionId = crypto.randomUUID();
