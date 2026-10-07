@@ -1,3 +1,14 @@
+/**
+ * 从事件目标向上找 .tree-item 祖先元素（收窄类型）。
+ * @param {Event} e
+ * @returns {HTMLElement | null}
+ */
+function csTreeItem(e) {
+    if (!(e.target instanceof Element)) return null;
+    const el = e.target.closest('.tree-item');
+    return el instanceof HTMLElement ? el : null;
+}
+
 class CloudSyncPanel {
     constructor() {
         this.rootPath = '/';
@@ -49,6 +60,7 @@ class CloudSyncPanel {
         panel.querySelectorAll('.icon-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (!(btn instanceof HTMLElement)) return;
                 const action = btn.dataset.action;
                 switch (action) {
                     case 'cloud-new-file':
@@ -74,7 +86,7 @@ class CloudSyncPanel {
     setupTreeEvents() {
         if (!this.treeEl) return;
         this.treeEl.addEventListener('click', (e) => {
-            const item = (e.target).closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) return;
             const path = item.dataset.path;
             const type = item.dataset.kind;
@@ -89,7 +101,7 @@ class CloudSyncPanel {
         });
 
         this.treeEl.addEventListener('dblclick', (e) => {
-            const item = (e.target).closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) return;
             const path = item.dataset.path;
             const type = item.dataset.kind;
@@ -106,7 +118,7 @@ class CloudSyncPanel {
         this.treeEl.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            const item = (e.target).closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) {
                 this.clearSelection();
                 this.showEmptyAreaContextMenu(e);
@@ -140,7 +152,7 @@ class CloudSyncPanel {
         };
 
         this.treeEl.addEventListener('dragstart', (e) => {
-            const item = (e.target).closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) return;
             const path = item.dataset.path;
             const type = item.dataset.kind;
@@ -153,7 +165,7 @@ class CloudSyncPanel {
         });
 
         this.treeEl.addEventListener('dragend', (e) => {
-            const item = (e.target).closest('.tree-item');
+            const item = csTreeItem(e);
             if (item) item.classList.remove('dragging');
             clearDragState();
         });
@@ -161,7 +173,7 @@ class CloudSyncPanel {
         this.treeEl.addEventListener('dragover', (e) => {
             e.preventDefault();
             clearDragState();
-            const item = (e.target).closest('.tree-item');
+            const item = csTreeItem(e);
             if (!item) {
                 this.treeEl.classList.add('drag-over-root');
                 return;
@@ -181,7 +193,7 @@ class CloudSyncPanel {
             try { payload = JSON.parse(data); } catch (_) { return; }
             if (!payload?.path || !payload?.type) return;
 
-            const item = (e.target).closest('.tree-item');
+            const item = csTreeItem(e);
             let targetFolder = '/';
             if (item && item.dataset.kind === 'folder') {
                 targetFolder = item.dataset.path;
@@ -197,7 +209,7 @@ class CloudSyncPanel {
             if (currentPanel !== 'cloud') return;
             const activeElement = document.activeElement;
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTyping = tag === 'input' || tag === 'textarea' || !!((activeElement))?.isContentEditable;
+            const isTyping = tag === 'input' || tag === 'textarea' || (activeElement instanceof HTMLElement && activeElement.isContentEditable);
             if (isTyping) return;
 
             const target = this.getPrimarySelection();
