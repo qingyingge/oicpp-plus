@@ -8660,6 +8660,7 @@ async function compileFile(options) {
         ]);
         const libraryEnvValue = mergeEnvPathValue(libraryCandidates, process.env.LIBRARY_PATH);
 
+        /** @type {{ [key: string]: string | undefined, PATH?: string, MINGW_PREFIX?: string }} */
         const compilerEnv = {
             ...process.env,
             PATH: envPath,
