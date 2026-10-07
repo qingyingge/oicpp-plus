@@ -34,6 +34,7 @@ interface OicppVarData {
 
 interface HTMLDivElement {
   __variableData?: OicppVarData;
+  __oicppFile?: unknown;
 }
 
 interface HTMLElement {

@@ -127,7 +127,7 @@ class FileExplorer {
             logWarn('refocusSelectedFile 定位选中项失败', error);
         }
         const fileTree = (document.querySelector('#file-tree'));
-        if (fileTree) {
+        if (fileTree instanceof HTMLElement) {
             fileTree.setAttribute('tabindex', '0');
             fileTree.focus();
         }
@@ -180,7 +180,7 @@ class FileExplorer {
                 activeElement.closest?.('.editor-terminal-container')
             ));
             const tag = (activeElement && activeElement.tagName) ? activeElement.tagName.toLowerCase() : '';
-            const isTypingElement = tag === 'input' || tag === 'textarea' || !!((activeElement))?.isContentEditable;
+            const isTypingElement = tag === 'input' || tag === 'textarea' || (activeElement instanceof HTMLElement && activeElement.isContentEditable);
             if (isInEditor || isInTerminal || isTypingElement) {
                 return;
             }
@@ -584,6 +584,7 @@ class FileExplorer {
             const fileTree = (document.querySelector('.file-tree'));
             if (!fileTree) return;
             fileTree.querySelectorAll('.tree-item').forEach(item => {
+                if (!(item instanceof HTMLElement)) return;
                 const isSelected = selectedPaths.has(item.dataset?.path);
                 item.classList.toggle('selected', isSelected);
             });
@@ -1663,9 +1664,9 @@ class FileExplorer {
 
                     window.electronIPC.send('create-file', filePath, defaultContent);
 
-                    const handleFileCreated = (event, createdPath, error) => {
-                        if (!((handleFileCreated))._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
-                            ((handleFileCreated))._handled = true;
+                    const handleFileCreated = /** @type {((event: any, createdPath: any, error: any) => void) & { _handled?: boolean }} */ ((event, createdPath, error) => {
+                        if (!handleFileCreated._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
+                            handleFileCreated._handled = true;
                             if (error) {
                                 logError('创建文件失败:', error);
                                 this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
@@ -1680,7 +1681,7 @@ class FileExplorer {
                             }
                             window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
                         }
-                    };
+                    });
 
                     window.electronIPC.on('file-created', handleFileCreated);
                 } else {
