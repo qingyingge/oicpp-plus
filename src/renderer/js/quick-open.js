@@ -2,13 +2,13 @@
     let allFiles = [];
     let indexedRoot = '';
     let indexDirty = true;
-    const overlay = (document.getElementById('quick-open-overlay'));
-    const input = (document.getElementById('quick-open-input'));
-    const results = (document.getElementById('quick-open-results'));
-    const titleTrigger = (document.getElementById('titlebar-quickopen'));
+    const overlay = document.getElementById('quick-open-overlay');
+    const input = /** @type {HTMLInputElement | null} */ (document.getElementById('quick-open-input'));
+    const results = document.getElementById('quick-open-results');
+    const titleTrigger = document.getElementById('titlebar-quickopen');
     let activeIndex = -1;
 
-    if (!overlay || !input || !results) return;
+    if (!overlay || !input || !results || !(input instanceof HTMLInputElement) || !(results instanceof HTMLDivElement)) return;
 
     function fuzzyScore(query, fullPath) {
         if (!query) return 0;
@@ -161,6 +161,7 @@
         const items = results.querySelectorAll('.quick-open-item');
         if (!items || !items.length || activeIndex < 0) return;
         const el = items[activeIndex];
+        if (!(el instanceof HTMLElement)) return;
         const rTop = results.scrollTop;
         const rBottom = rTop + results.clientHeight;
         const eTop = el.offsetTop;
@@ -170,7 +171,7 @@
     }
 
     document.addEventListener('keydown', async (e) => {
-        const isInEditor = (e.target).closest?.('.monaco-editor');
+        const isInEditor = e.target instanceof Element ? e.target.closest?.('.monaco-editor') : null;
         if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
             e.preventDefault();
             const ok = await ensureIndex();
