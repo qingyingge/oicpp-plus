@@ -3629,6 +3629,20 @@ function setupWindowControls() {
 }
 
 function setupIPC() {
+    function decodeBufferAuto(buffer) {
+        if (!buffer || buffer.length === 0) return '';
+        try {
+            const encoding = detectEncoding(buffer);
+            if (encoding === 'utf8') return buffer.toString('utf8');
+        } catch (_) { }
+        try {
+            const iconv = require('iconv-lite');
+            return iconv.decode(buffer, 'gbk');
+        } catch (_) {
+            return buffer.toString('utf8');
+        }
+    }
+
     ipcMain.handle('get-app-path', () => {
         return app.getAppPath();
     });
@@ -5375,19 +5389,6 @@ function setupIPC() {
             }
         }
 
-        function decodeBufferAuto(buffer) {
-            if (!buffer || buffer.length === 0) return '';
-            try {
-                const encoding = detectEncoding(buffer);
-                if (encoding === 'utf8') return buffer.toString('utf8');
-            } catch (_) { }
-            try {
-                const iconv = require('iconv-lite');
-                return iconv.decode(buffer, 'gbk');
-            } catch (_) {
-                return buffer.toString('utf8');
-            }
-        }
 
         try {
             if (!skipPreKill && process.platform === 'win32') {
@@ -6254,6 +6255,43 @@ function setupIPC() {
             let progressWindow = null;
             let downloader = null;
 
+            function updateProgress(message, percent = null, speed = null) {
+                try {
+                    if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
+                        progressWindow.webContents.executeJavaScript(`
+                (function() {
+                  try {
+                    const statusElement = document.getElementById('status');
+                    const progressBar = document.getElementById('progress-bar');
+                    const progressText = document.getElementById('progress-text');
+                    const speedElement = document.getElementById('speed');
+                    
+                    if (statusElement) {
+                      statusElement.textContent = ${JSON.stringify(message)};
+                    }
+                    
+                    if (progressBar && progressText && ${percent !== null}) {
+                      const percentValue = Math.max(0, Math.min(100, Math.round(${percent})));
+                      progressBar.style.width = percentValue + '%';
+                      progressText.textContent = percentValue + '%';
+                    }
+                    
+                    if (speedElement && ${speed !== null}) {
+                      speedElement.textContent = ${JSON.stringify(speed)};
+                    }
+                    
+                    return true;
+                  } catch (error) {
+                    return false;
+                  }
+                })()
+          `).catch(() => {
+                        });
+                    }
+                } catch (error) {
+                }
+            }
+
             try {
                 logInfo('[编译器下载] 创建进度窗口...');
 
@@ -6409,43 +6447,6 @@ function setupIPC() {
                 progressWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
                     logError('[编译器下载] 页面加载失败:', errorCode, errorDescription);
                 });
-
-                function updateProgress(message, percent = null, speed = null) {
-                    try {
-                        if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
-                            progressWindow.webContents.executeJavaScript(`
-                (function() {
-                  try {
-                    const statusElement = document.getElementById('status');
-                    const progressBar = document.getElementById('progress-bar');
-                    const progressText = document.getElementById('progress-text');
-                    const speedElement = document.getElementById('speed');
-                    
-                    if (statusElement) {
-                      statusElement.textContent = ${JSON.stringify(message)};
-                    }
-                    
-                    if (progressBar && progressText && ${percent !== null}) {
-                      const percentValue = Math.max(0, Math.min(100, Math.round(${percent})));
-                      progressBar.style.width = percentValue + '%';
-                      progressText.textContent = percentValue + '%';
-                    }
-                    
-                    if (speedElement && ${speed !== null}) {
-                      speedElement.textContent = ${JSON.stringify(speed)};
-                    }
-                    
-                    return true;
-                  } catch (error) {
-                    return false;
-                  }
-                })()
-              `).catch(() => {
-                            });
-                        }
-                    } catch (error) {
-                    }
-                }
 
                 updateProgress(`开始下载编译器: ${name} ${version}`);
 
@@ -6658,6 +6659,43 @@ function setupIPC() {
             let progressWindow = null;
             let downloader = null;
 
+            function updateProgress(message, percent = null, speed = null) {
+                try {
+                    if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
+                        progressWindow.webContents.executeJavaScript(`
+                (function() {
+                  try {
+                    const statusElement = document.getElementById('status');
+                    const progressBar = document.getElementById('progress-bar');
+                    const progressText = document.getElementById('progress-text');
+                    const speedElement = document.getElementById('speed');
+                    
+                    if (statusElement) {
+                      statusElement.textContent = ${JSON.stringify(message)};
+                    }
+                    
+                    if (progressBar && progressText && ${percent !== null}) {
+                      const percentValue = Math.max(0, Math.min(100, Math.round(${percent})));
+                      progressBar.style.width = percentValue + '%';
+                      progressText.textContent = percentValue + '%';
+                    }
+                    
+                    if (speedElement && ${speed !== null}) {
+                      speedElement.textContent = ${JSON.stringify(speed)};
+                    }
+                    
+                    return true;
+                  } catch (error) {
+                    return false;
+                  }
+                })()
+          `).catch(() => {
+                        });
+                    }
+                } catch (error) {
+                }
+            }
+
             try {
                 logInfo('[testlib下载] 创建进度窗口...');
 
@@ -6813,43 +6851,6 @@ function setupIPC() {
                 progressWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
                     logError('[testlib下载] 页面加载失败:', errorCode, errorDescription);
                 });
-
-                function updateProgress(message, percent = null, speed = null) {
-                    try {
-                        if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
-                            progressWindow.webContents.executeJavaScript(`
-                (function() {
-                  try {
-                    const statusElement = document.getElementById('status');
-                    const progressBar = document.getElementById('progress-bar');
-                    const progressText = document.getElementById('progress-text');
-                    const speedElement = document.getElementById('speed');
-                    
-                    if (statusElement) {
-                      statusElement.textContent = ${JSON.stringify(message)};
-                    }
-                    
-                    if (progressBar && progressText && ${percent !== null}) {
-                      const percentValue = Math.max(0, Math.min(100, Math.round(${percent})));
-                      progressBar.style.width = percentValue + '%';
-                      progressText.textContent = percentValue + '%';
-                    }
-                    
-                    if (speedElement && ${speed !== null}) {
-                      speedElement.textContent = ${JSON.stringify(speed)};
-                    }
-                    
-                    return true;
-                  } catch (error) {
-                    return false;
-                  }
-                })()
-              `).catch(() => {
-                            });
-                        }
-                    } catch (error) {
-                    }
-                }
 
                 updateProgress(`开始下载testlib: ${name} ${version}`);
 
