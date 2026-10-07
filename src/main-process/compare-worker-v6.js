@@ -39,6 +39,18 @@ try {
 
 const { spawn } = require('child_process');
 const { terminateProcessTree } = require('../utils/process-supervisor');
+
+/**
+ * 对拍工作进程的句柄：在标准 ChildProcess 上扩展了对拍自定义属性。
+ * @typedef {{
+ *   _collect: () => Buffer,
+ *   _stderr: () => string,
+ *   _outputTruncated: () => boolean,
+ *   _done: boolean,
+ *   _result: { exitCode: number, error?: string, outputTruncated?: boolean, timeout?: boolean } | null,
+ *   _collectors: Array<Function>,
+ * } & import('child_process').ChildProcess} WorkerProc
+ */
 const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
 // 超时 kill 之后等待进程真正退出的上限；超过就放行，把清理失败降级为一条告警。
 const PROCESS_EXIT_GRACE_MS = 5000;
@@ -69,12 +81,12 @@ function outputsEqual(left, right) {
 
 function spawnProcess(exePath, args, cwd) {
     return new Promise((resolve) => {
-        const proc = (spawn(exePath, args || [], {
+        const proc = (/** @type {WorkerProc} */ (spawn(exePath, args || [], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
             detached: process.platform !== 'win32',
             cwd
-        }));
+        })));
         activeProcesses.add(proc);
         const stdout = [], stderr = [];
         let outputBytes = 0;
