@@ -133,12 +133,13 @@ class OICPPApp {
         });
 
         document.addEventListener('contextmenu', (e) => {
-            const isInEditor = e.target.closest('.monaco-editor') || 
-                              e.target.closest('.monaco-editor-container') ||
-                              e.target.classList.contains('monaco-editor') ||
-                              e.target.classList.contains('monaco-editor-container');
+            const target = e.target instanceof Element ? e.target : null;
+            const isInEditor = !!target && (target.closest('.monaco-editor') ||
+                              target.closest('.monaco-editor-container') ||
+                              target.classList.contains('monaco-editor') ||
+                              target.classList.contains('monaco-editor-container'));
 
-            const isInCloudPanel = e.target.closest('#cloud-panel') || e.target.closest('.cloud-tree');
+            const isInCloudPanel = !!target && (target.closest('#cloud-panel') || target.closest('.cloud-tree'));
             if (isInCloudPanel) {
                 return;
             }
@@ -152,7 +153,8 @@ class OICPPApp {
         });
 
         document.addEventListener('settings-changed', (e) => {
-            this.applySettings(e.detail.type, e.detail.settings);
+            const evt = /** @type {CustomEvent} */ (e);
+            this.applySettings(evt.detail.type, evt.detail.settings);
         });
 
         this.setupMenuBarEvents();
@@ -160,12 +162,13 @@ class OICPPApp {
 
     setupMenuBarEvents() {
         document.addEventListener('click', (e) => {
-            if (e.target.classList.contains('menu-dropdown-item') || 
-                e.target.closest('.menu-dropdown-item')) {
+            const target = e.target instanceof Element ? e.target : null;
+            if (target && (target.classList.contains('menu-dropdown-item') ||
+                target.closest('.menu-dropdown-item'))) {
                 
-                const menuItem = e.target.classList.contains('menu-dropdown-item') ? 
-                    e.target : e.target.closest('.menu-dropdown-item');
-                if (!menuItem) {
+                const menuItem = target.classList.contains('menu-dropdown-item') ?
+                    target : target.closest('.menu-dropdown-item');
+                if (!(menuItem instanceof HTMLElement)) {
                     return;
                 }
 
@@ -195,19 +198,21 @@ class OICPPApp {
         });
 
         document.addEventListener('mouseover', (e) => {
-            if (e.target.classList.contains('menu-item')) {
+            const target = e.target instanceof Element ? e.target : null;
+            if (target && target.classList.contains('menu-item')) {
                 document.querySelectorAll('.menu-dropdown.active').forEach(menu => {
                     menu.classList.remove('active');
                 });
-                const dropdown = e.target.querySelector('.menu-dropdown');
-                if (dropdown) {
+                const dropdown = target.querySelector('.menu-dropdown');
+                if (dropdown instanceof HTMLElement) {
                     dropdown.classList.add('active');
                 }
             }
         });
 
         document.addEventListener('click', (e) => {
-            if (!e.target.closest('.menu-bar')) {
+            const target = e.target instanceof Element ? e.target : null;
+            if (!target || !target.closest('.menu-bar')) {
                 document.querySelectorAll('.menu-dropdown.active').forEach(menu => {
                     menu.classList.remove('active');
                 });
@@ -359,9 +364,9 @@ class OICPPApp {
     }
 
     updateAccountMenu() {
-        const loginItem = document.querySelector('.menu-dropdown-item[data-action="ide-login"]');
-        const accountItem = document.querySelector('.menu-dropdown-item[data-action="ide-account"]');
-        const logoutItem = document.querySelector('.menu-dropdown-item[data-action="ide-logout"]');
+        const loginItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="ide-login"]'));
+        const accountItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="ide-account"]'));
+        const logoutItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="ide-logout"]'));
 
         try {
             if (window.sidebarManager && typeof window.sidebarManager.setCloudPanelVisible === 'function') {
@@ -432,14 +437,10 @@ class OICPPApp {
         }
     }
 
-    openFolder() {
-        window.electronAPI.openFolder();
-    }
-
     updatePlatformSpecificMenu() {
         try {
             const isWindows = !!(window.process && window.process.platform === 'win32');
-            const cloudMenuItem = document.querySelector('.menu-dropdown-item[data-action="cloud-compile"]');
+            const cloudMenuItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="cloud-compile"]'));
             if (cloudMenuItem) {
                 cloudMenuItem.style.display = isWindows ? '' : 'none';
                 if (!isWindows) {
@@ -1198,6 +1199,7 @@ class OICPPApp {
         componentsToUpdate.forEach(selector => {
             const elements = document.querySelectorAll(selector);
             elements.forEach(element => {
+                if (!(element instanceof HTMLElement)) return;
                 element.style.display = 'none';
                 void element.offsetHeight;
                 element.style.display = '';
@@ -1908,7 +1910,7 @@ class OICPPApp {
             input.type = 'file';
             input.accept = '.cpp,.c,.h,.hpp,.cc,.cxx,.txt,.in,.out,.ans,.py';
             input.onchange = (e) => {
-                const file = e.target.files[0];
+                const file = /** @type {HTMLInputElement} */ (e.target).files[0];
                 if (file) {
                     const reader = new FileReader();
                     reader.onload = (event) => {
@@ -2670,7 +2672,7 @@ class OICPPApp {
     }
 
     async compileBeforeDebug() {
-        return new Promise((resolve, reject) => {
+        return /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
             logInfo('开始为调试编译代码...');
             
             if (!this.compilerManager) {
@@ -2750,7 +2752,7 @@ class OICPPApp {
                     handleCompileResult(false, window.i18n.t('debug.compileTimedOut'));
                 }
             }, 30000); // 30秒超时
-        });
+        }));
     }
 
     startDebugSession(currentFile, options = {}) {
@@ -2811,7 +2813,7 @@ class OICPPApp {
             }
         }
         
-        if (this.editor && this.currentFile) {
+        if (this.currentFile) {
             return this.currentFile;
         }
         
@@ -2825,7 +2827,7 @@ class OICPPApp {
             'debug-step-out', 'debug-stop', 'debug-add-watch', 'debug-refresh-vars'
         ];
         ids.forEach((id) => {
-            const btn = document.getElementById(id);
+            const btn = /** @type {HTMLButtonElement | null} */ (document.getElementById(id));
             if (btn) btn.disabled = false;
         });
     }
@@ -3066,7 +3068,7 @@ class OICPPApp {
         
         this.highlightCurrentLine(breakpoint.file, breakpoint.line);
         try {
-            document.querySelectorAll('.message-toast').forEach(n => n.style.pointerEvents = 'none');
+            document.querySelectorAll('.message-toast').forEach(n => { if (n instanceof HTMLElement) n.style.pointerEvents = 'none'; });
         } catch (_) {}
     }
 
@@ -3089,7 +3091,7 @@ class OICPPApp {
             const container = document.getElementById(id);
             if (container) {
                 const waitingMsg = container.querySelector('.waiting-debug-message');
-                if (waitingMsg) {
+                if (waitingMsg instanceof HTMLElement) {
                     waitingMsg.style.display = 'none';
                 }
             }
@@ -3130,7 +3132,7 @@ class OICPPApp {
     showDebugInfo(message) {
         const container = document.getElementById('debug-variables');
         if (container) {
-            let infoElement = container.querySelector('.debug-info-message');
+            let infoElement = /** @type {HTMLElement | null} */ (container.querySelector('.debug-info-message'));
             if (!infoElement) {
                 infoElement = document.createElement('div');
                 infoElement.className = 'debug-info-message';
@@ -3645,7 +3647,7 @@ class OICPPApp {
         try {
             if (window.electronAPI && window.electronAPI.getUserIconPath) {
                 const iconPath = await window.electronAPI.getUserIconPath();
-                const iconElement = document.querySelector('#feedback-dialog-icon');
+                const iconElement = /** @type {HTMLImageElement | null} */ (document.querySelector('#feedback-dialog-icon'));
                 if (iconElement && iconPath) {
                     iconElement.src = iconPath;
                 }
@@ -3697,7 +3699,7 @@ class OICPPApp {
 
     async showAbout() {
         const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: window.i18n?.t?.('message.unknown', null) || '未知', author: 'mywwzh (修改: qingyingge)' };
-        let buildInfo = { ...fallbackBuildInfo };
+        let buildInfo = /** @type {{ version: string, buildTime: any, author: string, buildTag?: string, buildVersion?: string, buildNo?: string }} */ ({ ...fallbackBuildInfo });
         try {
             const buildInfoData = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
             if (buildInfoData) {
@@ -3854,7 +3856,7 @@ class OICPPApp {
     async setAboutDialogIcon() {
         try {
             const userIconPath = await window.electronAPI.getUserIconPath();
-            const aboutIcon = document.getElementById('about-dialog-icon');
+            const aboutIcon = /** @type {HTMLImageElement | null} */ (document.getElementById('about-dialog-icon'));
             if (aboutIcon) {
                 aboutIcon.src = userIconPath;
             }
@@ -3866,7 +3868,7 @@ class OICPPApp {
     async setAppIcon() {
         try {
             const userIconPath = await window.electronAPI.getUserIconPath();
-            const appIcon = document.getElementById('app-icon');
+            const appIcon = /** @type {HTMLImageElement | null} */ (document.getElementById('app-icon'));
             if (appIcon) {
                 appIcon.src = userIconPath;
             }
@@ -4021,7 +4023,7 @@ class OICPPApp {
         const lspItem = document.getElementById('lsp-status-item');
         if (!lspItem) return;
 
-        const icon = lspItem.querySelector('.lsp-status-icon');
+        const icon = /** @type {HTMLElement | null} */ (lspItem.querySelector('.lsp-status-icon'));
         if (!icon) return;
         const label = lspItem.querySelector('.lsp-status-label');
 
@@ -4460,10 +4462,13 @@ class OICPPApp {
         });
     }
 
+    /**
+     * @param {Date} date
+     */
     formatHistoryTime(date) {
         try {
             const now = new Date();
-            const diffMs = now - date;
+            const diffMs = now.getTime() - date.getTime();
             const diffMin = Math.floor(diffMs / 60000);
             const diffHour = Math.floor(diffMs / 3600000);
             const diffDay = Math.floor(diffMs / 86400000);
