@@ -230,16 +230,16 @@ class I18nManager {
             // Translate placeholders
             document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
                 const key = el.getAttribute('data-i18n-placeholder');
-                if (key) {
-                    ((el)).placeholder = this.t(key);
+                if (key && el instanceof HTMLInputElement) {
+                    el.placeholder = this.t(key);
                 }
             });
 
             // Translate titles
             document.querySelectorAll('[data-i18n-title]').forEach(el => {
                 const key = el.getAttribute('data-i18n-title');
-                if (key) {
-                    ((el)).title = this.t(key);
+                if (key && el instanceof HTMLElement) {
+                    el.title = this.t(key);
                 }
             });
 
@@ -269,15 +269,15 @@ class I18nManager {
                 for (const mutation of mutations) {
                     if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
                         for (const node of mutation.addedNodes) {
-                            if (node.nodeType === 1) { // Element
+                            if (node instanceof Element) {
                                 const elem = (node);
-                                if (elem.hasAttribute && (
+                                if (
                                     elem.hasAttribute('data-i18n') ||
                                     elem.hasAttribute('data-i18n-placeholder') ||
                                     elem.hasAttribute('data-i18n-title') ||
                                     elem.hasAttribute('data-i18n-aria-label') ||
                                     elem.querySelector('[data-i18n],[data-i18n-placeholder],[data-i18n-title],[data-i18n-aria-label]')
-                                )) {
+                                ) {
                                     needsTranslate = true;
                                     break;
                                 }
