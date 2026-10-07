@@ -85,7 +85,7 @@ class DialogManager {
             const input = (document.getElementById('dialog-input'));
 
             setTimeout(() => {
-                if (input) {
+                if (input instanceof HTMLInputElement) {
                     input.focus();
                     const start = Number.isFinite(options.selectStart) ? options.selectStart : null;
                     const end = Number.isFinite(options.selectEnd) ? options.selectEnd : null;
@@ -303,7 +303,7 @@ class DialogManager {
         if (!this.currentDialog) return;
 
         const input = (document.getElementById('dialog-input'));
-        const result = input ? input.value : true;
+        const result = input instanceof HTMLInputElement ? input.value : true;
 
         this.currentDialog.resolve(result);
         this.hideDialog();
