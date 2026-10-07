@@ -129,7 +129,7 @@ class BrowserManager {
             }
         };
         fixInternalFrame(webview);
-        webview.addEventListener('did-attach', () => fixInternalFrame(webview), ({ once: true }));
+        (/** @type {any} */ (webview)).addEventListener('did-attach', () => fixInternalFrame(webview), ({ once: true }));
 
         // 保存引用
         const state = {
