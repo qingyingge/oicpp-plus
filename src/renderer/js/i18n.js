@@ -175,6 +175,10 @@ class I18nManager {
      * @param {Function} callback
      * @returns {Function} Unsubscribe function
      */
+    /**
+     * @param {(lang: string) => void} callback
+     * @returns {() => void}
+     */
     onChange(callback) {
         if (typeof callback !== 'function') return () => {};
         this._listeners.push(callback);

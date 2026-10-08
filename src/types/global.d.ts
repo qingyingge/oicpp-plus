@@ -51,15 +51,32 @@ interface Window {
   logerror: (...args: unknown[]) => void;
   monaco: any;
   require: ((moduleName: string) => any) & { __electronHelper?: boolean };
-  i18n: any;
+  i18n: {
+    t: (key: string, params?: Record<string, unknown>) => string;
+    init: () => Promise<void>;
+    onChange: (callback: (lang: string) => void) => () => void;
+    getCurrentLanguage: () => string;
+    _applyToDOM: () => void;
+    enableAutoTranslate: () => void;
+    setLanguage: (langCode: string) => Promise<void>;
+    getAvailableLanguages: () => Promise<Array<{ code: string; name: string; nameEn: string }>>;
+  };
   electronIPC: any;
   electron: any;
-  markdownAPI: any;
-  turndownAPI: any;
+  markdownAPI: { render: (text: string, filePath?: string) => string };
+  turndownAPI: { toMarkdown: (html: string) => string };
   getElectronModule: () => any;
   __electronRequireAvailable: boolean;
-  process: any;
-  fontDetector: any;
+  process: {
+    versions: Record<string, string>;
+    platform: NodeJS.Platform;
+    env: { NODE_ENV: string; CI: boolean };
+  };
+  fontDetector: {
+    validateFont: (fontName: string) => string;
+    getAllAvailableFonts: () => Promise<string[]>;
+    getAllAvailableFontsSync: () => string[];
+  };
   // 渲染层各 manager 单例（window.X = ... 在各自文件里赋值）
   [key: string]: any;
 }
