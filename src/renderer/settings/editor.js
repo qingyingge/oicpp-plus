@@ -1206,7 +1206,7 @@ class EditorSettings {
 
     setupThemeListener() {
         if (window.electronIPC && window.electronIPC.on) {
-            window.electronIPC.on('theme-changed', (event, theme) => {
+            window.electronIPC.on('theme-changed', /** @param {unknown} event @param {string} theme */ (event, theme) => {
                 logInfo('编辑器设置页面收到主题变更:', theme);
                 this.settings.theme = theme;
                 this.applyTheme(theme);

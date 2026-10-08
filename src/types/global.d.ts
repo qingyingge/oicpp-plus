@@ -61,7 +61,22 @@ interface Window {
     setLanguage: (langCode: string) => Promise<void>;
     getAvailableLanguages: () => Promise<Array<{ code: string; name: string; nameEn: string }>>;
   };
-  electronIPC: any;
+  electronIPC: {
+    send: (channel: string, ...args: unknown[]) => void;
+    invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+    on: (channel: string, listener: (...args: unknown[]) => void) => void;
+    once: (channel: string, listener: (...args: unknown[]) => void) => void;
+    removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+    removeAllListeners: (channel: string) => void;
+    ipcRenderer: {
+      send: (channel: string, ...args: unknown[]) => void;
+      invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+      on: (channel: string, listener: (...args: unknown[]) => void) => void;
+      once: (channel: string, listener: (...args: unknown[]) => void) => void;
+      removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+      removeAllListeners: (channel: string) => void;
+    };
+  };
   electron: any;
   markdownAPI: { render: (text: string, filePath?: string) => string };
   turndownAPI: { toMarkdown: (html: string) => string };

@@ -530,7 +530,7 @@ class CompilerSettings {
         compilerList.innerHTML = '<div class="loading">' + (window.i18n.t('compiler.fetchingList')) + '</div>';
         
         try {
-            const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableCompilerList', method: 'GET' });
+            const response = /** @type {{ ok: boolean; status: number; statusText: string; data: Array<{ platform: string; version: string; name: string; download_url: string }> }} */ (await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableCompilerList', method: 'GET' }));
             
             if (!response.ok) {
                 throw new Error(window.i18n.t('compiler.networkRequestFailed', {
@@ -1320,7 +1320,7 @@ class CompilerSettings {
         testlibList.innerHTML = `<div class="loading">${window.i18n.t('compiler.fetchingTestlibList')}</div>`;
         
         try {
-            const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableTestlibList', method: 'GET' });
+            const response = /** @type {{ ok: boolean; status: number; statusText: string; data: Array<{ version: string; name: string; description: string; file_size_mb?: number | string; downloadUrl?: string; download_url?: string }> }} */ (await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableTestlibList', method: 'GET' }));
             
             if (!response.ok) {
                 throw new Error(window.i18n.t('compiler.networkRequestFailed', {

@@ -32,7 +32,7 @@ class BackupSettings {
         }
 
         if (window.electronIPC && window.electronIPC.on) {
-            window.electronIPC.on('settings-imported', (_event, allSettings) => {
+            window.electronIPC.on('settings-imported', /** @param {unknown} _event @param {{ autoBackupSettings?: boolean }} allSettings */ (_event, allSettings) => {
                 if (allSettings && typeof allSettings.autoBackupSettings === 'boolean') {
                     this.settings.autoBackupSettings = allSettings.autoBackupSettings;
                     this.updateUI();

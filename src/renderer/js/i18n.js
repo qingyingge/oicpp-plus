@@ -53,7 +53,7 @@ class I18nManager {
             // Also listen for settings-changed (which includes language)
             if (window.electronIPC && window.electronIPC.on) {
                 const originalOn = window.electronIPC.on.bind(window.electronIPC);
-                window.electronIPC.on('settings-changed', async (_event, _settingsType, newSettings) => {
+                window.electronIPC.on('settings-changed', /** @param {unknown} _event @param {unknown} _settingsType @param {{ language?: string }} newSettings */ async (_event, _settingsType, newSettings) => {
                     if (newSettings && newSettings.language && newSettings.language !== this._currentLang) {
                         this._currentLang = newSettings.language;
                         await this._loadCurrentLanguage();
