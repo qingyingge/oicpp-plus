@@ -14,7 +14,10 @@ declare const OICPPApp: typeof import('../js/main.js');
 declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
 declare const CompilerManager: typeof import('../js/compile-manager.js');
 declare const DebugPanel: typeof import('../js/sidebar/debugPanel.js');
+// 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
 declare function require(moduleName: string): any;
+// 注：删掉此行会让 @types/node 合并进 Window.require 的 Require 形状激活（cache/extensions/main/resolve 必填），
+// 渲染层自定义 require loader（只认 'electron'）无法满足 → TS2322。精确类型化待 .ts 阶段（require → import）。
 
 interface OicppVarData {
   name?: string;
@@ -91,7 +94,17 @@ interface Window {
   };
   markdownAPI: { render: (text: string, filePath?: string) => string };
   turndownAPI: { toMarkdown: (html: string) => string };
-  getElectronModule: () => any;
+  getElectronModule: () => ({
+    ipcRenderer: {
+      send: (channel: string, ...args: unknown[]) => void;
+      invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+      on: (channel: string, listener: (...args: unknown[]) => void) => void;
+      once: (channel: string, listener: (...args: unknown[]) => void) => void;
+      removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+      removeAllListeners: (channel: string) => void;
+    };
+    shell: import('electron').Shell;
+  });
   __electronRequireAvailable: boolean;
   process: {
     versions: Record<string, string>;
