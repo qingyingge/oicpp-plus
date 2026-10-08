@@ -7,12 +7,13 @@ declare function logError(...args: unknown[]): void;
 declare function logwarn(...args: unknown[]): void;
 declare function logerror(...args: unknown[]): void;
 
-// Monaco AMD loader 注入
+// Monaco AMD loader 注入（AMD 运行时 API 面比 ESM 公共类型大，精确类型化待 2c-mono 批）
 declare const monaco: any;
-declare const DebugPanel: any;
-declare const OICPPApp: any;
-declare const MonacoEditorManager: any;
-declare const CompilerManager: any;
+// 渲染层 4 个 manager 单例：类在各文件顶层声明，经文件尾 guarded module.exports 可被 typeof import 精确引用
+declare const OICPPApp: typeof import('../js/main.js');
+declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
+declare const CompilerManager: typeof import('../js/compile-manager.js');
+declare const DebugPanel: typeof import('../js/sidebar/debugPanel.js');
 declare function require(moduleName: string): any;
 
 interface OicppVarData {
@@ -77,7 +78,17 @@ interface Window {
       removeAllListeners: (channel: string) => void;
     };
   };
-  electron: any;
+  electron: {
+    ipcRenderer: {
+      send: (channel: string, ...args: unknown[]) => void;
+      invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+      on: (channel: string, listener: (...args: unknown[]) => void) => void;
+      once: (channel: string, listener: (...args: unknown[]) => void) => void;
+      removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+      removeAllListeners: (channel: string) => void;
+    };
+    shell: import('electron').Shell;
+  };
   markdownAPI: { render: (text: string, filePath?: string) => string };
   turndownAPI: { toMarkdown: (html: string) => string };
   getElectronModule: () => any;

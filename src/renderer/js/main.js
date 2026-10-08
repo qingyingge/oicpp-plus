@@ -4549,4 +4549,8 @@ class OICPPApp {
     }
 }
 
-window.OICPPApp = OICPPApp;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = OICPPApp;
+} else {
+    window.OICPPApp = OICPPApp;
+}

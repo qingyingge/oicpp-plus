@@ -777,6 +777,8 @@ class DebugPanel {
     }
 }
 
-if (typeof window !== 'undefined') {
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = DebugPanel;
+} else if (typeof window !== 'undefined') {
     window.DebugPanel = DebugPanel;
 }
