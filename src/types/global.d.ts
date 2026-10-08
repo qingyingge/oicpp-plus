@@ -1,11 +1,11 @@
 // 全局声明：主进程/渲染层/preload 通过 contextBridge 或 AMD loader 注入的全局。
 // 路线甲阶段只做「名称可解析」，签名先用 any，A3 负责把 electronAPI 细化。
 
-declare function logInfo(...args: any[]): void;
-declare function logWarn(...args: any[]): void;
-declare function logError(...args: any[]): void;
-declare function logwarn(...args: any[]): void;
-declare function logerror(...args: any[]): void;
+declare function logInfo(...args: unknown[]): void;
+declare function logWarn(...args: unknown[]): void;
+declare function logError(...args: unknown[]): void;
+declare function logwarn(...args: unknown[]): void;
+declare function logerror(...args: unknown[]): void;
 
 // Monaco AMD loader 注入
 declare const monaco: any;
@@ -44,11 +44,11 @@ interface HTMLElement {
 }
 
 interface Window {
-  logInfo: (...args: any[]) => void;
-  logWarn: (...args: any[]) => void;
-  logError: (...args: any[]) => void;
-  logwarn: (...args: any[]) => void;
-  logerror: (...args: any[]) => void;
+  logInfo: (...args: unknown[]) => void;
+  logWarn: (...args: unknown[]) => void;
+  logError: (...args: unknown[]) => void;
+  logwarn: (...args: unknown[]) => void;
+  logerror: (...args: unknown[]) => void;
   monaco: any;
   require: ((moduleName: string) => any) & { __electronHelper?: boolean };
   i18n: any;
