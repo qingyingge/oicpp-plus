@@ -3020,7 +3020,7 @@ function createWindow() {
 
 
 function createMenuBar() {
-    const defaultKeybindings = getDefaultSettings().keybindings || {};
+    const defaultKeybindings = getDefaultSettings().keybindings;
     const activeKeybindings = (settings && settings.keybindings && typeof settings.keybindings === 'object')
         ? settings.keybindings
         : {};
@@ -3071,6 +3071,7 @@ function createMenuBar() {
     // 移除与带修饰符快捷键冲突的裸 Fn 菜单加速器，
     // 避免 Electron 同时触发两个动作（如 Ctrl+F11 触发 F11）
     const compileRunAcceleratorFinal = hasConflictingModifiedKey(compileRunAccelerator) ? undefined : compileRunAccelerator;
+    /** @type {import('electron').MenuItemConstructorOptions[]} */
     const menuTemplate = [
         {
             label: t('menu.file'),
@@ -7284,7 +7285,7 @@ async function readFileContent(filePath) {
         }
 
         const encoding = detectEncoding(buffer);
-        if (encoding === 'gbk' || encoding === 'gb2312') {
+        if (encoding === 'gbk') {
             const iconv = require('iconv-lite');
             return iconv.decode(buffer, 'gbk');
         } else {
@@ -8065,10 +8066,10 @@ function loadSettings() {
                 && (!existingCompileAndRun || existingCompileAndRun.toUpperCase() === 'F11');
 
             if (shouldMigrateCompileAndRun) {
-                settings.keybindings = {
+                settings.keybindings = /** @type {typeof settings.keybindings} */ ({
                     ...existingKeybindings,
                     compileAndRun: normalizedCompileAndRunShortcut
-                };
+                });
             }
 
             if (settings.runMode !== normalizedRunMode || settings.compilerArgs !== normalizedCompilerArgs || shouldMigrateCompileAndRun) {
@@ -11128,7 +11129,7 @@ function _restoreTTYShell() {
 
     try {
         const sanitizedTtyPath = String(ttyPath).replace(/[^a-zA-Z0-9\\/\\-_.]/g, '');
-        const sanitizedShellPid = parseInt(shellPid, 10);
+        const sanitizedShellPid = parseInt(String(shellPid), 10);
         if (!sanitizedTtyPath || !sanitizedTtyPath.startsWith('/dev/') || isNaN(sanitizedShellPid) || sanitizedShellPid <= 0) {
             logWarn('[主进程] _restoreTTYShell: 无效的TTY路径或进程ID');
             return;
