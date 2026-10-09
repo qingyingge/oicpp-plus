@@ -312,12 +312,12 @@ class LspClientBridge {
             initializationOptions: {}
         };
 
-        const initResult = await api.lspRequest('initialize', initializeParams);
+        const initResult = /** @type {{ capabilities?: unknown; serverInfo?: { name?: string; version?: string } } | null} */ (await api.lspRequest('initialize', initializeParams));
         this._serverCapabilities = initResult && initResult.capabilities ? initResult.capabilities : null;
         this._semanticTokensLegend = this._serverCapabilities?.semanticTokensProvider?.legend || null;
 
-        const serverInfo = initResult?.serverInfo || {};
-        logInfo('[LSP] 初始化完成, 服务器:', serverInfo.name || 'clangd', '版本:', serverInfo.version || '?');
+        const serverInfo = initResult?.serverInfo;
+        logInfo('[LSP] 初始化完成, 服务器:', serverInfo?.name || 'clangd', '版本:', serverInfo?.version || '?');
         if (this._semanticTokensLegend) {
             logInfo('[LSP] 语义令牌支持: ' + (this._semanticTokensLegend.tokenTypes?.length || 0) + ' 种类型, ' + (this._semanticTokensLegend.tokenModifiers?.length || 0) + ' 种修饰符');
         }

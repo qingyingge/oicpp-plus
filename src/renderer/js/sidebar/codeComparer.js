@@ -1430,7 +1430,7 @@ class CodeComparer {
         const fallbackThreads = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 2;
         let cpuThreads = fallbackThreads;
         try {
-            const remoteCount = await window.electronAPI?.getCpuThreads?.();
+            const remoteCount = /** @type {number} */ (await window.electronAPI?.getCpuThreads?.());
             if (Number.isFinite(remoteCount) && remoteCount > 0) {
                 cpuThreads = remoteCount;
             }

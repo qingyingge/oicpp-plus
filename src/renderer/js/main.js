@@ -20,7 +20,7 @@ class OICPPApp {
         this.editorManager = null;
         this.initialized = false;
         this.accountLoggedIn = false;
-        this.accountInfo = null;
+        this.accountInfo = /** @type {{ username?: string } | null} */ (null);
         this._accountIpcBound = false;
     this.isDebugging = false;
     this._autoContinueOnStart = false;

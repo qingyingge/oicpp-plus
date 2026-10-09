@@ -8687,7 +8687,7 @@ class MonacoEditorManager {
         try {
             const entries = await this.readDirectorySafe(dirPath);
             if (!Array.isArray(entries) || !entries.length) return [];
-            return entries.filter(item => item && item.type === 'folder' && typeof item.path === 'string').map(item => item.path);
+            return entries.filter(item => item && item.type === 'folder' && typeof item.path === 'string').map(item => /** @type {string} */ (item.path));
         } catch (_) {
             return [];
         }

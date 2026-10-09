@@ -661,7 +661,9 @@ class CloudSyncPanel {
                 return;
             }
             const buffer = await window.electronAPI.readFileBuffer(filePath);
-            const byteLength = buffer?.byteLength ?? buffer?.length ?? 0;
+            // read-file-buffer 主进程返回 base64 字符串（buffer.toString('base64')），string 无 byteLength，
+            // byteLength 分支恒 undefined，删死代码直接用 length
+            const byteLength = buffer?.length ?? 0;
             if (byteLength > this.maxFileSize) {
                 this.showMessage(window.i18n.t('cloud.fileSizeExceeded'), 'error');
                 return;
@@ -1255,7 +1257,9 @@ class CloudSyncPanel {
         if (data && data.code && data.code !== 200) {
             throw new Error(data.msg || window.i18n.t('cloud.serverError'));
         }
-        return data?.data ?? data;
+        // request 返回 HTTP body 的 data ?? body 本身；消费方访问 items/remainingFiles/content，
+        // 用守卫（Array.isArray/typeof）消费，cast 给出守卫所需形状
+        return /** @type {{ items?: unknown; remainingFiles?: number; content?: string }} */ (data?.data ?? data);
     }
 }
 
