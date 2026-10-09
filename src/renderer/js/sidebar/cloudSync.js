@@ -1263,6 +1263,8 @@ class CloudSyncPanel {
     }
 }
 
-if (typeof window !== 'undefined') {
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = CloudSyncPanel;
+} else if (typeof window !== 'undefined') {
     window.CloudSyncPanel = CloudSyncPanel;
 }

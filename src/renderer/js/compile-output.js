@@ -246,4 +246,8 @@ class CompileOutputManager {
     }
 }
 
-window.compileOutputManager = new CompileOutputManager();
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = CompileOutputManager;
+} else {
+    window.compileOutputManager = new CompileOutputManager();
+}

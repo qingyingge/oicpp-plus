@@ -616,4 +616,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-window.TemplatesSettings = TemplatesSettings;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = TemplatesSettings;
+} else {
+    window.TemplatesSettings = TemplatesSettings;
+}

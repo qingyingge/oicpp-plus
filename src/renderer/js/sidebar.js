@@ -555,6 +555,8 @@ class SidebarManager {
     }
 }
 
-if (typeof window !== 'undefined') {
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = SidebarManager;
+} else if (typeof window !== 'undefined') {
     window.SidebarManager = SidebarManager;
 }

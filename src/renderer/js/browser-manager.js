@@ -640,4 +640,8 @@ class BrowserManager {
 }
 
 // 全局实例
-window.browserManager = new BrowserManager();
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = BrowserManager;
+} else {
+    window.browserManager = new BrowserManager();
+}

@@ -279,4 +279,8 @@ class TitlebarManager {
 }
 
 
-window.TitlebarManager = TitlebarManager;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = TitlebarManager;
+} else {
+    window.TitlebarManager = TitlebarManager;
+}

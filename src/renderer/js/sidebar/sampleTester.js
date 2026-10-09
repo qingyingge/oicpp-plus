@@ -3839,6 +3839,9 @@ class SampleTester {
     }
 }
 
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = SampleTester;
+}
 if (typeof window !== 'undefined') {
     window.SampleTester = SampleTester;
 }

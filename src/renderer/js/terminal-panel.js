@@ -1175,4 +1175,8 @@ class IntegratedTerminalPanel {
     }
 }
 
-window.IntegratedTerminalPanel = IntegratedTerminalPanel;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = IntegratedTerminalPanel;
+} else {
+    window.IntegratedTerminalPanel = IntegratedTerminalPanel;
+}

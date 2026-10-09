@@ -430,5 +430,9 @@ class LspClientBridge {
     }
 }
 
-window.LspClientBridge = LspClientBridge;
-window.lspClient = window.lspClient || new LspClientBridge();
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = LspClientBridge;
+} else {
+    window.LspClientBridge = LspClientBridge;
+    window.lspClient = window.lspClient || new LspClientBridge();
+}

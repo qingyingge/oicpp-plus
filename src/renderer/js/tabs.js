@@ -5585,3 +5585,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.tabManager = tabManager;
     logInfo('标签页管理器已初始化');
 });
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = TabManager;
+}

@@ -14,6 +14,13 @@ declare const OICPPApp: typeof import('../js/main.js');
 declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
 declare const CompilerManager: typeof import('../js/compile-manager.js');
 declare const DebugPanel: typeof import('../js/sidebar/debugPanel.js');
+declare const TitlebarManager: typeof import('../js/titlebar.js');
+declare const SidebarManager: typeof import('../js/sidebar.js');
+declare const TabManager: typeof import('../js/tabs.js');
+declare const IntegratedTerminalPanel: typeof import('../js/terminal-panel.js');
+declare const dialogManager: InstanceType<typeof import('../js/dialog.js')>;
+declare const SampleTester: typeof import('../js/sidebar/sampleTester.js');
+declare const CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
 declare function require(moduleName: string): any;
 // 注：删掉此行会让 @types/node 合并进 Window.require 的 Require 形状激活（cache/extensions/main/resolve 必填），
@@ -116,6 +123,63 @@ interface Window {
     getAllAvailableFonts: () => Promise<string[]>;
     getAllAvailableFontsSync: () => string[];
   };
-  // 渲染层各 manager 单例（window.X = ... 在各自文件里赋值）
-  [key: string]: any;
+  // 渲染层各 manager 单例（window.X = ... 在各自文件里赋值；类经文件尾 guarded module.exports 可被 typeof import 引用）
+  tabManager: InstanceType<typeof import('../js/tabs.js')>;
+  titlebarManager: InstanceType<typeof import('../js/titlebar.js')>;
+  sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
+  dialogManager: InstanceType<typeof import('../js/dialog.js')>;
+  browserManager: InstanceType<typeof import('../js/browser-manager.js')>;
+  LspClientBridge: typeof import('../js/lsp-client.js');
+  lspClient: InstanceType<typeof import('../js/lsp-client.js')>;
+  sampleTester: InstanceType<typeof import('../js/sidebar/sampleTester.js')>;
+  codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
+  cloudSyncPanel: InstanceType<typeof import('../js/sidebar/cloudSync.js')>;
+  editorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
+  monacoEditorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
+  compilerManager: InstanceType<typeof import('../js/compile-manager.js')>;
+  oicppApp: InstanceType<typeof OICPPApp>;
+  OICPPApp: typeof OICPPApp;
+  MonacoEditorManager: typeof MonacoEditorManager;
+  CompilerManager: typeof CompilerManager;
+  IntegratedTerminalPanel: typeof import('../js/terminal-panel.js');
+  OicppLspUtils?: typeof import('../js/lsp-utils.js');
+  // 从未赋值，仅死守卫读（window.sidebar / window.fileExplorer / window.app.* 无赋值位点）
+  sidebar?: InstanceType<typeof import('../js/sidebar.js')>;
+  fileExplorer?: unknown;
+  app?: {
+    editorManager?: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
+    fileExplorer?: unknown;
+    isDebugging?: boolean;
+    startDebug?: () => void;
+  };
+  uiIcons: { svg: (name: string) => string; hydrate: (root?: Document | Element) => void };
+  folderPicker: { show: (opts?: { startPath?: string }) => Promise<string | null> };
+  quickOpen: { open: () => void; close: () => void; ensureIndex: () => Promise<boolean> };
+  cppFormatter: { format: (code: string, options?: Record<string, unknown>) => string };
+  applySettings: (settings: Record<string, unknown>) => void;
+  updateSettings: (newSettings: Record<string, unknown>) => Promise<boolean>;
+  getCurrentSettings: () => Promise<Record<string, unknown>>;
+  checkSidebarResize: () => unknown;
+  initializeApp: () => Promise<void>;
+  debugUIInitialized: boolean;
+  debugIPCInitialized: boolean;
+  __oicppDiscardClose: boolean;
+  __: (key: string, params?: unknown) => string;
+  FitAddon: { FitAddon: typeof import('@xterm/addon-fit').FitAddon };
+  Unicode11Addon: { Unicode11Addon: typeof import('@xterm/addon-unicode11').Unicode11Addon };
+  webkitRequestAnimationFrame?: (callback: FrameRequestCallback) => number;
+  mozRequestAnimationFrame?: (callback: FrameRequestCallback) => number;
+  queryLocalFonts?: (options?: unknown) => Promise<Array<{ family: string; fullName: string; postscriptName: string; style: string }>>;
+  compileOutputManager: InstanceType<typeof import('../js/compile-output.js')>;
+  TemplatesSettings: typeof import('../settings/templates.js');
+  debugUI?: unknown;
+  FontDetector: typeof import('../utils/font-detector.js');
+  TitlebarManager: typeof import('../js/titlebar.js');
+  SidebarManager: typeof import('../js/sidebar.js');
+  CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');
+  CodeComparer: typeof import('../js/sidebar/codeComparer.js');
+  DebugPanel: typeof import('../js/sidebar/debugPanel.js');
+  FileExplorer: typeof import('../js/sidebar/fileExplorer.js');
+  SampleTester: typeof import('../js/sidebar/sampleTester.js');
+  Terminal: typeof import('@xterm/xterm').Terminal;
 }
