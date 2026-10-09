@@ -3699,7 +3699,7 @@ class OICPPApp {
 
     async showAbout() {
         const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: window.i18n?.t?.('message.unknown', null) || '未知', author: 'mywwzh (修改: qingyingge)' };
-        let buildInfo = /** @type {{ version: string, buildTime: any, author: string, buildTag?: string, buildVersion?: string, buildNo?: string }} */ ({ ...fallbackBuildInfo });
+        let buildInfo = /** @type {{ version: string, buildTime: string, author: string, buildTag?: string, buildVersion?: string, buildNo?: string }} */ ({ ...fallbackBuildInfo });
         try {
             const buildInfoData = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
             if (buildInfoData) {

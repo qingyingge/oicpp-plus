@@ -1664,7 +1664,7 @@ class FileExplorer {
 
                     window.electronIPC.send('create-file', filePath, defaultContent);
 
-                    const handleFileCreated = /** @type {((event: any, createdPath: any, error: any) => void) & { _handled?: boolean }} */ ((event, createdPath, error) => {
+                    const handleFileCreated = /** @type {((event: unknown, createdPath: string, error: unknown) => void) & { _handled?: boolean }} */ ((event, createdPath, error) => {
                         if (!handleFileCreated._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
                             handleFileCreated._handled = true;
                             if (error) {

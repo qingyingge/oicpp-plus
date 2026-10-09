@@ -38,7 +38,7 @@ function serializeClangFormatStyle(style) {
 /**
  * @param {{
  *   filePath?: string,
- *   style?: any,
+ *   style?: unknown,
  *   styleFilePath?: string,
  *   fallbackStyle?: string,
  *   startLine?: number,
@@ -87,8 +87,8 @@ function buildClangFormatArgs({
  *   executablePath?: string,
  *   content?: string,
  *   filePath?: string,
- *   style?: any,
- *   styleRaw?: any,
+ *   style?: unknown,
+ *   styleRaw?: unknown,
  *   fallbackStyle?: string,
  *   startLine?: number,
  *   endLine?: number,

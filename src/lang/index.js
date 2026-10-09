@@ -18,11 +18,13 @@ i18next.init({
     parseMissingKeyHandler: (key) => key
 });
 
+const i18nextInstance = /** @type {{ t: (...args: unknown[]) => string, language: string, changeLanguage: (lang: string) => Promise<unknown> }} */ (/** @type {unknown} */ (i18next));
+
 const instance = {
-    /** @type {(key: string, params?: any) => string} */
-    t: (key, params) => /** @type {string} */ ((i18next).t(key, params)),
-    getCurrentLanguage: () => (/** @type {any} */ (i18next)).language,
-    setLanguage: (lang) => (i18next).changeLanguage(lang),
+    /** @type {(key: string, params?: unknown) => string} */
+    t: (key, params) => i18nextInstance.t(key, params),
+    getCurrentLanguage: () => i18nextInstance.language,
+    setLanguage: (lang) => i18nextInstance.changeLanguage(lang),
     getAvailableLanguages: () => [
         { code: 'zh-cn', name: '中文（简体）', nameEn: 'Chinese (Simplified)' },
         { code: 'en', name: 'English', nameEn: 'English' }
