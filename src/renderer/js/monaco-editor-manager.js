@@ -1289,7 +1289,7 @@ class MonacoEditorManager {
                         // 而这些场景下文档版本往往没变。命中缓存直接复用，避免把同样的
                         // range 反复打给 clangd —— 那会让它取消上一批请求并重建 AST。
                         const cached = this._lspInlayHintCache.get(model);
-                        if (cached && cached.version === model.getVersion?.()) {
+                        if (cached && cached.version === model.getVersionId?.()) {
                             return cached.result;
                         }
 
@@ -1321,7 +1321,7 @@ class MonacoEditorManager {
                             // 版本号比对在上面拦掉。
                             dispose: () => { }
                         };
-                        this._lspInlayHintCache.set(model, { version: model.getVersion?.(), result: payload });
+                        this._lspInlayHintCache.set(model, { version: model.getVersionId?.(), result: payload });
                         return payload;
                     } catch (_) {
                         return empty;
@@ -1909,6 +1909,7 @@ class MonacoEditorManager {
                         const mapSymbol = (sym) => ({
                             name: sym.name || '',
                             detail: sym.detail || '',
+                            tags: [],
                             kind: kindMap[sym.kind] || monaco.languages.SymbolKind.Variable,
                             range: toRange(sym.range || sym.location?.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }),
                             selectionRange: toRange(sym.selectionRange || sym.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }),
@@ -2043,59 +2044,6 @@ class MonacoEditorManager {
                     } catch (_) {
                         return null;
                     }
-                },
-                prepareRename: async (model, position, token) => {
-                    try {
-                        const lspReady = await this._ensureLspDocumentReady(model);
-                        if (!lspReady) return null;
-                        if (!this.lspClient) return null;
-                        const uri = await this.getDocumentUriForModel(model);
-                        if (!uri) return null;
-
-                        const result = await this.lspClient.request('textDocument/prepareRename', {
-                            textDocument: { uri },
-                            position: {
-                                line: position.lineNumber - 1,
-                                character: position.column - 1
-                            }
-                        }, token);
-                        if (!result) return null;
-                        if (result.range) {
-                            return {
-                                range: new monaco.Range(
-                                    (result.range.start?.line || 0) + 1,
-                                    (result.range.start?.character || 0) + 1,
-                                    (result.range.end?.line || 0) + 1,
-                                    (result.range.end?.character || 0) + 1
-                                ),
-                                placeholder: result.placeholder || ''
-                            };
-                        }
-                        if (result.start && result.end) {
-                            return {
-                                range: new monaco.Range(
-                                    (result.start.line || 0) + 1,
-                                    (result.start.character || 0) + 1,
-                                    (result.end.line || 0) + 1,
-                                    (result.end.character || 0) + 1
-                                ),
-                                placeholder: ''
-                            };
-                        }
-                        const wordUntil = model.getWordUntilPosition(position);
-                        if (!wordUntil || !wordUntil.word) return null;
-                        return {
-                            range: new monaco.Range(
-                                position.lineNumber,
-                                wordUntil.startColumn,
-                                position.lineNumber,
-                                wordUntil.endColumn
-                            ),
-                            placeholder: wordUntil.word
-                        };
-                    } catch (_) {
-                        return null;
-                    }
                 }
             });
             this._lspProviders.set(key, disposable);
@@ -2161,7 +2109,6 @@ class MonacoEditorManager {
             if (this._lspProviders.has(key)) continue;
             logInfo('[LSP] 注册代码操作提供器 (语言:', language, ')');
             const disposable = monaco.languages.registerCodeActionProvider(language, {
-                providedCodeActionKinds: ['quickfix', 'refactor', 'source'],
                 provideCodeActions: async (model, range, context, token) => {
                     try {
                         const lspReady = await this._ensureLspDocumentReady(model);
@@ -2443,7 +2390,7 @@ class MonacoEditorManager {
                         return { lenses: [], dispose: () => {} };
                     }
                 },
-                resolveCodeLens: async (lens, token) => {
+                resolveCodeLens: async (model, lens, token) => {
                     const original = lens?.__oicppLspCodeLens;
                     const capabilities = this.lspClient?.getServerCapabilities?.();
                     if (capabilities?.codeLensProvider?.resolveProvider === false) return lens;
@@ -2496,7 +2443,7 @@ class MonacoEditorManager {
                             return [];
                         }
 
-                        const foldingRangeKind = monaco.languages.FoldingRangeKind || {};
+                        const foldingRangeKind = monaco.languages.FoldingRangeKind;
                         const kindMap = {
                             1: foldingRangeKind.Comment,
                             2: foldingRangeKind.Imports,
@@ -3296,7 +3243,7 @@ class MonacoEditorManager {
         const themePreset = this.getThemePreset(theme);
         try {
             monaco.editor.defineTheme(customThemeName, {
-                base: themePreset.base,
+                base: /** @type {import('monaco-editor').editor.BuiltinTheme} */ (themePreset.base),
                 inherit: true,
                 rules: [
                     ...(Array.isArray(themePreset.rules) ? themePreset.rules : []),
@@ -4326,10 +4273,9 @@ class MonacoEditorManager {
                 language: this.getLanguageFromFileName(fileName),
                 theme: monacoTheme,
                 automaticLayout: true,
-                'semanticHighlighting.enabled': true,
                 glyphMargin: true,
                     links: true,
-                    occurrencesHighlight: true,
+                    occurrencesHighlight: 'singleFile',
                     selectionHighlight: true,
                     matchBrackets: 'never',
                     colorDecorators: true,
@@ -4341,8 +4287,6 @@ class MonacoEditorManager {
                     bracketPairs: true,
                     bracketPairsHorizontal: false
                 },
-                renderIndentGuides: true,
-                highlightActiveIndentGuide: true,
                 fontSize: fontSize,
                 fontFamily: fontFamily,
                 fontLigatures: !!fontLigaturesEnabled,
@@ -4372,7 +4316,6 @@ class MonacoEditorManager {
                 showFoldingControls: 'always',
                 contextmenu: true,
                 selectionClipboard: true,
-                multiCursorSupport: true,
                 find: {
                     addExtraSpaceOnTop: false,
                     autoFindInSelection: 'never',
@@ -4446,12 +4389,11 @@ class MonacoEditorManager {
 
             try {
                 const markdownPreviewKey = this.toMonacoKeybinding('markdownPreview') || (monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyV);
-                const previewContextExpr = monaco.ContextKeyExpr ? monaco.ContextKeyExpr.equals('oicppIsMarkdown', true) : 'oicppIsMarkdown';
                 editor.addAction({
                     id: 'markdown-preview-split',
                     label: window.i18n.t('monaco.openMarkdownPreview'),
                     keybindings: markdownPreviewKey ? [markdownPreviewKey] : [],
-                    precondition: previewContextExpr,
+                    precondition: 'oicppIsMarkdown',
                     keybindingContext: null,
                     contextMenuGroupId: 'navigation',
                     contextMenuOrder: 1.5,
@@ -5744,7 +5686,6 @@ class MonacoEditorManager {
             const diffEditor = monaco.editor.createDiffEditor(container, {
                 renderSideBySide: true,
                 automaticLayout: true,
-                'semanticHighlighting.enabled': true,
                 readOnly: false,
                 originalEditable: false,
                 enableSplitViewResizing: true,
@@ -5856,7 +5797,6 @@ class MonacoEditorManager {
 
         if (this.currentEditor && settings) {
             const updateOptions = {};
-            updateOptions['semanticHighlighting.enabled'] = true;
             let targetFontSize = null;
             if (settings.fontSize !== undefined) {
                 const fontSize = parseInt(settings.fontSize, 10);
@@ -6227,7 +6167,6 @@ class MonacoEditorManager {
     this.editors.forEach((editor, fileName) => {
             if (editor && editor !== this.currentEditor) {
                 const updateOptions = {};
-                updateOptions['semanticHighlighting.enabled'] = true;
                 let targetFontSize = null;
                 if (settings.fontSize !== undefined) {
                     const fontSize = parseInt(settings.fontSize, 10);
@@ -6652,7 +6591,7 @@ class MonacoEditorManager {
         if (!window.electronAPI?.formatCppCode) {
             throw new Error('clang-format bridge is unavailable');
         }
-        const modelVersion = model.getVersion?.();
+        const modelVersion = model.getVersionId?.();
 
         const request = {
             content: model.getValue(),
@@ -6669,7 +6608,7 @@ class MonacoEditorManager {
         if (!result?.ok || typeof result.content !== 'string') {
             throw new Error(result?.error || 'clang-format did not return formatted content');
         }
-        if (model.isDisposed?.() || (modelVersion !== undefined && model.getVersion?.() !== modelVersion)) {
+        if (model.isDisposed?.() || (modelVersion !== undefined && model.getVersionId?.() !== modelVersion)) {
             return null;
         }
         return result.content;

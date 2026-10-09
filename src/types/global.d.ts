@@ -7,8 +7,8 @@ declare function logError(...args: unknown[]): void;
 declare function logwarn(...args: unknown[]): void;
 declare function logerror(...args: unknown[]): void;
 
-// Monaco AMD loader 注入（AMD 运行时 API 面比 ESM 公共类型大，精确类型化待 2c-mono 批）
-declare const monaco: any;
+// Monaco AMD loader 注入（monaco-editor 自带完整 ESM 类型）
+declare const monaco: typeof import('monaco-editor');
 // 渲染层 4 个 manager 单例：类在各文件顶层声明，经文件尾 guarded module.exports 可被 typeof import 精确引用
 declare const OICPPApp: typeof import('../js/main.js');
 declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
@@ -60,7 +60,7 @@ interface Window {
   logError: (...args: unknown[]) => void;
   logwarn: (...args: unknown[]) => void;
   logerror: (...args: unknown[]) => void;
-  monaco: any;
+  monaco: typeof import('monaco-editor');
   require: ((moduleName: string) => any) & { __electronHelper?: boolean };
   i18n: {
     t: (key: string, params?: Record<string, unknown>) => string;
@@ -183,3 +183,4 @@ interface Window {
   SampleTester: typeof import('../js/sidebar/sampleTester.js');
   Terminal: typeof import('@xterm/xterm').Terminal;
 }
+
