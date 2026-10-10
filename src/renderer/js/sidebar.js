@@ -124,7 +124,10 @@ class SidebarManager {
             document.addEventListener('mousemove', onResizeMove);
             document.addEventListener('mouseup', onResizeUp);
         });
-        function onResizeMove(e) {
+        // 修复：原为 function 声明，作为 document 监听器调用时 this=document，
+        // this.collapseSidebar()/this.scheduleEditorResize() 每次拖拽抛 TypeError。
+        // 箭头函数捕获方法 this=实例，即这段代码的本意。
+        const onResizeMove = (e) => {
             if (!isResizing)
                 return;
             e.preventDefault();
@@ -143,8 +146,8 @@ class SidebarManager {
                 sidebar.style.width = clampedWidth + 'px';
             }
             this.scheduleEditorResize();
-        }
-        function onResizeUp() {
+        };
+        const onResizeUp = () => {
             document.removeEventListener('mousemove', onResizeMove);
             document.removeEventListener('mouseup', onResizeUp);
             if (!isResizing)
@@ -160,7 +163,7 @@ class SidebarManager {
             setTimeout(() => {
                 this.scheduleEditorResize(true);
             }, 100);
-        }
+        };
         function preventSelection(e) {
             e.preventDefault();
             return false;
