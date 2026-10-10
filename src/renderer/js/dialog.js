@@ -1,34 +1,38 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DialogManager = void 0;
 class DialogManager {
+    currentDialog;
+    _keydownHandler;
+    _overlayKeydown;
     constructor() {
         this.currentDialog = null;
         this._keydownHandler = null;
         this.createDialogContainer();
     }
-
     createDialogContainer() {
         const overlay = document.createElement('div');
         overlay.className = 'dialog-overlay';
         overlay.id = 'dialog-overlay';
         overlay.style.display = 'none';
         overlay.dataset.closeOnBackdrop = '0';
-
         const dialog = document.createElement('div');
         dialog.className = 'dialog-container';
         dialog.id = 'dialog-container';
-
         overlay.appendChild(dialog);
         document.body.appendChild(overlay);
-
         overlay.addEventListener('click', (e) => {
             try {
-                if (e.target !== overlay) return;
-                if (overlay.dataset.closeOnBackdrop !== '1') return;
+                if (e.target !== overlay)
+                    return;
+                if (overlay.dataset.closeOnBackdrop !== '1')
+                    return;
                 this.hideDialog();
-            } catch (_) {
+            }
+            catch (_) {
             }
         });
     }
-
     resetDialogState() {
         const overlay = (document.getElementById('dialog-overlay'));
         const container = (document.getElementById('dialog-container'));
@@ -39,7 +43,6 @@ class DialogManager {
             container.classList.remove('newyear-container');
         }
     }
-
     attachEscapeToClose() {
         try {
             if (this._keydownHandler) {
@@ -52,20 +55,20 @@ class DialogManager {
                         e.preventDefault();
                         this.hideDialog();
                     }
-                } catch (_) {
+                }
+                catch (_) {
                 }
             };
             document.addEventListener('keydown', this._keydownHandler, true);
-        } catch (_) {
+        }
+        catch (_) {
         }
     }
-
     showInputDialog(title, defaultValue = '', placeholder = '', options = {}) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = (document.getElementById('dialog-overlay'));
             const container = (document.getElementById('dialog-container'));
-
             container.innerHTML = `
                 <div class="dialog-header">
                     <h3>${title}</h3>
@@ -79,11 +82,8 @@ class DialogManager {
                     <button class="dialog-btn dialog-btn-confirm" onclick="dialogManager.confirmDialog()">${window.i18n.t('dialog.ok')}</button>
                 </div>
             `;
-
             overlay.style.display = 'flex';
-
             const input = (document.getElementById('dialog-input'));
-
             setTimeout(() => {
                 if (input instanceof HTMLInputElement) {
                     input.focus();
@@ -91,26 +91,25 @@ class DialogManager {
                     const end = Number.isFinite(options.selectEnd) ? options.selectEnd : null;
                     if (start !== null && end !== null && end >= start) {
                         input.setSelectionRange(start, end);
-                    } else {
+                    }
+                    else {
                         input.select();
                     }
                 }
             }, 50);
-
             if (input) {
                 input.addEventListener('keydown', (e) => {
                     e.stopPropagation();
-
                     if (e.key === 'Enter') {
                         e.preventDefault();
                         this.confirmDialog();
-                    } else if (e.key === 'Escape') {
+                    }
+                    else if (e.key === 'Escape') {
                         e.preventDefault();
                         this.hideDialog();
                     }
                 });
             }
-
             if (this._overlayKeydown) {
                 overlay.removeEventListener('keydown', this._overlayKeydown);
             }
@@ -118,20 +117,17 @@ class DialogManager {
                 e.stopPropagation();
             };
             overlay.addEventListener('keydown', this._overlayKeydown);
-
             this.currentDialog = {
                 resolve: resolve,
                 reject: reject
             };
         });
     }
-
     showConfirmDialog(title, message) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = (document.getElementById('dialog-overlay'));
             const container = (document.getElementById('dialog-container'));
-
             container.innerHTML = `
                 <div class="dialog-header">
                     <h3>${title}</h3>
@@ -145,29 +141,24 @@ class DialogManager {
                     <button class="dialog-btn dialog-btn-confirm" onclick="dialogManager.confirmDialog()">${window.i18n.t('dialog.ok')}</button>
                 </div>
             `;
-
             overlay.style.display = 'flex';
-
             this.currentDialog = {
                 resolve: resolve,
                 reject: reject
             };
         });
     }
-
     showActionDialog(title, message, actions = []) {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = (document.getElementById('dialog-overlay'));
             const container = (document.getElementById('dialog-container'));
-
             const buttonsHtml = (actions || []).map((action) => {
                 const safeId = this.escapeHtml(String(action.id ?? ''));
                 const safeLabel = this.escapeHtml(String(action.label ?? ''));
                 const className = action.className ? ` ${this.escapeHtml(action.className)}` : '';
                 return `<button class="dialog-btn${className}" data-action="${safeId}" onclick="dialogManager.actionDialog('${safeId}')">${safeLabel}</button>`;
             }).join('');
-
             container.innerHTML = `
                 <div class="dialog-header">
                     <h3>${title}</h3>
@@ -180,33 +171,26 @@ class DialogManager {
                     ${buttonsHtml}
                 </div>
             `;
-
             overlay.style.display = 'flex';
-
             this.currentDialog = {
                 resolve: resolve,
                 reject: reject
             };
         });
     }
-
     showNewYearGreeting(now = new Date()) {
         return new Promise((resolve) => {
             this.resetDialogState();
-
             const overlay = (document.getElementById('dialog-overlay'));
             const container = (document.getElementById('dialog-container'));
             if (!overlay || !container) {
                 resolve(false);
                 return;
             }
-
             const isTestDate = (now instanceof Date) && (now.getMonth() === 11) && (now.getDate() === 21);
             const displayYear = isTestDate ? (now.getFullYear() + 1) : now.getFullYear();
-
             overlay.dataset.closeOnBackdrop = '1';
             container.classList.add('newyear-container');
-
             const safeYear = this.escapeHtml(String(displayYear));
             container.innerHTML = `
                 <div class="dialog-header newyear-header">
@@ -230,38 +214,30 @@ class DialogManager {
                     <button class="dialog-btn dialog-btn-primary" onclick="dialogManager.confirmDialog()">${window.i18n.t('festival.newYearButton')}</button>
                 </div>
             `;
-
             if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
                 window.uiIcons.hydrate(container);
             }
-
             overlay.style.display = 'flex';
             this.attachEscapeToClose();
-
             this.currentDialog = {
                 resolve: resolve,
-                reject: () => {}
+                reject: () => { }
             };
         });
     }
-
     showSpringFestivalGreeting(now = new Date()) {
         return new Promise((resolve) => {
             this.resetDialogState();
-
             const overlay = (document.getElementById('dialog-overlay'));
             const container = (document.getElementById('dialog-container'));
             if (!overlay || !container) {
                 resolve(false);
                 return;
             }
-
             const displayYear = (now instanceof Date) ? now.getFullYear() : new Date().getFullYear();
             const safeYear = this.escapeHtml(String(displayYear));
-
             overlay.dataset.closeOnBackdrop = '1';
             container.classList.add('newyear-container');
-
             container.innerHTML = `
                 <div class="dialog-header newyear-header">
                     <h3>${window.i18n.t('festival.springFestivalTitle')}</h3>
@@ -284,44 +260,37 @@ class DialogManager {
                     <button class="dialog-btn dialog-btn-primary" onclick="dialogManager.confirmDialog()">${window.i18n.t('festival.springFestivalButton')}</button>
                 </div>
             `;
-
             if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
                 window.uiIcons.hydrate(container);
             }
-
             overlay.style.display = 'flex';
             this.attachEscapeToClose();
-
             this.currentDialog = {
                 resolve: resolve,
-                reject: () => {}
+                reject: () => { }
             };
         });
     }
-
     confirmDialog() {
-        if (!this.currentDialog) return;
-
+        if (!this.currentDialog)
+            return;
         const input = (document.getElementById('dialog-input'));
         const result = input instanceof HTMLInputElement ? input.value : true;
-
         this.currentDialog.resolve(result);
         this.hideDialog();
     }
-
     cancelDialog() {
-        if (!this.currentDialog) return;
-
+        if (!this.currentDialog)
+            return;
         this.currentDialog.resolve(null);
         this.hideDialog();
     }
-
     actionDialog(actionId) {
-        if (!this.currentDialog) return;
+        if (!this.currentDialog)
+            return;
         this.currentDialog.resolve(actionId);
         this.hideDialog();
     }
-
     hideDialog() {
         const overlay = (document.getElementById('dialog-overlay'));
         const pending = this.currentDialog;
@@ -330,7 +299,8 @@ class DialogManager {
             if (pending && typeof pending.resolve === 'function') {
                 pending.resolve(null);
             }
-        } catch (_) {
+        }
+        catch (_) {
         }
         overlay.style.display = 'none';
         this.resetDialogState();
@@ -339,47 +309,47 @@ class DialogManager {
                 document.removeEventListener('keydown', this._keydownHandler, true);
                 this._keydownHandler = null;
             }
-        } catch (_) {
+        }
+        catch (_) {
         }
     }
-
     showGotoLineDialog() {
         return this.showInputDialog(window.i18n.t('dialog.gotoLine'), '1', window.i18n.t('dialog.gotoLinePlaceholder'));
     }
-
     showNewFileDialog(errorMessage = '', defaultName = 'untitled.cpp') {
         const title = errorMessage ? window.i18n.t('dialog.newFileDialogErrorTitle') : window.i18n.t('dialog.newFileDialogTitle');
         const placeholder = errorMessage ? window.i18n.t('dialog.newFileDialogError', { msg: errorMessage }) : window.i18n.t('dialog.newFileDialogPlaceholder');
         const initial = defaultName && typeof defaultName === 'string' ? defaultName : 'untitled.cpp';
         return this.showInputDialog(title, initial, placeholder);
     }
-
     showNewFolderDialog() {
         return this.showInputDialog(window.i18n.t('dialog.newFolderDialogTitle'), 'new-folder', window.i18n.t('dialog.newFolderDialogPlaceholder'));
     }
-
     showError(message) {
         this.resetDialogState();
-        try { logError('[DialogShowError]', { message: String(message) }); } catch (_) { }
-        try { logWarn('[DialogShowErrorSuppressed]', String(message)); } catch (_) { }
+        try {
+            logError('[DialogShowError]', { message: String(message) });
+        }
+        catch (_) { }
+        try {
+            logWarn('[DialogShowErrorSuppressed]', String(message));
+        }
+        catch (_) { }
     }
-
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 }
-
+exports.DialogManager = DialogManager;
 let dialogManager;
 document.addEventListener('DOMContentLoaded', () => {
     dialogManager = new DialogManager();
     if (typeof window !== 'undefined') {
         window.dialogManager = dialogManager;
     }
-
 });
-
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = DialogManager;
 }

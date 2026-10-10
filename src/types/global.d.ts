@@ -18,7 +18,7 @@ declare const TitlebarManager: typeof import('../js/titlebar.js');
 declare const SidebarManager: typeof import('../js/sidebar.js');
 declare const TabManager: typeof import('../js/tabs.js');
 declare const IntegratedTerminalPanel: typeof import('../js/terminal-panel.js');
-declare const dialogManager: InstanceType<typeof import('../js/dialog.js')>;
+declare const dialogManager: import('../js/dialog.js').DialogManager;
 declare const SampleTester: typeof import('../js/sidebar/sampleTester.js');
 declare const CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
@@ -122,7 +122,7 @@ interface Window {
   tabManager: InstanceType<typeof import('../js/tabs.js')>;
   titlebarManager: InstanceType<typeof import('../js/titlebar.js')>;
   sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
-  dialogManager: InstanceType<typeof import('../js/dialog.js')>;
+  dialogManager: import('../js/dialog.js').DialogManager;
   browserManager: InstanceType<typeof import('../js/browser-manager.js')>;
   LspClientBridge: typeof import('../js/lsp-client.js');
   lspClient: InstanceType<typeof import('../js/lsp-client.js')>;
