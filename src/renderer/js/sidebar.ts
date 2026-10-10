@@ -1,0 +1,586 @@
+const sbQs = (selector: string): HTMLElement | null => {
+    const el = document.querySelector(selector);
+    return el instanceof HTMLElement ? el : null;
+};
+
+export class SidebarManager {
+    currentPanel: string;
+    panels: {
+        files: FileExplorer;
+        samples: InstanceType<typeof SampleTester>;
+        compare: CodeComparer;
+        debug: InstanceType<typeof DebugPanel>;
+        cloud: InstanceType<typeof CloudSyncPanel>;
+    };
+    _pendingResizeRaf: number | ReturnType<typeof setTimeout> | null;
+    _pendingResizeIsTimeout: boolean;
+    // 以下字段在 setupResizer/hideForWelcome/collapseSidebar 中赋值
+    resizer: HTMLElement | null;
+    sidebar: HTMLElement | null;
+    sidebarPanel: HTMLElement | null;
+    isCollapsed: boolean;
+    savedWidth: number;
+    _prevWidth: string;
+    _wasCollapsed: boolean;
+
+    constructor() {
+        this.currentPanel = 'files';
+        this.panels = {
+            files: new FileExplorer(),
+            samples: new SampleTester(),
+            compare: new CodeComparer(),
+            debug: new DebugPanel(),
+            cloud: new CloudSyncPanel()
+        };
+
+        this._pendingResizeRaf = null;
+        this._pendingResizeIsTimeout = false;
+
+        this.init();
+    }
+
+    init(): void {
+        this.setupEventListeners();
+        this.setupActiveFileListener();
+        this.setupLanguageListener();
+        this.setupResizer();
+        this.showPanel('files');
+        this.bootstrapCloudVisibility();
+    }
+
+    async bootstrapCloudVisibility(): Promise<void> {
+        this.setCloudPanelVisible(false);
+    }
+
+    setupEventListeners(): void {
+        const sidebarIcons = document.querySelectorAll('.sidebar-icon');
+        logInfo('setupEventListeners: 找到', sidebarIcons.length, '个侧边栏图标');
+        sidebarIcons.forEach((icon, index) => {
+            if (!(icon instanceof HTMLElement)) return;
+            logInfo('绑定事件监听器到图标', index, '面板名:', icon.dataset.panel);
+            icon.tabIndex = 0;
+            icon.setAttribute('role', 'button');
+            icon.addEventListener('click', (e) => {
+                e.preventDefault();
+                icon.focus({ preventScroll: true });
+                const currentTarget = e.currentTarget;
+                const panelName = currentTarget instanceof HTMLElement ? currentTarget.dataset.panel : undefined;
+                logInfo('图标被点击，面板名:', panelName);
+                this.showPanel(panelName as string);
+            });
+            icon.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                e.stopPropagation();
+                this.showPanel(icon.dataset.panel as string);
+            });
+        });
+
+        const sidebarIconsContainer = (document.querySelector('.sidebar-icons'));
+        if (sidebarIconsContainer) {
+            sidebarIconsContainer.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                this.toggleSidebar();
+            });
+        }
+
+        this.setupPanelHeaderButtons();
+    }
+
+    setupActiveFileListener(): void {
+        window.addEventListener('oicpp:active-file-changed', (event) => {
+            const detail = event instanceof CustomEvent ? event.detail : undefined;
+            const filePath = detail?.filePath;
+            const isCloudFile = typeof filePath === 'string' && /^cloud:/i.test(filePath);
+            this.updateCloudPanelLocks();
+            if (isCloudFile && ['debug', 'samples', 'compare'].includes(this.currentPanel)) {
+                this.showPanel('files');
+            }
+        });
+    }
+
+    setupLanguageListener(): void {
+        document.addEventListener('i18n-language-changed', () => {
+            this.updateCloudPanelLocks();
+            if (this.currentPanel && this.panels[this.currentPanel]) {
+                const panel = this.panels[this.currentPanel];
+                if (typeof panel.activate === 'function') {
+                    panel.activate();
+                }
+            }
+        });
+    }
+
+    setupResizer(): void {
+        const sidebar = sbQs('.sidebar');
+        const resizer = sbQs('.sidebar-resizer');
+        const mainContainer = sbQs('.main-container');
+        const sidebarPanel = sbQs('.sidebar-panel');
+
+        if (!sidebar || !resizer || !mainContainer || !sidebarPanel) return;
+
+        let isResizing = false;
+        let startX = 0;
+        let startWidth = 0;
+
+        this.resizer = resizer;
+        this.sidebar = sidebar;
+        this.sidebarPanel = sidebarPanel;
+        this.isCollapsed = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isResizing = true;
+            startX = e.clientX;
+            startWidth = sidebar.offsetWidth;
+
+            resizer.classList.add('resizing');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            document.addEventListener('selectstart', preventSelection);
+            document.addEventListener('mousemove', onResizeMove);
+            document.addEventListener('mouseup', onResizeUp);
+        });
+
+        function onResizeMove(e: MouseEvent): void {
+            if (!isResizing) return;
+
+            e.preventDefault();
+            const deltaX = e.clientX - startX;
+            const newWidth = startWidth + deltaX;
+
+            const hideThreshold = 100;
+            const minWidth = 200;
+
+            if (newWidth < hideThreshold) {
+                this.collapseSidebar();
+            } else {
+                if (this.isCollapsed) {
+                    this.expandSidebar();
+                }
+
+                const clampedWidth = Math.max(minWidth, newWidth);
+                sidebar.style.width = clampedWidth + 'px';
+            }
+
+            this.scheduleEditorResize();
+        }
+
+        function onResizeUp(): void {
+            document.removeEventListener('mousemove', onResizeMove);
+            document.removeEventListener('mouseup', onResizeUp);
+            if (!isResizing) return;
+
+            isResizing = false;
+            resizer.classList.remove('resizing');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+
+            document.removeEventListener('selectstart', preventSelection);
+
+            const width = sidebar.offsetWidth;
+            localStorage.setItem('sidebar-width', String(width));
+
+            this.scheduleEditorResize(true);
+            setTimeout(() => {
+                this.scheduleEditorResize(true);
+            }, 100);
+        }
+
+        function preventSelection(e: Event): boolean {
+            e.preventDefault();
+            return false;
+        }
+
+        const savedWidth = localStorage.getItem('sidebar-width');
+        const savedCollapsed = localStorage.getItem('sidebar-collapsed') === 'true';
+
+        if (savedCollapsed) {
+            this.savedWidth = savedWidth ? parseInt(savedWidth) : 350;
+            this.isCollapsed = true;
+            this.collapseSidebar();
+        } else if (savedWidth) {
+            const width = parseInt(savedWidth);
+            if (width >= 200 && width <= window.innerWidth * 0.6) {
+                sidebar.style.width = width + 'px';
+            }
+        }
+
+        setTimeout(() => {
+            const welcomeContainer = (document.getElementById('welcome-container'));
+            const editorArea = sbQs('.editor-area');
+
+            const isWelcomeVisible = welcomeContainer &&
+                (welcomeContainer.style.display === 'block' ||
+                    (welcomeContainer.style.display !== 'none' && welcomeContainer.offsetParent !== null));
+            const isEditorHidden = editorArea && editorArea.style.display === 'none';
+
+            if (isWelcomeVisible || isEditorHidden) {
+                this.disableResize();
+                try {
+                    this.hideForWelcome();
+                } catch (_) { }
+                logInfo('初始化时检测到欢迎页面，已禁用侧边栏拖拽并隐藏侧边栏');
+            }
+        }, 200);
+    }
+
+    disableResize(): void {
+        if (this.resizer) {
+            this.resizer.style.pointerEvents = 'none';
+            this.resizer.style.display = 'none';
+            logInfo('侧边栏拖拽调整已禁用（欢迎页面模式）');
+        }
+    }
+
+    enableResize(): void {
+        if (this.resizer) {
+            this.resizer.style.pointerEvents = '';
+            this.resizer.style.display = '';
+            logInfo('侧边栏拖拽调整已启用（编辑器模式）');
+        }
+    }
+
+    hideForWelcome(): void {
+        const sidebar = this.sidebar || sbQs('.sidebar');
+        if (sidebar) {
+            if (sidebar.classList.contains('hidden')) return;
+            try {
+                this._prevWidth = sidebar.style.width || '';
+                this._wasCollapsed = this.isCollapsed === true || localStorage.getItem('sidebar-collapsed') === 'true';
+            } catch (_) { }
+            sidebar.classList.add('hidden');
+        }
+        this.disableResize();
+    }
+
+    showForEditor(): void {
+        const sidebar = this.sidebar || sbQs('.sidebar');
+        if (sidebar) {
+            sidebar.classList.remove('hidden');
+            try {
+                if (this._prevWidth) {
+                    sidebar.style.width = this._prevWidth;
+                } else {
+                    const savedWidth = localStorage.getItem('sidebar-width');
+                    const width = savedWidth ? parseInt(savedWidth) : 350;
+                    sidebar.style.width = (isFinite(width) && width >= 200 ? width : 300) + 'px';
+                }
+            } catch (_) { }
+            try {
+                if (this._wasCollapsed) {
+                    this.collapseSidebar();
+                } else {
+                    this.expandSidebar();
+                }
+            } catch (_) { }
+        }
+        this.enableResize();
+    }
+
+    collapseSidebar(): void {
+        if (!this.sidebar || !this.sidebarPanel) return;
+
+        logInfo('开始折叠侧边栏，当前isCollapsed:', this.isCollapsed);
+
+        this.isCollapsed = true;
+
+        this.savedWidth = this.sidebar.offsetWidth;
+
+        this.sidebar.style.width = '48px';
+
+        this.sidebarPanel.style.display = 'none';
+
+        localStorage.setItem('sidebar-collapsed', 'true');
+
+        logInfo('侧边栏已折叠，新的isCollapsed状态:', this.isCollapsed);
+
+        this.scheduleEditorResize();
+    }
+
+    expandSidebar(): void {
+        logInfo('expandSidebar called, sidebar:', !!this.sidebar, 'sidebarPanel:', !!this.sidebarPanel);
+        if (!this.sidebar || !this.sidebarPanel) {
+            logInfo('expandSidebar: 缺少必要的DOM元素');
+            return;
+        }
+
+        this.isCollapsed = false;
+
+        this.sidebarPanel.style.display = '';
+
+        const currentWidth = parseInt(this.sidebar.style.width, 10);
+        const rememberedWidth = Number(this.savedWidth);
+        const storedWidth = parseInt(localStorage.getItem('sidebar-width') as string, 10);
+        const width = [currentWidth, rememberedWidth, storedWidth]
+            .find(candidate => Number.isFinite(candidate) && candidate >= 200) || 350;
+        this.sidebar.style.width = width + 'px';
+
+        localStorage.setItem('sidebar-width', String(width));
+        localStorage.removeItem('sidebar-collapsed');
+
+        logInfo('侧边栏已展开，宽度:', width, 'isCollapsed:', this.isCollapsed);
+
+        this.scheduleEditorResize();
+    }
+
+    toggleSidebar(): void {
+        if (this.isCollapsed) {
+            this.expandSidebar();
+        } else {
+            this.collapseSidebar();
+        }
+    }
+
+    checkResizeStatus() {
+        const welcomeContainer = (document.getElementById('welcome-container'));
+        const editorArea = sbQs('.editor-area');
+        const isWelcomeVisible = welcomeContainer && welcomeContainer.style.display === 'block';
+        const isEditorVisible = editorArea && editorArea.style.display !== 'none';
+        const isResizerEnabled = this.resizer && this.resizer.style.display !== 'none';
+
+        logInfo('=== 侧边栏拖拽状态检查 ===');
+        logInfo('欢迎页面可见:', isWelcomeVisible);
+        logInfo('编辑器区域可见:', isEditorVisible);
+        logInfo('拖拽手柄启用:', isResizerEnabled);
+        logInfo('当前状态:', isWelcomeVisible ? '欢迎页面模式' : '编辑器模式');
+        logInfo('拖拽状态:', isResizerEnabled ? '启用' : '禁用');
+
+        return {
+            welcomeVisible: isWelcomeVisible,
+            editorVisible: isEditorVisible,
+            resizerEnabled: isResizerEnabled
+        };
+    }
+
+    triggerEditorResize(): void {
+        if (window.monaco && window.editorManager && window.editorManager.currentEditor) {
+            setTimeout(() => {
+                if (window.editorManager.currentEditor.layout) {
+                    window.editorManager.currentEditor.layout();
+                }
+            }, 50);
+        }
+
+        window.dispatchEvent(new Event('resize'));
+    }
+
+    scheduleEditorResize(force = false): void {
+        if (force) {
+            if (this._pendingResizeRaf !== null) {
+                if (this._pendingResizeIsTimeout) {
+                    clearTimeout(this._pendingResizeRaf);
+                } else {
+                    // _pendingResizeIsTimeout 为 false 时该句柄必为 raf id（number）
+                    try { cancelAnimationFrame(this._pendingResizeRaf as number); } catch (_) { }
+                }
+                this._pendingResizeRaf = null;
+                this._pendingResizeIsTimeout = false;
+            }
+            this.triggerEditorResize();
+            return;
+        }
+
+        if (this._pendingResizeRaf !== null) {
+            return;
+        }
+
+        const raf = window.requestAnimationFrame || window.webkitRequestAnimationFrame || window.mozRequestAnimationFrame;
+        if (typeof raf !== 'function') {
+            this._pendingResizeRaf = setTimeout(() => {
+                this._pendingResizeRaf = null;
+                this._pendingResizeIsTimeout = false;
+                this.triggerEditorResize();
+            }, 50);
+            this._pendingResizeIsTimeout = true;
+            return;
+        }
+
+        this._pendingResizeRaf = raf.call(window, () => {
+            this._pendingResizeRaf = null;
+            this._pendingResizeIsTimeout = false;
+            this.triggerEditorResize();
+        });
+        this._pendingResizeIsTimeout = false;
+    }
+
+    setupPanelHeaderButtons(): void {
+        const fileButtons = document.querySelectorAll('#files-panel .icon-btn');
+        fileButtons.forEach((btn, index) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+
+                const fileExplorer = this.panels.files;
+                logInfo('检查工作区状态:', fileExplorer ? fileExplorer.hasWorkspace : '文件管理器不存在', '路径:', fileExplorer ? fileExplorer.currentPath : 'N/A');
+                if (!fileExplorer || !fileExplorer.hasWorkspace) {
+                    logInfo('没有工作区，无法执行操作');
+                    return;
+                }
+
+                switch (index) {
+                    case 0: // 新建文件
+                        fileExplorer.createNewFile();
+                        break;
+                    case 1: // 新建文件夹
+                        fileExplorer.createNewFolder();
+                        break;
+                    case 2: // 刷新
+                        fileExplorer.refresh();
+                        break;
+                    case 3: // 批量删除
+                        fileExplorer.batchDelete();
+                        break;
+                }
+            });
+        });
+    }
+
+    showPanel(panelName: string): void {
+        logInfo('showPanel called, panelName:', panelName, 'isCollapsed:', this.isCollapsed);
+        this.updateCloudPanelLocks();
+        if (this.isCloudFileActive() && ['debug', 'samples', 'compare'].includes(panelName)) {
+            if (window.oicppApp?.showMessage) {
+                const msg = window.i18n.t('message.cloudFileLocalOnly', { feature: panelName });
+                window.oicppApp.showMessage(msg, 'warning');
+            }
+            return;
+        }
+        if (this.isCollapsed) {
+            logInfo('侧边栏处于折叠状态，正在展开...');
+            this.expandSidebar();
+        }
+
+        if (this.currentPanel === panelName) {
+            return;
+        }
+
+        // 离开当前面板时通知其 deactivate，释放定时器/监听器等资源。
+        if (this.currentPanel && this.panels[this.currentPanel]
+            && typeof this.panels[this.currentPanel].deactivate === 'function') {
+            this.panels[this.currentPanel].deactivate();
+        }
+
+        const icons = document.querySelectorAll('.sidebar-icon');
+        icons.forEach(icon => {
+            if (!(icon instanceof HTMLElement)) return;
+            icon.classList.remove('active');
+            if (icon.dataset.panel === panelName) {
+                icon.classList.add('active');
+            }
+        });
+
+        const panels = document.querySelectorAll('.panel-content');
+        panels.forEach(panel => {
+            panel.classList.remove('active');
+            if (panel.id === `${panelName}-panel`) {
+                panel.classList.add('active');
+            }
+        });
+
+        this.currentPanel = panelName;
+
+        if (this.panels[panelName]) {
+            logInfo('正在激活面板管理器:', panelName);
+            this.panels[panelName].activate();
+            logInfo('面板管理器激活完成:', panelName);
+        } else {
+            logWarn('面板管理器不存在:', panelName);
+        }
+
+        if (panelName === 'compare' && this.panels.compare) {
+            setTimeout(() => {
+                this.panels.compare.checkCompilerAndUpdate();
+            }, 100);
+        }
+    }
+
+    getCurrentPanel(): string {
+        return this.currentPanel;
+    }
+
+    getPanelManager(panelName: string) {
+        return this.panels[panelName];
+    }
+
+    updateFileExplorerButtons(): void {
+        const fileButtons = document.querySelectorAll('#files-panel .icon-btn');
+        const fileExplorer = this.panels.files;
+        const hasWorkspace = fileExplorer && fileExplorer.hasWorkspace;
+
+        fileButtons.forEach((btn, index) => {
+            if (!(btn instanceof HTMLButtonElement)) return;
+            // 新建文件、新建文件夹、批量删除在无工作区时禁用；刷新始终可用
+            if (index === 0 || index === 1 || index === 3) {
+                btn.disabled = !hasWorkspace;
+                btn.style.opacity = hasWorkspace ? '1' : '0.5';
+                btn.style.cursor = hasWorkspace ? 'pointer' : 'not-allowed';
+            }
+        });
+    }
+
+    isCloudFileActive(): boolean {
+        try {
+            const filePath = window.oicppApp?.getActiveFilePath?.();
+            if (!filePath) return false;
+            if (window.oicppApp?.isCloudFilePath) {
+                return window.oicppApp.isCloudFilePath(filePath);
+            }
+            return typeof filePath === 'string' && /^cloud:/i.test(filePath);
+        } catch (_) {
+            return false;
+        }
+    }
+
+    updateCloudPanelLocks(): void {
+        const locked = this.isCloudFileActive();
+        const lockTargets = ['debug', 'samples', 'compare'];
+        lockTargets.forEach(panel => {
+            const icon = (document.querySelector(`.sidebar-icon[data-panel="${panel}"]`));
+            if (!icon) return;
+            if (locked) {
+                icon.classList.add('disabled');
+                icon.setAttribute('title', window.i18n.t('message.cloudFileLocalOnly', { feature: panel }));
+            } else {
+                icon.classList.remove('disabled');
+                if (panel === 'debug') icon.setAttribute('title', window.i18n.t('sidebar.debug'));
+                if (panel === 'samples') icon.setAttribute('title', window.i18n.t('sidebar.sampleTester'));
+                if (panel === 'compare') icon.setAttribute('title', window.i18n.t('sidebar.codeComparer'));
+            }
+        });
+    }
+
+    setCloudPanelVisible(visible: boolean): void {
+        const show = false; // OICPP-Plus: 云服务已禁用（无独立服务，避免依赖原作者服务器）
+        const icon = sbQs('.sidebar-icon.cloud-sync-icon');
+        const panel = (document.getElementById('cloud-panel'));
+        if (icon) {
+            icon.style.display = show ? 'flex' : 'none';
+            icon.style.visibility = show ? 'visible' : 'hidden';
+        } else {
+            logWarn('未找到云空间侧边栏图标');
+        }
+        if (panel) {
+            panel.style.display = show ? 'flex' : 'none';
+            panel.style.visibility = show ? 'visible' : 'hidden';
+        } else {
+            logWarn('未找到云空间面板容器');
+        }
+        if (!show && this.currentPanel === 'cloud') {
+            this.showPanel('files');
+        }
+        if (this.panels.cloud && typeof this.panels.cloud.setLoggedInState === 'function') {
+            this.panels.cloud.setLoggedInState(show);
+        }
+    }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = SidebarManager;
+} else if (typeof window !== 'undefined') {
+    window.SidebarManager = SidebarManager;
+}
+
+// 渲染层模块级 logger 声明：运行时由 main.js 挂到全局；模块内声明仅为类型可解析（build 图无 global.d.ts）。
+declare function logInfo(...args: unknown[]): void;
+declare function logWarn(...args: unknown[]): void;
