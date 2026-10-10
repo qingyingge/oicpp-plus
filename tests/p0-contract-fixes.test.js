@@ -195,7 +195,7 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
 
     // ---- P0-4 / S-3：cloudSync 取消判定与空串兜底 ----
     check('P0-4 moveItem 用 !ok 而非 ok === false',
-        /const ok = await window\.dialogManager[\s\S]{0,160}?\n\s*if \(!ok\) return;/.test(cloudSyncSource));
+        /const ok = await window\.dialogManager[\s\S]{0,160}?\n\s*if \(!ok\)\s*return;/.test(cloudSyncSource));
     check('P0-4 不再存在 ok === false 判定',
         !/ok === false/.test(cloudSyncSource));
     check('S-3 下载内容缺失时抛错而非兜底成空串',

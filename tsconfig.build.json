@@ -10,5 +10,5 @@
     "noCheck": true
   },
   "include": [],
-  "files": ["src/renderer/js/lsp-client.ts", "src/utils/path-identity.ts", "src/gdb-mi.ts", "src/clang-format-service.ts", "src/utils/clangd-compile-flags.ts", "src/utils/multi-thread-downloader.ts", "src/renderer/js/compile-output.ts", "src/renderer/js/titlebar.ts", "src/utils/font-detector.ts", "src/renderer/js/dialog.ts", "src/renderer/js/sidebar.ts", "src/renderer/settings/templates.ts", "src/renderer/js/browser-manager.ts", "src/renderer/js/sidebar/debugPanel.ts", "src/renderer/js/terminal-panel.ts", "node_modules/electron/electron.d.ts"]
+  "files": ["src/renderer/js/lsp-client.ts", "src/utils/path-identity.ts", "src/gdb-mi.ts", "src/clang-format-service.ts", "src/utils/clangd-compile-flags.ts", "src/utils/multi-thread-downloader.ts", "src/renderer/js/compile-output.ts", "src/renderer/js/titlebar.ts", "src/utils/font-detector.ts", "src/renderer/js/dialog.ts", "src/renderer/js/sidebar.ts", "src/renderer/settings/templates.ts", "src/renderer/js/browser-manager.ts", "src/renderer/js/sidebar/debugPanel.ts", "src/renderer/js/terminal-panel.ts", "src/renderer/js/sidebar/cloudSync.ts", "node_modules/electron/electron.d.ts"]
 }

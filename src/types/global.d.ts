@@ -20,7 +20,7 @@ declare const TabManager: typeof import('../js/tabs.js');
 declare const IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
 declare const dialogManager: import('../js/dialog.js').DialogManager;
 declare const SampleTester: typeof import('../js/sidebar/sampleTester.js');
-declare const CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');
+declare const CloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
 declare function require(moduleName: string): any;
 // 注：删掉此行会让 @types/node 合并进 Window.require 的 Require 形状激活（cache/extensions/main/resolve 必填），
@@ -126,7 +126,7 @@ interface Window {
   browserManager: import('../js/browser-manager.js').BrowserManager;
   sampleTester: InstanceType<typeof import('../js/sidebar/sampleTester.js')>;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
-  cloudSyncPanel: InstanceType<typeof import('../js/sidebar/cloudSync.js')>;
+  cloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
   editorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
   monacoEditorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
   compilerManager: InstanceType<typeof import('../js/compile-manager.js')>;
@@ -167,7 +167,7 @@ interface Window {
   debugUI?: unknown;
   TitlebarManager: typeof import('../js/titlebar.js');
   SidebarManager: typeof import('../js/sidebar.js');
-  CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');
+  CloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
   CodeComparer: typeof import('../js/sidebar/codeComparer.js');
   DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
   FileExplorer: typeof import('../js/sidebar/fileExplorer.js');
