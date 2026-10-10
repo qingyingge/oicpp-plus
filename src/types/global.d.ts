@@ -17,7 +17,7 @@ declare const DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
 declare const TitlebarManager: typeof import('../js/titlebar.js');
 declare const SidebarManager: typeof import('../js/sidebar.js');
 declare const TabManager: typeof import('../js/tabs.js');
-declare const IntegratedTerminalPanel: typeof import('../js/terminal-panel.js');
+declare const IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
 declare const dialogManager: import('../js/dialog.js').DialogManager;
 declare const SampleTester: typeof import('../js/sidebar/sampleTester.js');
 declare const CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');
@@ -134,7 +134,7 @@ interface Window {
   OICPPApp: typeof OICPPApp;
   MonacoEditorManager: typeof MonacoEditorManager;
   CompilerManager: typeof CompilerManager;
-  IntegratedTerminalPanel: typeof import('../js/terminal-panel.js');
+  IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
   OicppLspUtils?: typeof import('../js/lsp-utils.js');
   // 从未赋值，仅死守卫读（window.sidebar / window.fileExplorer / window.app.* 无赋值位点）
   sidebar?: InstanceType<typeof import('../js/sidebar.js')>;
