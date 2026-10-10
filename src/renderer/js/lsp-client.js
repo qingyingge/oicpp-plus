@@ -1,4 +1,18 @@
+"use strict";
+// 渲染层 LSP 客户端桥。以「脚本」形式参与构建（无 import/export）：
+// tests/lsp*.test.js 用 fs.readFileSync + vm.runInNewContext 直接执行本文件源码，
+// 沙箱 context 没有 exports/module，模块化输出的顶层 exports.* 引用会 ReferenceError。
+// 因此保持 script 形态：类经文件尾 guarded if/else 注入 window 或 module.exports。
 class LspClientBridge {
+    _ready;
+    _readyPromise;
+    _serverCapabilities;
+    _semanticTokensLegend;
+    _nextRequestId;
+    _readyListeners;
+    _diagnosticListeners;
+    _notificationListeners;
+    _applyEditListeners;
     constructor() {
         this._ready = false;
         this._readyPromise = null;
@@ -11,25 +25,30 @@ class LspClientBridge {
         this._applyEditListeners = new Set();
         this._bindNotifications();
     }
-
     _bindNotifications() {
         if (typeof window.electronAPI?.onLspApplyEdit === 'function') {
             window.electronAPI.onLspApplyEdit(async (payload) => {
-                if (!payload?.requestId) return;
+                if (!payload?.requestId)
+                    return;
                 let applied = false;
                 let skipped = 0;
                 let conflicts = 0;
                 for (const listener of this._applyEditListeners) {
                     try {
                         const result = await listener(payload.edit);
-                        if (result?.applied !== false) applied = true;
-                        if (Number.isInteger(result?.skipped)) skipped += result.skipped;
-                        if (Number.isInteger(result?.conflicts)) conflicts += result.conflicts;
-                    } catch (_) {}
+                        if (result?.applied !== false)
+                            applied = true;
+                        if (Number.isInteger(result?.skipped))
+                            skipped += result.skipped;
+                        if (Number.isInteger(result?.conflicts))
+                            conflicts += result.conflicts;
+                    }
+                    catch (_) { }
                 }
                 try {
                     await window.electronAPI.lspApplyEditResult?.(payload.requestId, { applied, skipped, conflicts });
-                } catch (_) {}
+                }
+                catch (_) { }
             });
         }
         if (!window.electronAPI || typeof window.electronAPI.onLspNotification !== 'function') {
@@ -50,15 +69,20 @@ class LspClientBridge {
                 const uri = params.uri || '';
                 const diagnostics = Array.isArray(params.diagnostics) ? params.diagnostics : [];
                 this._diagnosticListeners.forEach((listener) => {
-                    try { listener(uri, diagnostics); } catch (_) {}
+                    try {
+                        listener(uri, diagnostics);
+                    }
+                    catch (_) { }
                 });
             }
             this._notificationListeners.forEach((listener) => {
-                try { listener(payload); } catch (_) {}
+                try {
+                    listener(payload);
+                }
+                catch (_) { }
             });
         });
     }
-
     async start(options = {}) {
         if (this._readyPromise) {
             return this._readyPromise;
@@ -70,7 +94,6 @@ class LspClientBridge {
         });
         return this._readyPromise;
     }
-
     async restart(options = {}) {
         this._ready = false;
         this._readyPromise = null;
@@ -80,13 +103,11 @@ class LspClientBridge {
         });
         return this._readyPromise;
     }
-
     async _restartInternal(options = {}) {
         const api = window.electronAPI;
         if (!api) {
             throw new Error('LSP API unavailable');
         }
-
         if (typeof api.lspRestart === 'function') {
             const startResult = await api.lspRestart({
                 workspaceRoot: options.workspaceRoot || '',
@@ -95,47 +116,40 @@ class LspClientBridge {
                 compilerPath: options.compilerPath || '',
                 rootUri: options.rootUri || ''
             });
-
             if (!startResult || startResult.ok !== true) {
                 const errMsg = startResult?.error || window.i18n.t('lsp.restartFailUnknown');
                 logError('[LSP] clangd 重启失败:', errMsg);
                 throw new Error('clangd restart failed: ' + errMsg);
             }
-
             if (startResult.alreadyRunning) {
                 logInfo('[LSP] clangd 已在运行中，复用现有进程');
-            } else {
+            }
+            else {
                 logInfo('[LSP] clangd 进程已启动:', startResult.clangdPath || '');
             }
-
             return await this._finishStartup(startResult, options);
         }
-
         if (typeof api.lspStop === 'function') {
             await api.lspStop();
         }
         return await this._startInternal(options);
     }
-
     async _startInternal(options = {}) {
         const api = window.electronAPI;
         if (!api || typeof api.lspStart !== 'function') {
             logError('[LSP] LSP API 不可用，无法启动');
             throw new Error('LSP API unavailable');
         }
-
         const rootUri = options.rootUri || '';
         const workspaceFolders = rootUri
             ? [{ uri: rootUri, name: options.workspaceName || 'workspace' }]
             : [];
-
         logInfo('[LSP] 正在启动 clangd LSP 客户端...');
         logInfo('[LSP] 工作区根目录:', options.workspaceRoot || '(无)');
         logInfo('[LSP] rootUri:', rootUri || '(无)');
         if (options.compilerPath) {
             logInfo('[LSP] 编译器路径:', options.compilerPath);
         }
-
         const startResult = await api.lspStart({
             workspaceRoot: options.workspaceRoot || '',
             clangdArgs: Array.isArray(options.clangdArgs) ? options.clangdArgs : [],
@@ -143,41 +157,38 @@ class LspClientBridge {
             compilerPath: options.compilerPath || '',
             rootUri
         });
-
         // 检查 clangd 启动结果
         if (!startResult || startResult.ok !== true) {
             const errMsg = startResult?.error || window.i18n.t('lsp.startFailUnknown');
             logError('[LSP] clangd 启动失败:', errMsg);
             throw new Error('clangd start failed: ' + errMsg);
         }
-
         if (startResult.alreadyRunning) {
             logInfo('[LSP] clangd 已在运行中，复用现有进程');
-        } else {
+        }
+        else {
             logInfo('[LSP] clangd 进程已启动:', startResult.clangdPath || '');
         }
-
         return await this._finishStartup(startResult, options, api);
     }
-
     async _finishStartup(startResult, options = {}, api = window.electronAPI) {
         const rootUri = options.rootUri || '';
         const workspaceFolders = rootUri
             ? [{ uri: rootUri, name: options.workspaceName || 'workspace' }]
             : [];
-
         if (startResult?.initialized && startResult?.serverCapabilities) {
             this._serverCapabilities = startResult.serverCapabilities;
             this._semanticTokensLegend = this._serverCapabilities?.semanticTokensProvider?.legend || null;
             this._ready = true;
             this._readyListeners.forEach((listener) => {
-                try { listener(this); } catch (_) {}
+                try {
+                    listener(this);
+                }
+                catch (_) { }
             });
             return { capabilities: this._serverCapabilities, reused: true };
         }
-
         logInfo('[LSP] 发送 initialize 请求...');
-
         const initializeParams = {
             processId: null,
             rootUri: rootUri || null,
@@ -234,7 +245,7 @@ class LspClientBridge {
                     documentSymbol: {
                         hierarchicalDocumentSymbolSupport: true,
                         symbolKind: {
-                            valueSet: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26]
+                            valueSet: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
                         }
                     },
                     references: {},
@@ -311,27 +322,25 @@ class LspClientBridge {
             // .oicpp-plus/lsp/compile_flags.txt 生效，这里不再传无用的 fallbackFlags。
             initializationOptions: {}
         };
-
-        const initResult = /** @type {{ capabilities?: unknown; serverInfo?: { name?: string; version?: string } } | null} */ (await api.lspRequest('initialize', initializeParams));
+        const initResult = (await api.lspRequest('initialize', initializeParams));
         this._serverCapabilities = initResult && initResult.capabilities ? initResult.capabilities : null;
         this._semanticTokensLegend = this._serverCapabilities?.semanticTokensProvider?.legend || null;
-
         const serverInfo = initResult?.serverInfo;
         logInfo('[LSP] 初始化完成, 服务器:', serverInfo?.name || 'clangd', '版本:', serverInfo?.version || '?');
         if (this._semanticTokensLegend) {
             logInfo('[LSP] 语义令牌支持: ' + (this._semanticTokensLegend.tokenTypes?.length || 0) + ' 种类型, ' + (this._semanticTokensLegend.tokenModifiers?.length || 0) + ' 种修饰符');
         }
-
         await api.lspNotify('initialized', {});
         this._ready = true;
         logInfo('[LSP] clangd LSP 客户端就绪');
-
         this._readyListeners.forEach((listener) => {
-            try { listener(this); } catch (_) {}
+            try {
+                listener(this);
+            }
+            catch (_) { }
         });
         return initResult;
     }
-
     async request(method, params, cancellationToken = null) {
         const api = window.electronAPI;
         if (!api || typeof api.lspRequest !== 'function') {
@@ -340,23 +349,26 @@ class LspClientBridge {
         if (cancellationToken?.isCancellationRequested) {
             throw new Error('LSP request cancelled');
         }
-
         const requestId = `oicpp-renderer-${this._nextRequestId++}`;
         const requestPromise = api.lspRequest(method, params, requestId);
         if (!cancellationToken || typeof cancellationToken.onCancellationRequested !== 'function') {
             return await requestPromise;
         }
-
         return await new Promise((resolve, reject) => {
             let settled = false;
             const listener = cancellationToken.onCancellationRequested(() => {
-                if (settled) return;
+                if (settled)
+                    return;
                 settled = true;
-                try { Promise.resolve(api.lspCancel?.(requestId)).catch(() => {}); } catch (_) {}
+                try {
+                    Promise.resolve(api.lspCancel?.(requestId)).catch(() => { });
+                }
+                catch (_) { }
                 reject(new Error('LSP request cancelled'));
             });
             const finish = (callback) => (value) => {
-                if (settled) return;
+                if (settled)
+                    return;
                 settled = true;
                 listener?.dispose?.();
                 callback(value);
@@ -365,12 +377,14 @@ class LspClientBridge {
             if (cancellationToken.isCancellationRequested && !settled) {
                 settled = true;
                 listener?.dispose?.();
-                try { Promise.resolve(api.lspCancel?.(requestId)).catch(() => {}); } catch (_) {}
+                try {
+                    Promise.resolve(api.lspCancel?.(requestId)).catch(() => { });
+                }
+                catch (_) { }
                 reject(new Error('LSP request cancelled'));
             }
         });
     }
-
     async notify(method, params) {
         const api = window.electronAPI;
         if (!api || typeof api.lspNotify !== 'function') {
@@ -383,56 +397,58 @@ class LspClientBridge {
         }
         return result;
     }
-
     onReady(listener) {
-        if (typeof listener !== 'function') return () => {};
+        if (typeof listener !== 'function')
+            return () => { };
         this._readyListeners.add(listener);
         if (this._ready) {
-            try { listener(this); } catch (_) {}
+            try {
+                listener(this);
+            }
+            catch (_) { }
         }
         return () => this._readyListeners.delete(listener);
     }
-
     onDiagnostics(listener) {
-        if (typeof listener !== 'function') return () => {};
+        if (typeof listener !== 'function')
+            return () => { };
         this._diagnosticListeners.add(listener);
         return () => this._diagnosticListeners.delete(listener);
     }
-
     onApplyEdit(listener) {
-        if (typeof listener !== 'function') return () => {};
+        if (typeof listener !== 'function')
+            return () => { };
         this._applyEditListeners.add(listener);
         return () => this._applyEditListeners.delete(listener);
     }
-
     onNotification(listener) {
-        if (typeof listener !== 'function') return () => {};
+        if (typeof listener !== 'function')
+            return () => { };
         this._notificationListeners.add(listener);
         return () => this._notificationListeners.delete(listener);
     }
-
     getSemanticTokensLegend() {
         return this._semanticTokensLegend;
     }
-
     getServerCapabilities() {
         return this._serverCapabilities;
     }
-
     supportsCapability(path, fallback = false) {
-        if (!path) return fallback;
+        if (!path)
+            return fallback;
         let value = this._serverCapabilities;
         for (const key of String(path).split('.')) {
-            if (value === null || value === undefined) return fallback;
+            if (value === null || value === undefined)
+                return fallback;
             value = value[key];
         }
         return value === undefined ? fallback : !!value;
     }
 }
-
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = LspClientBridge;
-} else {
+}
+else {
     window.LspClientBridge = LspClientBridge;
     window.lspClient = window.lspClient || new LspClientBridge();
 }

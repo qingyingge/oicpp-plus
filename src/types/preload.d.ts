@@ -159,9 +159,9 @@ interface ElectronAPI {
   clipboardWriteText(text: string): Promise<{ success?: boolean; error?: string } | null>;
   clipboardReadText(): Promise<unknown>;
   walkDirectory(dirPath: string, options: Record<string, unknown>): Promise<{ success?: boolean; error?: string; files?: Array<{ name?: string; path?: string; ext?: string }> } | null>;
-  lspStart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string } | null>;
+  lspStart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string; initialized?: boolean; serverCapabilities?: unknown } | null>;
   lspStop(): Promise<unknown>;
-  lspRestart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string } | null>;
+  lspRestart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string; initialized?: boolean; serverCapabilities?: unknown } | null>;
   lspRequest(method: string, params: unknown, requestId?: unknown): Promise<unknown>;
   lspCancel(requestId: unknown): Promise<unknown>;
   lspApplyEditResult(requestId: unknown, result: unknown): Promise<unknown>;

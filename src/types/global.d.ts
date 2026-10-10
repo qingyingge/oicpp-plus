@@ -124,8 +124,6 @@ interface Window {
   sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
   dialogManager: import('../js/dialog.js').DialogManager;
   browserManager: InstanceType<typeof import('../js/browser-manager.js')>;
-  LspClientBridge: typeof import('../js/lsp-client.js');
-  lspClient: InstanceType<typeof import('../js/lsp-client.js')>;
   sampleTester: InstanceType<typeof import('../js/sidebar/sampleTester.js')>;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
   cloudSyncPanel: InstanceType<typeof import('../js/sidebar/cloudSync.js')>;

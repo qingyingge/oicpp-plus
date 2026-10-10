@@ -28,6 +28,9 @@ declare module 'monaco-editor/editor/editor.api' {
     }
   }
   namespace languages {
+    interface CompletionItem {
+      __oicppLspItem?: unknown;
+    }
     interface ILink {
       __oicppLspDocumentLink?: unknown;
     }

@@ -984,6 +984,7 @@ class MonacoEditorManager {
         this._lspProviders.set(`command:${id}`, disposable);
     }
 
+    /** @returns {import('monaco-editor').languages.CompletionItem & { deprecated?: unknown }} */
     _mapLspCompletionItem(item, options = {}) {
         const rawLabel = String(item?.label || '').trim();
         if (!rawLabel) return null;
@@ -1042,7 +1043,7 @@ class MonacoEditorManager {
         if (item.insertTextFormat === 2) {
             suggestion.insertTextRules = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
         }
-        return suggestion;
+        return /** @type {import('monaco-editor').languages.CompletionItem & { deprecated?: unknown }} */ (suggestion);
     }
 
     _registerLspCompletionProvider() {
@@ -1098,7 +1099,7 @@ class MonacoEditorManager {
                         return { suggestions: [] };
                     }
 
-                    const result = await this.lspClient.request('textDocument/completion', {
+                    const result = /** @type {{ items?: Array<{ label?: unknown }>; isIncomplete?: boolean }} */ (await this.lspClient.request('textDocument/completion', {
                         textDocument: { uri },
                         position: {
                             line: position.lineNumber - 1,
@@ -1108,7 +1109,7 @@ class MonacoEditorManager {
                             triggerKind: context.triggerKind,
                             triggerCharacter: context.triggerCharacter
                         } : undefined
-                    }, token);
+                    }, token));
 
                     if (token?.isCancellationRequested) return { suggestions: [] };
                     const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
@@ -1180,7 +1181,7 @@ class MonacoEditorManager {
                 const capabilities = this.lspClient.getServerCapabilities?.();
                 if (capabilities?.completionProvider?.resolveProvider === false) return item;
                 try {
-                    const resolved = await this.lspClient.request('completionItem/resolve', original);
+                    const resolved = /** @type {Record<string, unknown> | null} */ (await this.lspClient.request('completionItem/resolve', original));
                     if (!resolved) return item;
                     const merged = { ...original, ...resolved };
                     const mapped = this._mapLspCompletionItem(merged, {
@@ -1439,7 +1440,7 @@ class MonacoEditorManager {
                     if (capabilities?.documentLinkProvider?.resolveProvider === false) return link;
                     if (!original || !this.lspClient || token?.isCancellationRequested) return link;
                     try {
-                        const result = await this.lspClient.request('documentLink/resolve', original, token);
+                        const result = /** @type {{ range?: unknown; target?: string; tooltip?: string } | null} */ (await this.lspClient.request('documentLink/resolve', original, token));
                         if (!result?.range || !result?.target) return link;
                         const range = this.lspRangeToMonaco(result.range);
                         if (!range) return link;
@@ -1485,7 +1486,7 @@ class MonacoEditorManager {
                         const uri = await this.getDocumentUriForModel(model);
                         if (!uri) return createSignatureHelpResult(emptySignatureHelp);
 
-                        const result = await this.lspClient.request('textDocument/signatureHelp', {
+                        const result = /** @type {{ signatures?: Array<{ label?: string; documentation?: string | { value?: string }; parameters?: Array<{ label?: string | [number, number]; documentation?: string | { value?: string } }> }>; activeSignature?: number; activeParameter?: number } | null} */ (await this.lspClient.request('textDocument/signatureHelp', {
                             textDocument: { uri },
                             position: {
                                 line: position.lineNumber - 1,
@@ -1496,7 +1497,7 @@ class MonacoEditorManager {
                                 triggerCharacter: context.triggerCharacter,
                                 isRetrigger: context.isRetrigger === true
                             } : undefined
-                        }, token);
+                        }, token));
                         if (!result || !Array.isArray(result.signatures) || result.signatures.length === 0) {
                             return createSignatureHelpResult(emptySignatureHelp);
                         }
@@ -1549,13 +1550,13 @@ class MonacoEditorManager {
                         if (!uri) return null;
                         if (!model || model.isDisposed?.() || token?.isCancellationRequested) return null;
 
-                        const result = await this.lspClient.request('textDocument/hover', {
+                        const result = /** @type {{ range?: { start: { line?: number; character?: number }; end: { line?: number; character?: number } }; contents?: string | { value?: string } } | null} */ (await this.lspClient.request('textDocument/hover', {
                             textDocument: { uri },
                             position: {
                                 line: position.lineNumber - 1,
                                 character: position.column - 1
                             }
-                        }, token);
+                        }, token));
                         // The editor/tab may have been disposed while clangd was
                         // answering. Returning content for it makes Monaco keep
                         // tokenizing a model whose worker entry is already gone,
@@ -2396,7 +2397,7 @@ class MonacoEditorManager {
                     if (capabilities?.codeLensProvider?.resolveProvider === false) return lens;
                     if (!original || !this.lspClient || token?.isCancellationRequested) return lens;
                     try {
-                        const result = await this.lspClient.request('codeLens/resolve', original, token);
+                        const result = /** @type {{ range?: unknown; command?: { command?: string; title?: string; arguments?: unknown[] } | null } | null} */ (await this.lspClient.request('codeLens/resolve', original, token));
                         if (!result) return lens;
                         return {
                             ...lens,
@@ -2424,7 +2425,7 @@ class MonacoEditorManager {
             if (this._lspProviders.has(key)) continue;
             logInfo('[LSP] 注册代码折叠提供器 (语言:', language, ')');
             const disposable = monaco.languages.registerFoldingRangeProvider(language, {
-                provideFoldingRanges: async (model, token) => {
+                provideFoldingRanges: async (model, _context, token) => {
                     try {
                         if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
                             return [];
