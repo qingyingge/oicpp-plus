@@ -163,7 +163,7 @@ interface Window {
   webkitRequestAnimationFrame?: (callback: FrameRequestCallback) => number;
   mozRequestAnimationFrame?: (callback: FrameRequestCallback) => number;
   queryLocalFonts?: (options?: unknown) => Promise<Array<{ family: string; fullName: string; postscriptName: string; style: string }>>;
-  TemplatesSettings: typeof import('../settings/templates.js');
+  TemplatesSettings: typeof import('../settings/templates.js').TemplatesSettings;
   debugUI?: unknown;
   TitlebarManager: typeof import('../js/titlebar.js');
   SidebarManager: typeof import('../js/sidebar.js');
