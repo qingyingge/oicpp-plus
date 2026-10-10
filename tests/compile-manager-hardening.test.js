@@ -127,7 +127,7 @@ const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'en.json'),
     check('编译成功路径返回 true，供调用方区分「启动」与「被重入拒绝」',
         /handleCompileError\(error\.message\);\s*\}\s*\n\s*return true;/.test(src));
     check('compileAndRun 依据返回值复位 shouldRunAfterCompile',
-        /const started = await this\.compileCurrentFile\(\);\s*\n\s*if \(started === false\) this\.shouldRunAfterCompile = false;/.test(src));
+        /const started = await this\.compileCurrentFile\(\);\s*\n\s*if \(started === false\)\s*this.shouldRunAfterCompile = false;/.test(src));
     check('重入提示复用 i18n 键',
         /window\.i18n\?\.\?\.t\?\.\('compileOutput\.alreadyRunning'/.test(src) ||
         /window\.i18n\?\.t\?\.\('compileOutput\.alreadyRunning'/.test(src));

@@ -151,7 +151,7 @@ const runEngineOnce = async (Ctor, progressCount) => {
     check('compileAndRun 依据返回值复位 shouldRunAfterCompile', () => {
         // 旧写法 `if (!this.isCompiling) reset` 在重入时不成立（isCompiling 恰为 true），
         // 标志位会残留到下一次编译完成，把「编译」意外变成「编译并运行」
-        assert.ok(/const started = await this\.compileCurrentFile\(\);\s*\n\s*if \(started === false\) this\.shouldRunAfterCompile = false;/.test(cmSrc));
+        assert.ok(/const started = await this\.compileCurrentFile\(\);\s*\n\s*if \(started === false\)\s*this.shouldRunAfterCompile = false;/.test(cmSrc));
         assert.ok(!/await this\.compileCurrentFile\(\);\s*\n\s*if \(!this\.isCompiling\)/.test(cmSrc),
             '仍有旧的复位条件，重入时不会生效');
     });
