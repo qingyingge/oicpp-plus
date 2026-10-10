@@ -3624,6 +3624,13 @@ function setupIPC() {
     ipcMain.handle('update-settings', async (event, newSettings) => {
         try {
             const incomingSettings = { ...(newSettings || {}) };
+            const rejectedKeys = Object.keys(incomingSettings).filter((key) => !SETTINGS_WRITABLE_KEYS.includes(key));
+            if (rejectedKeys.length > 0) {
+                logInfo(`拒绝非法设置键: ${rejectedKeys.join(', ')}`);
+                for (const key of rejectedKeys) {
+                    delete incomingSettings[key];
+                }
+            }
             if (Object.prototype.hasOwnProperty.call(incomingSettings, 'runMode')) {
                 incomingSettings.runMode = normalizeRunModeForPlatform(incomingSettings.runMode);
             }
