@@ -21,6 +21,15 @@ const { t, setLanguage } = require('./lang');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
+const {
+    getDefaultClangFormatStyle,
+    normalizeClangFormatStyle,
+    generateClangFormatText
+} = require('./utils/clang-format-options');
+const {
+    SETTINGS_KEYS,
+    SETTINGS_WRITABLE_KEYS
+} = require('./utils/settings-schema');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
 const clangdCompileFlags = require('./utils/clangd-compile-flags');
 
@@ -2012,79 +2021,6 @@ function getDefaultSettings() {
     };
 }
 
-function getDefaultClangFormatStyle() {
-    return {
-        BasedOnStyle: 'LLVM',
-        IndentWidth: 4,
-        TabWidth: 4,
-        UseTab: 'Never',
-        ColumnLimit: 0,
-        BreakBeforeBraces: 'Attach',
-        AllowShortIfStatementsOnASingleLine: 'Never',
-        AllowShortFunctionsOnASingleLine: 'Empty',
-        IndentCaseLabels: false,
-        PointerAlignment: 'Left',
-        SpaceBeforeParens: 'ControlStatements',
-        SortIncludes: true,
-        AlignConsecutiveAssignments: false,
-        AlignConsecutiveDeclarations: false
-    };
-}
-
-function normalizeClangFormatStyle(raw = null) {
-    const defaults = getDefaultClangFormatStyle();
-    const normalized = { ...defaults };
-    if (!raw || typeof raw !== 'object') {
-        return normalized;
-    }
-
-    const toInt = (value, fallback) => {
-        const parsed = parseInt(value, 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-    };
-    const toBool = (value, fallback) => {
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'string') {
-            const lowered = value.trim().toLowerCase();
-            if (['true', 'yes', 'on'].includes(lowered)) return true;
-            if (['false', 'no', 'off'].includes(lowered)) return false;
-        }
-        return fallback;
-    };
-    const toEnum = (value, allowed, fallback) => {
-        const rawValue = String(value || '').trim();
-        if (!rawValue) return fallback;
-        const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
-        return matched || fallback;
-    };
-
-    normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-    normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-    normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-    normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-    normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-    normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-    normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-    normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-    normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-    normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-    normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-    normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-    normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-    normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
-
-    if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-        const legacyStyle = String(raw.formatterIndentStyle || '').trim().toLowerCase();
-        if (legacyStyle === 'tabs') {
-            normalized.UseTab = 'Always';
-        } else if (legacyStyle === 'spaces') {
-            normalized.UseTab = 'Never';
-        }
-    }
-
-    return normalized;
-}
-
 function normalizeSettingsRuntimeShape(nextSettings) {
     if (!nextSettings || typeof nextSettings !== 'object') {
         return nextSettings;
@@ -2092,22 +2028,7 @@ function normalizeSettingsRuntimeShape(nextSettings) {
     const style = normalizeClangFormatStyle(nextSettings.clangFormatStyle || nextSettings.clangFormat || null);
     nextSettings.clangFormatStyle = style;
     if (typeof nextSettings.clangFormatRaw !== 'string' || !nextSettings.clangFormatRaw.trim()) {
-        nextSettings.clangFormatRaw = [
-            `BasedOnStyle: ${style.BasedOnStyle}`,
-            `IndentWidth: ${style.IndentWidth}`,
-            `TabWidth: ${style.TabWidth}`,
-            `UseTab: ${style.UseTab}`,
-            `ColumnLimit: ${style.ColumnLimit}`,
-            `BreakBeforeBraces: ${style.BreakBeforeBraces}`,
-            `AllowShortIfStatementsOnASingleLine: ${style.AllowShortIfStatementsOnASingleLine}`,
-            `AllowShortFunctionsOnASingleLine: ${style.AllowShortFunctionsOnASingleLine}`,
-            `IndentCaseLabels: ${style.IndentCaseLabels ? 'true' : 'false'}`,
-            `PointerAlignment: ${style.PointerAlignment}`,
-            `SpaceBeforeParens: ${style.SpaceBeforeParens}`,
-            `SortIncludes: ${style.SortIncludes ? 'true' : 'false'}`,
-            `AlignConsecutiveAssignments: ${style.AlignConsecutiveAssignments ? 'true' : 'false'}`,
-            `AlignConsecutiveDeclarations: ${style.AlignConsecutiveDeclarations ? 'true' : 'false'}`
-        ].join('\n');
+        nextSettings.clangFormatRaw = generateClangFormatText(style);
     }
     if (!nextSettings.formatterIndentStyle) {
         nextSettings.formatterIndentStyle = style.UseTab === 'Always' ? 'tabs' : 'editor';
@@ -7983,7 +7904,7 @@ function loadSettings() {
 
         if (fs.existsSync(settingsPath)) {
             const savedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'lastOpen', 'recentFiles', 'fileHistory', 'lastOpenTabs', 'lastUpdateCheck', 'pendingUpdate', 'postInstallNotice', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'];
+            const validKeys = SETTINGS_KEYS;
             let needsSaveAfterMigration = false;
 
             for (const key of validKeys) {
@@ -8086,7 +8007,7 @@ function loadSettings() {
 
 function mergeSettings(defaultSettings, userSettings) {
     const result = JSON.parse(JSON.stringify(defaultSettings));
-    const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'];
+    const validKeys = SETTINGS_MERGE_KEYS;
 
     const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
     const deepMerge = (target, source) => {
@@ -8127,13 +8048,7 @@ function saveSettings() {
 function updateSettings(settingsType, newSettings) {
     try {
 
-        const validKeys = [
-            'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme',
-            'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'fontLigaturesEnabled', 'cppTemplate', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'autoSave', 'autoSaveInterval',
-            'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'markdownMode', 'keybindings',
-            'fileHistory', 'lastOpenTabs', 'autoOpenLastWorkspace', 'language', 'autoBackupSettings', 'receiveBetaUpdates',
-            'runAllSamples'
-        ];
+        const validKeys = SETTINGS_WRITABLE_KEYS;
 
         for (const key in newSettings) {
             if (validKeys.includes(key)) {
@@ -10535,17 +10450,11 @@ ipcMain.handle('clipboard-read-text', async (event) => {
 });
 
 // 渲染进程可写设置键白名单（与 updateSettings 的 validKeys 保持一致），防止任意键写入（如 account/compilerPath 注入）
-const SETTINGS_WRITABLE_KEYS = new Set([
-    'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme',
-    'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'fontLigaturesEnabled', 'cppTemplate', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'autoSave', 'autoSaveInterval',
-    'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'markdownMode', 'keybindings',
-    'fileHistory', 'lastOpenTabs', 'autoOpenLastWorkspace', 'language', 'autoBackupSettings', 'receiveBetaUpdates',
-    'runAllSamples'
-]);
+const SETTINGS_WRITABLE_KEYS_SET = new Set(SETTINGS_WRITABLE_KEYS);
 
 ipcMain.handle('save-setting', async (event, key, value) => {
     try {
-        if (typeof key !== 'string' || !SETTINGS_WRITABLE_KEYS.has(key)) {
+        if (typeof key !== 'string' || !SETTINGS_WRITABLE_KEYS_SET.has(key)) {
             logInfo(`拒绝保存无效设置键: ${String(key)}`);
             return { success: false, error: 'invalid setting key' };
         }
