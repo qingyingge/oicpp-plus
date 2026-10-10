@@ -526,7 +526,7 @@ class CompilerManager {
             return;
         }
         try {
-            const response = /** @type {{ data: unknown, status: number }} */ (await window.electronIPC.invoke('fetch-remote-json', {
+            const response = (await window.electronIPC.invoke('fetch-remote-json', {
                 path: '/api/getCloudCompilationResult?task_id=' + encodeURIComponent(taskId),
                 method: 'GET'
             }));
