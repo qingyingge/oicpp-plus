@@ -5,7 +5,6 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const {
-    PRESET_STYLES,
     serializeClangFormatStyle
 } = require('./utils/clang-format-options');
 

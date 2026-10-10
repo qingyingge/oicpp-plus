@@ -186,15 +186,6 @@
         return Object.keys(OPTION_DEFS).map((key) => `${key}: ${serialize(normalized[key])}`).join('\n');
     }
 
-    /**
-     * Stable fingerprint of a normalized style, used as the pool key for
-     * reusable clang-format processes (P4).
-     */
-    function getStyleFingerprint(style) {
-        const normalized = normalizeClangFormatStyle(style || null);
-        return Object.keys(OPTION_DEFS).map((key) => `${key}=${String(normalized[key])}`).join('|');
-    }
-
     return {
         OPTION_DEFS,
         PRESET_STYLES,
@@ -202,7 +193,6 @@
         normalizeClangFormatStyle,
         serializeClangFormatStyle,
         parseClangFormatText,
-        generateClangFormatText,
-        getStyleFingerprint
+        generateClangFormatText
     };
 });

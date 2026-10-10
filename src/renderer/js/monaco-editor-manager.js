@@ -6522,9 +6522,7 @@ class MonacoEditorManager {
                 
                 const formatAction = this.currentEditor.getAction('editor.action.formatDocument');
                 if (formatAction) {
-                    await formatAction.run();
-                    logInfo('代码格式化完成');
-                    return true;
+                    return await formatAction.run();
                 } 
             } catch (error) {
                 logError('代码格式化失败:', error);

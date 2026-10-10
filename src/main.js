@@ -22,7 +22,6 @@ const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
 const {
-    getDefaultClangFormatStyle,
     normalizeClangFormatStyle,
     generateClangFormatText
 } = require('./utils/clang-format-options');
