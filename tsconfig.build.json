@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "commonjs",
+    "rootDir": "src",
+    "outDir": "src",
+    "typeRoots": ["./node_modules/@types", "./node_modules/.pnpm/node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": [],
+  "files": ["src/utils/path-identity.ts", "node_modules/electron/electron.d.ts"]
+}

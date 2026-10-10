@@ -1,5 +1,4 @@
-'use strict';
-
+"use strict";
 // Path identity / containment / portability.
 //
 // Three questions that used to be answered by one hand-rolled `norm()`
@@ -35,30 +34,65 @@
 // allowed for identity keys, on win32, where a missing fold duplicates
 // tabs/compilations while a spurious fold needs a deliberately
 // case-sensitive NTFS directory to misbehave.
-
-const fs = require('fs');
-const path = require('path');
-
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.canon = canon;
+exports.samePath = samePath;
+exports.isInside = isInside;
+exports.toPosixRel = toPosixRel;
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 const realpathNative = typeof fs.realpathSync.native === 'function'
     ? fs.realpathSync.native
     : fs.realpathSync;
-
 // Errors that mean "this component is not on disk yet", which is expected
 // for paths we are about to create and must be tolerated while walking up
 // to the deepest existing ancestor. Everything else (EACCES, ELOOP,
 // ENAMETOOLONG, ...) is a real failure and must not be swallowed.
 const MISSING = new Set(['ENOENT', 'ENOTDIR', 'ELOOP']);
-
 function realpath(p) {
     const fn = realpathNative;
     try {
         return fn(p);
-    } catch (err) {
-        if (err && err.code === 'EINVAL') return fs.realpathSync(p);
+    }
+    catch (err) {
+        if (err && err.code === 'EINVAL')
+            return fs.realpathSync(p);
         throw err;
     }
 }
-
 // Canonical absolute path, symlinks resolved.
 //
 // The target usually does not exist yet (a temp file that was already
@@ -74,41 +108,46 @@ function canon(target) {
     const absolute = path.resolve(target);
     try {
         return realpath(absolute);
-    } catch (err) {
-        if (!err || !MISSING.has(err.code)) throw err;
+    }
+    catch (err) {
+        if (!err || !MISSING.has(err.code))
+            throw err;
     }
     const tail = [];
     let current = absolute;
     for (;;) {
         const parent = path.dirname(current);
-        if (parent === current) return absolute; // reached the root, still missing
+        if (parent === current)
+            return absolute; // reached the root, still missing
         tail.unshift(path.basename(current));
         current = parent;
         try {
             return path.join(realpath(current), ...tail);
-        } catch (err) {
-            if (!err || !MISSING.has(err.code)) throw err;
+        }
+        catch (err) {
+            if (!err || !MISSING.has(err.code))
+                throw err;
         }
     }
 }
-
 // Same file? Folds case on win32 only, where the volume is normally
 // case-insensitive and the cost of a false negative (two tabs for one
 // file) is much higher than the cost of a false positive.
 function samePath(a, b) {
-    if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+    if (typeof a !== 'string' || typeof b !== 'string' || !a || !b)
+        return false;
     let ca, cb;
     try {
         ca = canon(a);
         cb = canon(b);
-    } catch (_) {
+    }
+    catch (_) {
         return false;
     }
     return process.platform === 'win32'
         ? ca.toLowerCase() === cb.toLowerCase()
         : ca === cb;
 }
-
 // win32 reserves a fixed set of names for devices rather than files:
 // CON, PRN, AUX, NUL, CLOCK$, COM1-COM9, LPT1-LPT9, with or without an
 // extension ("NUL.txt" is still the null device) and with or without the
@@ -118,13 +157,12 @@ function samePath(a, b) {
 // realpath() reports ENOENT for it and the ancestor fallback cheerfully
 // re-attaches the literal tail, which would make isInside() answer "inside".
 const RESERVED_DEVICE = /^(CON|PRN|AUX|NUL|CLOCK\$|COM[1-9]|LPT[1-9])([ .].*)?$/i;
-
 function hasReservedDeviceComponent(target) {
-    if (process.platform !== 'win32') return false;
+    if (process.platform !== 'win32')
+        return false;
     const { root } = path.parse(target);
     return target.slice(root.length).split(/[\\/]+/).some((name) => RESERVED_DEVICE.test(name));
 }
-
 // May `target` be touched, given that it must live inside `root`?
 //
 // Both sides go through canon(), which resolves symlinks -- that is the
@@ -138,20 +176,23 @@ function hasReservedDeviceComponent(target) {
 // path.relative() rather than string prefix, so the separator and the
 // boundary case (root vs rootEvil) come from the platform implementation.
 function isInside(target, root) {
-    if (typeof target !== 'string' || typeof root !== 'string' || !target || !root) return false;
+    if (typeof target !== 'string' || typeof root !== 'string' || !target || !root)
+        return false;
     let t, r;
     try {
         t = canon(target);
         r = canon(root);
-    } catch (_) {
+    }
+    catch (_) {
         return false; // EACCES / ELOOP / ENAMETOOLONG / bad input: deny
     }
-    if (hasReservedDeviceComponent(t)) return false; // "root\NUL" is the null device
-    if (t === r) return true;
+    if (hasReservedDeviceComponent(t))
+        return false; // "root\NUL" is the null device
+    if (t === r)
+        return true;
     const rel = path.relative(r, t);
     return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
-
 // Relative POSIX path for a remote key (cloud sync, manifests, ...).
 //
 // Substitution happens on the canonical form of both sides, so the two
@@ -169,7 +210,8 @@ function isInside(target, root) {
 //
 // Returns '' when the file is not inside the root.
 function toPosixRel(file, root) {
-    if (typeof file !== 'string' || typeof root !== 'string' || !file || !root) return '';
+    if (typeof file !== 'string' || typeof root !== 'string' || !file || !root)
+        return '';
     let rel;
     try {
         const canonicalRoot = canon(root);
@@ -179,11 +221,11 @@ function toPosixRel(file, root) {
             ? literal
             : canonicalFile;
         rel = path.relative(canonicalRoot, spelling);
-    } catch (_) {
+    }
+    catch (_) {
         return '';
     }
-    if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return '';
+    if (!rel || rel.startsWith('..') || path.isAbsolute(rel))
+        return '';
     return rel.split(path.sep).join('/');
 }
-
-module.exports = { canon, samePath, isInside, toPosixRel };
