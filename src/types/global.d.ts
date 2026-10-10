@@ -170,7 +170,6 @@ interface Window {
   webkitRequestAnimationFrame?: (callback: FrameRequestCallback) => number;
   mozRequestAnimationFrame?: (callback: FrameRequestCallback) => number;
   queryLocalFonts?: (options?: unknown) => Promise<Array<{ family: string; fullName: string; postscriptName: string; style: string }>>;
-  compileOutputManager: InstanceType<typeof import('../js/compile-output.js')>;
   TemplatesSettings: typeof import('../settings/templates.js');
   debugUI?: unknown;
   FontDetector: typeof import('../utils/font-detector.js');
