@@ -19,7 +19,7 @@ declare const SidebarManager: typeof import('../js/sidebar.js');
 declare const TabManager: typeof import('../js/tabs.js');
 declare const IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
 declare const dialogManager: import('../js/dialog.js').DialogManager;
-declare const SampleTester: typeof import('../js/sidebar/sampleTester.js');
+// SampleTester 类为全局声明（sampleTester.ts script 形态），无需 ambient declare
 declare const CloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
 declare function require(moduleName: string): any;
@@ -124,7 +124,6 @@ interface Window {
   sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
   dialogManager: import('../js/dialog.js').DialogManager;
   browserManager: import('../js/browser-manager.js').BrowserManager;
-  sampleTester: InstanceType<typeof import('../js/sidebar/sampleTester.js')>;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
   cloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
   editorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
@@ -171,7 +170,6 @@ interface Window {
   CodeComparer: typeof import('../js/sidebar/codeComparer.js');
   DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
   FileExplorer: typeof import('../js/sidebar/fileExplorer.js');
-  SampleTester: typeof import('../js/sidebar/sampleTester.js');
   Terminal: typeof import('@xterm/xterm').Terminal;
 }
 

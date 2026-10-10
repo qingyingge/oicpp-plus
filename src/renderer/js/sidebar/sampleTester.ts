@@ -1,0 +1,3901 @@
+const MAX_PERSISTED_OUTPUT_BYTES = 1024 * 1024;
+const MAX_RUNTIME_OUTPUT_CHARS = 64 * 1024;
+
+const resizeBoundResizers = new WeakSet();
+const elButton = (id) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLButtonElement ? el : null;
+};
+const elInput = (id) => {
+    const el = document.getElementById(id);
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el;
+    return null;
+};
+const stCheckbox = (id) => {
+    const el = document.getElementById(id);
+    return el instanceof HTMLInputElement && el.type === 'checkbox' ? el : null;
+};
+const htmlOf = (el) => (el instanceof HTMLElement ? el : null);
+const toTextArea = (el) => (el instanceof HTMLTextAreaElement ? el : null);
+const stEvtValue = (e) => {
+    const target = e && e.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return target.value;
+    return '';
+};
+const setEvtValue = (e, v) => {
+    const target = e && e.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) target.value = v;
+};
+const evtChecked = (e) => {
+    const target = e && e.target;
+    return target instanceof HTMLInputElement ? target.checked : false;
+};
+
+declare function logInfo(...args: unknown[]): void;
+declare function logWarn(...args: unknown[]): void;
+declare function logError(...args: unknown[]): void;
+
+interface SampleEntry {
+    id: number;
+    name?: string;
+    type?: string;
+    input?: string | null;
+    output?: string | null;
+    inputType?: string;
+    outputType?: string;
+    timeLimit?: number | null;
+    memoryLimit?: number | null;
+    useTestlib?: boolean;
+    spjPath?: string | null;
+    freopenInputFile?: string | null;
+    freopenOutputFile?: string | null;
+    result?: {
+        status?: string;
+        output?: string | null;
+        rawOutput?: string | null;
+        time?: number | null;
+        memoryBytes?: number | null;
+        outputSizeBytes?: number | null;
+        outputExpanded?: boolean;
+    } | null;
+}
+
+class SampleTester {
+    samples: SampleEntry[];
+    currentFile: string | null;
+    samplesFilePath: string | null;
+    nextId: number;
+    mainCompileCache: { key: string | null; executablePath: string | null };
+    spjCompileCache: { key: string | null; executablePath: string | null };
+    graderCompileCache: { key: string | null; executablePath: string | null };
+    spjTempFiles: Set<string>;
+    spjTempSequence: number;
+    interactiveTempSequence: number;
+    deferSpjTempCleanup: boolean;
+    isOperating: boolean;
+    editorChangeInterval: ReturnType<typeof setInterval> | null;
+    samplesDirCache: Map<string, string>;
+    pendingSampleSaves: Map<string, { samples?: unknown; globalSettings?: unknown }>;
+    sampleSaveInFlight: Promise<void> | null;
+    statusFilter: string | null;
+    globalSettings: { defaultTimeLimit?: number; defaultMemoryLimit?: number; useTestlib?: boolean; graderPath?: string; spjPath?: string; freopenInputFile?: string; freopenOutputFile?: string; [key: string]: unknown };
+    globalSettingsPanelHeight: number;
+
+    constructor() {
+        this.samples = [];
+        this.currentFile = null;
+        this.samplesFilePath = null;
+        this.nextId = 1;
+        this.mainCompileCache = {
+            key: null,
+            executablePath: null
+        };
+        this.spjCompileCache = {
+            key: null,
+            executablePath: null
+        };
+        this.graderCompileCache = {
+            key: null,
+            executablePath: null
+        };
+        this.spjTempFiles = new Set();
+        this.spjTempSequence = 0;
+        this.interactiveTempSequence = 0;
+        this.deferSpjTempCleanup = false;
+        this.isOperating = false;
+        this.editorChangeInterval = null;
+        this.samplesDirCache = new Map();
+        this.pendingSampleSaves = new Map();
+        this.sampleSaveInFlight = null;
+        this.statusFilter = null;
+        this.globalSettings = {
+            useTestlib: false,
+            useInteractive: false,
+            spjPath: '',
+            graderPath: '',
+            freopenInputFile: '',
+            freopenOutputFile: '',
+            defaultTimeLimit: 1000,
+            defaultMemoryLimit: 0
+        };
+        this.globalSettingsPanelHeight = this.loadGlobalSettingsPanelHeight();
+
+        this.setupEventListeners();
+
+        try {
+            if (window.electronAPI && window.electronAPI.onSampleTesterCreateProblem) {
+                window.electronAPI.onSampleTesterCreateProblem((data) => {
+                    try {
+                        logInfo('[样例测试器] 收到外部 createNewProblem:', data?.problemName);
+                        if (!data || !Array.isArray(data.samples) || data.samples.length === 0) return;
+                        const workspacePath = window.sidebarManager?.panels?.files?.workspacePath;
+                        if (!workspacePath) {
+                            logWarn('[样例测试器] 未打开工作区，无法创建题目文件');
+                            try { window.sidebarManager?.showPanel?.('files'); } catch (_) { }
+                            window.alert?.(window.i18n.t('tester.openWorkspaceFirst'));
+                            return;
+                        }
+                        const nameRaw = (data.problemName || '').trim();
+                        const fileName = this.buildProblemFileName(nameRaw, data.OJ);
+                        this.isOperating = true;
+                        (async () => {
+                            try {
+                                const targetPath = await window.electronAPI.pathJoin(workspacePath, fileName);
+                                let created = false;
+                                if (!(await window.electronAPI.checkFileExists(targetPath))) {
+                                    let template = '';
+                                    try { const all = await window.electronAPI.getAllSettings(); if (all?.cppTemplate) template = all.cppTemplate + '\n'; } catch (_) { }
+                                    if (!template) template = '';
+                                    await window.electronAPI.createFile(targetPath, template);
+                                    created = true;
+                                }
+                                try {
+                                    const content = await window.electronAPI.readFileContent(targetPath);
+                                    window.tabManager?.openFile?.(fileName, content, false, targetPath);
+                                } catch (e) { logWarn('[样例测试器] 打开题目文件失败', e); }
+                                const waitEditor = async () => {
+                                    for (let i = 0; i < 20; i++) {
+                                        const cur = window.editorManager?.currentEditor;
+                                        const p = cur?.getFilePath ? cur.getFilePath() : cur?.filePath;
+                                        if (p === targetPath) return true;
+                                        await new Promise(r => setTimeout(r, 100));
+                                    }
+                                    return false;
+                                };
+                                await waitEditor();
+                                this.currentFile = targetPath;
+                                await this.updateSamplesFilePath();
+                                let existing = [];
+                                if (this.samplesFilePath && await window.electronAPI.checkFileExists(this.samplesFilePath)) {
+                                    try {
+                                        const oldData = JSON.parse(await window.electronAPI.readFileContent(this.samplesFilePath));
+                                        existing = Array.isArray(oldData.samples) ? oldData.samples : [];
+                                    } catch (_) { }
+                                }
+                                const baseId = existing.length;
+                                const newSamples = data.samples.map((s, idx) => ({
+                                    id: baseId + idx + 1,
+                                    title: window.i18n.t('tester.sampleTitle', { id: baseId + idx + 1 }),
+                                    input: s.input || '',
+                                    output: s.output || '',
+                                    timeLimit: s.timeLimit && Number.isInteger(s.timeLimit) ? s.timeLimit : 1000,
+                                    memoryLimit: this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0),
+                                    showInput: true,
+                                    showOutput: true,
+                                    inputType: 'userinput',
+                                    outputType: 'userinput',
+                                    freopenInputFile: '',
+                                    freopenOutputFile: ''
+                                }));
+                                this.samples = existing.concat(newSamples);
+                                this.nextId = this.samples.length + 1;
+                                await this.saveSamples();
+                                this.updateUI();
+                                setTimeout(() => this.expandAllSamples(), 120);
+                                try { window.sidebarManager?.showPanel?.('samples'); } catch (_) { }
+                                logInfo('[样例测试器] 题目处理完成 文件:', targetPath, '新增样例数:', newSamples.length, '创建新文件:', created);
+                            } catch (e) { logError('[样例测试器] 处理外部题目失败', e); }
+                            finally {
+                                this.isOperating = false;
+                            }
+                        })();
+                    } catch (e) { logError('[样例测试器] 处理外部样例失败(外层)', e); }
+                });
+            }
+        } catch (e) { logWarn('[样例测试器] 注册外部 API 监听失败', e); }
+    }
+
+    buildProblemFileName(nameRaw, ojRaw) {
+        const normalizedName = this.normalizeProblemFileName(nameRaw);
+        if (normalizedName) {
+            return normalizedName;
+        }
+        const ojPart = (ojRaw || 'OJ').replace(/[^A-Za-z0-9]/g, '') || 'OJ';
+        const idPart = this.extractProblemIdToken(nameRaw);
+        return `${ojPart}_${idPart}.cpp`;
+    }
+
+    normalizeProblemFileName(nameRaw) {
+        if (!nameRaw || typeof nameRaw !== 'string') {
+            return '';
+        }
+
+        let cleaned = nameRaw
+            .replace(/[\x00-\x1F]/g, '')
+            .replace(/[<>:"/\\|?*]/g, '_')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        cleaned = cleaned.replace(/[. ]+$/g, '').trim();
+        if (!cleaned) {
+            return '';
+        }
+
+        const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+        if (reserved.test(cleaned)) {
+            cleaned = `_${cleaned}`;
+        }
+
+        const hasCppExt = /\.(cpp|cc|cxx)$/i.test(cleaned);
+        if (!hasCppExt) {
+            cleaned = `${cleaned}.cpp`;
+        }
+
+        return cleaned;
+    }
+
+    extractProblemIdToken(nameRaw) {
+        const raw = typeof nameRaw === 'string' ? nameRaw.trim() : '';
+        let firstTokenMatch = raw.match(/[A-Za-z0-9_\-]+/);
+        let idPart = firstTokenMatch ? firstTokenMatch[0] : raw.replace(/[^A-Za-z0-9_\-]/g, '_');
+        if (!idPart) idPart = 'problem';
+        if (idPart.length > 32) idPart = idPart.slice(0, 32);
+        return idPart;
+    }
+
+    async activate() {
+        logInfo('激活样例测试器面板');
+        await this.updateCurrentFile();
+        await this.loadSamples();
+        this.updateUI();
+
+        setTimeout(() => {
+            this.expandAllSamples();
+        }, 100);
+        this.setupEditorChangeListener();
+    }
+
+    deactivate() {
+        if (this.editorChangeInterval) {
+            clearInterval(this.editorChangeInterval);
+            this.editorChangeInterval = null;
+            logInfo('[样例测试器] 面板停用，已清理编辑器变化监听定时器');
+        }
+    }
+
+    async refresh() {
+        await this.updateCurrentFile();
+        await this.loadSamples();
+        this.updateUI();
+    }
+
+    setupEditorChangeListener() {
+        if (this.editorChangeInterval) {
+            clearInterval(this.editorChangeInterval);
+            logInfo('[样例测试器] 清理旧的编辑器变化监听定时器');
+        }
+
+        let lastFilePath = null;
+        let lastEditor = null;
+
+        const checkEditorChange = async () => {
+            if (this.isOperating) {
+                logInfo('[样例测试器] 正在操作中，跳过编辑器变化检查');
+                return;
+            }
+
+            const currentEditor = window.editorManager?.currentEditor;
+
+            if (currentEditor === lastEditor) {
+                return;
+            }
+
+            lastEditor = currentEditor;
+            const currentFilePath = currentEditor?.getFilePath ? currentEditor.getFilePath() : currentEditor?.filePath;
+
+            if (currentFilePath === lastFilePath) {
+                return;
+            }
+
+            this.isOperating = true;
+
+            try {
+                lastFilePath = currentFilePath;
+
+                this.samples = [];
+                this.samplesFilePath = null;
+
+                // 始终根据当前活动编辑器更新 currentFile / samplesFilePath，
+                // 避免样例关联到「上一个文件」。
+                await this.updateCurrentFile();
+
+                // 仅在样例面板为活动面板时才刷新 UI，减少不必要的渲染。
+                if (window.sidebarManager?.getCurrentPanel() === 'samples') {
+                    await this.loadSamples();
+                    this.updateUI();
+
+                    setTimeout(() => {
+                        if (this.samples.length > 0) {
+                            this.expandAllSamples();
+                        }
+                    }, 100);
+                }
+            } finally {
+                this.isOperating = false;
+            }
+        };
+
+        this.editorChangeInterval = setInterval(checkEditorChange, 1000);
+        logInfo('[样例测试器] 创建新的编辑器变化监听定时器');
+
+        setTimeout(checkEditorChange, 100);
+    }
+
+    setupEventListeners() {
+        const addBtn = (document.getElementById('add-sample-btn'));
+        if (addBtn) {
+            const newAddBtn = addBtn.cloneNode(true);
+            addBtn.parentNode.replaceChild(newAddBtn, addBtn);
+
+            newAddBtn.addEventListener('click', () => {
+                logInfo('[样例测试器] 添加按钮被点击');
+                this.addSample();
+            });
+        }
+
+        const importZipBtn = (document.getElementById('import-samples-zip-btn'));
+        if (importZipBtn) {
+            const newImportZipBtn = importZipBtn.cloneNode(true);
+            importZipBtn.parentNode.replaceChild(newImportZipBtn, importZipBtn);
+
+            newImportZipBtn.addEventListener('click', () => {
+                logInfo('[样例测试器] 压缩包导入按钮被点击');
+                this.importSamplesFromZip();
+            });
+        }
+
+        const runAllBtn = (document.getElementById('run-all-samples-btn'));
+        if (runAllBtn) {
+            const newRunAllBtn = runAllBtn.cloneNode(true);
+            runAllBtn.parentNode.replaceChild(newRunAllBtn, runAllBtn);
+
+            newRunAllBtn.addEventListener('click', () => {
+                logInfo('[样例测试器] 运行所有样例按钮被点击');
+                this.runAllSamples();
+            });
+        }
+
+        this.setupEditorChangeListener();
+
+        const globalUseTestlib = (document.getElementById('global-use-testlib'));
+        if (globalUseTestlib) {
+            globalUseTestlib.addEventListener('change', (e) => {
+                this.updateGlobalSetting('useTestlib', evtChecked(e));
+            });
+        }
+
+        const globalUseInteractive = (document.getElementById('global-use-interactive'));
+        if (globalUseInteractive) {
+            globalUseInteractive.addEventListener('change', (e) => {
+                this.updateGlobalSetting('useInteractive', evtChecked(e));
+                this.updateGlobalSettingsUI();
+            });
+        }
+
+        const browseGlobalGraderBtn = (document.getElementById('browse-global-grader-btn'));
+        if (browseGlobalGraderBtn) {
+            browseGlobalGraderBtn.addEventListener('click', () => {
+                this.selectGlobalGraderFile();
+            });
+        }
+
+        const browseGlobalSpjBtn = (document.getElementById('browse-global-spj-btn'));
+        if (browseGlobalSpjBtn) {
+            browseGlobalSpjBtn.addEventListener('click', () => {
+                this.selectGlobalSpjFile();
+            });
+        }
+
+        const globalSpjPath = (document.getElementById('global-spj-path'));
+        if (globalSpjPath) {
+            globalSpjPath.addEventListener('change', (e) => {
+                this.updateGlobalSetting('spjPath', stEvtValue(e));
+            });
+        }
+
+        const globalFreopenInputFile = (document.getElementById('global-freopen-input-file'));
+        if (globalFreopenInputFile) {
+            globalFreopenInputFile.addEventListener('change', (e) => {
+                const normalized = this.normalizeFreopenFileName(stEvtValue(e));
+                setEvtValue(e, normalized);
+                this.updateGlobalSetting('freopenInputFile', normalized);
+            });
+        }
+
+        const globalFreopenOutputFile = (document.getElementById('global-freopen-output-file'));
+        if (globalFreopenOutputFile) {
+            globalFreopenOutputFile.addEventListener('change', (e) => {
+                const normalized = this.normalizeFreopenFileName(stEvtValue(e));
+                setEvtValue(e, normalized);
+                this.updateGlobalSetting('freopenOutputFile', normalized);
+            });
+        }
+
+        const globalTimeLimit = (document.getElementById('global-time-limit'));
+        if (globalTimeLimit) {
+            globalTimeLimit.addEventListener('change', (e) => {
+                const parsed = this.sanitizeTimeLimit(stEvtValue(e), this.globalSettings.defaultTimeLimit);
+                setEvtValue(e, parsed);
+                this.updateGlobalSetting('defaultTimeLimit', parsed);
+            });
+        }
+
+        const globalMemoryLimit = (document.getElementById('global-memory-limit'));
+        if (globalMemoryLimit) {
+            globalMemoryLimit.addEventListener('change', (e) => {
+                const parsed = this.sanitizeMemoryLimit(stEvtValue(e), this.globalSettings.defaultMemoryLimit);
+                setEvtValue(e, parsed);
+                this.updateGlobalSetting('defaultMemoryLimit', parsed);
+            });
+        }
+
+        const applyFileIoAllBtn = (document.getElementById('apply-fileio-all-btn'));
+        if (applyFileIoAllBtn) {
+            applyFileIoAllBtn.addEventListener('click', () => {
+                this.applyFreopenToAllSamples();
+            });
+        }
+
+        const applyTimeLimitAllBtn = (document.getElementById('apply-time-limit-all-btn'));
+        if (applyTimeLimitAllBtn) {
+            applyTimeLimitAllBtn.addEventListener('click', () => {
+                this.applyTimeLimitToAllSamples();
+            });
+        }
+
+        const applyMemoryLimitAllBtn = (document.getElementById('apply-memory-limit-all-btn'));
+        if (applyMemoryLimitAllBtn) {
+            applyMemoryLimitAllBtn.addEventListener('click', () => {
+                this.applyMemoryLimitToAllSamples();
+            });
+        }
+
+        const summaryEl = (document.getElementById('samples-summary'));
+        if (summaryEl) {
+            summaryEl.addEventListener('click', (event) => {
+                const pill = (event.target instanceof Element ? event.target : null)?.closest('.summary-pill[data-status]');
+                if (!pill) return;
+                const status = pill.getAttribute('data-status');
+                this.toggleStatusFilter(status);
+            });
+        }
+
+        this.setupGlobalSettingsResizer();
+    }
+
+    loadGlobalSettingsPanelHeight() {
+        try {
+            const height = Number(window.localStorage?.getItem('oicpp.sampleTester.globalSettingsHeight'));
+            return Number.isFinite(height) && height > 0 ? height : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    saveGlobalSettingsPanelHeight(height) {
+        try {
+            window.localStorage?.setItem('oicpp.sampleTester.globalSettingsHeight', String(Math.round(height)));
+        } catch (_) {}
+    }
+
+    getGlobalSettingsHeightBounds() {
+        const panel = (document.getElementById('samples-panel'));
+        const settings = (document.getElementById('global-settings'));
+        const resizer = (document.getElementById('global-settings-resizer'));
+        if (!panel || !settings || !resizer) return null;
+
+        const panelRect = panel.getBoundingClientRect();
+        const settingsRect = settings.getBoundingClientRect();
+        const minHeight = 80;
+        const maxHeight = Math.max(minHeight, panelRect.bottom - settingsRect.top - resizer.offsetHeight - 120);
+        return { minHeight, maxHeight };
+    }
+
+    applyGlobalSettingsPanelHeight(height) {
+        const settings = (document.getElementById('global-settings'));
+        const bounds = this.getGlobalSettingsHeightBounds();
+        if (!settings || !bounds || !Number.isFinite(height)) return;
+        const clampedHeight = Math.max(bounds.minHeight, Math.min(height, bounds.maxHeight));
+        settings.style.height = `${Math.round(clampedHeight)}px`;
+        this.globalSettingsPanelHeight = clampedHeight;
+    }
+
+    setupGlobalSettingsResizer() {
+        const resizer = (document.getElementById('global-settings-resizer'));
+        const settings = (document.getElementById('global-settings'));
+        if (!resizer || !settings || resizeBoundResizers.has(resizer)) return;
+        resizeBoundResizers.add(resizer);
+
+        let dragState = null;
+        const finishDrag = () => {
+            if (!dragState) return;
+            this.saveGlobalSettingsPanelHeight(this.globalSettingsPanelHeight);
+            dragState = null;
+            resizer.classList.remove('is-dragging');
+            document.body.style.removeProperty('cursor');
+            document.body.style.removeProperty('user-select');
+        };
+
+        resizer.addEventListener('pointerdown', (event) => {
+            if (event.button !== 0) return;
+            const bounds = this.getGlobalSettingsHeightBounds();
+            if (!bounds) return;
+            event.preventDefault();
+            dragState = {
+                startY: event.clientY,
+                startHeight: settings.getBoundingClientRect().height
+            };
+            resizer.setPointerCapture?.(event.pointerId);
+            resizer.classList.add('is-dragging');
+            document.body.style.cursor = 'row-resize';
+            document.body.style.userSelect = 'none';
+        });
+
+        resizer.addEventListener('pointermove', (event) => {
+            if (!dragState) return;
+            this.applyGlobalSettingsPanelHeight(dragState.startHeight + event.clientY - dragState.startY);
+        });
+        resizer.addEventListener('pointerup', finishDrag);
+        resizer.addEventListener('pointercancel', finishDrag);
+        window.addEventListener('resize', () => {
+            if (this.globalSettingsPanelHeight) {
+                this.applyGlobalSettingsPanelHeight(this.globalSettingsPanelHeight);
+            }
+        });
+    }
+
+    async updateCurrentFile() {
+        if (window.editorManager && window.editorManager.currentEditor) {
+            const currentEditor = window.editorManager.currentEditor;
+
+            let filePath = null;
+            if (currentEditor.getFilePath) {
+                filePath = currentEditor.getFilePath();
+            } else if (currentEditor.filePath) {
+                filePath = currentEditor.filePath;
+            } else if (currentEditor.fileName) {
+                filePath = currentEditor.fileName;
+            }
+
+            if (filePath &&
+                !filePath.startsWith('untitled') &&
+                (filePath.endsWith('.cpp') || filePath.endsWith('.c') || filePath.endsWith('.cc') || filePath.endsWith('.cxx'))) {
+                this.currentFile = filePath;
+                try {
+                    await this.updateSamplesFilePath();
+                } catch (error) {
+                    logError('[样例测试器] 更新样例文件路径失败:', error);
+                }
+            } else {
+                this.currentFile = null;
+                this.samplesFilePath = null;
+                this.samples = [];
+            }
+        } else {
+            this.currentFile = null;
+            this.samplesFilePath = null;
+            this.samples = [];
+        }
+    }
+
+    // 样例配置目录每个工作区只需建一次，重命名/删除等操作反复调用时不再重复
+    // 走 ensureDirectory 往返（P4）
+    async ensureSampleTesterDir(workspaceRoot) {
+        if (!workspaceRoot) return null;
+        const cached = this.samplesDirCache.get(workspaceRoot);
+        if (cached) return cached;
+        const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus');
+        const sampleTesterDir = await window.electronAPI.pathJoin(oicppDir, 'sampleTester');
+        await window.electronAPI.ensureDirectory(oicppDir);
+        await window.electronAPI.ensureDirectory(sampleTesterDir);
+        this.samplesDirCache.set(workspaceRoot, sampleTesterDir);
+        return sampleTesterDir;
+    }
+
+    async updateSamplesFilePath() {
+        if (!this.currentFile) {
+            this.samplesFilePath = null;
+            return;
+        }
+
+        try {
+            const fileExplorer = window.sidebarManager?.panels?.files;
+            if (!fileExplorer || !fileExplorer.workspacePath) {
+                logError('[样例测试器] 无法获取工作区路径');
+                this.samplesFilePath = null;
+                return;
+            }
+
+            const workspaceRoot = fileExplorer.workspacePath;
+
+            let relativePath;
+            if (this.currentFile.startsWith(workspaceRoot)) {
+                relativePath = this.currentFile.substring(workspaceRoot.length);
+                if (relativePath.startsWith('\\') || relativePath.startsWith('/')) {
+                    relativePath = relativePath.substring(1);
+                }
+            } else {
+                relativePath = this.currentFile.replace(/[:\\]/g, '_');
+            }
+
+            const sampleTesterDir = await this.ensureSampleTesterDir(workspaceRoot);
+            if (!sampleTesterDir) {
+                this.samplesFilePath = null;
+                return;
+            }
+
+            const safeRelativePath = relativePath.replace(/[\\\/]/g, '_').replace(/[<>:"|?*]/g, '_');
+            this.samplesFilePath = await window.electronAPI.pathJoin(sampleTesterDir, `${safeRelativePath as string}.json`);
+
+            logInfo('[样例测试器] 样例文件路径:', this.samplesFilePath);
+        } catch (error) {
+            logError('[样例测试器] 更新样例文件路径失败:', error);
+            this.samplesFilePath = null;
+        }
+    }
+
+    async computeSamplesFilePathForFile(filePath) {
+        if (!filePath) return null;
+        const fileExplorer = window.sidebarManager?.panels?.files;
+        if (!fileExplorer || !fileExplorer.workspacePath) {
+            return null;
+        }
+
+        const workspaceRoot = fileExplorer.workspacePath;
+        let relativePath;
+        if (filePath.startsWith(workspaceRoot)) {
+            relativePath = filePath.substring(workspaceRoot.length);
+            if (relativePath.startsWith('\\') || relativePath.startsWith('/')) {
+                relativePath = relativePath.substring(1);
+            }
+        } else {
+            relativePath = filePath.replace(/[:\\]/g, '_');
+        }
+
+        const sampleTesterDir = await this.ensureSampleTesterDir(workspaceRoot);
+        if (!sampleTesterDir) return null;
+
+        const safeRelativePath = relativePath.replace(/[\\\/]/g, '_').replace(/[<>:"|?*]/g, '_');
+        return await window.electronAPI.pathJoin(sampleTesterDir, `${safeRelativePath as string}.json`);
+    }
+
+    async handleFileRenamed(oldPath, newPath) {
+        try {
+            if (!oldPath || !newPath) return;
+            const oldSamplesPath = await this.computeSamplesFilePathForFile(oldPath);
+            const newSamplesPath = await this.computeSamplesFilePathForFile(newPath);
+            if (!oldSamplesPath || !newSamplesPath) return;
+
+            const exists = await window.electronAPI.checkFileExists(oldSamplesPath);
+            if (exists) {
+                const sep = newSamplesPath.includes('\\') ? '\\' : '/';
+                const newFileName = newSamplesPath.substring(newSamplesPath.lastIndexOf(sep) + 1);
+                await new Promise((resolve) => {
+                    const handleRenameResult = (event, renamedOldPath, renamedNewPath, error) => {
+                        if (renamedOldPath === oldSamplesPath) {
+                            window.electronIPC.ipcRenderer.removeListener('file-renamed', handleRenameResult);
+                            resolve({ renamedNewPath, error });
+                        }
+                    };
+                    window.electronIPC.on('file-renamed', handleRenameResult);
+                    window.electronIPC.send('rename-file', oldSamplesPath, newFileName);
+                });
+                logInfo('[样例测试器] 样例配置已重命名:', oldSamplesPath, '->', newSamplesPath);
+            }
+
+            if (this.currentFile === oldPath) {
+                this.currentFile = newPath;
+                this.samplesFilePath = newSamplesPath;
+            }
+        } catch (error) {
+            logWarn('[样例测试器] 重命名样例配置失败:', error);
+        }
+    }
+
+    async handleFileDeleted(filePath) {
+        try {
+            if (!filePath) return;
+            const samplesPath = await this.computeSamplesFilePathForFile(filePath);
+            if (!samplesPath) return;
+
+            const exists = await window.electronAPI.checkFileExists(samplesPath);
+            if (!exists) return;
+
+            const result = await window.electronAPI.deleteFile(samplesPath);
+            if (result && result.success === false) {
+                logWarn('[样例测试器] 删除样例配置失败:', samplesPath, result.error || '未知错误');
+                return;
+            }
+
+            if (this.currentFile === filePath) {
+                this.currentFile = null;
+                this.samplesFilePath = null;
+                this.samples = [];
+                this.nextId = 1;
+                this.statusFilter = null;
+                this.updateUI();
+            }
+
+            logInfo('[样例测试器] 已删除样例配置:', samplesPath);
+        } catch (error) {
+            logWarn('[样例测试器] 删除样例配置失败:', error);
+        }
+    }
+
+    async loadSamples() {
+        if (!this.samplesFilePath) {
+            this.samples = [];
+            logInfo('[样例测试器] 没有样例文件路径，清空样例列表');
+            return;
+        }
+
+        try {
+            const fileExists = await window.electronAPI.checkFileExists(this.samplesFilePath);
+            if (fileExists) {
+                logInfo('[样例测试器] 从文件加载样例:', this.samplesFilePath);
+                const data = await window.electronAPI.readFileContent(this.samplesFilePath);
+                const parsed = JSON.parse(data);
+                this.samples = parsed.samples || [];
+
+                this.loadGlobalSettings(parsed);
+
+                logInfo('[样例测试器] 加载到样例数量:', this.samples.length);
+
+                this.samples.forEach((sample, index) => {
+                    sample.id = index + 1;
+
+                    if (sample.type) {
+                        if (!sample.inputType) {
+                            sample.inputType = sample.type;
+                        }
+                        if (!sample.outputType) {
+                            sample.outputType = sample.type;
+                        }
+                        delete sample.type;
+                    }
+
+                    if (!sample.inputType) {
+                        sample.inputType = 'userinput';
+                    }
+                    if (!sample.outputType) {
+                        sample.outputType = 'userinput';
+                    }
+                    if (typeof sample.freopenInputFile !== 'string') {
+                        sample.freopenInputFile = '';
+                    }
+                    if (typeof sample.freopenOutputFile !== 'string') {
+                        sample.freopenOutputFile = '';
+                    }
+                    sample.memoryLimit = this.sanitizeMemoryLimit(sample.memoryLimit, 0);
+
+                    if (sample.hasOwnProperty('useTestlib')) {
+                        delete sample.useTestlib;
+                    }
+                    if (sample.hasOwnProperty('spjPath')) {
+                        delete sample.spjPath;
+                    }
+                    if (sample.result && typeof sample.result === 'object') {
+                        if (typeof sample.result.outputExpanded !== 'boolean') {
+                            sample.result.outputExpanded = false;
+                        }
+                        if (!Number.isFinite(sample.result.outputSizeBytes) || sample.result.outputSizeBytes <= 0) {
+                            sample.result.outputSizeBytes = this.getOutputSizeBytes(sample.result.rawOutput ?? sample.result.output ?? '');
+                        }
+                    }
+                });
+                const maxId = this.samples.length > 0 ? Math.max(...this.samples.map(s => s.id)) : 0;
+                this.nextId = maxId + 1;
+            } else {
+                logInfo('[样例测试器] 样例文件不存在，使用空列表');
+                this.samples = [];
+            }
+        } catch (error) {
+            logError('加载样例失败:', error);
+            this.samples = [];
+        }
+    }
+
+    serializeSamplesForSave(samples) {
+        return (Array.isArray(samples) ? samples : []).map(sample => {
+            const s = { ...sample };
+            if (s.result) {
+                const fullOutput = String(s.result.rawOutput ?? s.result.output ?? '');
+                const outputSizeBytes = Number.isFinite(s.result.outputSizeBytes) && s.result.outputSizeBytes > 0
+                    ? s.result.outputSizeBytes
+                    : this.getOutputSizeBytes(fullOutput);
+                const persistedOutput = outputSizeBytes > MAX_PERSISTED_OUTPUT_BYTES
+                    ? fullOutput.slice(0, MAX_PERSISTED_OUTPUT_BYTES)
+                    : fullOutput;
+                const { rawOutput, ...restResult } = s.result;
+                s.result = {
+                    ...restResult,
+                    stderr: typeof restResult.stderr === 'string'
+                        ? this.truncateForStorage(restResult.stderr, MAX_PERSISTED_OUTPUT_BYTES)
+                        : restResult.stderr,
+                    output: persistedOutput,
+                    outputExpanded: !!s.result.outputExpanded,
+                    outputSizeBytes,
+                    outputTruncated: !!s.result.outputTruncated || outputSizeBytes > MAX_PERSISTED_OUTPUT_BYTES
+                };
+            }
+            return s;
+        });
+    }
+
+    isCurrentSamplesContext(samplesFilePath, currentFile) {
+        return this.samplesFilePath === samplesFilePath && this.currentFile === currentFile;
+    }
+
+    // P5: 同一路径的整份落盘合并。样例测试的多个分支和快速编辑会连续触发写回，
+    // 每次都是 6~16ms 的 save-file 往返；写进行中到达的请求只保留最新一份，
+    // 写完补一次即可，既不会并发写同一文件，也不会丢掉最后状态。
+    async saveSamplesToPath(samplesFilePath, samples = this.samples, globalSettings = this.globalSettings) {
+        if (!samplesFilePath) return;
+        this.pendingSampleSaves.set(samplesFilePath, { samples, globalSettings });
+        if (!this.sampleSaveInFlight) {
+            this.sampleSaveInFlight = this.drainSampleSaves()
+                .finally(() => { this.sampleSaveInFlight = null; });
+        }
+        return this.sampleSaveInFlight;
+    }
+
+    async drainSampleSaves() {
+        while (this.pendingSampleSaves.size > 0) {
+            const entry = this.pendingSampleSaves.entries().next().value;
+            const [samplesFilePath, job] = entry;
+            this.pendingSampleSaves.delete(samplesFilePath);
+            try {
+                const data = {
+                    samples: this.serializeSamplesForSave(job.samples),
+                    globalSettings: job.globalSettings
+                };
+                await window.electronAPI.saveFile(samplesFilePath, JSON.stringify(data, null, 2));
+            } catch (error) {
+                // 目录可能被外部删除/清理，丢弃缓存让下次重新 ensureDirectory
+                this.samplesDirCache.clear();
+                logError('保存样例失败:', error);
+            }
+        }
+    }
+
+    // 样例运行结果落盘：各分支共用同一份落点，避免重复整份写回
+    async persistRunResults(samplesFilePath, currentFile, runSamples) {
+        const samplesToPersist = this.isCurrentSamplesContext(samplesFilePath, currentFile) ? this.samples : runSamples;
+        await this.saveSamplesToPath(samplesFilePath, samplesToPersist, this.globalSettings);
+    }
+
+    async saveSamples() {
+        await this.saveSamplesToPath(this.samplesFilePath, this.samples, this.globalSettings);
+    }
+
+    updateUI() {
+        const noFileMessage = (document.getElementById('no-file-message'));
+        const noSamplesMessage = (document.getElementById('no-samples-message'));
+        const samplesList = (document.getElementById('samples-list'));
+        const addBtn = elButton('add-sample-btn');
+        const runAllBtn = elButton('run-all-samples-btn');
+        const globalSettings = (document.getElementById('global-settings'));
+        const globalSettingsResizer = (document.getElementById('global-settings-resizer'));
+
+        if (!this.currentFile) {
+            noFileMessage.style.display = 'flex';
+            noSamplesMessage.style.display = 'none';
+            samplesList.style.display = 'none';
+            globalSettings.style.display = 'none';
+            if (globalSettingsResizer) globalSettingsResizer.style.display = 'none';
+            addBtn.disabled = true;
+            runAllBtn.disabled = true;
+            this.updateSummary();
+            return;
+        }
+
+        noFileMessage.style.display = 'none';
+        globalSettings.style.display = 'flex';
+        if (globalSettingsResizer) globalSettingsResizer.style.display = 'block';
+        if (this.globalSettingsPanelHeight) {
+            this.applyGlobalSettingsPanelHeight(this.globalSettingsPanelHeight);
+        }
+        addBtn.disabled = false;
+        runAllBtn.disabled = this.samples.length === 0;
+
+        this.updateGlobalSettingsUI();
+
+        if (this.samples.length === 0) {
+            noSamplesMessage.style.display = 'flex';
+            samplesList.style.display = 'none';
+        } else {
+            noSamplesMessage.style.display = 'none';
+            samplesList.style.display = 'block';
+            this.renderSamples();
+        }
+
+        this.updateSummary();
+    }
+
+    updateSummary() {
+        const summaryEl = (document.getElementById('samples-summary'));
+        if (!summaryEl) return;
+
+        if (!this.currentFile || this.samples.length === 0) {
+            summaryEl.style.display = 'none';
+            return;
+        }
+
+        const total = this.samples.length;
+        const counts = {
+            AC: 0,
+            WA: 0,
+            TLE: 0,
+            RE: 0,
+            CE: 0,
+            MLE: 0,
+            OLE: 0,
+            PENDING: 0
+        };
+
+        this.samples.forEach(sample => {
+            const status = sample?.result?.status;
+            if (status && counts.hasOwnProperty(status)) {
+                counts[status] += 1;
+            } else if (status) {
+                counts.PENDING += 1;
+            } else {
+                counts.PENDING += 1;
+            }
+        });
+
+        let overallLabel = window.i18n.t('tester.notRun');
+        let overallClass = 'status-pending';
+        if (counts.PENDING === 0) {
+            if (counts.AC === total) {
+                overallLabel = 'AC';
+                overallClass = 'status-ac';
+            } else {
+                const priority = ['CE', 'MLE', 'RE', 'TLE', 'WA', 'OLE', 'AC'];
+                const found = priority.find(s => counts[s] > 0);
+                if (found) {
+                    overallLabel = found;
+                    overallClass = `status-${found.toLowerCase()}`;
+                }
+            }
+        } else if (counts.PENDING < total) {
+            overallLabel = window.i18n.t('tester.running');
+        }
+
+        const badgeOrder = ['AC', 'WA', 'MLE', 'TLE', 'RE', 'CE', 'OLE', 'PENDING'];
+        const badges = badgeOrder
+            .filter(status => counts[status] > 0)
+            .map(status => {
+                const label = status === 'PENDING' ? window.i18n.t('tester.notRun') : status;
+                const klass = status === 'PENDING' ? 'status-pending' : `status-${status.toLowerCase()}`;
+                const isActive = this.statusFilter === status;
+                const activeClass = isActive ? ' is-active' : '';
+                const title = isActive ? window.i18n.t('tester.clickToUnfilter') : window.i18n.t('tester.clickToFilter');
+                return `<span class="summary-pill ${klass}${activeClass}" data-status="${status}" title="${title}">${label} ${counts[status]}</span>`;
+            })
+            .join('');
+
+        summaryEl.innerHTML = `
+            <div class="summary-left">
+                <span class="summary-label">${window.i18n.t('tester.overview')}</span>
+                <span class="status-badge ${overallClass}">${overallLabel}</span>
+                <span class="summary-label">${window.i18n.t('tester.totalGroups', { total })}</span>
+            </div>
+            <div class="summary-right">
+                ${badges}
+            </div>
+        `;
+        summaryEl.style.display = 'flex';
+        const summaryLabel = summaryEl.querySelector('.summary-label');
+        if (summaryLabel && window.i18n) summaryLabel.textContent = window.i18n.t('tester.overview');
+    }
+
+    renderSamples() {
+        const samplesList = (document.getElementById('samples-list'));
+        samplesList.innerHTML = '';
+
+        const filteredSamples = this.getFilteredSamples();
+        if (filteredSamples.length === 0) {
+            if (this.statusFilter) {
+                samplesList.innerHTML = '<div class="samples-filter-empty" data-i18n="tester.filterEmpty">当前筛选无样例，点击总览状态可取消筛选。</div>';
+            }
+            return;
+        }
+
+        filteredSamples.forEach(sample => {
+            const sampleElement = this.createSampleElement(sample);
+            samplesList.appendChild(sampleElement);
+        });
+
+        setTimeout(() => {
+            const textareas = samplesList.querySelectorAll('.sample-textarea');
+            textareas.forEach(textarea => {
+                this.autoResizeTextarea(textarea);
+            });
+
+            const programOutputs = samplesList.querySelectorAll('.program-output');
+            programOutputs.forEach(textarea => {
+                this.autoResizeProgramOutput(textarea);
+            });
+        }, 0);
+        this.applyDynamicTranslations();
+    }
+
+    applyDynamicTranslations() {
+        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        document.querySelectorAll('.sample-title').forEach((el) => {
+            const group = el.closest('.sample-group');
+            const id = (group instanceof HTMLElement ? group.dataset.sampleId : '') || '';
+            el.textContent = t('tester.testGroup', { i: id }, `Test ${id}`);
+        });
+        document.querySelectorAll('.sample-run-btn').forEach((el) => {
+            if (!(el instanceof HTMLElement)) return;
+            el.textContent = t('tester.run', null, 'Run');
+            el.title = t('tester.runSample', null, 'Run Sample');
+        });
+        document.querySelectorAll('.sample-delete-btn').forEach((el) => {
+            if (el instanceof HTMLElement) el.title = t('tester.deleteSample', null, 'Delete Sample');
+        });
+        document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => {
+            if (el instanceof HTMLElement) el.textContent = t(el.dataset.i18n, null, el.textContent);
+        });
+        document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+            if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+                el.placeholder = t(el.dataset.i18nPlaceholder, null, el.placeholder);
+            }
+        });
+        document.querySelectorAll('.sample-io-group .file-btn').forEach((el) => {
+            if (!(el instanceof HTMLElement)) return;
+            const key = el.classList.contains('switch-btn') ? 'tester.manualInput' : 'tester.readFromFile';
+            el.textContent = t(key, null, el.textContent.trim());
+            el.title = t(key, null, el.title);
+        });
+        document.querySelectorAll('.export-output-btn').forEach((el) => {
+            if (el.classList.contains('expand-output-btn')) {
+                el.textContent = t('tester.expand', null, 'Expand');
+            } else {
+                el.textContent = t('tester.export', null, 'Export');
+            }
+        });
+    }
+
+    createSampleElement(sample) {
+        const div = document.createElement('div');
+        div.className = 'sample-group';
+        div.dataset.sampleId = sample.id;
+
+        let statusBadge = '';
+        if (sample.result && sample.result.status) {
+            statusBadge = `<span class="status-badge status-${sample.result.status.toLowerCase()}">${sample.result.status}</span>`;
+            if (sample.result.time !== undefined) {
+                statusBadge += `<span style="color: #858585; font-size: 11px;">${sample.result.time}ms</span>`;
+            }
+            if (Number.isFinite(sample.result.memoryBytes)) {
+                statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${(sample.result.memoryBytes / (1024 * 1024)).toFixed(1)}MB</span>`;
+            }
+        }
+
+        const inputDisplay = this.getDisplayContent(sample, 'input');
+        const outputDisplay = this.getDisplayContent(sample, 'output');
+        const outputIsTruncated = sample.result ? this.isOutputTruncated(sample.result) : false;
+        const outputIsExpanded = !!sample.result?.outputExpanded;
+        const processedProgramOutput = sample.result
+            ? this.processOutputForDisplay(sample.result.output || '', sample.result, sample.id)
+            : '';
+
+        div.innerHTML = `
+            <div class="sample-header" onclick="sampleTester.toggleSample(${sample.id})">
+                <span class="sample-title">${window.i18n.t('tester.testGroup', { i: sample.id })}</span>
+                <div class="sample-status">
+                    ${statusBadge}
+                </div>
+                <div class="sample-controls" onclick="event.stopPropagation()">
+                    <button class="sample-run-btn" id="run-btn-${sample.id}" onclick="sampleTester.runSample(${sample.id})" data-i18n-title="tester.runSample" title="运行此样例">
+                        运行
+                    </button>
+                    <button class="sample-delete-btn" onclick="sampleTester.deleteSample(${sample.id}).catch(logError)" data-i18n-title="tester.deleteSample" title="删除样例">
+                        <svg width="12" height="12" viewBox="0 0 12 12">
+                            <path d="M2 2l8 8M2 10l8-8" stroke="currentColor" stroke-width="1.5"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="sample-content">
+                <div class="sample-content-grid">
+                    <div class="sample-io-group">
+                        <div class="sample-io-header">
+                            <span class="sample-io-label"><span data-i18n="tester.input">输入</span></span>
+                            <div class="file-actions">
+                                ${sample.inputType === 'file' ?
+                `<button class="file-btn switch-btn" onclick="sampleTester.switchToManualInput(${sample.id})" data-i18n-title="tester.manualInput"><span data-i18n="tester.manualInput">切换手动输入</span></button>` :
+                `<button class="file-btn" onclick="sampleTester.selectInputFile(${sample.id})" data-i18n-title="tester.readFromFile"><span data-i18n="tester.readFromFile">从文件读取</span></button>`
+            }
+                            </div>
+                        </div>
+                        ${inputDisplay}
+                    </div>
+                    <div class="sample-io-group">
+                        <div class="sample-io-header">
+                            <span class="sample-io-label"><span data-i18n="tester.expectedOutput">期望输出</span></span>
+                            <div class="file-actions">
+                                ${sample.outputType === 'file' ?
+                `<button class="file-btn switch-btn" onclick="sampleTester.switchToManualOutput(${sample.id})" data-i18n-title="tester.manualInput" title="${window.i18n.t('tester.manualInput')}">${window.i18n.t('tester.manualInput')}</button>` :
+                `<button class="file-btn" onclick="sampleTester.selectOutputFile(${sample.id})" data-i18n-title="tester.readFromFile" title="${window.i18n.t('tester.readFromFile')}">${window.i18n.t('tester.readFromFile')}</button>`
+            }
+                            </div>
+                        </div>
+                        ${outputDisplay}
+                    </div>
+                    <div class="program-output-group">
+                        <div class="sample-io-header">
+                            <span class="sample-io-label"><span data-i18n="tester.programOutput">程序输出</span></span>
+                            <span class="diff-info" id="diff-info-${sample.id}" style="display: none;"></span>
+                            <div class="output-controls" style="display: ${sample.result?.output ? 'flex' : 'none'};">
+                                <button class="export-output-btn expand-output-btn" style="display: ${outputIsTruncated ? 'inline-flex' : 'none'};" onclick="sampleTester.toggleExpandOutput(${sample.id})" title="${outputIsExpanded ? window.i18n.t('tester.collapseOutput') : window.i18n.t('tester.expandFullOutput')}">${outputIsExpanded ? window.i18n.t('tester.collapse') : window.i18n.t('tester.expand')}</button>
+                                <button class="export-output-btn" onclick="sampleTester.exportSampleOutput(${sample.id})" data-i18n-title="tester.export" title="导出输出到文件">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <polyline points="7,10 12,15 17,10"></polyline>
+                                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                                    </svg>
+                                    导出
+                                </button>
+                            </div>
+                        </div>
+            <div class="program-output-container" id="output-container-${sample.id}">
+                            <textarea class="program-output" readonly spellcheck="false" data-i18n-placeholder="tester.outputPlaceholder" placeholder="运行程序后显示输出..." id="output-${sample.id}">${processedProgramOutput}</textarea>
+                        </div>
+                    </div>
+                    <div class="program-output-group stderr-output-group" style="display: ${sample.result?.stderr ? '' : 'none'};">
+                        <div class="sample-io-header"><span class="sample-io-label">${window.i18n.t('tester.stderrLabel')}</span></div>
+                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.stderrPlaceholder')}" id="stderr-${sample.id}">${sample.result?.stderr || ''}</textarea></div>
+                    </div>
+                    <div class="program-output-group spj-output-group" style="display: ${sample.result?.spjOutput ? '' : 'none'};">
+                        <div class="sample-io-header"><span class="sample-io-label">${window.i18n.t('tester.spjOutputLabel')}</span></div>
+                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.spjOutputPlaceholder')}" id="spj-output-${sample.id}">${sample.result?.spjOutput || ''}</textarea></div>
+                    </div>
+                </div>
+                <div class="sample-settings">
+                    <div class="sample-settings-pair">
+                        <div class="setting-group">
+                            <span class="setting-label"><span data-i18n="tester.timeLimit">时限:</span></span>
+                            <input type="number" class="setting-input" value="${sample.timeLimit || 1000}" 
+                                   onchange="sampleTester.updateSampleSetting(${sample.id}, 'timeLimit', this.value)">
+                            <span class="setting-unit">ms</span>
+                        </div>
+                        <div class="setting-group">
+                            <span class="setting-label"><span data-i18n="tester.memoryLimit">内存:</span></span>
+                            <input type="number" class="setting-input" min="0" value="${this.sanitizeMemoryLimit(sample.memoryLimit, 0)}"
+                                   onchange="sampleTester.updateSampleSetting(${sample.id}, 'memoryLimit', this.value)">
+                            <span class="setting-unit" data-i18n="tester.mb">MB</span>
+                        </div>
+                    </div>
+                    <div class="setting-group">
+                        <span class="setting-label"><span data-i18n="tester.inputFile">输入文件:</span></span>
+                        <input type="text" class="setting-input setting-input-wide" value="${sample.freopenInputFile || ''}"
+                               data-i18n-placeholder="tester.freopenInputPlaceholder" placeholder="如 sample.in"
+                               onchange="sampleTester.updateSampleSetting(${sample.id}, 'freopenInputFile', this.value)">
+                    </div>
+                    <div class="setting-group">
+                        <span class="setting-label"><span data-i18n="tester.outputFile">输出文件:</span></span>
+                        <input type="text" class="setting-input setting-input-wide" value="${sample.freopenOutputFile || ''}"
+                               data-i18n-placeholder="tester.freopenOutputPlaceholder" placeholder="如 sample.out"
+                               onchange="sampleTester.updateSampleSetting(${sample.id}, 'freopenOutputFile', this.value)">
+                    </div>
+                </div>
+            </div>
+        `;
+
+        return div;
+    }
+
+    getSampleStatusKey(sample) {
+        const status = sample?.result?.status;
+        const knownStatuses = ['AC', 'WA', 'MLE', 'TLE', 'RE', 'CE', 'OLE'];
+        if (status && knownStatuses.includes(status)) {
+            return status;
+        }
+        return 'PENDING';
+    }
+
+    getFilteredSamples() {
+        if (!this.statusFilter) {
+            return this.samples;
+        }
+        return this.samples.filter(sample => this.getSampleStatusKey(sample) === this.statusFilter);
+    }
+
+    toggleStatusFilter(status) {
+        if (!status) return;
+        this.statusFilter = this.statusFilter === status ? null : status;
+        this.renderSamples();
+        this.updateSummary();
+    }
+
+    getDisplayContent(sample, type) {
+        const typeField = type === 'input' ? 'inputType' : 'outputType';
+        const isFromFile = sample[typeField] === 'file';
+
+        if (isFromFile) {
+            const filePath = type === 'input' ? sample.input : sample.output;
+            const abbreviatedPath = this.abbreviateFilePath(filePath);
+            const icon = (window.uiIcons && typeof window.uiIcons.svg === 'function') ? window.uiIcons.svg('folder') : '';
+            return `<div class="file-reference" title="${filePath}"><span class="file-reference-icon" aria-hidden="true">${icon}</span><span>file: ${abbreviatedPath}</span></div>`;
+        } else {
+            const content = type === 'input' ? sample.input : sample.output;
+            const lines = (content || '').split('\n').length;
+            const autoHeight = lines <= 1 ? 'auto-height' : '';
+
+            const placeholderKey = type === 'input' ? 'tester.inputPlaceholder' : 'tester.expectedOutputPlaceholder';
+            const placeholderFallback = type === 'input' ? 'Enter test data...' : 'Enter expected output...';
+            return `<textarea class="sample-textarea ${autoHeight}" spellcheck="false"
+           data-i18n-placeholder="${placeholderKey}" placeholder="${window.i18n?.t?.(placeholderKey) || placeholderFallback}"
+           onfocus="sampleTester.expandTextarea(this)"
+           onblur="sampleTester.collapseTextarea(this)"
+           oninput="sampleTester.autoResizeTextarea(this); sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)"
+           onchange="sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)">${content || ''}</textarea>`;
+        }
+    }
+
+    abbreviateFilePath(filePath, maxLength = 10) {
+        if (!filePath || filePath.length <= maxLength) {
+            return filePath;
+        }
+
+        const fileName = filePath.split(/[\\/]/).pop();
+
+        if (fileName.length > maxLength - 3) {
+            return '...' + fileName.slice(-(maxLength - 3));
+        }
+
+        const availableLength = maxLength - fileName.length - 3;
+
+        if (availableLength <= 0) {
+            return '...' + fileName;
+        }
+
+        const pathPart = filePath.substring(0, filePath.length - fileName.length);
+
+        if (pathPart.length <= availableLength) {
+            return filePath;
+        }
+
+        const truncatedPath = pathPart.substring(0, availableLength);
+        return truncatedPath + '...' + fileName;
+    }
+
+    detectSampleFileRole(filePath) {
+        const normalizedPath = String(filePath || '').replace(/\\/g, '/');
+        const fileName = normalizedPath.split('/').pop() || '';
+        const dot = fileName.lastIndexOf('.');
+        const ext = dot >= 0 ? fileName.substring(dot).toLowerCase() : '';
+        const baseName = dot >= 0 ? fileName.substring(0, dot) : fileName;
+        const lowerBase = baseName.toLowerCase();
+
+        if (ext === '.in' || ext === '.input') {
+            return 'input';
+        }
+        if (ext === '.out' || ext === '.ans' || ext === '.output') {
+            return 'output';
+        }
+        if (ext === '.txt') {
+            if (/(^|[_.\-\s])(out|ans|answer|output|stdout|std)($|[_.\-\s])/i.test(lowerBase) || /(out|ans|answer|output|stdout)$/i.test(lowerBase)) {
+                return 'output';
+            }
+            if (/(^|[_.\-\s])(in|input|stdin)($|[_.\-\s])/i.test(lowerBase) || /(in|input|stdin)$/i.test(lowerBase)) {
+                return 'input';
+            }
+        }
+
+        return null;
+    }
+
+    buildSamplePairKey(filePath, role) {
+        const normalizedPath = String(filePath || '').replace(/\\/g, '/');
+        const lastSlash = normalizedPath.lastIndexOf('/');
+        const dirPart = lastSlash >= 0 ? normalizedPath.substring(0, lastSlash).toLowerCase() : '';
+        const fileName = lastSlash >= 0 ? normalizedPath.substring(lastSlash + 1) : normalizedPath;
+        const dot = fileName.lastIndexOf('.');
+        let stem = (dot >= 0 ? fileName.substring(0, dot) : fileName).toLowerCase();
+
+        stem = stem
+            .replace(/(sample|test|case)/g, '')
+            .replace(/[\s._\-()\[\]{}]+/g, '');
+
+        if (role === 'input') {
+            stem = stem.replace(/(input|stdin|in)$/g, '');
+        } else if (role === 'output') {
+            stem = stem.replace(/(output|stdout|answer|ans|out)$/g, '');
+        }
+
+        if (!stem) {
+            stem = (dot >= 0 ? fileName.substring(0, dot) : fileName).toLowerCase().replace(/[\s._\-()\[\]{}]+/g, '');
+        }
+
+        return `${dirPart}::${stem}`;
+    }
+
+    pairSamplesFromZipFiles(files) {
+        const grouped = new Map();
+        let recognizedCount = 0;
+
+        for (const file of files || []) {
+            const filePath = file?.path;
+            const role = this.detectSampleFileRole(filePath);
+            if (!filePath || !role) continue;
+            recognizedCount += 1;
+
+            const key = this.buildSamplePairKey(filePath, role);
+            if (!grouped.has(key)) {
+                grouped.set(key, { inputs: [], outputs: [] });
+            }
+            const group = grouped.get(key);
+            if (role === 'input') {
+                group.inputs.push(file);
+            } else {
+                group.outputs.push(file);
+            }
+        }
+
+        const pairs = [];
+        for (const group of grouped.values()) {
+            if (!group.inputs.length || !group.outputs.length) continue;
+            group.inputs.sort((a, b) => String(a.path).localeCompare(String(b.path)));
+            group.outputs.sort((a, b) => String(a.path).localeCompare(String(b.path)));
+            const pairCount = Math.min(group.inputs.length, group.outputs.length);
+            for (let i = 0; i < pairCount; i++) {
+                pairs.push({ input: group.inputs[i], output: group.outputs[i] });
+            }
+        }
+
+        pairs.sort((a, b) => String(a.input.path).localeCompare(String(b.input.path)));
+        return {
+            pairs,
+            recognizedCount,
+            unmatchedCount: Math.max(0, recognizedCount - pairs.length * 2)
+        };
+    }
+
+    async askFreopenOptionsForZipImport() {
+        let enableFreopen = false;
+        try {
+            if (window.dialogManager?.showActionDialog) {
+                const action = await window.dialogManager.showActionDialog(
+                    (window.i18n.t('dialog.importSettings')),
+                    (window.i18n.t('dialog.importSettingsDesc')),
+                    [
+                        { id: 'skip', label: window.i18n.t('dialog.notEnabled'), className: 'dialog-btn-cancel' },
+                        { id: 'enable', label: window.i18n.t('dialog.enableAndSet'), className: 'dialog-btn-confirm' }
+                    ]
+                );
+                enableFreopen = action === 'enable';
+            } else if (window.dialogManager?.showConfirmDialog) {
+                enableFreopen = await window.dialogManager.showConfirmDialog(window.i18n.t('dialog.importSettings'), window.i18n.t('dialog.importSettingsDesc'));
+            } else {
+                enableFreopen = window.confirm(window.i18n.t('dialog.importSettingsDesc'));
+            }
+        } catch (_) {
+            enableFreopen = false;
+        }
+
+        if (!enableFreopen) {
+            return { canceled: false, freopenInputFile: '', freopenOutputFile: '' };
+        }
+
+        let inputName = '';
+        let outputName = '';
+
+        if (window.dialogManager?.showInputDialog) {
+            const inputResult = await window.dialogManager.showInputDialog(
+                (window.i18n.t('dialog.freopenInputFile')),
+                '',
+                (window.i18n.t('dialog.freopenInputPlaceholder'))
+            );
+            if (inputResult === null) {
+                return { canceled: true };
+            }
+            inputName = this.normalizeFreopenFileName(inputResult);
+
+            const outputResult = await window.dialogManager.showInputDialog(
+                (window.i18n.t('dialog.freopenOutputFile')),
+                '',
+                (window.i18n.t('dialog.freopenOutputPlaceholder'))
+            );
+            if (outputResult === null) {
+                return { canceled: true };
+            }
+            outputName = this.normalizeFreopenFileName(outputResult);
+        } else {
+            const inputRaw = window.prompt(window.i18n.t('dialog.freopenInputPrompt'), '') || '';
+            const outputRaw = window.prompt(window.i18n.t('dialog.freopenOutputPrompt'), '') || '';
+            inputName = this.normalizeFreopenFileName(inputRaw);
+            outputName = this.normalizeFreopenFileName(outputRaw);
+        }
+
+        return {
+            canceled: false,
+            freopenInputFile: inputName,
+            freopenOutputFile: outputName
+        };
+    }
+
+    getZipLargeSampleThresholdBytes() {
+        return 10 * 1024;
+    }
+
+    getZipEntrySizeBytes(entry) {
+        const sizeBytes = Number(entry?.sizeBytes);
+        if (Number.isFinite(sizeBytes) && sizeBytes >= 0) {
+            return Math.floor(sizeBytes);
+        }
+        return String(entry?.content || '').length;
+    }
+
+    sanitizeZipImportFileName(fileName, fallback = 'sample.txt') {
+        const raw = String(fileName || '').trim();
+        let safe = raw
+            .replace(/[\x00-\x1F]/g, '')
+            .replace(/[<>:"/\\|?*]/g, '_')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/[. ]+$/g, '');
+
+        if (!safe) {
+            safe = fallback;
+        }
+
+        const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+        if (reserved.test(safe)) {
+            safe = `_${safe}`;
+        }
+
+        if (!/\.[A-Za-z0-9]+$/.test(safe)) {
+            const fallbackMatch = String(fallback || '').match(/\.[A-Za-z0-9]+$/);
+            const fallbackExt = fallbackMatch ? fallbackMatch[0] : '.txt';
+            safe += fallbackExt;
+        }
+
+        return safe;
+    }
+
+    async prepareZipLargeSampleImportDir(zipPath) {
+        const workspacePath = window.sidebarManager?.panels?.files?.workspacePath;
+        if (!workspacePath) {
+            throw new Error((window.i18n.t('tester.noWorkspaceForSample')));
+        }
+
+        const rootDir = await window.electronAPI.pathJoin(workspacePath, '.oicpp-plus', 'sampleTester', 'zip-imports');
+        await window.electronAPI.ensureDirectory(rootDir);
+
+        let zipBaseName = 'zip';
+        try {
+            const info = await window.electronAPI.getPathInfo(zipPath);
+            zipBaseName = this.sanitizeZipImportFileName(info?.basenameWithoutExt || 'zip', 'zip').replace(/\.[A-Za-z0-9]+$/, '');
+        } catch (_) {
+            zipBaseName = 'zip';
+        }
+
+        const uniqueTag = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const targetDir = await window.electronAPI.pathJoin(rootDir, `${zipBaseName}_${uniqueTag}`);
+        await window.electronAPI.ensureDirectory(targetDir);
+        return targetDir;
+    }
+
+    async writeZipEntryToWorkspace(entry, targetDir, fallbackName) {
+        const entryPath = String(entry?.path || '');
+        const rawName = entryPath.split(/[\\/]/).pop() || fallbackName;
+        const fileName = this.sanitizeZipImportFileName(rawName, fallbackName);
+        const targetPath = await window.electronAPI.pathJoin(targetDir, fileName);
+        const content = String(entry?.content || '');
+        const created = await window.electronAPI.createFile(targetPath, content);
+        if (!created || !created.success) {
+            throw new Error(created?.error || (window.i18n.t('tester.writeSampleFail', {name: fileName})));
+        }
+        return created.filePath || targetPath;
+    }
+
+    async importSamplesFromZip() {
+        if (!this.currentFile) {
+            logWarn('[样例测试器] 无活动文件，无法导入压缩包样例');
+            return;
+        }
+
+        try {
+            const result = await window.electronAPI.showOpenDialog({
+                title: window.i18n.t('dialog.selectZip'),
+                filters: [
+                    { name: window.i18n.t('dialog.zipFilter'), extensions: ['zip'] },
+                    { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
+                ],
+                properties: ['openFile']
+            });
+
+            if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+                return;
+            }
+
+            const zipPath = result.filePaths[0];
+            const zipReadResult = await window.electronAPI.readZipTextFiles(zipPath);
+            if (!zipReadResult || !zipReadResult.success) {
+                throw new Error(zipReadResult?.error || (window.i18n.t('tester.readZipFail')));
+            }
+
+            const importPlan = this.pairSamplesFromZipFiles(zipReadResult.files || []);
+            const pairs = importPlan.pairs || [];
+            if (pairs.length === 0) {
+                logWarn('[样例测试器] 压缩包中未识别到可配对的样例输入输出文件');
+                return;
+            }
+
+            const thresholdBytes = this.getZipLargeSampleThresholdBytes();
+            const largePairCount = pairs.filter((pair) => {
+                const totalBytes = this.getZipEntrySizeBytes(pair?.input) + this.getZipEntrySizeBytes(pair?.output);
+                return totalBytes > thresholdBytes;
+            }).length;
+
+            const previewMessage = window.i18n.t('dialog.importDetected', { count: pairs.length, recognized: importPlan.recognizedCount, unmatched: importPlan.unmatchedCount, size: Math.floor(thresholdBytes / 1024), largeCount: largePairCount });
+            let shouldImport = true;
+            if (window.dialogManager?.showActionDialog) {
+                const action = await window.dialogManager.showActionDialog((window.i18n.t('dialog.importPreview')), previewMessage, [
+                    { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' },
+                    { id: 'import', label: window.i18n.t('dialog.continueImport'), className: 'dialog-btn-confirm' }
+                ]);
+                shouldImport = action === 'import';
+            } else if (window.dialogManager?.showConfirmDialog) {
+                shouldImport = await window.dialogManager.showConfirmDialog(window.i18n.t('dialog.importPreview'), window.i18n.t('tester.importSummaryText', { count: pairs.length, recognized: importPlan.recognizedCount, unmatched: importPlan.unmatchedCount }));
+            }
+            if (!shouldImport) {
+                return;
+            }
+
+            const freopenOptions = await this.askFreopenOptionsForZipImport();
+            if (freopenOptions?.canceled) {
+                return;
+            }
+
+            let largeSamplesDir = null;
+            let maxId = this.samples.length > 0 ? Math.max(...this.samples.map(s => s.id)) : 0;
+            for (const pair of pairs) {
+                maxId += 1;
+                const inputBytes = this.getZipEntrySizeBytes(pair?.input);
+                const outputBytes = this.getZipEntrySizeBytes(pair?.output);
+                const shouldUseFileMode = (inputBytes + outputBytes) > thresholdBytes;
+
+                if (shouldUseFileMode) {
+                    if (!largeSamplesDir) {
+                        largeSamplesDir = await this.prepareZipLargeSampleImportDir(zipPath);
+                    }
+
+                    const inputFilePath = await this.writeZipEntryToWorkspace(pair.input, largeSamplesDir, `sample_${maxId}.in`);
+                    const outputFilePath = await this.writeZipEntryToWorkspace(pair.output, largeSamplesDir, `sample_${maxId}.out`);
+
+                    this.samples.push({
+                        id: maxId,
+                        inputType: 'file',
+                        outputType: 'file',
+                        input: inputFilePath,
+                        output: outputFilePath,
+                        timeLimit: 1000,
+                        memoryLimit: this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0),
+                        freopenInputFile: freopenOptions.freopenInputFile || '',
+                        freopenOutputFile: freopenOptions.freopenOutputFile || '',
+                        useTestlib: false,
+                        spjPath: '',
+                        result: null
+                    });
+                } else {
+                    this.samples.push({
+                        id: maxId,
+                        inputType: 'userinput',
+                        outputType: 'userinput',
+                        input: pair.input?.content || '',
+                        output: pair.output?.content || '',
+                        timeLimit: 1000,
+                        memoryLimit: this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0),
+                        freopenInputFile: freopenOptions.freopenInputFile || '',
+                        freopenOutputFile: freopenOptions.freopenOutputFile || '',
+                        useTestlib: false,
+                        spjPath: '',
+                        result: null
+                    });
+                }
+            }
+
+            this.nextId = maxId + 1;
+            await this.saveSamples();
+            this.statusFilter = null;
+            this.updateUI();
+            setTimeout(() => this.expandAllSamples(), 100);
+
+            logInfo(`[样例测试器] 从压缩包导入样例成功，共 ${pairs.length} 组，其中大样例组 ${largePairCount} 组`);
+        } catch (error) {
+            logError('[样例测试器] 导入压缩包样例失败:', error);
+        }
+    }
+
+    async addSample() {
+        if (!this.currentFile) return;
+
+        this.isOperating = true;
+        try {
+            const maxId = this.samples.length > 0 ? Math.max(...this.samples.map(s => s.id)) : 0;
+            const newId = maxId + 1;
+
+            const newSample = {
+                id: newId,
+                inputType: 'userinput',
+                outputType: 'userinput',
+                input: '',
+                output: '',
+                timeLimit: this.sanitizeTimeLimit(this.globalSettings.defaultTimeLimit, 1000),
+                memoryLimit: this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0),
+                freopenInputFile: this.normalizeFreopenFileName(this.globalSettings.freopenInputFile || ''),
+                freopenOutputFile: this.normalizeFreopenFileName(this.globalSettings.freopenOutputFile || ''),
+                useTestlib: false,
+                spjPath: '',
+                result: null
+            };
+
+            this.samples.push(newSample);
+
+            this.nextId = newId + 1;
+            await this.saveSamples();
+            this.updateUI();
+
+            setTimeout(() => {
+                const element = (document.querySelector(`[data-sample-id="${newSample.id}"]`));
+                if (element && !element.classList.contains('expanded')) {
+                    element.classList.add('expanded');
+                }
+            }, 100);
+        } finally {
+            this.isOperating = false;
+        }
+    }
+
+    async deleteSample(id) {
+        this.isOperating = true;
+
+        try {
+
+            const sampleIndex = this.samples.findIndex(s => s.id === id);
+            if (sampleIndex === -1) {
+                logWarn('[样例测试器] 未找到要删除的样例:', id);
+                return;
+            }
+
+            this.samples.splice(sampleIndex, 1);
+
+            this.samples.forEach((sample, index) => {
+                sample.id = index + 1;
+            });
+
+            const maxId = this.samples.length > 0 ? Math.max(...this.samples.map(s => s.id)) : 0;
+            this.nextId = maxId + 1;
+            await this.saveSamples();
+            this.updateUI();
+            logInfo('[样例测试器] 删除操作完成');
+        } finally {
+            this.isOperating = false;
+        }
+    }
+
+    toggleSample(id) {
+        const element = (document.querySelector(`[data-sample-id="${id}"]`));
+        if (element) {
+            element.classList.toggle('expanded');
+        }
+    }
+
+    expandAllSamples() {
+        const sampleElements = document.querySelectorAll('.sample-group');
+        sampleElements.forEach(element => {
+            element.classList.add('expanded');
+        });
+    }
+
+    updateSampleContent(id, type, value) {
+        const sample = this.samples.find(s => s.id === id);
+        if (sample) {
+            sample[type] = value;
+            this.saveSamples();
+        }
+    }
+
+    updateSampleSetting(id, setting, value) {
+        const sample = this.samples.find(s => s.id === id);
+        if (sample) {
+            if (setting === 'timeLimit') {
+                sample[setting] = this.sanitizeTimeLimit(value, sample.timeLimit || this.globalSettings.defaultTimeLimit || 1000);
+            } else if (setting === 'memoryLimit') {
+                sample[setting] = this.sanitizeMemoryLimit(value, sample.memoryLimit || 0);
+            } else if (setting === 'freopenInputFile' || setting === 'freopenOutputFile') {
+                sample[setting] = this.normalizeFreopenFileName(value);
+            } else if (setting === 'useTestlib') {
+                sample[setting] = value;
+            } else {
+                sample[setting] = value;
+            }
+            this.saveSamples();
+        }
+    }
+
+    sanitizeTimeLimit(value, fallback: number | undefined = 1000) {
+        const parsed = parseInt(value, 10);
+        const safeFallback = Number.isFinite(fallback) && fallback > 0 ? Math.floor(fallback) : 1000;
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            return safeFallback;
+        }
+        return Math.floor(parsed);
+    }
+
+    sanitizeMemoryLimit(value, fallback: number | undefined = 0) {
+        const parsed = Number(value);
+        const safeFallback = Number.isFinite(Number(fallback)) && Number(fallback) >= 0
+            ? Math.round(Number(fallback) * 100) / 100
+            : 0;
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            return safeFallback;
+        }
+        return Math.round(parsed * 100) / 100;
+    }
+
+    applyFreopenToAllSamples() {
+        if (this.samples.length === 0) return;
+
+        const expandedSampleIds = this.getExpandedSampleIds();
+
+        const inputName = this.normalizeFreopenFileName(this.globalSettings.freopenInputFile || '');
+        const outputName = this.normalizeFreopenFileName(this.globalSettings.freopenOutputFile || '');
+
+        this.globalSettings.freopenInputFile = inputName;
+        this.globalSettings.freopenOutputFile = outputName;
+
+        this.samples.forEach(sample => {
+            sample.freopenInputFile = inputName;
+            sample.freopenOutputFile = outputName;
+        });
+
+        this.saveSamples();
+        this.updateUI();
+        this.restoreExpandedSampleIds(expandedSampleIds);
+    }
+
+    applyTimeLimitToAllSamples() {
+        if (this.samples.length === 0) return;
+
+        const expandedSampleIds = this.getExpandedSampleIds();
+
+        const timeLimit = this.sanitizeTimeLimit(this.globalSettings.defaultTimeLimit, 1000);
+        this.globalSettings.defaultTimeLimit = timeLimit;
+
+        this.samples.forEach(sample => {
+            sample.timeLimit = timeLimit;
+        });
+
+        this.saveSamples();
+        this.updateUI();
+        this.restoreExpandedSampleIds(expandedSampleIds);
+    }
+
+    applyMemoryLimitToAllSamples() {
+        if (this.samples.length === 0) return;
+
+        const expandedSampleIds = this.getExpandedSampleIds();
+
+        const memoryLimit = this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0);
+        this.globalSettings.defaultMemoryLimit = memoryLimit;
+
+        this.samples.forEach(sample => {
+            sample.memoryLimit = memoryLimit;
+        });
+
+        this.saveSamples();
+        this.updateUI();
+        this.restoreExpandedSampleIds(expandedSampleIds);
+    }
+
+    getExpandedSampleIds() {
+        const expandedElements = document.querySelectorAll('.sample-group.expanded');
+        const ids = [];
+        expandedElements.forEach((element) => {
+            if (!(element instanceof HTMLElement)) return;
+            const sampleId = parseInt(element.dataset.sampleId, 10);
+            if (Number.isFinite(sampleId)) {
+                ids.push(sampleId);
+            }
+        });
+        return ids;
+    }
+
+    restoreExpandedSampleIds(ids) {
+        if (!Array.isArray(ids) || ids.length === 0) {
+            return;
+        }
+
+        setTimeout(() => {
+            ids.forEach(id => {
+                const element = (document.querySelector(`[data-sample-id="${id}"]`));
+                if (element) {
+                    element.classList.add('expanded');
+                }
+            });
+        }, 0);
+    }
+
+    normalizeFreopenFileName(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        const normalized = raw.replace(/[\\/]/g, '').replace(/[<>:"|?*]/g, '').trim();
+        return normalized;
+    }
+
+    async prepareFreopenContext(sample, inputData) {
+        const inputFileName = this.normalizeFreopenFileName(sample?.freopenInputFile);
+        const outputFileName = this.normalizeFreopenFileName(sample?.freopenOutputFile);
+
+        if (!inputFileName && !outputFileName) {
+            return {
+                runInput: inputData,
+                workingDirectory: null,
+                outputFilePath: null,
+                cleanupFiles: []
+            };
+        }
+
+        const userHome = await window.electronAPI.getUserHome();
+        const baseDir = await window.electronAPI.pathJoin(userHome, '.oicpp-plus', 'sampleTester', 'freopen_runs');
+        const runDirName = `sample_${sample?.id || 'x'}`;
+        const runDir = await window.electronAPI.pathJoin(baseDir, runDirName);
+
+        await window.electronAPI.ensureDirectory(baseDir);
+        await window.electronAPI.ensureDirectory(runDir);
+
+        const cleanupFiles = [];
+        let outputFilePath = null;
+
+        if (inputFileName) {
+            const inputFilePath = await window.electronAPI.pathJoin(runDir, inputFileName);
+            await window.electronAPI.writeFile(inputFilePath, inputData || '');
+            cleanupFiles.push(inputFilePath);
+        }
+
+        if (outputFileName) {
+            outputFilePath = await window.electronAPI.pathJoin(runDir, outputFileName);
+            cleanupFiles.push(outputFilePath);
+        }
+
+        return {
+            runInput: inputFileName ? '' : inputData,
+            workingDirectory: runDir,
+            outputFilePath,
+            cleanupFiles
+        };
+    }
+
+    async cleanupFreopenContext(context) {
+        if (!context || !Array.isArray(context.cleanupFiles)) return;
+        for (const filePath of context.cleanupFiles) {
+            try {
+                const exists = await window.electronAPI.checkFileExists(filePath);
+                if (exists) {
+                    await window.electronAPI.deleteFile(filePath);
+                }
+            } catch (_) { }
+        }
+    }
+
+    // 「程序输出」只取 stdout：run-program 的 output 字段在非零退出时会用 stderr 顶替 stdout，
+    // 直接用它会让 stderr 内容出现在程序输出里、并把已产生的 stdout 整段丢掉。
+    buildProgramOutput(runResult) {
+        let text = typeof runResult?.stdout === 'string' ? runResult.stdout : '';
+        const notices = [];
+        if (runResult?.outputLimitExceeded) {
+            const limitMb = Math.max(1, Math.floor((runResult.outputLimitBytes || 0) / (1024 * 1024)));
+            notices.push(window.i18n.t('tester.outputLimitNotice', { limit: limitMb }));
+        }
+        if (runResult?.memoryLimitExceeded) {
+            const limitMb = Math.max(1, Math.floor((runResult.memoryLimitBytes || 0) / (1024 * 1024)));
+            notices.push(window.i18n.t('tester.memoryLimitNotice', { limit: limitMb }));
+        }
+        for (const notice of notices) {
+            text = text ? (text.endsWith('\n') ? text + notice : `${text}\n${notice}`) : notice;
+        }
+        return text;
+    }
+
+    async resolveProgramOutput(runResult, freopenContext) {
+        if (!freopenContext?.outputFilePath) {
+            return this.buildProgramOutput(runResult);
+        }
+
+        try {
+            const exists = await window.electronAPI.checkFileExists(freopenContext.outputFilePath);
+            if (!exists) {
+                return this.buildProgramOutput(runResult);
+            }
+            return await window.electronAPI.readFileContent(freopenContext.outputFilePath);
+        } catch (error) {
+            try { logWarn('[样例测试器] 读取freopen输出文件失败:', error); } catch (_) { }
+            return this.buildProgramOutput(runResult);
+        }
+    }
+
+    updateSampleDisplay(id) {
+        const sample = this.samples.find(s => s.id === id);
+        if (!sample) return;
+
+        const element = (document.querySelector(`[data-sample-id="${id}"]`));
+        if (!element) return;
+
+        const isExpanded = element.classList.contains('expanded');
+
+        const newElement = this.createSampleElement(sample);
+
+        if (isExpanded) {
+            newElement.classList.add('expanded');
+        }
+
+        element.parentNode.replaceChild(newElement, element);
+
+        setTimeout(() => {
+            const textareas = newElement.querySelectorAll('.sample-textarea');
+            textareas.forEach(textarea => {
+                this.autoResizeTextarea(textarea);
+            });
+
+            const programOutput = newElement.querySelector('.program-output');
+            if (programOutput) {
+                this.autoResizeProgramOutput(programOutput);
+            }
+        }, 0);
+    }
+
+    expandTextarea(textarea) {
+        textarea.classList.add('expanded');
+        textarea.classList.remove('auto-height');
+    }
+
+    collapseTextarea(textarea) {
+        textarea.classList.remove('expanded');
+        this.autoResizeTextarea(textarea);
+    }
+
+    autoResizeTextarea(textarea) {
+        if (textarea.classList.contains('expanded')) return;
+
+        const content = textarea.value;
+        const lines = content.split('\n').length;
+        const isEmpty = !content.trim();
+
+        if (isEmpty || lines === 1) {
+            textarea.classList.add('auto-height');
+            textarea.style.height = 'auto';
+        } else {
+            textarea.classList.remove('auto-height');
+            const lineHeight = 16.8;
+            const padding = 16;
+            const minHeight = Math.min(lines * lineHeight + padding, 200);
+            textarea.style.height = `${minHeight}px`;
+        }
+    }
+
+    autoResizeProgramOutput(textarea) {
+        const content = textarea.value;
+        const lines = content.split('\n').length;
+        const isEmpty = !content.trim();
+
+        if (isEmpty) {
+            textarea.style.height = '60px';
+        } else {
+            const lineHeight = 16.8;
+            const padding = 16;
+            const calculatedHeight = lines * lineHeight + padding;
+            const minHeight = Math.max(60, Math.min(calculatedHeight, 200));
+            textarea.style.height = `${minHeight}px`;
+        }
+    }
+
+    switchToManualInput(id) {
+        const sample = this.samples.find(s => s.id === id);
+        if (sample) {
+            sample.inputType = 'userinput';
+            sample.input = '';
+            this.saveSamples();
+            this.updateSampleDisplay(id);
+        }
+    }
+
+    switchToManualOutput(id) {
+        const sample = this.samples.find(s => s.id === id);
+        if (sample) {
+            sample.outputType = 'userinput';
+            sample.output = '';
+            this.saveSamples();
+            this.updateSampleDisplay(id);
+        }
+    }
+
+    async selectInputFile(id) {
+        const result = await window.electronAPI.showOpenDialog({
+            title: window.i18n.t('tester.selectInputFile'),
+            filters: [
+                { name: window.i18n.t('tester.textFileFilter'), extensions: ['txt', 'in'] },
+                { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
+            ],
+            properties: ['openFile']
+        });
+
+        if (!result.canceled && result.filePaths.length > 0) {
+            const sample = this.samples.find(s => s.id === id);
+            if (sample) {
+                sample.inputType = 'file';
+                sample.input = result.filePaths[0];
+                await this.tryAutoMatchOutputFile(sample);
+                this.saveSamples();
+                this.updateSampleDisplay(id);
+            }
+        }
+    }
+
+    async selectOutputFile(id) {
+        const result = await window.electronAPI.showOpenDialog({
+            title: window.i18n.t('tester.selectOutputFile'),
+            filters: [
+                { name: window.i18n.t('tester.textFileFilter'), extensions: ['txt', 'out', 'ans'] },
+                { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
+            ],
+            properties: ['openFile']
+        });
+
+        if (!result.canceled && result.filePaths.length > 0) {
+            const sample = this.samples.find(s => s.id === id);
+            if (sample) {
+                sample.outputType = 'file';
+                sample.output = result.filePaths[0];
+                this.saveSamples();
+                this.updateSampleDisplay(id);
+            }
+        }
+    }
+
+    async tryAutoMatchOutputFile(sample) {
+        if (!sample || !sample.input) return false;
+
+        try {
+            const pathInfo = await window.electronAPI.getPathInfo(sample.input);
+            if (!pathInfo || !pathInfo.dirname || !pathInfo.basenameWithoutExt) return false;
+
+            const candidates = [`${pathInfo.basenameWithoutExt}.ans`, `${pathInfo.basenameWithoutExt}.out`];
+            for (const name of candidates) {
+                const candidatePath = await window.electronAPI.pathJoin(pathInfo.dirname, name);
+                if (await window.electronAPI.checkFileExists(candidatePath)) {
+                    sample.outputType = 'file';
+                    sample.output = candidatePath;
+                    try { logInfo('[样例测试器] 自动匹配输出文件:', candidatePath); } catch (_) { }
+                    return true;
+                }
+            }
+        } catch (error) {
+            try { logWarn('[样例测试器] 自动匹配输出文件失败', error); } catch (_) { }
+        }
+        return false;
+    }
+
+
+
+    async runSample(id) {
+        const runSamples = this.samples;
+        const runSamplesFilePath = this.samplesFilePath;
+        const runCurrentFile = this.currentFile;
+        const sample = this.samples.find(s => s.id === id);
+        if (!sample) return;
+
+        const button = elButton(`run-btn-${id}`);
+        if (!button || button.disabled) return;
+
+        await this.autoSaveCurrentFile();
+
+        button.disabled = true;
+        button.classList.add('running');
+
+        try {
+            button.textContent = window.i18n.t('tester.compileStatus');
+            const result = await this.executeSample(sample, (status) => {
+                if (status === 'compiling') {
+                    button.textContent = window.i18n.t('tester.compileStatus');
+                } else if (status === 'cached-main') {
+                    button.textContent = window.i18n.t('tester.reuseCompile');
+                } else if (status === 'cached-spj') {
+                    button.textContent = window.i18n.t('tester.reuseSpj');
+                } else if (status === 'cached-grader') {
+                    button.textContent = window.i18n.t('tester.reuseGrader');
+                } else if (status === 'running') {
+                    button.textContent = window.i18n.t('tester.running');
+                }
+            });
+            sample.result = result;
+            await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+            if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                this.updateSampleResult(id, result, sample);
+            }
+        } catch (error) {
+            logError('运行样例失败:', error);
+            sample.result = {
+                status: 'CE',
+                output: error.message,
+                time: 0
+            };
+            await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+            if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                this.updateSampleResult(id, sample.result);
+            }
+        } finally {
+            button.disabled = false;
+            button.textContent = window.i18n.t('tester.run');
+            button.classList.remove('running');
+        }
+    }
+
+    async runAllSamples() {
+        const runSamples = this.samples;
+        const runSamplesFilePath = this.samplesFilePath;
+        const runCurrentFile = this.currentFile;
+
+        if (runSamples.length === 0) return;
+
+        await this.autoSaveCurrentFile();
+
+        const runAllBtn = elButton('run-all-samples-btn');
+        if (runAllBtn) {
+            runAllBtn.disabled = true;
+            runAllBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" style="animation: spin 1s linear infinite;"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="31.416" stroke-dashoffset="31.416" stroke-linecap="round"/></svg>';
+        }
+
+        runSamples.forEach(sample => {
+            const button = elButton(`run-btn-${sample.id}`);
+            if (button) {
+                button.disabled = true;
+                button.classList.add('running');
+            }
+        });
+
+        let executablePath = null;
+        let spjExecutablePath = null;
+        let graderExecutablePath = null;
+        this.deferSpjTempCleanup = true;
+
+        try {
+            const useTestlib = this.globalSettings.useTestlib;
+            const useInteractive = !!this.globalSettings.useInteractive;
+            const spjPath = this.globalSettings.spjPath;
+            const graderPath = this.globalSettings.graderPath;
+
+            runSamples.forEach(sample => {
+                const button = (document.getElementById(`run-btn-${sample.id}`));
+                if (button) {
+                    button.textContent = window.i18n.t('tester.compileStatus');
+                }
+            });
+
+            const compileResult = await this.compileCurrentFile(useTestlib ?? false);
+            if (!compileResult.success) {
+                for (const sample of runSamples) {
+                    sample.result = {
+                        status: 'CE',
+                        output: compileResult.stderr || compileResult.stdout || (window.i18n.t('tester.compileFail')),
+                        time: 0
+                    };
+                    if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                        this.updateSampleResult(sample.id, sample.result, sample);
+                    }
+                }
+                await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+                return;
+            }
+
+            if (compileResult.cached) {
+                this.notifyCompileCacheHit(window.i18n.t('tester.targetMain'));
+                runSamples.forEach(sample => {
+                    const button = (document.getElementById(`run-btn-${sample.id}`));
+                    if (button) {
+                        button.textContent = window.i18n.t('tester.reuseCompile');
+                    }
+                });
+            }
+
+            executablePath = compileResult.executablePath;
+
+            if (useInteractive) {
+                if (!graderPath) {
+                    for (const sample of runSamples) {
+                        sample.result = {
+                            status: 'CE',
+                            output: window.i18n.t('tester.graderPathEmpty'),
+                            time: 0
+                        };
+                        if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                            this.updateSampleResult(sample.id, sample.result, sample);
+                        }
+                    }
+                    await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+                    return;
+                }
+
+                const graderCompileResult = await this.compileGraderFile(graderPath);
+                if (!graderCompileResult.success) {
+                    for (const sample of runSamples) {
+                        sample.result = {
+                            status: 'CE',
+                            output: window.i18n.t('tester.graderCompileFail', { msg: graderCompileResult.stderr || graderCompileResult.stdout || (window.i18n.t('tester.compileFail')) }),
+                            time: 0
+                        };
+                        if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                            this.updateSampleResult(sample.id, sample.result, sample);
+                        }
+                    }
+                    await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+                    return;
+                }
+
+                if (graderCompileResult.cached) {
+                    this.notifyCompileCacheHit('grader');
+                    runSamples.forEach(sample => {
+                        const button = (document.getElementById('run-btn-' + sample.id));
+                        if (button) {
+                            button.textContent = window.i18n.t('tester.reuseGrader');
+                        }
+                    });
+                }
+                graderExecutablePath = graderCompileResult.executablePath;
+            } else if (useTestlib && spjPath) {
+                const spjCompileResult = await this.compileSpjFile(spjPath);
+                if (!spjCompileResult.success) {
+                    for (const sample of runSamples) {
+                        sample.result = {
+                            status: 'CE',
+                            output: window.i18n.t('tester.spjCompileFail', { msg: spjCompileResult.stderr || spjCompileResult.stdout || (window.i18n.t('tester.compileFail')) }),
+                            time: 0
+                        };
+                        if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                            this.updateSampleResult(sample.id, sample.result, sample);
+                        }
+                    }
+                    await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+                    return;
+                }
+
+                if (spjCompileResult.cached) {
+                    this.notifyCompileCacheHit(window.i18n.t('tester.targetSpj'));
+                    runSamples.forEach(sample => {
+                        const button = (document.getElementById(`run-btn-${sample.id}`));
+                        if (button) {
+                            button.textContent = window.i18n.t('tester.reuseSpj');
+                        }
+                    });
+                }
+                spjExecutablePath = spjCompileResult.executablePath;
+            }
+
+            runSamples.forEach(sample => {
+                const button = (document.getElementById(`run-btn-${sample.id}`));
+                if (button) {
+                    button.textContent = window.i18n.t('tester.running');
+                }
+            });
+
+            const logicalCores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 2;
+            const maxParallel = Math.max(1, Math.floor(logicalCores / 2));
+            const workerCount = Math.min(maxParallel, runSamples.length);
+
+            logInfo('[样例测试器] 并行运行样例', { logicalCores, workerCount, sampleCount: runSamples.length });
+
+            let currentIndex = 0;
+            const worker = async () => {
+                while (true) {
+                    const index = currentIndex++;
+                    if (index >= runSamples.length) return;
+
+                    const sample = runSamples[index];
+                    try {
+                        const result = await this.executeSampleWithCompiledProgram(sample, executablePath, spjExecutablePath, graderExecutablePath);
+                        sample.result = result;
+                        if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                            this.updateSampleResult(sample.id, result, sample);
+                        }
+                    } catch (error) {
+                        logError(`运行样例 ${sample.id} 失败:`, error);
+                        sample.result = {
+                            status: 'RE',
+                            output: error.message,
+                            time: 0
+                        };
+                        if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                            this.updateSampleResult(sample.id, sample.result, sample);
+                        }
+                    }
+                }
+            };
+
+            const workers = Array.from({ length: workerCount }, worker);
+            await Promise.all(workers);
+
+            await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+
+        } finally {
+            this.deferSpjTempCleanup = false;
+            await this.cleanupSpjTempFiles();
+            // 主程序编译结果会被缓存复用，这里不删除可执行文件。
+            // SPJ 编译结果同样会被缓存复用，这里不删除可执行文件。
+
+            if (runAllBtn) {
+                runAllBtn.disabled = false;
+                runAllBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14"><path d="M4 2l8 5-8 5V2z" fill="currentColor"/></svg>';
+            }
+
+            runSamples.forEach(sample => {
+                const button = elButton(`run-btn-${sample.id}`);
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = window.i18n.t('tester.run');
+                    button.classList.remove('running');
+                }
+            });
+        }
+    }
+
+    async executeInteractiveSample(sample, executablePath, graderExecutablePath) {
+        if (!graderExecutablePath) {
+            return {
+                status: 'CE',
+                output: window.i18n.t('tester.graderPathEmpty'),
+                rawOutput: '',
+                expectedOutput: '',
+                stderr: '',
+                outputSizeBytes: 0,
+                outputExpanded: false,
+                time: 0,
+                interactive: true
+            };
+        }
+
+        let inputData = '';
+        if (sample.inputType === 'file') {
+            try {
+                inputData = await window.electronAPI.readFileContent(sample.input);
+            } catch (error) {
+                throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: error.message})));
+            }
+        } else {
+            inputData = sample.input || '';
+        }
+
+        const suffix = Date.now() + '_' + (++this.interactiveTempSequence) + '_' + (sample.id || 'x');
+        const inputFilePath = await window.electronAPI.saveTempFile(
+            'interactive_input_' + suffix + '.txt',
+            inputData
+        );
+
+        try {
+            const contestantWorkingDirectory = this.currentFile
+                ? await window.electronAPI.pathDirname(this.currentFile)
+                : null;
+            const graderWorkingDirectory = this.globalSettings.graderPath
+                ? await window.electronAPI.pathDirname(this.globalSettings.graderPath)
+                : null;
+            const runResult = await window.electronAPI.runInteractive({
+                contestantExecutablePath: executablePath,
+                graderExecutablePath,
+                inputFilePath,
+                contestantWorkingDirectory,
+                graderWorkingDirectory,
+                timeLimit: sample.timeLimit,
+                memoryLimit: sample.memoryLimit,
+                skipPreKill: true
+            });
+
+            let status;
+            if (runResult.outputLimitExceeded) {
+                status = 'OLE';
+            } else if (runResult.memoryLimitExceeded) {
+                status = 'MLE';
+            } else if (runResult.timeout) {
+                status = 'TLE';
+            } else if (runResult.contestantExitCode !== 0 && runResult.contestantExitCode !== null) {
+                status = 'RE';
+            } else if (runResult.graderExitCode !== 0 && runResult.graderExitCode !== null) {
+                status = 'WA';
+            } else if (runResult.contestantExitCode === 0 && runResult.graderExitCode === 0) {
+                status = 'AC';
+            } else {
+                status = 'RE';
+            }
+
+            const output = runResult.output || '';
+            return {
+                status,
+                output: this.truncateOutput(output),
+                rawOutput: this.truncateForStorage(output),
+                expectedOutput: '',
+                stderr: this.truncateForStorage(runResult.stderr),
+                outputSizeBytes: this.getOutputSizeBytes(output),
+                outputExpanded: false,
+                time: runResult.time,
+                memoryBytes: runResult.memoryBytes,
+                usedSpj: false,
+                spjOutput: '',
+                interactive: true,
+                contestantExitCode: runResult.contestantExitCode,
+                graderExitCode: runResult.graderExitCode
+            };
+        } finally {
+            try {
+                await window.electronAPI.deleteTempFile(inputFilePath);
+            } catch (_) { }
+        }
+    }
+
+    async executeSampleWithCompiledProgram(sample, executablePath, spjExecutablePath = null, graderExecutablePath = null) {
+        const useInteractive = !!this.globalSettings.useInteractive;
+        if (useInteractive) {
+            return await this.executeInteractiveSample(sample, executablePath, graderExecutablePath);
+        }
+
+        const useTestlib = this.globalSettings.useTestlib;
+        const spjPath = this.globalSettings.spjPath;
+
+        try {
+            let inputData = '';
+            if (sample.inputType === 'file') {
+                try {
+                    inputData = await window.electronAPI.readFileContent(sample.input);
+                } catch (error) {
+                    throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: error.message})));
+                }
+            } else {
+                inputData = sample.input || '';
+            }
+
+
+            let expectedOutput = '';
+            if (sample.outputType === 'file') {
+                try {
+                    expectedOutput = await window.electronAPI.readFileContent(sample.output);
+                } catch (error) {
+                    throw new Error((window.i18n.t('tester.cannotReadOutputFile', {msg: error.message})));
+                }
+            } else {
+                expectedOutput = sample.output || '';
+            }
+
+            const freopenContext = await this.prepareFreopenContext(sample, inputData);
+            let runResult;
+            let actualOutput = '';
+            try {
+                const runOptions = freopenContext.workingDirectory
+                    ? { executablePath, workingDirectory: freopenContext.workingDirectory }
+                    : executablePath;
+                runResult = await this.runProgram(runOptions, freopenContext.runInput, sample.timeLimit, sample.memoryLimit);
+                actualOutput = await this.resolveProgramOutput(runResult, freopenContext);
+            } finally {
+                await this.cleanupFreopenContext(freopenContext);
+            }
+
+            let status;
+            let spjUsed = false;
+            let spjOutput = '';
+
+            if (runResult.outputLimitExceeded) {
+                status = 'OLE';
+                try {
+                    logWarn('[样例测试器][OLE]', {
+                        sampleId: sample.id,
+                        limitBytes: runResult.outputLimitBytes,
+                        capturedBytes: runResult.capturedOutputBytes,
+                        observedBytes: runResult.observedOutputBytes
+                    });
+                } catch (_) { }
+            } else if (runResult.memoryLimitExceeded) {
+                status = 'MLE';
+                try { logWarn('[样例测试器][MLE]', { sampleId: sample.id, durationMs: runResult.time, limitMb: sample.memoryLimit, memoryBytes: runResult.memoryBytes }); } catch (_) { }
+            } else if (runResult.timeout) {
+                status = 'TLE';
+                try { logInfo('[样例测试器][TLE]', { sampleId: sample.id, durationMs: runResult.time, limitMs: sample.timeLimit }); } catch (_) { }
+            } else if (runResult.exitCode !== 0) {
+                status = 'RE';
+                try { logWarn('[样例测试器][RE]', { sampleId: sample.id, exitCode: runResult.exitCode, stderrBytes: (runResult.stderr || '').length, durationMs: runResult.time }); } catch (_) { }
+            } else {
+                if (useTestlib && spjExecutablePath) {
+                    const normalizedActual = actualOutput.trimEnd();
+                    const normalizedExpected = expectedOutput.trimEnd();
+
+                    const spjExists = await window.electronAPI.checkFileExists(spjExecutablePath);
+
+                    if (!spjExists) {
+                        status = 'WA';
+                    } else {
+                        const spjJudgeResult = await this.judgeWithSpj(spjExecutablePath, inputData, normalizedActual, normalizedExpected);
+                        status = spjJudgeResult.status;
+                        spjOutput = spjJudgeResult.output;
+                    }
+                    spjUsed = true;
+                } else {
+                    status = this.compareOutput(actualOutput, expectedOutput);
+                    if (status === 'WA') {
+                        const diff = this.getDifferenceInfo((actualOutput || '').trimEnd(), (expectedOutput || '').trimEnd());
+                        try {
+                            const diffText = diff ? `${diff.line}:${diff.char}` : 'none';
+                            const inputSource = sample.inputType === 'file' ? `file:${sample.input}` : 'manual';
+                            const expectedSource = sample.outputType === 'file' ? `file:${sample.output}` : 'manual';
+                            logInfo(`[样例测试器][WA] sampleId=${sample.id} inputSource=${inputSource} expectedSource=${expectedSource} actualLen=${(actualOutput || '').length} expectedLen=${(expectedOutput || '').length} firstDiff=${diffText}`);
+                        } catch (_) { }
+                    }
+                }
+            }
+
+            return {
+                status: status,
+                output: this.truncateOutput(actualOutput),
+                rawOutput: this.truncateForStorage(actualOutput),
+                expectedOutput,
+                stderr: this.truncateForStorage(runResult.stderr),
+                outputSizeBytes: this.getOutputSizeBytes(actualOutput),
+                outputExpanded: false,
+                time: runResult.time,
+                memoryBytes: runResult.memoryBytes,
+                usedSpj: spjUsed
+                ,spjOutput
+            };
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    async executeSample(sample, statusCallback = null) {
+        const useInteractive = !!this.globalSettings.useInteractive;
+        const useTestlib = sample.useTestlib !== undefined ? sample.useTestlib : this.globalSettings.useTestlib;
+
+        const spjPath = sample.spjPath || this.globalSettings.spjPath;
+        const graderPath = this.globalSettings.graderPath;
+
+        logInfo('[样例测试器] 执行样例调试信息:');
+        logInfo('- 样例ID:', sample.id);
+        logInfo('- 使用testlib:', useTestlib);
+        logInfo('- SPJ路径:', spjPath);
+        logInfo('- 全局设置:', this.globalSettings);
+
+        if (statusCallback) statusCallback('compiling');
+
+        const compileResult = await this.compileCurrentFile(useTestlib ?? false);
+        if (!compileResult.success) {
+            return {
+                status: 'CE',
+                output: compileResult.stderr || compileResult.stdout || (window.i18n.t('tester.compileFail')),
+                time: 0
+            };
+        }
+        if (compileResult.cached) {
+            this.notifyCompileCacheHit(window.i18n.t('tester.targetMain'));
+            if (statusCallback) statusCallback('cached-main');
+        }
+
+        let executablePath = compileResult.executablePath;
+        let spjExecutablePath = null;
+        let graderExecutablePath = null;
+
+        try {
+            if (useInteractive) {
+                if (!graderPath) {
+                    return {
+                        status: 'CE',
+                        output: window.i18n.t('tester.graderPathEmpty'),
+                        time: 0
+                    };
+                }
+
+                const graderCompileResult = await this.compileGraderFile(graderPath);
+                if (!graderCompileResult.success) {
+                    return {
+                        status: 'CE',
+                        output: window.i18n.t('tester.graderCompileFail', { msg: graderCompileResult.stderr || graderCompileResult.stdout || (window.i18n.t('tester.compileFail')) }),
+                        time: 0
+                    };
+                }
+                if (graderCompileResult.cached) {
+                    this.notifyCompileCacheHit('grader');
+                    if (statusCallback) statusCallback('cached-grader');
+                }
+                graderExecutablePath = graderCompileResult.executablePath;
+            } else if (useTestlib && spjPath) {
+                logInfo('[样例测试器] 开始编译SPJ程序:', spjPath);
+                const spjCompileResult = await this.compileSpjFile(spjPath);
+
+                if (!spjCompileResult.success) {
+                    return {
+                        status: 'CE',
+                        output: window.i18n.t('tester.spjCompileFail', { msg: spjCompileResult.stderr || spjCompileResult.stdout || (window.i18n.t('tester.compileFail')) }),
+                        time: 0
+                    };
+                }
+                if (spjCompileResult.cached) {
+                    this.notifyCompileCacheHit(window.i18n.t('tester.targetSpj'));
+                    if (statusCallback) statusCallback('cached-spj');
+                }
+                spjExecutablePath = spjCompileResult.executablePath;
+
+            } else {
+
+            }
+
+            if (!useInteractive && useTestlib === this.globalSettings.useTestlib && spjPath === this.globalSettings.spjPath) {
+                if (statusCallback) statusCallback('running');
+                return await this.executeSampleWithCompiledProgram(sample, executablePath, spjExecutablePath, graderExecutablePath);
+            }
+
+            let inputData = '';
+            if (sample.inputType === 'file') {
+                try {
+                    inputData = await window.electronAPI.readFileContent(sample.input);
+                } catch (error) {
+                    throw new Error(window.i18n.t('tester.cannotReadInputFile', { msg: error.message }));
+                }
+            } else {
+                inputData = sample.input || '';
+            }
+
+            if (useInteractive) {
+                if (statusCallback) statusCallback('running');
+                return await this.executeInteractiveSample(sample, executablePath, graderExecutablePath);
+            }
+
+            let expectedOutput = '';
+            if (sample.outputType === 'file') {
+                try {
+                    expectedOutput = await window.electronAPI.readFileContent(sample.output);
+                } catch (error) {
+                    throw new Error(window.i18n.t('tester.cannotReadOutputFile', { msg: error.message }));
+                }
+            } else {
+                expectedOutput = sample.output || '';
+            }
+
+            if (statusCallback) {
+                statusCallback('running');
+            }
+            const freopenContext = await this.prepareFreopenContext(sample, inputData);
+            let runResult;
+            let actualOutput = '';
+            try {
+                const runOptions = freopenContext.workingDirectory
+                    ? { executablePath, workingDirectory: freopenContext.workingDirectory }
+                    : executablePath;
+                runResult = await this.runProgram(runOptions, freopenContext.runInput, sample.timeLimit, sample.memoryLimit);
+                actualOutput = await this.resolveProgramOutput(runResult, freopenContext);
+            } finally {
+                await this.cleanupFreopenContext(freopenContext);
+            }
+
+            let status;
+            let spjUsed = false;
+            let spjOutput = '';
+
+            try {
+                if (runResult.outputLimitExceeded) {
+                    status = 'OLE';
+                    try {
+                        logWarn('[样例测试器][OLE]', {
+                            sampleId: sample.id,
+                            limitBytes: runResult.outputLimitBytes,
+                            capturedBytes: runResult.capturedOutputBytes,
+                            observedBytes: runResult.observedOutputBytes
+                        });
+                    } catch (_) { }
+                } else if (runResult.memoryLimitExceeded) {
+                    status = 'MLE';
+                    try { logWarn('[样例测试器][MLE]', { sampleId: sample.id, durationMs: runResult.time, limitMb: sample.memoryLimit, memoryBytes: runResult.memoryBytes }); } catch (_) { }
+                } else if (runResult.timeout) {
+                    status = 'TLE';
+                    try { logInfo('[样例测试器][TLE]', { sampleId: sample.id, durationMs: runResult.time, limitMs: sample.timeLimit }); } catch (_) { }
+                } else if (runResult.exitCode !== 0) {
+                    status = 'RE';
+                    try { logWarn('[样例测试器][RE]', { sampleId: sample.id, exitCode: runResult.exitCode, stderrBytes: (runResult.stderr || '').length, durationMs: runResult.time }); } catch (_) { }
+                } else {
+                    if (useTestlib && spjExecutablePath) {
+                        const normalizedActual = actualOutput.trimEnd();
+                        const normalizedExpected = expectedOutput.trimEnd();
+
+                        const spjExists = await window.electronAPI.checkFileExists(spjExecutablePath);
+
+                        if (!spjExists) {
+
+                            status = 'WA';
+                        } else {
+                            const spjJudgeResult = await this.judgeWithSpj(spjExecutablePath, inputData, normalizedActual, normalizedExpected);
+                            status = spjJudgeResult.status;
+                            spjOutput = spjJudgeResult.output;
+
+                        }
+                        spjUsed = true;
+                    } else {
+                        status = this.compareOutput(actualOutput, expectedOutput);
+                        if (status === 'WA') {
+                            const diff = this.getDifferenceInfo((actualOutput || '').trimEnd(), (expectedOutput || '').trimEnd());
+                            try {
+                                const diffText = diff ? `${diff.line}:${diff.char}` : 'none';
+                                const inputSource = sample.inputType === 'file' ? `file:${sample.input}` : 'manual';
+                                const expectedSource = sample.outputType === 'file' ? `file:${sample.output}` : 'manual';
+                                logInfo(`[样例测试器][WA] sampleId=${sample.id} inputSource=${inputSource} expectedSource=${expectedSource} actualLen=${(actualOutput || '').length} expectedLen=${(expectedOutput || '').length} firstDiff=${diffText}`);
+                            } catch (_) { }
+                        }
+                    }
+                }
+            } finally {
+            }
+
+            return {
+                status: status,
+                output: this.truncateOutput(actualOutput),
+                rawOutput: this.truncateForStorage(actualOutput),
+                expectedOutput,
+                stderr: this.truncateForStorage(runResult.stderr),
+                outputSizeBytes: this.getOutputSizeBytes(actualOutput),
+                outputExpanded: false,
+                time: runResult.time,
+                memoryBytes: runResult.memoryBytes,
+                usedSpj: spjUsed
+                ,spjOutput
+            };
+        } finally {
+            // 主程序编译结果会被缓存复用，这里不删除可执行文件。
+        }
+    }
+
+    computeStableHash(text) {
+        const str = String(text || '');
+        let hash = 2166136261;
+        for (let i = 0; i < str.length; i++) {
+            hash ^= str.charCodeAt(i);
+            hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+        }
+        return (hash >>> 0).toString(16).padStart(8, '0');
+    }
+
+    buildMainCompileCacheKey({
+        content,
+        currentFile,
+        compilerPath,
+        compilerArgs,
+        useTestlib,
+        testlibIncludePath
+    }) {
+        const payload = [
+            currentFile || '',
+            compilerPath || '',
+            compilerArgs || '',
+            useTestlib ? '1' : '0',
+            testlibIncludePath || '',
+            content || ''
+        ].join('\n<oicpp-sample-cache>\n');
+        return this.computeStableHash(payload);
+    }
+
+    buildSpjCompileCacheKey({
+        spjPath,
+        spjContent,
+        compilerPath,
+        compilerArgs,
+        testlibIncludePath
+    }) {
+        const payload = [
+            spjPath || '',
+            compilerPath || '',
+            compilerArgs || '',
+            testlibIncludePath || '',
+            spjContent || ''
+        ].join('\n<oicpp-spj-cache>\n');
+        return this.computeStableHash(payload);
+    }
+
+    buildGraderCompileCacheKey({
+        graderPath,
+        graderContent,
+        compilerPath,
+        compilerArgs,
+        testlibIncludePath
+    }) {
+        const payload = [
+            graderPath || '',
+            compilerPath || '',
+            compilerArgs || '',
+            testlibIncludePath || '',
+            graderContent || ''
+        ].join('\n<oicpp-grader-cache>\n');
+        return this.computeStableHash(payload);
+    }
+
+    notifyCompileCacheHit(targetName) {
+        const brief = (window.i18n.t('tester.compileCacheHit', {target: targetName}));
+        const msg = `[样例测试器] ${brief}`;
+        try { logInfo(msg); } catch (_) { }
+
+        try {
+            window.oicppApp?.showMessage?.(brief, 'info');
+        } catch (_) { }
+
+        const manager = window.compilerManager;
+        if (!manager) return;
+        try {
+            manager.setStatus?.(brief);
+            manager.appendOutput?.(`${msg}\n`, 'info');
+        } catch (_) { }
+    }
+
+    async compileCurrentFile(useTestlib = false) {
+        if (!this.currentFile) {
+            throw new Error(window.i18n.t('tester.noActiveCppFile'));
+        }
+
+        const content = window.editorManager?.getCurrentContent() || '';
+        logInfo('[样例测试器] 获取到的文件内容长度:', content.length);
+        if (!content.trim()) {
+            throw new Error(window.i18n.t('tester.fileEmpty'));
+        }
+
+        // Keep this path consistent with F11.  The tester compiles currentFile
+        // from disk, while the editor content above is only in memory.  Relying
+        // on the periodic auto-save means a busy renderer can compile an older
+        // (occasionally empty) version and report its output as this sample's.
+        if (!window.electronAPI?.saveFile) {
+            throw new Error(window.i18n.t('tester.saveApiUnavailable'));
+        }
+        await window.electronAPI.saveFile(this.currentFile, content);
+        try {
+            const uniqueKey = String(this.currentFile).replace(/\\/g, '/');
+            window.tabManager?.markTabAsSavedByUniqueKey?.(uniqueKey);
+        } catch (_) { }
+
+        const settings = await window.electronAPI.getAllSettings();
+        const compilerPath = settings.compilerPath;
+        let compilerArgs = settings.compilerArgs || '-std=c++14 -O2';
+        let testlibIncludePath = '';
+
+        if (!compilerPath) {
+            throw new Error(window.i18n.t('tester.setCompilerFirst'));
+        }
+
+        if (useTestlib) {
+            if (settings.testlibPath) {
+                const pathInfo = await window.electronAPI.getPathInfo(settings.testlibPath);
+                testlibIncludePath = pathInfo.dirname;
+            } else {
+                const pathInfo = await window.electronAPI.getPathInfo(compilerPath);
+                testlibIncludePath = await window.electronAPI.pathJoin(pathInfo.dirname, '..', 'include');
+            }
+            compilerArgs += ` -I"${testlibIncludePath}"`;
+        }
+
+        const cacheKey = this.buildMainCompileCacheKey({
+            content,
+            currentFile: this.currentFile,
+            compilerPath,
+            compilerArgs,
+            useTestlib,
+            testlibIncludePath
+        });
+
+        const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
+        const cachedExeName = `sample_${cacheKey}${isWin ? '.exe' : ''}`;
+
+        if (
+            this.mainCompileCache.key === cacheKey &&
+            this.mainCompileCache.executablePath &&
+            await window.electronAPI.checkFileExists(this.mainCompileCache.executablePath)
+        ) {
+            logInfo('[样例测试器] 命中编译缓存，跳过编译');
+            return {
+                success: true,
+                cached: true,
+                executablePath: this.mainCompileCache.executablePath,
+                stdout: '',
+                stderr: '',
+                warnings: [],
+                errors: [],
+                diagnostics: []
+            };
+        }
+
+        const currentFilePathInfo = await window.electronAPI.getPathInfo(this.currentFile);
+        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        await window.electronAPI.ensureDirectory(tempDir);
+        const executableFile = await window.electronAPI.pathJoin(tempDir, cachedExeName);
+
+        const result = await window.electronAPI.compileFile({
+            inputFile: this.currentFile,
+            outputFile: executableFile,
+            compilerPath: compilerPath,
+            compilerArgs,
+            workingDirectory: currentFilePathInfo?.dirname || tempDir
+        });
+
+            if (result.success) {
+                if (
+                    this.mainCompileCache.executablePath &&
+                    this.mainCompileCache.executablePath !== executableFile
+                ) {
+                    try {
+                        await window.electronAPI.deleteTempFile(this.mainCompileCache.executablePath);
+                    } catch (_) { }
+                }
+
+                this.mainCompileCache = {
+                    key: cacheKey,
+                    executablePath: executableFile
+                };
+                result.executablePath = executableFile;
+                if (window.editorManager && window.editorManager.clearDiagnostics) {
+                    window.editorManager.clearDiagnostics();
+                }
+            } else {
+                this.mainCompileCache = {
+                    key: null,
+                    executablePath: null
+                };
+            }
+            if (!result.success && result.diagnostics && window.editorManager && window.editorManager.applyDiagnostics) {
+                window.editorManager.applyDiagnostics(result.diagnostics);
+            }
+
+            if (!result.success) {
+                this.showCompileOutputForResult(window.i18n.t('tester.titleSampleCompile'), result);
+            }
+
+        return result;
+    }
+
+    async runProgram(executablePath, input, timeLimit, memoryLimit) {
+        const execOptions = typeof executablePath === 'object'
+            ? { ...executablePath, skipPreKill: true }
+            : { executablePath, skipPreKill: true };
+        if (memoryLimit !== undefined) {
+            execOptions.memoryLimit = memoryLimit;
+        }
+        return await window.electronAPI.runProgram(execOptions, input, timeLimit, memoryLimit);
+    }
+
+    compareOutput(actual, expected) {
+        const normalize = (str) => {
+            return String(str || '').replace(/\r\n?/g, '\n').split('\n')
+                .map(line => line.trimEnd())
+                .join('\n')
+                .replace(/\n+$/, '');
+        };
+
+        const normalizedActual = normalize(actual || '');
+        const normalizedExpected = normalize(expected || '');
+
+        return normalizedActual === normalizedExpected ? 'AC' : 'WA';
+    }
+
+    truncateOutput(output) {
+        if (!output) return '';
+        if (output.length > 1000) {
+            return output.substring(0, 1000) + '\n' + window.i18n.t('tester.outputTruncated');
+        }
+        return output;
+    }
+
+    // 运行结果常出现数十 MB 的输出（死循环打印等），完整留在内存会拖垮渲染进程，
+    // 故 rawOutput/stderr 只保留前 cap 个字符，超出部分丢弃。
+    truncateForStorage(output, cap = MAX_RUNTIME_OUTPUT_CHARS) {
+        const str = output == null ? '' : String(output);
+        if (str.length <= cap) return str;
+        return str.substring(0, cap) + '\n' + window.i18n.t('tester.outputTruncated');
+    }
+
+    getOutputSizeBytes(output) {
+        const safeOutput = output == null ? '' : String(output);
+        // 大输出不再整体编码：TextEncoder().encode() 会分配与字符串等大的数组，
+        // 60MB 输出即多占 60MB 峰值，这里改用上界估算。
+        if (safeOutput.length > MAX_RUNTIME_OUTPUT_CHARS) {
+            return safeOutput.length * 2;
+        }
+        try {
+            return new TextEncoder().encode(safeOutput).length;
+        } catch (_) {
+            return safeOutput.length;
+        }
+    }
+
+    getOutputSizeMbText(result) {
+        const fullOutput = result?.rawOutput ?? result?.output ?? '';
+        const bytes = (result && Number.isFinite(result.outputSizeBytes) && result.outputSizeBytes > 0)
+            ? result.outputSizeBytes
+            : this.getOutputSizeBytes(fullOutput);
+        return (bytes / (1024 * 1024)).toFixed(2);
+    }
+
+    isOutputTruncated(result) {
+        if (!result) return false;
+        const compactOutput = result.output || '';
+        const fullOutput = result.rawOutput || compactOutput;
+        if (fullOutput.length > 1000) {
+            return true;
+        }
+        if (fullOutput.length > compactOutput.length) {
+            return true;
+        }
+        return fullOutput.split('\n').length > 100;
+    }
+
+    processOutputForDisplay(output, result, sampleId) {
+        const fullOutput = result?.rawOutput || output || '';
+
+        if (result?.outputExpanded) {
+            return fullOutput;
+        }
+
+        const charLimitedOutput = this.truncateOutput(fullOutput);
+        const displayBase = charLimitedOutput || fullOutput;
+
+        const lines = displayBase.split('\n');
+        const maxLines = 100;
+
+        if (lines.length > maxLines) {
+            const truncatedOutput = lines.slice(0, maxLines).join('\n');
+            return truncatedOutput + '\n' + window.i18n.t('tester.outputOmitted');
+        }
+        return displayBase;
+    }
+
+    // @ts-ignore TS2393: 历史遗留的重复定义，暂不合并
+    getDifferenceInfo(actual, expected) {
+        const actualLines = actual.split('\n');
+        const expectedLines = expected.split('\n');
+
+        const maxCompareLines = Math.max(actualLines.length, expectedLines.length);
+
+        for (let i = 0; i < maxCompareLines; i++) {
+            const actualLine = actualLines[i] || '';
+            const expectedLine = expectedLines[i] || '';
+            if (actualLine.trimEnd() !== expectedLine.trimEnd()) {
+                let diffChar = 0;
+                const minLength = Math.min(actualLine.length, expectedLine.length);
+                while (diffChar < minLength && actualLine[diffChar] === expectedLine[diffChar]) {
+                    diffChar++;
+                }
+                return {
+                    line: i + 1,
+                    char: diffChar + 1
+                };
+            }
+        }
+
+        return null;
+    }
+
+    // @ts-ignore TS2393: 历史遗留的重复定义，运行时以后者为准，暂不合并
+    getDifferenceInfo(actual, expected) {
+        const actualLines = actual.split('\n');
+        const expectedLines = expected.split('\n');
+
+        for (let i = 0; i < Math.max(actualLines.length, expectedLines.length); i++) {
+            const actualLine = actualLines[i] || '';
+            const expectedLine = expectedLines[i] || '';
+
+            if (actualLine !== expectedLine) {
+                for (let j = 0; j < Math.max(actualLine.length, expectedLine.length); j++) {
+                    if (actualLine[j] !== expectedLine[j]) {
+                        return {
+                            line: i + 1,
+                            char: j + 1
+                        };
+                    }
+                }
+                return {
+                    line: i + 1,
+                    char: Math.min(actualLine.length, expectedLine.length) + 1
+                };
+            }
+        }
+
+        return null;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    createHighlightedOutput(actual, expected) {
+        const safeActual = this.truncateOutput(actual || '');
+        const actualLines = safeActual.split('\n');
+        const expectedLines = expected.split('\n');
+        const maxLines = 100;
+
+        let result = '';
+        const maxCompareLines = Math.max(actualLines.length, expectedLines.length);
+        const displayLines = Math.min(maxLines, actualLines.length);
+
+        for (let i = 0; i < displayLines; i++) {
+            const actualLine = actualLines[i] || '';
+            const expectedLine = expectedLines[i] || '';
+
+            if (i < expectedLines.length && actualLine.trimEnd() !== expectedLine.trimEnd()) {
+                let diffChar = 0;
+                const minLength = Math.min(actualLine.length, expectedLine.length);
+                while (diffChar < minLength && actualLine[diffChar] === expectedLine[diffChar]) {
+                    diffChar++;
+                }
+
+                const beforeDiff = this.escapeHtml(actualLine.substring(0, diffChar));
+                const diffCharacter = actualLine.length > diffChar ? this.escapeHtml(actualLine.substring(diffChar, diffChar + 1)) : '';
+                const afterDiff = actualLine.length > diffChar + 1 ? this.escapeHtml(actualLine.substring(diffChar + 1)) : '';
+
+                if (diffCharacter) {
+                    result += beforeDiff + `<span class="diff-highlight">${diffCharacter}</span>` + afterDiff;
+                } else {
+                    const icon = (window.uiIcons && typeof window.uiIcons.svg === 'function') ? window.uiIcons.svg('emptyBox') : '';
+                    result += beforeDiff + `<span class="diff-highlight">${icon}</span>`;
+                }
+            } else {
+                result += this.escapeHtml(actualLine);
+            }
+
+            if (i < displayLines - 1) {
+                result += '\n';
+            }
+        }
+
+        if (actualLines.length > maxLines) {
+            result += '\n' + window.i18n.t('tester.outputOmitted');
+        }
+
+        return result;
+    }
+
+    updateSampleResult(id, result, sample = null) {
+        const stderrTextarea = toTextArea(document.getElementById(`stderr-${id}`));
+        if (stderrTextarea) {
+            stderrTextarea.value = result?.stderr || '';
+            const stderrGroup = stderrTextarea.closest('.stderr-output-group');
+            if (stderrGroup instanceof HTMLElement) stderrGroup.style.display = result?.stderr ? '' : 'none';
+        }
+        const spjOutputTextarea = toTextArea(document.getElementById(`spj-output-${id}`));
+        if (spjOutputTextarea) {
+            spjOutputTextarea.value = result?.spjOutput || '';
+            const spjGroup = spjOutputTextarea.closest('.spj-output-group');
+            if (spjGroup instanceof HTMLElement) spjGroup.style.display = result?.spjOutput ? '' : 'none';
+        }
+        const element = (document.querySelector(`[data-sample-id="${id}"]`));
+        if (!element) return;
+
+        const statusContainer = element.querySelector('.sample-status');
+        let statusBadge = `<span class="status-badge status-${result.status.toLowerCase()}">${result.status}</span>`;
+
+        if (result.time !== undefined) {
+            statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${result.time}ms</span>`;
+        }
+        if (Number.isFinite(result.memoryBytes)) {
+            statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${(result.memoryBytes / (1024 * 1024)).toFixed(1)}MB</span>`;
+        }
+
+        statusContainer.innerHTML = statusBadge;
+
+        const outputContainer = element.querySelector('.program-output-container');
+        const outputTextarea = toTextArea(element.querySelector('.program-output'));
+        const diffInfo = htmlOf(element.querySelector('.diff-info'));
+        const expandBtn = htmlOf(element.querySelector('.expand-output-btn'));
+        const truncated = this.isOutputTruncated(result);
+        const isExpanded = !!result.outputExpanded;
+
+        if (expandBtn) {
+            expandBtn.style.display = truncated ? 'inline-flex' : 'none';
+            expandBtn.textContent = isExpanded ? (window.i18n.t('tester.collapse')) : (window.i18n.t('tester.expand'));
+            expandBtn.title = `${isExpanded ? window.i18n.t('tester.collapse') : window.i18n.t('tester.expand')} ${window.i18n.t('tester.actualOutput')}`;
+        }
+
+        if (outputTextarea && outputContainer) {
+            const processedOutput = this.processOutputForDisplay(result.output || '', result, id);
+
+            const usedSpj = result.usedSpj || false;
+
+            if (result.status === 'WA' && !usedSpj && !isExpanded) {
+                if (!sample) {
+                    sample = this.samples.find(s => s.id === id);
+                }
+                if (sample) {
+                    // For file-backed samples, sample.output is the file path rather
+                    // than the expected text.  Use the exact content read during the
+                    // test run so the rendered first-difference location matches the
+                    // comparison result.
+                    const expectedOutput = Object.prototype.hasOwnProperty.call(result, 'expectedOutput')
+                        ? result.expectedOutput
+                        : (sample.output || '');
+                    const actualOutput = result.rawOutput || result.output || '';
+
+                    const diffPosition = this.getDifferenceInfo(actualOutput, expectedOutput);
+                    if (diffPosition && diffInfo) {
+                        diffInfo.textContent = window.i18n.t('compare.diffPosition', {line: diffPosition.line, char: diffPosition.char});
+                        diffInfo.style.display = 'inline';
+                    }
+
+                    const highlightedOutput = this.createHighlightedOutput(processedOutput, expectedOutput);
+
+                    outputTextarea.style.display = 'none';
+
+                    let highlightDiv = htmlOf(outputContainer.querySelector('.highlighted-output'));
+                    if (!highlightDiv) {
+                        highlightDiv = document.createElement('div');
+                        highlightDiv.className = 'highlighted-output';
+                        outputContainer.appendChild(highlightDiv);
+                    }
+                    highlightDiv.innerHTML = highlightedOutput;
+                    highlightDiv.style.display = 'block';
+                }
+            } else {
+                outputTextarea.value = processedOutput;
+                outputTextarea.style.display = 'block';
+
+                if (diffInfo) {
+                    diffInfo.style.display = 'none';
+                }
+
+                const highlightDiv = htmlOf(outputContainer.querySelector('.highlighted-output'));
+                if (highlightDiv) {
+                    highlightDiv.style.display = 'none';
+                }
+
+                this.autoResizeProgramOutput(outputTextarea);
+            }
+        }
+
+        const outputControls = htmlOf(element.querySelector('.output-controls'));
+        if (outputControls) {
+            const hasOutput = !!(result.rawOutput || result.output);
+            outputControls.style.display = hasOutput ? 'flex' : 'none';
+        }
+
+        element.classList.remove('success', 'error');
+        if (result.status === 'AC') {
+            element.classList.add('success');
+            element.classList.remove('expanded');
+        } else {
+            element.classList.add('error');
+        }
+
+        this.updateSummary();
+    }
+
+    async exportSampleOutput(sampleId) {
+        try {
+            const sample = this.samples.find(s => s.id === sampleId);
+            if (!sample || !sample.result || !sample.result.output) {
+                logWarn('没有可导出的输出数据');
+                return;
+            }
+
+            const result = await window.electronAPI.showSaveDialog({
+                title: window.i18n.t('tester.exportOutput'),
+                defaultPath: `sample_${sampleId}_output.txt`,
+                filters: [
+                    { name: window.i18n.t('tester.textFileFilter'), extensions: ['txt'] },
+                    { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
+                ]
+            });
+
+            if (!result.canceled && result.filePath) {
+                await window.electronAPI.saveFile(result.filePath, sample.result.rawOutput || sample.result.output);
+
+                const statusContainer = (document.querySelector(`[data-sample-id="${sampleId}"] .sample-status`));
+                if (statusContainer) {
+                    const originalContent = statusContainer.innerHTML;
+                    statusContainer.innerHTML = '<span style="color: #4CAF50; font-size: 11px;">' + (window.i18n.t('tester.exported')) + '</span>';
+                    setTimeout(() => {
+                        statusContainer.innerHTML = originalContent;
+                    }, 2000);
+                }
+            }
+        } catch (error) {
+            logError('导出样例输出失败:', error);
+        }
+    }
+
+    async toggleExpandOutput(sampleId) {
+        const sample = this.samples.find(s => s.id === sampleId);
+        if (!sample || !sample.result) {
+            return;
+        }
+
+        const result = sample.result;
+        if (!this.isOutputTruncated(result)) {
+            return;
+        }
+
+        if (result.outputExpanded) {
+            result.outputExpanded = false;
+            this.updateSampleResult(sampleId, result, sample);
+            this.saveSamples();
+            return;
+        }
+
+        const sizeMbText = this.getOutputSizeMbText(result);
+        const message = `${window.i18n.t('tester.expandConfirmMsg', {size: sizeMbText})}`;
+
+        let shouldExpand = false;
+        try {
+            if (window.dialogManager?.showActionDialog) {
+                const action = await window.dialogManager.showActionDialog((window.i18n.t('tester.expandConfirmTitle')), message, [
+                    { id: 'cancel', label: window.i18n.t('dialog.cancel'), className: 'dialog-btn-cancel' },
+                    { id: 'expand', label: window.i18n.t('tester.expandAnyway'), className: 'dialog-btn-confirm' }
+                ]);
+                shouldExpand = action === 'expand';
+            } else if (window.dialogManager?.showConfirmDialog) {
+                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('tester.expandConfirmTitle'), window.i18n.t('tester.expandConfirmMsgText', { size: sizeMbText }));
+            } else {
+                shouldExpand = window.confirm(window.i18n.t('tester.expandConfirmMsgText', { size: sizeMbText }));
+            }
+        } catch (error) {
+            logWarn('展开输出确认失败，已取消展开:', error);
+            shouldExpand = false;
+        }
+
+        if (!shouldExpand) {
+            return;
+        }
+
+        result.outputExpanded = true;
+        this.updateSampleResult(sampleId, result, sample);
+        this.saveSamples();
+    }
+
+    async autoSaveCurrentFile() {
+        try {
+            const currentEditor = window.editorManager?.getCurrentEditor();
+            if (!currentEditor) {
+                logInfo('[样例测试器-自动保存] 没有当前编辑器');
+                return;
+            }
+
+            const filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
+            if (!filePath || filePath.startsWith('untitled')) {
+                logInfo('[样例测试器-自动保存] 文件未保存或为临时文件，跳过自动保存');
+                return;
+            }
+
+            const content = currentEditor.getValue();
+            if (content === null || content === undefined) {
+                logInfo('[样例测试器-自动保存] 无法获取文件内容');
+                return;
+            }
+
+            if (window.tabManager) {
+                const fileName = filePath.split(/[\\/]/).pop();
+                const tab = window.tabManager.getTabByFileName && window.tabManager.getTabByFileName(fileName);
+                if (tab && !tab.modified) {
+                    logInfo('[样例测试器-自动保存] 文件未修改，跳过保存');
+                    return;
+                }
+            }
+
+            logInfo('[样例测试器-自动保存] 开始保存文件:', filePath);
+
+            if (window.electronAPI && window.electronAPI.saveFile) {
+                await window.electronAPI.saveFile(filePath, content);
+                logInfo('[样例测试器-自动保存] 文件保存成功');
+
+                if (window.tabManager) {
+                    const fileName = filePath.split(/[\\/]/).pop();
+                    if (window.tabManager.markTabAsSaved) {
+                        window.tabManager.markTabAsSaved(fileName);
+                    }
+                    if (window.tabManager.markTabAsSavedByUniqueKey) {
+                        window.tabManager.markTabAsSavedByUniqueKey(filePath);
+                    }
+                }
+            } else {
+                logWarn('[样例测试器-自动保存] electronAPI 不可用');
+            }
+        } catch (error) {
+            logError('[样例测试器-自动保存] 保存文件失败:', error);
+        }
+    }
+
+    async compileSpjFile(spjPath) {
+        if (!spjPath) {
+            throw new Error(window.i18n.t('tester.spjPathEmpty'));
+        }
+
+        let spjContent;
+        try {
+            spjContent = await window.electronAPI.readFileContent(spjPath);
+        } catch (error) {
+            throw new Error(window.i18n.t('tester.readSpjFail', { msg: error.message }));
+        }
+
+        if (!spjContent.trim()) {
+            throw new Error(window.i18n.t('tester.spjContentEmpty'));
+        }
+
+        const settings = await window.electronAPI.getAllSettings();
+        const compilerPath = settings.compilerPath;
+        let compilerArgs = settings.compilerArgs || '-std=c++14 -O2';
+        let testlibIncludePath = '';
+
+        if (!compilerPath) {
+            throw new Error(window.i18n.t('tester.setCompilerFirst'));
+        }
+
+        if (settings.testlibPath) {
+            const testlibPathInfo = await window.electronAPI.getPathInfo(settings.testlibPath);
+            testlibIncludePath = testlibPathInfo.dirname;
+            compilerArgs += ` -I"${testlibIncludePath}"`;
+        } else {
+            const pathInfo = await window.electronAPI.getPathInfo(compilerPath);
+            testlibIncludePath = await window.electronAPI.pathJoin(pathInfo.dirname, '..', 'include');
+            compilerArgs += ` -I"${testlibIncludePath}"`;
+        }
+
+        const cacheKey = this.buildSpjCompileCacheKey({
+            spjPath,
+            spjContent,
+            compilerPath,
+            compilerArgs,
+            testlibIncludePath
+        });
+
+        if (
+            this.spjCompileCache.key === cacheKey &&
+            this.spjCompileCache.executablePath &&
+            await window.electronAPI.checkFileExists(this.spjCompileCache.executablePath)
+        ) {
+            return {
+                success: true,
+                cached: true,
+                executablePath: this.spjCompileCache.executablePath,
+                stdout: '',
+                stderr: '',
+                warnings: [],
+                errors: [],
+                diagnostics: []
+            };
+        }
+
+        const isWin2 = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
+        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        await window.electronAPI.ensureDirectory(tempDir);
+        const executableFile = await window.electronAPI.pathJoin(tempDir, `spj_${cacheKey}${isWin2 ? '.exe' : ''}`);
+        const spjPathInfo = await window.electronAPI.getPathInfo(spjPath);
+
+        const result = await window.electronAPI.compileFile({
+            inputFile: spjPath,
+            outputFile: executableFile,
+            compilerPath: compilerPath,
+            compilerArgs,
+            workingDirectory: spjPathInfo?.dirname || tempDir
+        });
+
+            if (result.success) {
+                if (
+                    this.spjCompileCache.executablePath &&
+                    this.spjCompileCache.executablePath !== executableFile
+                ) {
+                    try {
+                        await window.electronAPI.deleteTempFile(this.spjCompileCache.executablePath);
+                    } catch (_) { }
+                }
+
+                this.spjCompileCache = {
+                    key: cacheKey,
+                    executablePath: executableFile
+                };
+                result.executablePath = executableFile;
+            } else {
+                this.spjCompileCache = {
+                    key: null,
+                    executablePath: null
+                };
+            }
+
+            if (!result.success) {
+                this.showCompileOutputForResult(window.i18n.t('tester.titleSpjCompile'), result);
+            }
+
+        return result;
+    }
+
+    async compileGraderFile(graderPath) {
+        if (!graderPath) {
+            throw new Error(window.i18n.t('tester.graderPathEmpty'));
+        }
+
+        let graderContent;
+        try {
+            graderContent = await window.electronAPI.readFileContent(graderPath);
+        } catch (error) {
+            throw new Error(window.i18n.t('tester.readGraderFail', { msg: error.message }));
+        }
+
+        if (!graderContent.trim()) {
+            throw new Error(window.i18n.t('tester.graderContentEmpty'));
+        }
+
+        const settings = await window.electronAPI.getAllSettings();
+        const compilerPath = settings.compilerPath;
+        let compilerArgs = settings.compilerArgs || '-std=c++14 -O2';
+        let testlibIncludePath = '';
+
+        if (!compilerPath) {
+            throw new Error(window.i18n.t('tester.setCompilerFirst'));
+        }
+
+        if (this.globalSettings.useTestlib) {
+            if (settings.testlibPath) {
+                const testlibPathInfo = await window.electronAPI.getPathInfo(settings.testlibPath);
+                testlibIncludePath = testlibPathInfo.dirname;
+            } else {
+                const pathInfo = await window.electronAPI.getPathInfo(compilerPath);
+                testlibIncludePath = await window.electronAPI.pathJoin(pathInfo.dirname, '..', 'include');
+            }
+            compilerArgs += ' -I"' + testlibIncludePath + '"';
+        }
+
+        const cacheKey = this.buildGraderCompileCacheKey({
+            graderPath,
+            graderContent,
+            compilerPath,
+            compilerArgs,
+            testlibIncludePath
+        });
+
+        if (
+            this.graderCompileCache.key === cacheKey &&
+            this.graderCompileCache.executablePath &&
+            await window.electronAPI.checkFileExists(this.graderCompileCache.executablePath)
+        ) {
+            return {
+                success: true,
+                cached: true,
+                executablePath: this.graderCompileCache.executablePath,
+                stdout: '',
+                stderr: '',
+                warnings: [],
+                errors: [],
+                diagnostics: []
+            };
+        }
+
+        const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
+        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        await window.electronAPI.ensureDirectory(tempDir);
+        const executableFile = await window.electronAPI.pathJoin(
+            tempDir,
+            'grader_' + cacheKey + (isWin ? '.exe' : '')
+        );
+        const graderPathInfo = await window.electronAPI.getPathInfo(graderPath);
+
+        const result = await window.electronAPI.compileFile({
+            inputFile: graderPath,
+            outputFile: executableFile,
+            compilerPath,
+            compilerArgs,
+            workingDirectory: graderPathInfo?.dirname || tempDir
+        });
+
+        if (result.success) {
+            if (
+                this.graderCompileCache.executablePath &&
+                this.graderCompileCache.executablePath !== executableFile
+            ) {
+                try {
+                    await window.electronAPI.deleteTempFile(this.graderCompileCache.executablePath);
+                } catch (_) { }
+            }
+
+            this.graderCompileCache = {
+                key: cacheKey,
+                executablePath: executableFile
+            };
+            result.executablePath = executableFile;
+        } else {
+            this.graderCompileCache = {
+                key: null,
+                executablePath: null
+            };
+        }
+
+        if (!result.success) {
+            this.showCompileOutputForResult(window.i18n.t('tester.titleGraderCompile'), result);
+        }
+
+        return result;
+    }
+
+    async judgeWithSpj(spjExecutablePath, inputData, actualOutput, expectedOutput) {
+        try {
+            const suffix = `${Date.now()}_${++this.spjTempSequence}`;
+            const inputFile = await window.electronAPI.saveTempFile(`spj_input_${suffix}.txt`, inputData);
+            const actualFile = await window.electronAPI.saveTempFile(`spj_actual_${suffix}.txt`, actualOutput);
+            const expectedFile = await window.electronAPI.saveTempFile(`spj_expected_${suffix}.txt`, expectedOutput);
+            const tempFiles = [inputFile, actualFile, expectedFile];
+            tempFiles.forEach(file => this.spjTempFiles.add(file));
+
+            try {
+                const workingDir = await window.electronAPI.pathDirname(spjExecutablePath);
+                const spjParams = {
+                    executablePath: spjExecutablePath,
+                    args: [inputFile, actualFile, expectedFile],
+                    timeLimit: 5000,
+                    workingDirectory: workingDir,
+                    skipPreKill: true
+                };
+
+                const spjResult = await ((window.electronAPI)).runProgram(spjParams);
+                const output = [spjResult.stdout, spjResult.stderr].filter(Boolean).join(spjResult.stdout && spjResult.stderr ? '\n' : '');
+
+                if (spjResult.outputLimitExceeded) {
+                    return { status: 'OLE', output };
+                } else if (spjResult.timeout) {
+                    return { status: 'TLE', output };
+                } else if (spjResult.exitCode === 0) {
+                    return { status: 'AC', output };
+                } else {
+                    return { status: 'WA', output };
+                }
+            } finally {
+                if (!this.deferSpjTempCleanup) {
+                    await this.cleanupSpjTempFiles(tempFiles);
+                }
+            }
+        } catch (error) {
+            logError('SPJ判题失败:', error);
+            return { status: 'Error', output: error?.message || String(error) };
+        }
+    }
+
+    async cleanupSpjTempFiles(files = null) {
+        const targets = files || Array.from(this.spjTempFiles);
+        await Promise.all(targets.map(async (file) => {
+            try {
+                await window.electronAPI.deleteTempFile(file);
+            } catch (_) { }
+            this.spjTempFiles.delete(file);
+        }));
+    }
+
+    showCompileOutputForResult(title, result) {
+        const manager = window.compilerManager;
+        if (!manager) return;
+        if (typeof manager.showExternalCompileResult === 'function') {
+            manager.showExternalCompileResult(result, { title });
+            return;
+        }
+
+        try {
+            manager.showOutput?.();
+            manager.clearOutput?.();
+            if (result?.success) {
+                manager.setStatus?.(window.i18n.t('tester.opSuccess', { title }));
+            } else {
+                manager.setStatus?.(window.i18n.t('tester.opFail', { title }));
+            }
+            if (result?.stderr) {
+                manager.appendOutput?.(window.i18n.t('tester.stderrHeader') + '\n', 'error');
+                manager.appendOutput?.(`${result.stderr}\n`, 'error');
+            }
+            if (result?.stdout) {
+                manager.appendOutput?.(window.i18n.t('tester.stdoutHeader') + '\n', 'info');
+                manager.appendOutput?.(`${result.stdout}\n`, 'info');
+            }
+        } catch (error) {
+            logWarn('[样例测试器] 推送编译输出失败', error);
+        }
+    }
+
+    updateGlobalSettingsUI() {
+        const globalUseTestlib = stCheckbox('global-use-testlib');
+        const globalUseInteractive = stCheckbox('global-use-interactive');
+        const globalSpjPath = elInput('global-spj-path');
+        const globalGraderPath = elInput('global-grader-path');
+        const globalGraderGroup = htmlOf(document.getElementById('global-grader-group'));
+        const globalFreopenInputFile = elInput('global-freopen-input-file');
+        const globalFreopenOutputFile = elInput('global-freopen-output-file');
+        const globalTimeLimit = elInput('global-time-limit');
+        const globalMemoryLimit = elInput('global-memory-limit');
+
+        if (globalUseTestlib) {
+            globalUseTestlib.checked = this.globalSettings.useTestlib;
+        }
+        if (globalUseInteractive) {
+            globalUseInteractive.checked = !!this.globalSettings.useInteractive;
+        }
+        if (globalGraderGroup) {
+            globalGraderGroup.style.display = this.globalSettings.useInteractive ? '' : 'none';
+        }
+        if (globalGraderPath) {
+            globalGraderPath.value = this.globalSettings.graderPath || '';
+            this.updateGraderFileDisplay(this.globalSettings.graderPath || '');
+        }
+        if (globalSpjPath) {
+            globalSpjPath.value = this.globalSettings.spjPath || '';
+            this.updateSpjFileDisplay(this.globalSettings.spjPath || '');
+        }
+        if (globalFreopenInputFile) {
+            globalFreopenInputFile.value = this.globalSettings.freopenInputFile || '';
+        }
+        if (globalFreopenOutputFile) {
+            globalFreopenOutputFile.value = this.globalSettings.freopenOutputFile || '';
+        }
+        if (globalTimeLimit) {
+            globalTimeLimit.value = String(this.sanitizeTimeLimit(this.globalSettings.defaultTimeLimit, 1000));
+        }
+        if (globalMemoryLimit) {
+            globalMemoryLimit.value = String(this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0));
+        }
+    }
+
+    updateGlobalSetting(setting, value) {
+        logInfo('[样例测试器] 更新全局设置:', setting, '=', value);
+        if (setting === 'freopenInputFile' || setting === 'freopenOutputFile') {
+            this.globalSettings[setting] = this.normalizeFreopenFileName(value);
+        } else if (setting === 'defaultTimeLimit') {
+            this.globalSettings[setting] = this.sanitizeTimeLimit(value, this.globalSettings.defaultTimeLimit);
+        } else if (setting === 'defaultMemoryLimit') {
+            this.globalSettings[setting] = this.sanitizeMemoryLimit(value, this.globalSettings.defaultMemoryLimit);
+        } else {
+            this.globalSettings[setting] = value;
+        }
+        logInfo('[样例测试器] 更新后的全局设置:', this.globalSettings);
+        this.saveGlobalSettings();
+    }
+
+    async selectGlobalSpjFile() {
+        try {
+            const result = await window.electronAPI.showOpenDialog({
+                title: window.i18n.t('tester.selectSpjFile'),
+                filters: [
+                    { name: 'C++ Files', extensions: ['cpp', 'cc', 'cxx'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ],
+                properties: ['openFile']
+            });
+
+            if (!result.canceled && result.filePaths.length > 0) {
+                const spjPath = result.filePaths[0];
+                this.globalSettings.spjPath = spjPath;
+                elInput('global-spj-path').value = spjPath;
+                this.updateSpjFileDisplay(spjPath);
+                this.saveGlobalSettings();
+            }
+        } catch (error) {
+            logError('选择SPJ文件失败:', error);
+        }
+    }
+
+    clearGlobalSpjFile() {
+        this.globalSettings.spjPath = '';
+        elInput('global-spj-path').value = '';
+        this.updateSpjFileDisplay('');
+        this.saveGlobalSettings();
+    }
+
+    async selectGlobalGraderFile() {
+        try {
+            const result = await window.electronAPI.showOpenDialog({
+                title: window.i18n.t('tester.selectGraderFile'),
+                filters: [
+                    { name: 'C++ Files', extensions: ['cpp', 'cc', 'cxx'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ],
+                properties: ['openFile']
+            });
+
+            if (!result.canceled && result.filePaths.length > 0) {
+                const graderPath = result.filePaths[0];
+                this.globalSettings.graderPath = graderPath;
+                elInput('global-grader-path').value = graderPath;
+                this.updateGraderFileDisplay(graderPath);
+                this.saveGlobalSettings();
+            }
+        } catch (error) {
+            logError('选择 grader 文件失败:', error);
+        }
+    }
+
+    clearGlobalGraderFile() {
+        this.globalSettings.graderPath = '';
+        elInput('global-grader-path').value = '';
+        this.updateGraderFileDisplay('');
+        this.saveGlobalSettings();
+    }
+
+    updateGraderFileDisplay(graderPath) {
+        const display = (document.getElementById('grader-file-display'));
+        const fileName = (document.getElementById('grader-file-name'));
+
+        if (!display || !fileName) return;
+        if (graderPath) {
+            fileName.textContent = graderPath.split(/[\\\\\\/]/).pop();
+            fileName.title = graderPath;
+            display.style.display = 'flex';
+        } else {
+            display.style.display = 'none';
+        }
+    }
+
+    updateSpjFileDisplay(spjPath) {
+        const spjFileDisplay = (document.getElementById('spj-file-display'));
+        const spjFileName = (document.getElementById('spj-file-name'));
+
+        if (spjPath) {
+            const fileName = spjPath.split(/[\\\/]/).pop();
+            spjFileName.textContent = fileName;
+            spjFileName.title = spjPath;
+            spjFileDisplay.style.display = 'flex';
+        } else {
+            spjFileDisplay.style.display = 'none';
+        }
+    }
+
+    saveGlobalSettings() {
+        if (this.currentFile && this.samplesFilePath) {
+            this.saveSamples();
+        }
+    }
+
+    loadGlobalSettings(data) {
+        if (data && data.globalSettings) {
+            this.globalSettings = { ...this.globalSettings, ...data.globalSettings };
+        } else {
+            this.globalSettings = {
+                useTestlib: false,
+                useInteractive: false,
+                spjPath: '',
+                graderPath: '',
+                freopenInputFile: '',
+                freopenOutputFile: '',
+                defaultTimeLimit: 1000,
+                defaultMemoryLimit: 0
+            };
+        }
+
+        this.globalSettings.freopenInputFile = this.normalizeFreopenFileName(this.globalSettings.freopenInputFile || '');
+        this.globalSettings.freopenOutputFile = this.normalizeFreopenFileName(this.globalSettings.freopenOutputFile || '');
+        this.globalSettings.defaultTimeLimit = this.sanitizeTimeLimit(this.globalSettings.defaultTimeLimit, 1000);
+        this.globalSettings.defaultMemoryLimit = this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0);
+        this.globalSettings.useInteractive = !!this.globalSettings.useInteractive;
+        this.globalSettings.graderPath = typeof this.globalSettings.graderPath === 'string' ? this.globalSettings.graderPath : '';
+    }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = SampleTester;
+}
+if (typeof window !== 'undefined') {
+    window.SampleTester = SampleTester;
+}
+
+interface Window {
+    SampleTester: typeof SampleTester;
+    sampleTester: SampleTester;
+}
