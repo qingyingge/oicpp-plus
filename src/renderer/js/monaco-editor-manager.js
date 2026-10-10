@@ -8212,10 +8212,9 @@ class MonacoEditorManager {
                 pathStr = pathStr.replace(/\//g, '\\');
             }
             if (!pathStr) return false;
-            const start = converted.range.start || {};
             const position = new monaco.Position(
-                Number(start.lineNumber) || 1,
-                Number(start.column) || 1
+                Number(converted.range.startLineNumber) || Number(converted.range.start?.lineNumber) || 1,
+                Number(converted.range.startColumn) || Number(converted.range.start?.character) || 1
             );
             // 同文件短路：LSP 返回的定义就在当前文件内时，直接在当前编辑器就地跳转光标，
             // 不经过 openFileAtPosition 的 tab 复用/新开路径，避免同一文件被新开一个 tab。
