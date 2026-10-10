@@ -8166,7 +8166,7 @@ class MonacoEditorManager {
             }
 
             const lspLocations = await this.requestLspLocations('textDocument/definition', model, position);
-            if (lspLocations.length && (await this.goToLspLocation(lspLocations[0]))) {
+            if (lspLocations.length && (await this.goToLspLocation(lspLocations[0], editor, model))) {
                 return;
             }
 
@@ -8188,7 +8188,7 @@ class MonacoEditorManager {
         }
     }
 
-    async goToLspLocation(location) {
+    async goToLspLocation(location, fromEditor = null, fromModel = null) {
         try {
             if (!location || typeof monaco === 'undefined') return false;
             let converted = location;
@@ -8217,11 +8217,33 @@ class MonacoEditorManager {
                 Number(start.lineNumber) || 1,
                 Number(start.column) || 1
             );
+            // 同文件短路：LSP 返回的定义就在当前文件内时，直接在当前编辑器就地跳转光标，
+            // 不经过 openFileAtPosition 的 tab 复用/新开路径，避免同一文件被新开一个 tab。
+            if (fromEditor && (typeof fromEditor.isDisposed !== 'function' || !fromEditor.isDisposed())) {
+                const currentPath = this.getModelFilePath(fromModel || fromEditor.getModel?.());
+                if (currentPath && this.normalizePathForCompare(currentPath) === this.normalizePathForCompare(pathStr)) {
+                    this.goToMonacoPosition(fromEditor, position);
+                    return true;
+                }
+            }
             await this.openFileAtPosition(pathStr, position);
             return true;
         } catch (err) {
             logWarn('[LSP] 跳转到 LSP 位置失败:', err?.message || err);
             return false;
+        }
+    }
+
+    // 归一化路径用于同文件/跨文件跳转判断：统一分隔符 + 忽略大小写（Windows）。
+    normalizePathForCompare(filePath) {
+        try {
+            if (!filePath || typeof filePath !== 'string') return '';
+            let p = filePath.replace(/\\/g, '/');
+            const isWindows = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32')
+                || /^[a-zA-Z]:\//.test(p);
+            return isWindows ? p.toLowerCase() : p;
+        } catch (_) {
+            return '';
         }
     }
 
