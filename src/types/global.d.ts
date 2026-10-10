@@ -123,7 +123,7 @@ interface Window {
   titlebarManager: InstanceType<typeof import('../js/titlebar.js')>;
   sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
   dialogManager: import('../js/dialog.js').DialogManager;
-  browserManager: InstanceType<typeof import('../js/browser-manager.js')>;
+  browserManager: import('../js/browser-manager.js').BrowserManager;
   sampleTester: InstanceType<typeof import('../js/sidebar/sampleTester.js')>;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
   cloudSyncPanel: InstanceType<typeof import('../js/sidebar/cloudSync.js')>;
