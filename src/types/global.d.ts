@@ -118,11 +118,6 @@ interface Window {
     platform: NodeJS.Platform;
     env: { NODE_ENV: string; CI: boolean };
   };
-  fontDetector: {
-    validateFont: (fontName: string) => string;
-    getAllAvailableFonts: () => Promise<string[]>;
-    getAllAvailableFontsSync: () => string[];
-  };
   // 渲染层各 manager 单例（window.X = ... 在各自文件里赋值；类经文件尾 guarded module.exports 可被 typeof import 引用）
   tabManager: InstanceType<typeof import('../js/tabs.js')>;
   titlebarManager: InstanceType<typeof import('../js/titlebar.js')>;
@@ -172,7 +167,6 @@ interface Window {
   queryLocalFonts?: (options?: unknown) => Promise<Array<{ family: string; fullName: string; postscriptName: string; style: string }>>;
   TemplatesSettings: typeof import('../settings/templates.js');
   debugUI?: unknown;
-  FontDetector: typeof import('../utils/font-detector.js');
   TitlebarManager: typeof import('../js/titlebar.js');
   SidebarManager: typeof import('../js/sidebar.js');
   CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');

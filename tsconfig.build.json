@@ -10,5 +10,5 @@
     "noCheck": true
   },
   "include": [],
-  "files": ["src/utils/path-identity.ts", "src/gdb-mi.ts", "src/clang-format-service.ts", "src/utils/clangd-compile-flags.ts", "src/utils/multi-thread-downloader.ts", "src/renderer/js/compile-output.ts", "src/renderer/js/titlebar.ts", "node_modules/electron/electron.d.ts"]
+  "files": ["src/utils/path-identity.ts", "src/gdb-mi.ts", "src/clang-format-service.ts", "src/utils/clangd-compile-flags.ts", "src/utils/multi-thread-downloader.ts", "src/renderer/js/compile-output.ts", "src/renderer/js/titlebar.ts", "src/utils/font-detector.ts", "node_modules/electron/electron.d.ts"]
 }

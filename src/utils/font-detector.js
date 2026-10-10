@@ -1,21 +1,31 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.FontDetector = void 0;
 class FontDetector {
+    testString;
+    testSize;
+    fallbackFont;
+    defaultFont;
+    _warnedFonts;
     constructor() {
         this.testString = 'mmmmmmmmmmlli';
         this.testSize = '72px';
         this.fallbackFont = 'monospace';
-        const platform = (typeof process!=='undefined' && process.platform)||'';
-        if(platform==='win32') {
+        const platform = (typeof process !== 'undefined' && process.platform) || '';
+        if (platform === 'win32') {
             this.defaultFont = 'Consolas';
-        } else {
+        }
+        else {
             this.defaultFont = 'monospace, monospace';
         }
         this._warnedFonts = new Set();
     }
-
     isFontAvailable(fontName) {
-    if(!fontName) return false;
-    const genericFamilies = ['monospace','serif','sans-serif'];
-    if (genericFamilies.includes(fontName.toLowerCase())) return true;
+        if (!fontName)
+            return false;
+        const genericFamilies = ['monospace', 'serif', 'sans-serif'];
+        if (genericFamilies.includes(fontName.toLowerCase()))
+            return true;
         const testElement = document.createElement('span');
         testElement.style.position = 'absolute';
         testElement.style.left = '-9999px';
@@ -23,27 +33,19 @@ class FontDetector {
         testElement.style.fontSize = this.testSize;
         testElement.style.fontFamily = this.fallbackFont;
         testElement.textContent = this.testString;
-        
         document.body.appendChild(testElement);
-        
         const fallbackWidth = testElement.offsetWidth;
         const fallbackHeight = testElement.offsetHeight;
-        
         testElement.style.fontFamily = `"${fontName}", ${this.fallbackFont}`;
-        
         const testWidth = testElement.offsetWidth;
         const testHeight = testElement.offsetHeight;
-        
         document.body.removeChild(testElement);
-        
         return testWidth !== fallbackWidth || testHeight !== fallbackHeight;
     }
-
     validateFont(fontName) {
         if (!fontName || fontName.trim() === '') {
             return this.defaultFont;
         }
-
         let cleanFontName = fontName.replace(/["']/g, '').trim();
         const aliasMap = {
             'mono': 'monospace',
@@ -51,30 +53,29 @@ class FontDetector {
             'code': 'monospace'
         };
         const lower = cleanFontName.toLowerCase();
-        if(aliasMap[lower]) cleanFontName = aliasMap[lower];
-        
+        if (aliasMap[lower])
+            cleanFontName = aliasMap[lower];
         const firstFont = cleanFontName.split(',')[0].trim();
-        if (['monospace','serif','sans-serif'].includes(firstFont.toLowerCase())) {
+        if (['monospace', 'serif', 'sans-serif'].includes(firstFont.toLowerCase())) {
             return firstFont;
         }
-        
         if (this.isFontAvailable(firstFont)) {
             return firstFont;
-        } else {
-            if(!this._warnedFonts.has(firstFont)) {
+        }
+        else {
+            if (!this._warnedFonts.has(firstFont)) {
                 this._warnedFonts.add(firstFont);
                 logWarn(`字体 "${firstFont}" 在系统中不可用，已切换到默认字体 "${this.defaultFont}"`);
-                const platform = (typeof process!=='undefined' && process.platform)||'';
-                if(platform!=='win32') this.showFontNotAvailableMessage(firstFont);
+                const platform = (typeof process !== 'undefined' && process.platform) || '';
+                if (platform !== 'win32')
+                    this.showFontNotAvailableMessage(firstFont);
             }
             return this.defaultFont;
         }
     }
-
     showFontNotAvailableMessage(fontName) {
         const message = document.createElement('div');
         message.className = 'font-warning-message';
-        
         message.style.cssText = `
             position: fixed;
             top: 20px;
@@ -89,7 +90,6 @@ class FontDetector {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             animation: slideInRight 0.3s ease-out;
         `;
-
         const content = document.createElement('div');
         content.className = 'font-warning-content';
         content.style.cssText = `
@@ -98,7 +98,6 @@ class FontDetector {
             padding: 12px 16px;
             gap: 12px;
         `;
-
         const icon = document.createElement('div');
         icon.className = 'font-warning-icon';
         icon.dataset.uiIcon = 'warning';
@@ -107,7 +106,6 @@ class FontDetector {
             flex-shrink: 0;
             margin-top: 2px;
         `;
-
         const text = document.createElement('div');
         text.className = 'font-warning-text';
         text.style.cssText = `
@@ -118,25 +116,18 @@ class FontDetector {
         `;
         const title = document.createElement('strong');
         title.textContent = window.i18n.t('settings.fontUnavailableTitle');
-        text.append(
-            title,
-            document.createElement('br'),
-            document.createTextNode(window.i18n.t('settings.fontUnavailableMessage', {
-                font: fontName,
-                fallback: this.defaultFont
-            }))
-        );
-
+        text.append(title, document.createElement('br'), document.createTextNode(window.i18n.t('settings.fontUnavailableMessage', {
+            font: fontName,
+            fallback: this.defaultFont
+        })));
         const closeBtn = document.createElement('button');
         closeBtn.type = 'button';
         closeBtn.className = 'font-warning-close';
         closeBtn.textContent = '×';
         closeBtn.setAttribute('aria-label', window.i18n.t('dialog.close'));
         closeBtn.addEventListener('click', () => message.remove());
-
         content.append(icon, text, closeBtn);
         message.appendChild(content);
-
         if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
             window.uiIcons.hydrate(message);
         }
@@ -155,15 +146,12 @@ class FontDetector {
             border-radius: 3px;
             transition: background-color 0.2s;
         `;
-        
         closeBtn.addEventListener('mouseenter', () => {
             closeBtn.style.backgroundColor = 'rgba(133, 100, 4, 0.1)';
         });
-        
         closeBtn.addEventListener('mouseleave', () => {
             closeBtn.style.backgroundColor = 'transparent';
         });
-        
         const style = document.createElement('style');
         style.textContent = `
             @keyframes slideInRight {
@@ -178,9 +166,7 @@ class FontDetector {
             }
         `;
         document.head.appendChild(style);
-        
         document.body.appendChild(message);
-        
         setTimeout(() => {
             if (message.parentElement) {
                 message.style.animation = 'slideInRight 0.3s ease-out reverse';
@@ -192,7 +178,6 @@ class FontDetector {
             }
         }, 5000);
     }
-
     getAvailableMonospaceFonts() {
         const commonMonospaceFonts = [
             'Consolas',
@@ -206,13 +191,12 @@ class FontDetector {
             'Courier',
             'monospace'
         ];
-        
         return commonMonospaceFonts.filter(font => {
-            if (font === 'monospace') return true; // 通用字体总是可用
+            if (font === 'monospace')
+                return true; // 通用字体总是可用
             return this.isFontAvailable(font);
         });
     }
-
     async getSystemFontsFromAPI() {
         try {
             if ('queryLocalFonts' in window) {
@@ -221,15 +205,14 @@ class FontDetector {
                 logInfo('通过API获取到的系统字体:', fontNames.length, '个');
                 return fontNames;
             }
-        } catch (error) {
+        }
+        catch (error) {
             logWarn('无法使用字体查询API:', error);
         }
         return [];
     }
-
     async getAllAvailableFonts() {
         const systemFonts = await this.getSystemFontsFromAPI();
-        
         const commonFonts = [
             'Consolas',
             'Monaco',
@@ -283,25 +266,20 @@ class FontDetector {
             'serif',
             'sans-serif'
         ];
-        
         const allFonts = [...new Set([...systemFonts, ...commonFonts])];
-        
         const availableFonts = allFonts.filter(font => {
             if (['monospace', 'serif', 'sans-serif'].includes(font)) {
                 return true;
             }
             return this.isFontAvailable(font);
         });
-        
         const consolas = 'Consolas';
         const filteredFonts = availableFonts.filter(font => font !== consolas);
         if (availableFonts.includes(consolas)) {
             return [consolas, ...filteredFonts];
         }
-        
         return availableFonts;
     }
-
     getAllAvailableFontsSync() {
         const commonFonts = [
             'Consolas',
@@ -356,28 +334,24 @@ class FontDetector {
             'serif',
             'sans-serif'
         ];
-        
         const availableFonts = commonFonts.filter(font => {
             if (['monospace', 'serif', 'sans-serif'].includes(font)) {
                 return true;
             }
             return this.isFontAvailable(font);
         });
-        
         const consolas = 'Consolas';
         const filteredFonts = availableFonts.filter(font => font !== consolas);
         if (availableFonts.includes(consolas)) {
             return [consolas, ...filteredFonts];
         }
-        
         return availableFonts;
     }
 }
-
+exports.FontDetector = FontDetector;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = FontDetector;
 }
-
 if (typeof window !== 'undefined') {
     window.FontDetector = FontDetector;
     window.fontDetector = new FontDetector();
