@@ -1,5 +1,4 @@
-'use strict';
-
+"use strict";
 // clangd 在 Windows 上会自行探测 Visual Studio 工具链并把 MSVC/Windows SDK 的
 // -internal-isystem 注入到 cc1 参数里，且 --query-driver / compile_commands.json 都压不过它：
 // 探测出的工具链优先级高于用户配置的编译器。clangd 23.1.0 的 --help 里也没有任何关闭该
@@ -9,32 +8,70 @@
 //   * 其中的 -isystem 会排在 clangd 自动注入的 -internal-isystem 之前。
 // 于是这里把用户实际编译器的 include 搜索列表与 target triple 落成一个
 // <workspace>/.oicpp-plus/lsp/compile_flags.txt，并用 --compile-commands-dir 指向它。
-
-const fs = require('fs');
-const path = require('path');
-
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LSP_PRIVATE_DIR_NAME = exports.COMPILE_FLAGS_FILE_NAME = void 0;
+exports.buildCompileFlagsText = buildCompileFlagsText;
+exports.hasUserCompilationDatabase = hasUserCompilationDatabase;
+exports.removeCompileFlagsFile = removeCompileFlagsFile;
+exports.writeCompileFlagsFile = writeCompileFlagsFile;
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 const LSP_PRIVATE_DIR_NAME = path.join('.oicpp-plus', 'lsp');
+exports.LSP_PRIVATE_DIR_NAME = LSP_PRIVATE_DIR_NAME;
 const COMPILE_FLAGS_FILE_NAME = 'compile_flags.txt';
+exports.COMPILE_FLAGS_FILE_NAME = COMPILE_FLAGS_FILE_NAME;
 // 向上查找用户自带编译数据库的最大层数，避免误判到无关工程的配置
 const USER_CDB_SEARCH_DEPTH = 8;
 const MAX_INCLUDE_DIRS = 64;
 const MSVC_TRIPLE = 'x86_64-pc-windows-msvc';
-
 function toPosixPath(value) {
     return String(value || '').replace(/\\/g, '/');
 }
-
 // 工作区（及其若干层父目录）里若已有用户自己的 compile_commands.json，
 // 说明该工程已经声明了编译命令，一律不接管，避免覆盖用户的构建配置。
 function hasUserCompilationDatabase(workspaceRoot) {
-    if (!workspaceRoot) return false;
+    if (!workspaceRoot)
+        return false;
     let currentDir;
     try {
         currentDir = path.resolve(workspaceRoot);
-    } catch (_) {
+    }
+    catch (_) {
         return false;
     }
-
     for (let depth = 0; depth <= USER_CDB_SEARCH_DEPTH; depth++) {
         if (fs.existsSync(path.join(currentDir, 'compile_commands.json'))) {
             return true;
@@ -47,58 +84,55 @@ function hasUserCompilationDatabase(workspaceRoot) {
     }
     return false;
 }
-
 function buildCompileFlagsText({ includePaths = [], target = '', compileFlags = [] } = {}) {
     const lines = [];
     const seen = new Set();
     const push = (value) => {
         const text = String(value || '').trim();
-        if (!text || /[\r\n]/.test(text)) return;
-        if (seen.has(text)) return;
+        if (!text || /[\r\n]/.test(text))
+            return;
+        if (seen.has(text))
+            return;
         seen.add(text);
         lines.push(text);
     };
-
     // 用户自定义编译参数里只有 -std= 会改变 clangd 的语义判断
     for (const flag of Array.isArray(compileFlags) ? compileFlags : []) {
         if (/^-std=[A-Za-z0-9+]+$/.test(String(flag || '').trim())) {
             push(String(flag).trim());
         }
     }
-
     let added = 0;
     const seenIncludeDirs = new Set();
     for (const includeDir of Array.isArray(includePaths) ? includePaths : []) {
-        if (added >= MAX_INCLUDE_DIRS) break;
-        if (!includeDir || !fs.existsSync(includeDir)) continue;
+        if (added >= MAX_INCLUDE_DIRS)
+            break;
+        if (!includeDir || !fs.existsSync(includeDir))
+            continue;
         try {
-            if (!fs.statSync(includeDir).isDirectory()) continue;
-        } catch (_) {
+            if (!fs.statSync(includeDir).isDirectory())
+                continue;
+        }
+        catch (_) {
             continue;
         }
         const normalized = toPosixPath(path.resolve(includeDir));
-        if (seenIncludeDirs.has(normalized)) continue;
+        if (seenIncludeDirs.has(normalized))
+            continue;
         seenIncludeDirs.add(normalized);
         // -isystem 与其路径必须成对出现，不能各自去重，否则第二个路径会变成孤立参数
         lines.push('-isystem');
         lines.push(normalized);
         added++;
     }
-
     const targetTriple = String(target || '').trim();
     // MSVC 目标下 clangd 自带的探测本来就是对的，不要用 gcc triple 覆盖
     if (targetTriple && targetTriple !== MSVC_TRIPLE && /^[A-Za-z0-9_.-]+$/.test(targetTriple)) {
         push(`--target=${targetTriple}`);
     }
-
     return lines.length > 0 ? lines.join('\r\n') + '\r\n' : '';
 }
-/**
- * 落盘 compile_flags.txt；内容没变时不重写，避免每次启动都动用户工作区。
- * 已有文件但内容与探测结果不一致时覆盖——编译器换了版本/路径后必须跟着更新。
- * @param {{ workspaceRoot?: string, includePaths?: string[], target?: string, compileFlags?: string[] }} opts
- */
-function writeCompileFlagsFile({ workspaceRoot, includePaths = [], target = '', compileFlags = [] } = ({})) {
+function writeCompileFlagsFile({ workspaceRoot, includePaths = [], target = '', compileFlags = [] } = {}) {
     const flagsText = buildCompileFlagsText({ includePaths, target, compileFlags });
     if (!flagsText) {
         return { ok: false, reason: 'no-flags', dir: '', filePath: '' };
@@ -109,48 +143,41 @@ function writeCompileFlagsFile({ workspaceRoot, includePaths = [], target = '', 
     if (hasUserCompilationDatabase(workspaceRoot)) {
         return { ok: false, reason: 'user-compilation-database', dir: '', filePath: '' };
     }
-
     try {
         if (!fs.statSync(workspaceRoot).isDirectory()) {
             return { ok: false, reason: 'invalid-workspace', dir: '', filePath: '' };
         }
-    } catch (_) {
+    }
+    catch (_) {
         return { ok: false, reason: 'invalid-workspace', dir: '', filePath: '' };
     }
-
     const dir = path.join(workspaceRoot, LSP_PRIVATE_DIR_NAME);
     const filePath = path.join(dir, COMPILE_FLAGS_FILE_NAME);
     try {
         if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf8') === flagsText) {
             return { ok: true, dir, filePath, written: false };
         }
-    } catch (_) { }
-
+    }
+    catch (_) { }
     try {
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(filePath, flagsText, 'utf8');
         return { ok: true, dir, filePath, written: true };
-    } catch (error) {
+    }
+    catch (error) {
         return { ok: false, reason: error?.message || String(error), dir, filePath };
     }
 }
-
 function removeCompileFlagsFile(filePath) {
-    if (!filePath) return false;
+    if (!filePath)
+        return false;
     try {
-        if (!fs.existsSync(filePath)) return false;
+        if (!fs.existsSync(filePath))
+            return false;
         fs.rmSync(filePath, { force: true });
         return true;
-    } catch (_) {
+    }
+    catch (_) {
         return false;
     }
 }
-
-module.exports = {
-    COMPILE_FLAGS_FILE_NAME,
-    LSP_PRIVATE_DIR_NAME,
-    buildCompileFlagsText,
-    hasUserCompilationDatabase,
-    removeCompileFlagsFile,
-    writeCompileFlagsFile
-};
