@@ -6519,12 +6519,6 @@ class MonacoEditorManager {
                 logInfo('开始格式化代码...');
                 
                 const model = this.currentEditor.getModel();
-                const language = model.getLanguageId();
-                logInfo('当前文件语言:', language);
-                
-                if (language === 'cpp' || language === 'c') {
-                    return await this.formatCppCode();
-                }
                 
                 const formatAction = this.currentEditor.getAction('editor.action.formatDocument');
                 if (formatAction) {
@@ -6618,33 +6612,7 @@ class MonacoEditorManager {
         return result.content;
     }
 
-    async formatCppCode() {
-        try {
-            // 守卫对象必须与作用对象是同一个：await 期间可能已切 tab，
-            // 此时 currentEditor 已是 B，而 model/range 仍来自 A
-            const editor = this.currentEditor;
-            const model = editor?.getModel?.();
-            if (!editor || !model || model.isDisposed?.()) return false;
-            const content = await this.requestClangFormattedCode(model);
-            if (content === null) return false;
-            if (this.currentEditor !== editor || editor.getModel?.() !== model || model.isDisposed?.()) {
-                logWarn('[clang-format] 格式化期间编辑器已切换，丢弃结果');
-                return false;
-            }
 
-            editor.executeEdits('clang-format', [{
-                range: model.getFullModelRange(),
-                text: content
-            }]);
-            logInfo('[clang-format] 已使用用户配置完成代码格式化');
-            return true;
-        } catch (error) {
-            logError('[clang-format] C++代码格式化失败:', error);
-            return false;
-        }
-    }
-
-    
     registerEnhancedCompletionProvider(editor) {
         this.registerAllLspProviders();
     }
