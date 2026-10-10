@@ -13,7 +13,7 @@ declare const monaco: typeof import('monaco-editor');
 declare const OICPPApp: typeof import('../js/main.js');
 declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
 declare const CompilerManager: typeof import('../js/compile-manager.js');
-declare const DebugPanel: typeof import('../js/sidebar/debugPanel.js');
+declare const DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
 declare const TitlebarManager: typeof import('../js/titlebar.js');
 declare const SidebarManager: typeof import('../js/sidebar.js');
 declare const TabManager: typeof import('../js/tabs.js');
@@ -169,7 +169,7 @@ interface Window {
   SidebarManager: typeof import('../js/sidebar.js');
   CloudSyncPanel: typeof import('../js/sidebar/cloudSync.js');
   CodeComparer: typeof import('../js/sidebar/codeComparer.js');
-  DebugPanel: typeof import('../js/sidebar/debugPanel.js');
+  DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
   FileExplorer: typeof import('../js/sidebar/fileExplorer.js');
   SampleTester: typeof import('../js/sidebar/sampleTester.js');
   Terminal: typeof import('@xterm/xterm').Terminal;

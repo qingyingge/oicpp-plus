@@ -1,4 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DebugPanel = void 0;
 class DebugPanel {
+    isActive;
+    root;
+    bound;
+    expandedVars;
+    loadingMore;
+    variableCache;
+    pendingWatchRemovals;
     constructor() {
         this.isActive = false;
         this.root = null;
@@ -8,20 +18,20 @@ class DebugPanel {
         this.variableCache = { local: {}, watches: {}, global: {} };
         this.pendingWatchRemovals = new Set();
     }
-
     activate() {
         this.isActive = true;
-        if (!this.root) this._mount();
-        if (!this.bound) this._bind();
+        if (!this.root)
+            this._mount();
+        if (!this.bound)
+            this._bind();
     }
-
     deactivate() {
         this.isActive = false;
     }
-
     _mount() {
         const host = (document.querySelector('#debug-panel .debug-content'));
-        if (!host) return;
+        if (!host)
+            return;
         host.innerHTML = '';
         const wrap = document.createElement('div');
         wrap.className = 'debug-mini-wrap';
@@ -80,7 +90,6 @@ class DebugPanel {
         host.appendChild(wrap);
         this.root = wrap;
     }
-
     _bind() {
         this.bound = true;
         const $ = (id) => this.root && this.root.querySelector(id);
@@ -94,27 +103,32 @@ class DebugPanel {
         $('#dbg-add-watch')?.addEventListener('click', () => {
             const input = $('#dbg-watch-input');
             const expr = input?.value?.trim();
-            if (expr) { send('debug-add-watch', expr); input.value = ''; }
+            if (expr) {
+                send('debug-add-watch', expr);
+                input.value = '';
+            }
         });
         $('#dbg-watch-input')?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 const input = $('#dbg-watch-input');
                 const expr = input?.value?.trim();
-                if (expr) { send('debug-add-watch', expr); input.value = ''; }
+                if (expr) {
+                    send('debug-add-watch', expr);
+                    input.value = '';
+                }
             }
         });
-
         this.root.querySelectorAll('.category-header').forEach(el => {
             el.addEventListener('click', () => {
                 const arrow = el.querySelector('.expand-arrow');
                 const content = el.nextElementSibling;
-                if (!(content instanceof HTMLElement)) return;
+                if (!(content instanceof HTMLElement))
+                    return;
                 const hidden = content.style.display === 'none';
                 content.style.display = hidden ? 'block' : 'none';
                 arrow.textContent = hidden ? '▼' : '▶';
             });
         });
-
         try {
             const { ipcRenderer } = require('electron');
             ipcRenderer.on('debug-variables-updated', (_e, variables) => this._renderVariables(variables));
@@ -129,25 +143,24 @@ class DebugPanel {
             ipcRenderer.on('debug-running', () => this._setToolbarEnabled(true));
             ipcRenderer.on('debug-variable-expanded', (_e, payload) => this._handleVariableExpanded(payload));
             ipcRenderer.on('debug-error', (_e, msg) => {
-
                 if (this.loadingMore.size > 0) {
                     this.loadingMore.clear();
-                    this._renderVariables(this.variableCache); 
+                    this._renderVariables(this.variableCache);
                 }
                 console.error('Debug Error:', msg);
             });
-        } catch (_) { }
-
+        }
+        catch (_) { }
         if (this.root) {
             this.root.addEventListener('click', (ev) => {
-                if (!(ev.target instanceof Element)) return;
+                if (!(ev.target instanceof Element))
+                    return;
                 const target = ev.target;
                 const toggleBtn = target.closest('.expand-toggle-btn');
                 if (toggleBtn && this.root.contains(toggleBtn)) {
                     this._handleToggleButtonClick(toggleBtn, ev);
                     return;
                 }
-
                 const removeBtn = target.closest('.remove-watch-btn');
                 if (removeBtn && this.root.contains(removeBtn)) {
                     this._handleRemoveWatchClick(removeBtn, ev);
@@ -156,16 +169,18 @@ class DebugPanel {
             });
         }
     }
-
     _normalizeScope(scope) {
         const value = typeof scope === 'string' ? scope.toLowerCase() : '';
-        if (value === 'watches') return 'watch';
-        if (value === 'locals') return 'local';
-        if (value === 'globals') return 'global';
-        if (value) return value;
+        if (value === 'watches')
+            return 'watch';
+        if (value === 'locals')
+            return 'local';
+        if (value === 'globals')
+            return 'global';
+        if (value)
+            return value;
         return 'local';
     }
-
     _resolveBackendName(scope, rootName, data) {
         const normalizedScope = this._normalizeScope(scope);
         if (data && typeof data.backendName === 'string' && data.backendName) {
@@ -187,7 +202,6 @@ class DebugPanel {
         }
         return rootName;
     }
-
     _makeNodeKey(scope, rootName, path = []) {
         const normalizedScope = this._normalizeScope(scope);
         const safeName = encodeURIComponent(rootName || '');
@@ -196,10 +210,10 @@ class DebugPanel {
         }
         return `${normalizedScope}:${safeName}:${path.map((p) => String(p)).join('.')}`;
     }
-
     _getCacheRoot(scope) {
         scope = this._normalizeScope(scope);
-        if (!this.variableCache) this.variableCache = { local: {}, watches: {}, global: {} };
+        if (!this.variableCache)
+            this.variableCache = { local: {}, watches: {}, global: {} };
         if (scope === 'watch') {
             this.variableCache.watches = this.variableCache.watches || {};
             return this.variableCache.watches;
@@ -211,12 +225,12 @@ class DebugPanel {
         this.variableCache.local = this.variableCache.local || {};
         return this.variableCache.local;
     }
-
     _getVariableNode(scope, rootName, path = []) {
         scope = this._normalizeScope(scope);
         const cacheRoot = this._getCacheRoot(scope);
         const root = cacheRoot ? cacheRoot[rootName] : null;
-        if (!path || path.length === 0) return root || null;
+        if (!path || path.length === 0)
+            return root || null;
         let node = root;
         for (const segment of path) {
             const idx = Number(segment);
@@ -227,7 +241,6 @@ class DebugPanel {
         }
         return node || null;
     }
-
     _pruneExpandedKeys(scope, rootName) {
         scope = this._normalizeScope(scope);
         const prefix = `${scope}:${encodeURIComponent(rootName || '')}`;
@@ -238,7 +251,6 @@ class DebugPanel {
             }
         });
         expandedToDelete.forEach((key) => this.expandedVars.delete(key));
-
         const loadingToDelete = [];
         this.loadingMore.forEach((key) => {
             if (key === prefix || key.startsWith(`${prefix}:`)) {
@@ -247,19 +259,23 @@ class DebugPanel {
         });
         loadingToDelete.forEach((key) => this.loadingMore.delete(key));
     }
-
     _setToolbarEnabled(enabled) {
-        if (!this.root) return;
+        if (!this.root)
+            return;
         ['#dbg-continue', '#dbg-step-over', '#dbg-step-into', '#dbg-step-out', '#dbg-stop', '#dbg-add-watch', '#dbg-start']
-            .forEach(sel => { const el = this.root.querySelector(sel); if (el instanceof HTMLButtonElement) el.disabled = !enabled; });
+            .forEach(sel => { const el = this.root.querySelector(sel); if (el instanceof HTMLButtonElement)
+            el.disabled = !enabled; });
     }
-
     _handleVariableExpanded(payload) {
-        if (!payload || !payload.name) return;
-        if (!this.variableCache) return;
+        if (!payload || !payload.name)
+            return;
+        if (!this.variableCache)
+            return;
         let scope = 'local';
-        if (payload.scope === 'watch') scope = 'watch';
-        else if (payload.scope === 'global') scope = 'global';
+        if (payload.scope === 'watch')
+            scope = 'watch';
+        else if (payload.scope === 'global')
+            scope = 'global';
         const cacheRoot = this._getCacheRoot(scope);
         if (payload.data) {
             if (payload.path && payload.path.length > 0) {
@@ -269,7 +285,8 @@ class DebugPanel {
                         const idx = payload.path[i];
                         if (current.children && current.children[idx]) {
                             current = current.children[idx];
-                        } else {
+                        }
+                        else {
                             current = null;
                             break;
                         }
@@ -281,10 +298,10 @@ class DebugPanel {
                         }
                     }
                 }
-            } else {
+            }
+            else {
                 cacheRoot[payload.name] = payload.data;
             }
-            
             if (scope === 'watch') {
                 this.pendingWatchRemovals.delete(payload.name);
                 const alias = payload.data?.expression || payload.data?.backendName || payload.data?.varObjectName;
@@ -296,44 +313,41 @@ class DebugPanel {
         this._renderVariableGroup('#local-variables', this.variableCache.local, 'local');
         this._renderVariableGroup('#watch-variables', this.variableCache.watches, 'watch');
     }
-
     _renderVariables(v) {
         console.log('[DebugPanel] _renderVariables:', v);
-        if (!this.root) return;
+        if (!this.root)
+            return;
         this.loadingMore.clear();
         this.variableCache = {
             local: v?.local || {},
             global: v?.global || {},
             watches: v?.watches || {}
         };
-
         if (this.pendingWatchRemovals.size > 0) {
             this.pendingWatchRemovals.forEach((name) => {
                 if (this.variableCache.watches && this.variableCache.watches[name]) {
                     delete this.variableCache.watches[name];
-                } else {
+                }
+                else {
                     this.pendingWatchRemovals.delete(name);
                 }
             });
         }
-
         this._renderVariableGroup('#local-variables', this.variableCache.local, 'local');
         this._renderVariableGroup('#watch-variables', this.variableCache.watches, 'watch');
     }
-
     _renderVariableGroup(selector, variables, scope) {
         scope = this._normalizeScope(scope);
         const container = this.root.querySelector(selector);
-        if (!container) return;
+        if (!container)
+            return;
         const names = Object.keys(variables || {});
         if (names.length === 0) {
             const emptyText = scope === 'watch' ? window.i18n.t('debug.noItems') : window.i18n.t('debug.none');
             container.innerHTML = `<div class="no-debug-message">${emptyText}</div>`;
             return;
         }
-
         const frag = document.createDocumentFragment();
-
         for (const name of names) {
             if (scope === 'watch' && this.pendingWatchRemovals.has(name)) {
                 continue;
@@ -346,16 +360,12 @@ class DebugPanel {
                 path: [],
                 isRoot: true
             });
-            if (nodeEl) frag.appendChild(nodeEl);
+            if (nodeEl)
+                frag.appendChild(nodeEl);
         }
-
         container.innerHTML = '';
         container.appendChild(frag);
     }
-
-    /**
-     * @param {{ scope: string, rootName: string, data?: OicppVarData, path?: (string|number)[], isRoot?: boolean }} params
-     */
     _renderVariableNode({ scope, rootName, data = ({}), path = [], isRoot = false }) {
         scope = this._normalizeScope(scope);
         const nodeKey = this._makeNodeKey(scope, rootName, path);
@@ -368,12 +378,10 @@ class DebugPanel {
         item.dataset.path = pathSegments.join(',');
         const backendName = this._resolveBackendName(scope, rootName, data);
         item.dataset.backendName = backendName || rootName || '';
-
         const header = document.createElement('div');
         header.className = 'variable-header';
         item.appendChild(header);
         item.__variableData = data;
-
         const hasChildren = Array.isArray(data?.children) && data.children.length > 0;
         const numericCount = Number(data?.elementCount);
         const elementCount = Number.isFinite(numericCount)
@@ -390,7 +398,6 @@ class DebugPanel {
         }
         const needsLabel = (isRoot && scope === 'watch') || this._shouldEmphasizeToggle(data);
         const isExpanded = this.expandedVars.has(nodeKey);
-
         let toggleEl = null;
         if (isWatchRoot) {
             toggleEl = document.createElement('button');
@@ -402,28 +409,27 @@ class DebugPanel {
             this._updateToggleButton(toggleEl, isExpanded);
             header.appendChild(toggleEl);
         }
-
         if (!toggleEl && shouldShowToggle) {
             toggleEl = document.createElement('button');
             toggleEl.type = 'button';
             toggleEl.className = 'expand-toggle-btn';
-            if (needsLabel) toggleEl.classList.add('with-label');
+            if (needsLabel)
+                toggleEl.classList.add('with-label');
             this._updateToggleButton(toggleEl, isExpanded);
             header.appendChild(toggleEl);
         }
-
         if (!toggleEl) {
             const spacer = document.createElement('span');
             spacer.className = 'expand-spacer';
             header.appendChild(spacer);
-        } else {
+        }
+        else {
             toggleEl.dataset.nodeKey = nodeKey;
             toggleEl.dataset.scope = scope;
             toggleEl.dataset.root = rootName;
             toggleEl.dataset.path = item.dataset.path || '';
             toggleEl.dataset.backendName = backendName || rootName || '';
         }
-
         const nameEl = document.createElement('span');
         nameEl.className = 'variable-name';
         const displayName = isRoot ? rootName : (data?.name != null ? String(data.name) : '');
@@ -432,15 +438,14 @@ class DebugPanel {
             nameEl.title = data.type;
         }
         header.appendChild(nameEl);
-
         const valueEl = document.createElement('span');
         valueEl.className = 'variable-value';
         const rawValue = data?.value != null ? String(data.value) : '';
         const valueText = isRoot ? this._formatValue(data) : rawValue;
         valueEl.textContent = valueText;
-        if (rawValue) valueEl.title = rawValue;
+        if (rawValue)
+            valueEl.title = rawValue;
         header.appendChild(valueEl);
-
         let removeBtn = null;
         if (isRoot && scope === 'watch') {
             const rm = document.createElement('button');
@@ -463,7 +468,6 @@ class DebugPanel {
             header.appendChild(rm);
             removeBtn = rm;
         }
-
         const childrenWrap = document.createElement('div');
         childrenWrap.className = 'variable-children';
         if (!isExpanded) {
@@ -471,43 +475,44 @@ class DebugPanel {
         }
         childrenWrap.dataset.nodeKey = nodeKey;
         item.appendChild(childrenWrap);
-
         header.addEventListener('dblclick', (ev) => {
-            if (!toggleEl) return;
-            if (removeBtn && (ev.target === removeBtn || removeBtn.contains(ev.target))) return;
-            if (ev.target === toggleEl || toggleEl.contains(ev.target)) return;
+            if (!toggleEl)
+                return;
+            if (removeBtn && (ev.target === removeBtn || removeBtn.contains(ev.target)))
+                return;
+            if (ev.target === toggleEl || toggleEl.contains(ev.target))
+                return;
             ev.preventDefault();
             ev.stopPropagation();
             toggleEl.click();
         });
-
         if (isExpanded) {
             const latestNode = this._getVariableNode(scope, rootName, path) || data;
             this._renderVariableChildren(childrenWrap, latestNode?.children, rootName, scope, path, latestNode);
         }
-
         return item;
     }
-
     _parsePathSegments(pathStr) {
-        if (!pathStr) return [];
+        if (!pathStr)
+            return [];
         return pathStr
             .split(',')
             .filter(segment => segment.length > 0)
             .map((segment) => {
-                const maybeNumber = Number(segment);
-                return Number.isNaN(maybeNumber) ? segment : maybeNumber;
-            });
+            const maybeNumber = Number(segment);
+            return Number.isNaN(maybeNumber) ? segment : maybeNumber;
+        });
     }
-
     _handleToggleButtonClick(button, ev) {
-        if (!button) return;
+        if (!button)
+            return;
         if (ev) {
             ev.preventDefault();
             ev.stopPropagation();
         }
         const item = button.closest('.variable-item');
-        if (!item) return;
+        if (!item)
+            return;
         const scope = this._normalizeScope(button.dataset.scope || item.dataset.scope);
         const rootName = button.dataset.root || item.dataset.root || item.dataset.name || '';
         const path = this._parsePathSegments(button.dataset.path || item.dataset.path || '');
@@ -516,8 +521,8 @@ class DebugPanel {
             || this._makeNodeKey(scope, rootName, path);
         const backendName = button.dataset.backendName || item.dataset.backendName || rootName;
         const childrenWrap = item.querySelector(`.variable-children[data-node-key="${nodeKey}"]`) || item.querySelector('.variable-children');
-        if (!childrenWrap) return;
-
+        if (!childrenWrap)
+            return;
         const currentlyExpanded = this.expandedVars.has(nodeKey);
         if (currentlyExpanded) {
             this.expandedVars.delete(nodeKey);
@@ -527,7 +532,6 @@ class DebugPanel {
             this._ipcSend('debug-collapse-variable', collapseTarget, { scope, path, cacheKey: nodeKey });
             return;
         }
-
         this.expandedVars.add(nodeKey);
         this._updateToggleButton(button, true);
         childrenWrap.style.display = 'block';
@@ -538,7 +542,6 @@ class DebugPanel {
             this._renderVariableChildren(childrenWrap, childData, rootName, scope, path, candidate);
             return;
         }
-
         childrenWrap.innerHTML = '<div class="no-debug-message">' + window.i18n.t('debug.loading') + '</div>';
         const payload = {
             scope,
@@ -546,32 +549,36 @@ class DebugPanel {
             cacheKey: nodeKey,
             start: 0
         };
-        if (candidate?.varObjectName) payload.varObjectName = candidate.varObjectName;
-        if (candidate?.expression) payload.expression = candidate.expression;
+        if (candidate?.varObjectName)
+            payload.varObjectName = candidate.varObjectName;
+        if (candidate?.expression)
+            payload.expression = candidate.expression;
         if (candidate?.chunkSize && Number(candidate.chunkSize) > 0) {
             payload.count = Number(candidate.chunkSize);
         }
         const expandTarget = candidate?.expression || candidate?.varObjectName || backendName || rootName;
         this._ipcSend('debug-expand-variable', expandTarget, payload);
     }
-
     _handleRemoveWatchClick(button, ev) {
-        if (!button) return;
+        if (!button)
+            return;
         if (ev) {
             ev.preventDefault();
             ev.stopPropagation();
         }
         const item = button.closest('.variable-item');
-        if (!item) return;
+        if (!item)
+            return;
         const scope = this._normalizeScope(button.dataset.scope || item.dataset.scope);
-        if (scope !== 'watch') return;
+        if (scope !== 'watch')
+            return;
         const rootName = button.dataset.root || item.dataset.root || item.dataset.name || '';
         const removalKey = button.dataset.watchExpression
             || button.dataset.backendName
             || item.dataset.backendName
             || rootName;
-        if (!removalKey) return;
-
+        if (!removalKey)
+            return;
         this._ipcSend('debug-remove-watch', removalKey);
         this._pruneExpandedKeys(scope, removalKey);
         if (removalKey !== rootName) {
@@ -591,72 +598,88 @@ class DebugPanel {
             }
         }
         this._renderVariableGroup('#watch-variables', this._getCacheRoot(scope), scope);
-        try { item.remove(); } catch (_) { }
+        try {
+            item.remove();
+        }
+        catch (_) { }
     }
-
     _applyForceToggleStyles(button) {
-        if (!button) return;
+        if (!button)
+            return;
         button.classList.add('force-visible');
     }
-
     _updateToggleButton(button, expanded) {
-        if (!button) return;
+        if (!button)
+            return;
         const forceVisible = button.classList.contains('force-visible');
         const withLabel = button.classList.contains('with-label');
         const arrow = expanded ? '▼' : '▶';
         if (forceVisible) {
             button.textContent = arrow;
-        } else if (withLabel) {
+        }
+        else if (withLabel) {
             const text = expanded ? window.i18n.t('debug.collapse') : window.i18n.t('debug.expand');
             button.innerHTML = `<span class="arrow">${arrow}</span><span class="label">${text}</span>`;
-        } else {
+        }
+        else {
             button.textContent = arrow;
         }
         button.setAttribute('aria-label', expanded ? window.i18n.t('debug.collapseVar') : window.i18n.t('debug.expandVar'));
     }
-
     _shouldForceToggle(scope, data, elementCount) {
-        if (this._normalizeScope(scope) !== 'watch') return false;
-        if (!data) return false;
-        if (data.isArray || data.isContainer) return true;
-        if (Number.isFinite(elementCount) && elementCount > 0) return true;
+        if (this._normalizeScope(scope) !== 'watch')
+            return false;
+        if (!data)
+            return false;
+        if (data.isArray || data.isContainer)
+            return true;
+        if (Number.isFinite(elementCount) && elementCount > 0)
+            return true;
         const hint = `${data.type || ''} ${data.value || ''}`.toLowerCase();
-        if (/std::/.test(hint)) return true;
+        if (/std::/.test(hint))
+            return true;
         const rawVal = String(data.value || '').trim();
-        if (rawVal.startsWith('{') && rawVal.endsWith('}')) return true;
+        if (rawVal.startsWith('{') && rawVal.endsWith('}'))
+            return true;
         return false;
     }
-
     _shouldEmphasizeToggle(data) {
-        if (!data) return false;
-        if (data.isArray || data.isContainer) return true;
+        if (!data)
+            return false;
+        if (data.isArray || data.isContainer)
+            return true;
         const hint = `${data.type || ''} ${data.value || ''}`.toLowerCase();
         return /std::/.test(hint);
     }
-
     _isExpandableVariable(data, elementCount, hasChildren) {
-        if (!data) return false;
-        if (hasChildren) return true;
-        if (elementCount != null && elementCount > 0) return true;
-        if (data.isContainer || data.isArray) return true;
+        if (!data)
+            return false;
+        if (hasChildren)
+            return true;
+        if (elementCount != null && elementCount > 0)
+            return true;
+        if (data.isContainer || data.isArray)
+            return true;
         const typeStr = String(data.type || '');
         const valueStr = String(data.value || '');
         const stdContainerPattern = /std::(vector|array|deque|list|forward_list|basic_string|u8string|u16string|u32string|wstring|set|map|unordered_set|unordered_map|multiset|multimap|queue|stack)\b/;
-        if (stdContainerPattern.test(typeStr) || stdContainerPattern.test(valueStr)) return true;
+        if (stdContainerPattern.test(typeStr) || stdContainerPattern.test(valueStr))
+            return true;
         const trimmed = valueStr.trim();
-        if (/^\{.*\}$/.test(trimmed)) return true;
-        if (trimmed.includes('{') && trimmed.includes('}')) return true;
+        if (/^\{.*\}$/.test(trimmed))
+            return true;
+        if (trimmed.includes('{') && trimmed.includes('}'))
+            return true;
         return false;
     }
-
     _extractChildrenData(scope, name) {
         const node = this._getVariableNode(scope, name, []);
         return Array.isArray(node?.children) ? node.children : [];
     }
-
     _renderVariableChildren(container, children, rootName, scope, parentPath = [], parentData = null) {
         scope = this._normalizeScope(scope);
-        if (!container) return;
+        if (!container)
+            return;
         container.innerHTML = '';
         const list = Array.isArray(children) ? children : [];
         if (list.length === 0) {
@@ -666,10 +689,8 @@ class DebugPanel {
             container.appendChild(empty);
             return;
         }
-
         const loadedCount = list.filter(child => !child?.isPlaceholder).length;
         container.dataset.loadedCount = String(loadedCount);
-
         list.forEach((child, index) => {
             if (child && child.isPlaceholder) {
                 const more = document.createElement('div');
@@ -682,12 +703,12 @@ class DebugPanel {
                 val.textContent = child.value || window.i18n.t('debug.clickToLoad');
                 more.appendChild(label);
                 more.appendChild(val);
-
                 more.addEventListener('click', (ev) => {
                     ev.preventDefault();
                     ev.stopPropagation();
                     const parentKey = this._makeNodeKey(scope, rootName, parentPath);
-                    if (this.loadingMore.has(parentKey)) return;
+                    if (this.loadingMore.has(parentKey))
+                        return;
                     this.loadingMore.add(parentKey);
                     val.textContent = window.i18n.t('debug.loading');
                     const latestParent = this._getVariableNode(scope, rootName, parentPath) || parentData || {};
@@ -701,17 +722,17 @@ class DebugPanel {
                         append: true,
                         cacheKey: parentKey
                     };
-                    if (latestParent?.varObjectName) payload.varObjectName = latestParent.varObjectName;
-                    if (latestParent?.expression) payload.expression = latestParent.expression;
+                    if (latestParent?.varObjectName)
+                        payload.varObjectName = latestParent.varObjectName;
+                    if (latestParent?.expression)
+                        payload.expression = latestParent.expression;
                     const loadMoreTarget = latestParent?.expression || latestParent?.varObjectName || rootName;
                     this._ipcSend('debug-load-more-variable', loadMoreTarget, payload);
                     setTimeout(() => this.loadingMore.delete(parentKey), 800);
                 });
-
                 container.appendChild(more);
                 return;
             }
-
             const childPath = parentPath.concat(index);
             const nodeEl = this._renderVariableNode({
                 scope,
@@ -720,31 +741,37 @@ class DebugPanel {
                 path: childPath,
                 isRoot: false
             });
-            if (nodeEl) container.appendChild(nodeEl);
+            if (nodeEl)
+                container.appendChild(nodeEl);
         });
     }
-
     _ipcSend(channel, ...args) {
         console.log(`[DebugPanel] Sending IPC: ${channel}`, args);
         try {
             const { ipcRenderer } = require('electron');
             ipcRenderer.send(channel, ...args);
             return;
-        } catch (_) { }
+        }
+        catch (_) { }
         try {
             window?.electron?.ipcRenderer?.send?.(channel, ...args);
             return;
-        } catch (_) { }
+        }
+        catch (_) { }
         try {
             window?.electronAPI?.ipcRenderer?.send?.(channel, ...args);
-        } catch (_) { }
+        }
+        catch (_) { }
     }
-
     _renderStack(stack) {
         const c = this.root.querySelector('#call-stack');
-        if (!c) return;
+        if (!c)
+            return;
         c.innerHTML = '';
-        if (!Array.isArray(stack) || stack.length === 0) { c.innerHTML = '<div class="no-debug-message">' + window.i18n.t('debug.none') + '</div>'; return; }
+        if (!Array.isArray(stack) || stack.length === 0) {
+            c.innerHTML = '<div class="no-debug-message">' + window.i18n.t('debug.none') + '</div>';
+            return;
+        }
         for (let i = 0; i < stack.length; i++) {
             const f = stack[i];
             const el = document.createElement('div');
@@ -755,13 +782,12 @@ class DebugPanel {
             c.appendChild(el);
         }
     }
-
     _formatValue(data) {
-        if (!data) return '';
+        if (!data)
+            return '';
         const rawValue = data.value != null ? String(data.value) : '';
         const rawType = data.type != null ? String(data.type) : '';
         let display = rawValue || '';
-
         const stdMatch = rawValue.match(/\bstd::([a-zA-Z_0-9]+)\b/)
             || rawType.match(/\bstd::([a-zA-Z_0-9]+)\b/);
         if (stdMatch && stdMatch[1]) {
@@ -772,13 +798,15 @@ class DebugPanel {
             const typeLabel = data.isArray ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
             display = `${typeLabel}[${cnt}] ${display}`;
         }
-        if (display.length > 60) display = display.slice(0, 57) + '...';
+        if (display.length > 60)
+            display = display.slice(0, 57) + '...';
         return display;
     }
 }
-
+exports.DebugPanel = DebugPanel;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = DebugPanel;
-} else if (typeof window !== 'undefined') {
+}
+else if (typeof window !== 'undefined') {
     window.DebugPanel = DebugPanel;
 }
