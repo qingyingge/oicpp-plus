@@ -122,7 +122,7 @@ class EditorSettings {
     }
 
     getDefaultClangFormatStyle() {
-        return {
+        return window.clangFormatOptions?.getDefaultClangFormatStyle?.() || {
             BasedOnStyle: 'LLVM',
             IndentWidth: 4,
             TabWidth: 4,
@@ -141,113 +141,15 @@ class EditorSettings {
     }
 
     normalizeClangFormatStyle(raw = null) {
-        const defaults = this.getDefaultClangFormatStyle();
-        const normalized = { ...defaults };
-        if (!raw || typeof raw !== 'object') {
-            return normalized;
-        }
-
-        const toInt = (value, fallback) => {
-            const parsed = parseInt(value, 10);
-            return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-        };
-        const toBool = (value, fallback) => {
-            if (typeof value === 'boolean') return value;
-            if (typeof value === 'string') {
-                const lowered = value.trim().toLowerCase();
-                if (['true', 'yes', 'on'].includes(lowered)) return true;
-                if (['false', 'no', 'off'].includes(lowered)) return false;
-            }
-            return fallback;
-        };
-        const toEnum = (value, allowed, fallback) => {
-            const rawValue = String(value || '').trim();
-            if (!rawValue) return fallback;
-            const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
-            return matched || fallback;
-        };
-
-        normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-        normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-        normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-        normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-        normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-        normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-        normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-        normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-        normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-        normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-        normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-        normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
-
-        if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-            const legacyStyle = String(raw.formatterIndentStyle || '').trim().toLowerCase();
-            if (legacyStyle === 'tabs') {
-                normalized.UseTab = 'Always';
-            } else if (legacyStyle === 'spaces') {
-                normalized.UseTab = 'Never';
-            }
-        }
-
-        return normalized;
+        return window.clangFormatOptions?.normalizeClangFormatStyle?.(raw) ?? this.getDefaultClangFormatStyle();
     }
 
     parseClangFormatText(text = '') {
-        const parsed = {};
-        String(text || '').split(/\r?\n/).forEach((line) => {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#') || trimmed === '---' || trimmed === '...') {
-                return;
-            }
-            const match = trimmed.match(/^([A-Za-z][A-Za-z0-9]*)\s*:\s*(.+)$/);
-            if (!match) {
-                return;
-            }
-            const key = match[1];
-            let value = match[2].trim();
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                value = value.slice(1, -1);
-            }
-            if (/^(true|false)$/i.test(value)) {
-                value = value.toLowerCase() === 'true';
-            } else if (/^-?\d+$/.test(value)) {
-                value = parseInt(value, 10);
-            }
-            parsed[key] = value;
-        });
-        return parsed;
+        return window.clangFormatOptions?.parseClangFormatText?.(text) || {};
     }
 
     generateClangFormatText(style = null) {
-        const normalized = this.normalizeClangFormatStyle(style || this.settings.clangFormatStyle || this.getDefaultClangFormatStyle());
-        const serialize = (value) => {
-            if (typeof value === 'boolean') return value ? 'true' : 'false';
-            if (typeof value === 'number') return String(value);
-            const text = String(value || '');
-            if (/\s/.test(text)) {
-                return `"${text.replace(/"/g, '\\"')}"`;
-            }
-            return text;
-        };
-
-        return [
-            `BasedOnStyle: ${serialize(normalized.BasedOnStyle)}`,
-            `IndentWidth: ${serialize(normalized.IndentWidth)}`,
-            `TabWidth: ${serialize(normalized.TabWidth)}`,
-            `UseTab: ${serialize(normalized.UseTab)}`,
-            `ColumnLimit: ${serialize(normalized.ColumnLimit)}`,
-            `BreakBeforeBraces: ${serialize(normalized.BreakBeforeBraces)}`,
-            `AllowShortIfStatementsOnASingleLine: ${serialize(normalized.AllowShortIfStatementsOnASingleLine)}`,
-            `AllowShortFunctionsOnASingleLine: ${serialize(normalized.AllowShortFunctionsOnASingleLine)}`,
-            `IndentCaseLabels: ${serialize(normalized.IndentCaseLabels)}`,
-            `PointerAlignment: ${serialize(normalized.PointerAlignment)}`,
-            `SpaceBeforeParens: ${serialize(normalized.SpaceBeforeParens)}`,
-            `SortIncludes: ${serialize(normalized.SortIncludes)}`,
-            `AlignConsecutiveAssignments: ${serialize(normalized.AlignConsecutiveAssignments)}`,
-            `AlignConsecutiveDeclarations: ${serialize(normalized.AlignConsecutiveDeclarations)}`
-        ].join('\n');
+        return window.clangFormatOptions?.generateClangFormatText?.(style || this.settings.clangFormatStyle || null) || '';
     }
 
     applyClangFormatStyleToUI(style = null, options = {}) {

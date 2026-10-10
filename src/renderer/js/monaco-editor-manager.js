@@ -5960,7 +5960,7 @@ class MonacoEditorManager {
     }
 
     getDefaultClangFormatStyle() {
-        return {
+        return (window.clangFormatOptions?.getDefaultClangFormatStyle?.()) || {
             BasedOnStyle: 'LLVM',
             IndentWidth: 4,
             TabWidth: 4,
@@ -5979,57 +5979,7 @@ class MonacoEditorManager {
     }
 
     normalizeClangFormatStyle(raw = null) {
-        const defaults = this.getDefaultClangFormatStyle();
-        const normalized = { ...defaults };
-        if (!raw || typeof raw !== 'object') {
-            return normalized;
-        }
-
-        const toInt = (value, fallback) => {
-            const parsed = parseInt(value, 10);
-            return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-        };
-        const toBool = (value, fallback) => {
-            if (typeof value === 'boolean') return value;
-            if (typeof value === 'string') {
-                const lowered = value.trim().toLowerCase();
-                if (['true', 'yes', 'on'].includes(lowered)) return true;
-                if (['false', 'no', 'off'].includes(lowered)) return false;
-            }
-            return fallback;
-        };
-        const toEnum = (value, allowed, fallback) => {
-            const rawValue = String(value || '').trim();
-            if (!rawValue) return fallback;
-            const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
-            return matched || fallback;
-        };
-
-        normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-        normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-        normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-        normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-        normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-        normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-        normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-        normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-        normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-        normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-        normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-        normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
-
-        if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-            const legacyStyle = String(raw.formatterIndentStyle || '').trim().toLowerCase();
-            if (legacyStyle === 'tabs') {
-                normalized.UseTab = 'Always';
-            } else if (legacyStyle === 'spaces') {
-                normalized.UseTab = 'Never';
-            }
-        }
-
-        return normalized;
+        return window.clangFormatOptions?.normalizeClangFormatStyle?.(raw) ?? this.getDefaultClangFormatStyle();
     }
 
     updateClangFormatSettings(settings = {}) {

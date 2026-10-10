@@ -4,36 +4,15 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const {
+    PRESET_STYLES,
+    serializeClangFormatStyle
+} = require('./utils/clang-format-options');
 
 const CLANG_FORMAT_TIMEOUT_MS = 10000;
 const CLANG_FORMAT_MAX_INPUT_BYTES = 5 * 1024 * 1024;
 const CLANG_FORMAT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 const CLANG_FORMAT_MAX_STYLE_BYTES = 256 * 1024;
-const PRESET_STYLES = new Set(['LLVM', 'GNU', 'Google', 'Chromium', 'Microsoft', 'Mozilla', 'WebKit']);
-
-function serializeClangFormatStyle(style) {
-    if (style === null || style === undefined || style === '') {
-        return 'file';
-    }
-    if (typeof style === 'string') {
-        const value = style.trim();
-        if (value.toLowerCase() === 'file') return 'file';
-        const preset = Array.from(PRESET_STYLES).find((item) => item.toLowerCase() === value.toLowerCase());
-        if (preset) return preset;
-        if (value.startsWith('{')) {
-            const parsed = JSON.parse(value);
-            if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-                throw new Error('clang-format style must be a JSON object');
-            }
-            return JSON.stringify(parsed);
-        }
-        throw new Error(`Unsupported clang-format style: ${value}`);
-    }
-    if (typeof style === 'object' && !Array.isArray(style)) {
-        return JSON.stringify(style);
-    }
-    throw new Error('clang-format style must be an object, preset name, or file');
-}
 
 function buildClangFormatArgs({
     filePath,
