@@ -1,4 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TitlebarManager = void 0;
 class TitlebarManager {
+    titlebar;
+    currentTitle;
+    isMaximized;
+    _closeConfirmInProgress;
+    isMacPlatform;
     constructor() {
         this.titlebar = null;
         this.currentTitle = 'OICPP-Plus';
@@ -7,7 +15,6 @@ class TitlebarManager {
         this.isMacPlatform = this.detectMacPlatform();
         this.init();
     }
-
     init() {
         this.setupTitlebar();
         this.applyPlatformLayout();
@@ -15,24 +22,23 @@ class TitlebarManager {
         this.setupElectronEvents();
         logInfo('标题栏管理器已初始化');
     }
-
     detectMacPlatform() {
         try {
             const platform = String(window.process?.platform || navigator?.platform || '').toLowerCase();
             return platform.includes('darwin') || platform.includes('mac');
-        } catch (_) {
+        }
+        catch (_) {
             return false;
         }
     }
-
     applyPlatformLayout() {
         if (this.isMacPlatform) {
             try {
                 document.body.classList.add('platform-macos');
-            } catch (_) { }
+            }
+            catch (_) { }
         }
     }
-
     setupTitlebar() {
         this.titlebar = document.querySelector('.titlebar');
         if (!this.titlebar) {
@@ -59,17 +65,14 @@ class TitlebarManager {
             document.body.insertBefore(this.titlebar, document.body.firstChild);
         }
     }
-
     setupWindowControls() {
-    if (!window.electronIPC && typeof require === 'undefined') {
+        if (!window.electronIPC && typeof require === 'undefined') {
             logWarn('不在 Electron 环境中，跳过窗口控制设置');
             return;
         }
-
         if (this.isMacPlatform) {
             return;
         }
-
         setTimeout(() => {
             const minimizeBtn = document.getElementById('minimize-btn');
             if (minimizeBtn) {
@@ -80,7 +83,6 @@ class TitlebarManager {
                     }
                 });
             }
-
             const maximizeBtn = document.getElementById('maximize-btn');
             if (maximizeBtn) {
                 maximizeBtn.addEventListener('click', () => {
@@ -88,13 +90,13 @@ class TitlebarManager {
                     if (window.electronIPC) {
                         if (this.isMaximized) {
                             window.electronIPC.send('window-unmaximize');
-                        } else {
+                        }
+                        else {
                             window.electronIPC.send('window-maximize');
                         }
                     }
                 });
             }
-
             const closeBtn = document.getElementById('close-btn');
             if (closeBtn) {
                 closeBtn.addEventListener('click', async () => {
@@ -104,25 +106,24 @@ class TitlebarManager {
             }
         }, 100);
     }
-
     _escapeHtml(text) {
         try {
             const div = document.createElement('div');
             div.textContent = String(text ?? '');
             return div.innerHTML;
-        } catch (_) {
+        }
+        catch (_) {
             return String(text ?? '');
         }
     }
-
     async requestClose() {
         return this._requestCloseInternal({ source: 'button' });
     }
-
     async _requestCloseInternal({ source } = { source: 'button' }) {
-        if (this._closeConfirmInProgress) return;
-        if (!window.electronIPC) return;
-
+        if (this._closeConfirmInProgress)
+            return;
+        if (!window.electronIPC)
+            return;
         const tempFilesHandled = await this._confirmTemporaryFilesBeforeClose();
         if (!tempFilesHandled) {
             if (source === 'system') {
@@ -130,102 +131,100 @@ class TitlebarManager {
             }
             return;
         }
-
         const unsavedFiles = (() => {
             try {
                 if (window.tabManager && typeof window.tabManager.getUnsavedFiles === 'function') {
                     return window.tabManager.getUnsavedFiles() || [];
                 }
-            } catch (_) { }
+            }
+            catch (_) { }
             return [];
         })();
-
         if (!unsavedFiles || unsavedFiles.length === 0) {
             if (source === 'system') {
                 window.electronIPC.send('app-close-confirmed');
-            } else {
+            }
+            else {
                 window.electronIPC.send('window-close');
             }
             return;
         }
-
         if (!window.dialogManager || typeof window.dialogManager.showActionDialog !== 'function') {
             logWarn('dialogManager 不可用，已阻止关闭以避免无提示自动保存');
             if (source === 'system') {
-                try { window.electronIPC.send('app-close-cancelled'); } catch (_) { }
+                try {
+                    window.electronIPC.send('app-close-cancelled');
+                }
+                catch (_) { }
             }
             return;
         }
-
         this._closeConfirmInProgress = true;
         try {
             const maxShow = 8;
             const shown = unsavedFiles.slice(0, maxShow);
             const moreCount = Math.max(0, unsavedFiles.length - shown.length);
-
             const listHtml = shown
-                .map(name => `- ${this._escapeHtml(name)}`)
+                .map((name) => `- ${this._escapeHtml(name)}`)
                 .join('<br>');
             const moreHtml = moreCount > 0 ? `<br>${window.i18n.t('dialog.unsavedFilesMore', { count: moreCount })}` : '';
-
             const message = window.i18n.t('dialog.unsavedFiles', { count: unsavedFiles.length, list: listHtml, more: moreHtml });
             const result = await window.dialogManager.showActionDialog(window.i18n.t('dialog.confirmQuit'), message, [
                 { id: 'save', label: window.i18n.t('dialog.save'), className: 'dialog-btn-confirm' },
                 { id: 'discard', label: window.i18n.t('dialog.discard'), className: 'dialog-btn-cancel' },
-                { id: 'cancel', label: window.i18n.t('dialog.cancel')}
+                { id: 'cancel', label: window.i18n.t('dialog.cancel') }
             ]);
-
             if (result === 'save') {
                 if (source === 'system') {
                     window.electronIPC.send('app-close-confirmed');
-                } else {
+                }
+                else {
                     window.electronIPC.send('window-close');
                 }
                 return;
             }
-
             if (result === 'discard') {
-                try { window.__oicppDiscardClose = true; } catch (_) { }
+                try {
+                    window.__oicppDiscardClose = true;
+                }
+                catch (_) { }
                 if (source === 'system') {
                     window.electronIPC.send('app-close-discard');
-                } else {
+                }
+                else {
                     window.electronIPC.send('window-close-discard');
                 }
                 return;
             }
-
             if (source === 'system') {
                 window.electronIPC.send('app-close-cancelled');
             }
-        } finally {
+        }
+        finally {
             this._closeConfirmInProgress = false;
         }
     }
-
     async _confirmTemporaryFilesBeforeClose() {
         const tempFiles = Array.from(window.tabManager?.tabs?.values?.() || [])
             .filter((tab) => tab?.isTempFile && tab.viewType !== 'pdf');
         for (const tab of tempFiles) {
             const fileName = this._escapeHtml(tab.fileName || window.i18n.t('titlebar.tempFileDefault'));
-            const result = await window.dialogManager?.showActionDialog?.(
-                window.i18n.t('titlebar.discardTempTitle'),
-                window.i18n.t('titlebar.discardTempMsg', { name: fileName }),
-                [
-                    { id: 'save', label: window.i18n.t('titlebar.save'), className: 'dialog-btn-confirm' },
-                    { id: 'discard', label: window.i18n.t('titlebar.discard'), className: 'dialog-btn-cancel' },
-                    { id: 'cancel', label: window.i18n.t('dialog.cancel') }
-                ]
-            );
-            if (result === 'cancel' || !result) return false;
+            const result = await window.dialogManager?.showActionDialog?.(window.i18n.t('titlebar.discardTempTitle'), window.i18n.t('titlebar.discardTempMsg', { name: fileName }), [
+                { id: 'save', label: window.i18n.t('titlebar.save'), className: 'dialog-btn-confirm' },
+                { id: 'discard', label: window.i18n.t('titlebar.discard'), className: 'dialog-btn-cancel' },
+                { id: 'cancel', label: window.i18n.t('dialog.cancel') }
+            ]);
+            if (result === 'cancel' || !result)
+                return false;
             if (result === 'save') {
                 const content = window.tabManager.getTabContentForSave?.(tab);
                 const savedPath = await window.electronAPI?.saveAsFile?.(content);
-                if (!savedPath) return false;
+                if (!savedPath)
+                    return false;
             }
         }
         return true;
     }
-
     setupElectronEvents() {
         if (window.electronIPC) {
             window.electronIPC.on('window-maximized', () => {
@@ -233,26 +232,25 @@ class TitlebarManager {
                 this.isMaximized = true;
                 this.updateMaximizeButton();
             });
-
             window.electronIPC.on('window-unmaximized', () => {
                 logInfo('窗口已还原');
                 this.isMaximized = false;
                 this.updateMaximizeButton();
             });
-
             window.electronIPC.on('app-close-requested', async () => {
                 try {
                     await this._requestCloseInternal({ source: 'system' });
-                } catch (e) {
+                }
+                catch (e) {
                     try {
                         logWarn('处理 app-close-requested 失败，已取消关闭:', e);
                         window.electronIPC.send('app-close-cancelled');
-                    } catch (_) { }
+                    }
+                    catch (_) { }
                 }
             });
         }
     }
-
     updateMaximizeButton() {
         const maximizeBtn = document.getElementById('maximize-btn');
         if (maximizeBtn) {
@@ -261,14 +259,14 @@ class TitlebarManager {
                 if (this.isMaximized) {
                     svg.setAttribute('d', 'M2 2h6v6H2V2zM4 4h6v6H4V4z');
                     maximizeBtn.title = window.i18n.t('titlebar.restore');
-                } else {
+                }
+                else {
                     svg.setAttribute('d', 'M2 2h8v8H2V2z');
                     maximizeBtn.title = window.i18n.t('titlebar.maximize');
                 }
             }
         }
     }
-
     setTitle(title) {
         this.currentTitle = title;
         const titleElement = this.titlebar.querySelector('.titlebar-title');
@@ -277,10 +275,10 @@ class TitlebarManager {
         }
     }
 }
-
-
+exports.TitlebarManager = TitlebarManager;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = TitlebarManager;
-} else {
+}
+else {
     window.TitlebarManager = TitlebarManager;
 }
