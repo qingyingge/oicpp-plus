@@ -54,8 +54,8 @@ check('重试实现存在且有分级延迟',
 
 check('同一 uri 只保留一条重试链（防连续保存叠出多条）',
     /_lspDiagnosticRetryTimers/.test(monacoSrc) &&
-    /const pending = this\._lspDiagnosticRetryTimers\.get\(uri\); if \(pending\) clearTimeout\(pending\);/.test(monacoSrc)
-        || /if \(pending\) clearTimeout\(pending\);/.test(monacoSrc));
+    (/const pending = this\._lspDiagnosticRetryTimers\.get\(uri\);[\s\n]*if \(pending\)[\s\n]*clearTimeout\(pending\);/.test(monacoSrc)
+        || /if \(pending\)[\s\n]*clearTimeout\(pending\);/.test(monacoSrc)));
 
 check('重试命中后真正落一次诊断（避免只探测不应用）',
     /if \(this\.findModelByLspUri\(uri\)\) \{\s*\n\s*this\.applyLspDiagnostics\(uri, diagnostics\);/.test(monacoSrc));
