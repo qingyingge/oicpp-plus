@@ -1130,9 +1130,8 @@ class MonacoEditorManager {
                 title: item.command.title || '',
                 arguments: item.command.arguments
             } : undefined,
-            tags: Array.isArray(item.tags) ? item.tags : undefined,
+            tags: Array.isArray(item.tags) ? item.tags : (item.deprecated === true ? [monaco.languages.CompletionItemTag.Deprecated] : undefined),
             preselect: item.preselect === true ? true : undefined,
-            deprecated: item.deprecated === true ? true : undefined,
             commitCharacters: Array.isArray(item.commitCharacters) ? item.commitCharacters : undefined,
             __oicppLspItem: item
         };
@@ -1207,8 +1206,9 @@ class MonacoEditorManager {
                     }, token));
                     if (token?.isCancellationRequested)
                         return { suggestions: [] };
-                    const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
-                    const isIncomplete = result?.isIncomplete === true;
+                    const resultObj = result;
+                    const items = Array.isArray(resultObj?.items) ? resultObj.items : (Array.isArray(resultObj) ? resultObj : []);
+                    const isIncomplete = resultObj?.isIncomplete === true;
                     const word = model.getWordUntilPosition(position);
                     const wordRange = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
                     const prefix = (word.word || '').toLowerCase();
@@ -1291,7 +1291,6 @@ class MonacoEditorManager {
                         command: mapped.command ?? item.command,
                         tags: mapped.tags ?? item.tags,
                         preselect: mapped.preselect ?? item.preselect,
-                        deprecated: mapped.deprecated ?? item.deprecated,
                         __oicppLspItem: resolved
                     };
                 }
@@ -1299,11 +1298,12 @@ class MonacoEditorManager {
                     return item;
                 }
             };
-            const disposableTrigger = monaco.languages.registerCompletionItemProvider(language, {
+            const provider = {
                 triggerCharacters: ['.', '>', ':', '"', '<', '/', '#', '&', '*', '[', '(', ','],
                 provideCompletionItems: lspComplete,
                 resolveCompletionItem
-            });
+            };
+            const disposableTrigger = monaco.languages.registerCompletionItemProvider(language, provider);
             this._lspProviders.set(key, disposableTrigger);
         }
     }

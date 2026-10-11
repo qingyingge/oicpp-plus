@@ -12,7 +12,31 @@ interface LSPClient {
     onApplyEdit: (callback: (edit: unknown) => void) => void;
     onNotification: (methodOrCallback: string | ((payload: { method: string; params: unknown }) => void), callback?: (params: unknown) => void) => void;
     onReady: (callback: () => void) => void;
-    getServerCapabilities: () => unknown;
+    getServerCapabilities: () => {
+        completionProvider?: { resolveProvider?: boolean; triggerCharacters?: string[] };
+        signatureHelpProvider?: { triggerCharacters?: string[]; retriggerCharacters?: string[] };
+        hoverProvider?: boolean | { };
+        definitionProvider?: boolean | { };
+        declarationProvider?: boolean | { };
+        typeDefinitionProvider?: boolean | { };
+        implementationProvider?: boolean | { };
+        referencesProvider?: boolean | { };
+        documentHighlightProvider?: boolean | { };
+        documentSymbolProvider?: boolean | { };
+        workspaceSymbolProvider?: boolean | { };
+        codeActionProvider?: boolean | { codeActionKinds?: string[] };
+        codeLensProvider?: { resolveProvider?: boolean };
+        documentLinkProvider?: { resolveProvider?: boolean };
+        documentFormattingProvider?: boolean | { };
+        documentRangeFormattingProvider?: boolean | { };
+        documentOnTypeFormattingProvider?: { firstTriggerCharacter: string; moreTriggerCharacter?: string[] };
+        renameProvider?: { prepareProvider?: boolean };
+        foldingRangeProvider?: boolean | { };
+        inlayHintProvider?: { resolveProvider?: boolean };
+        semanticTokensProvider?: { full?: boolean | { delta?: boolean }; legend: { tokenTypes: string[]; tokenModifiers: string[] } };
+        executeCommandProvider?: { commands: string[] };
+        textDocumentSync?: { openClose?: boolean; change?: number };
+    } | undefined;
     supportsCapability: (capability: string, fallback?: boolean) => boolean;
     request: (method: string, params: unknown) => Promise<unknown>;
     _ready?: boolean;
@@ -73,7 +97,7 @@ export class MonacoEditorManager {
     _syntaxCheckEnabled: boolean;
     _lspCompilerPath: string | undefined;
     _lspProviders: Map<string, monaco.IDisposable>;
-    _lspInlayHintCache: WeakMap<monaco.editor.ITextModel, monaco.languages.InlayHint[]>;
+    _lspInlayHintCache: WeakMap<monaco.editor.ITextModel, { version: number; result: { hints: monaco.languages.InlayHint[]; dispose: () => void } }>;
     _lspDiagnosticRetryTimers: Map<string, NodeJS.Timeout> | undefined;
     _lspProvidersRegistered: boolean;
     _lspDisposables: monaco.IDisposable[];
@@ -144,7 +168,7 @@ export class MonacoEditorManager {
         this._syntaxCheckEnabled = true;
         this._lspCompilerPath = undefined;
         this._lspProviders = new Map();
-        this._lspInlayHintCache = new WeakMap();
+        this._lspInlayHintCache = new WeakMap<monaco.editor.ITextModel, { version: number; result: { hints: monaco.languages.InlayHint[]; dispose: () => void } }>();
         this._clangFormatProviders = new Map();
         this._lspCommandArguments = new Map<string, unknown>();
         this._lspProvidersReady = false;
@@ -1076,7 +1100,29 @@ export class MonacoEditorManager {
     }
 
     /** @returns {import('monaco-editor').languages.CompletionItem & { deprecated?: unknown }} */
-    _mapLspCompletionItem(item, options = {}) {
+    _mapLspCompletionItem(item: {
+        label?: string;
+        kind?: number;
+        command?: { command?: string; title?: string; arguments?: unknown[] };
+        textEdit?: { range?: unknown; replace?: unknown; insert?: unknown; newText?: string };
+        textEditText?: string;
+        insertText?: string;
+        additionalTextEdits?: Array<{ range?: unknown; newText?: string }>;
+        detail?: string;
+        sortText?: string;
+        filterText?: string;
+        documentation?: string | { value?: string };
+        tags?: unknown[];
+        preselect?: boolean;
+        deprecated?: boolean;
+        commitCharacters?: string[];
+        insertTextFormat?: number;
+        __oicppLspItem?: unknown;
+    }, options: {
+        kindMap?: Record<number, monaco.languages.CompletionItemKind>;
+        wordRange?: monaco.Range | null;
+        sortText?: string;
+    } = {}) {
         const rawLabel = String(item?.label || '').trim();
         if (!rawLabel) return null;
 
@@ -1108,7 +1154,7 @@ export class MonacoEditorManager {
             documentation = { value: item.documentation.value };
         }
 
-        const suggestion = {
+        const suggestion: monaco.languages.CompletionItem & { __oicppLspItem?: unknown } = {
             label: rawLabel,
             kind: kindMap[item.kind] ?? monaco.languages.CompletionItemKind.Text,
             insertText,
@@ -1122,9 +1168,8 @@ export class MonacoEditorManager {
                 title: item.command.title || '',
                 arguments: item.command.arguments
             } : undefined,
-            tags: Array.isArray(item.tags) ? item.tags : undefined,
+            tags: Array.isArray(item.tags) ? item.tags as monaco.languages.CompletionItemTag[] : (item.deprecated === true ? [monaco.languages.CompletionItemTag.Deprecated] : undefined),
             preselect: item.preselect === true ? true : undefined,
-            deprecated: item.deprecated === true ? true : undefined,
             commitCharacters: Array.isArray(item.commitCharacters) ? item.commitCharacters : undefined,
             __oicppLspItem: item
         };
@@ -1203,8 +1248,9 @@ export class MonacoEditorManager {
                     }, token));
 
                     if (token?.isCancellationRequested) return { suggestions: [] };
-                    const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
-                    const isIncomplete = result?.isIncomplete === true;
+                    const resultObj = result as { items?: unknown[]; isIncomplete?: boolean } | null;
+                    const items = Array.isArray(resultObj?.items) ? resultObj.items : (Array.isArray(resultObj) ? resultObj : []);
+                    const isIncomplete = resultObj?.isIncomplete === true;
 
                     const word = model.getWordUntilPosition(position);
                     const wordRange = new monaco.Range(
@@ -1289,7 +1335,6 @@ export class MonacoEditorManager {
                         command: mapped.command ?? item.command,
                         tags: mapped.tags ?? item.tags,
                         preselect: mapped.preselect ?? item.preselect,
-                        deprecated: mapped.deprecated ?? item.deprecated,
                         __oicppLspItem: resolved
                     };
                 } catch (_) {
@@ -1297,11 +1342,12 @@ export class MonacoEditorManager {
                 }
             };
 
-            const disposableTrigger = monaco.languages.registerCompletionItemProvider(language, {
+            const provider = {
                 triggerCharacters: ['.', '>', ':', '"', '<', '/', '#', '&', '*', '[', '(', ','],
                 provideCompletionItems: lspComplete,
                 resolveCompletionItem
-            });
+            };
+            const disposableTrigger = monaco.languages.registerCompletionItemProvider(language, provider);
             this._lspProviders.set(key, disposableTrigger);
         }
     }
