@@ -21,6 +21,8 @@ function loadManagerClass(records) {
     const classSource = managerSource.slice(start);
 
     const context = {
+        exports: {},
+        module: { exports: {} },
         window: { electronAPI: {}, i18n: { t: (key) => key } },
         document: {
             createElement: () => ({ style: {}, classList: { add() {} } }),

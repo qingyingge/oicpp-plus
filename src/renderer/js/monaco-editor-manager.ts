@@ -1,7 +1,98 @@
 // lsp-start 失败后的重试冷却期：避免每个 LSP 特性请求都重新发起一次启动 IPC
 const LSP_START_RETRY_COOLDOWN_MS = 3000;
 
-class MonacoEditorManager {
+/// <reference types="monaco-editor" />
+/// <reference path="../../types/global.d.ts" />
+
+import * as monaco from 'monaco-editor';
+
+interface LSPClient {
+    restart: (options: { workspaceRoot: string; rootUri: string; workspaceName: string; compileFlags: string; compilerPath: string }) => Promise<boolean | void>;
+    onDiagnostics: (callback: (uri: string, diagnostics: monaco.editor.IMarkerData[]) => void) => void;
+    onApplyEdit: (callback: (edit: unknown) => void) => void;
+    onNotification: (methodOrCallback: string | ((payload: { method: string; params: unknown }) => void), callback?: (params: unknown) => void) => void;
+    onReady: (callback: () => void) => void;
+    getServerCapabilities: () => unknown;
+    supportsCapability: (capability: string, fallback?: boolean) => boolean;
+    request: (method: string, params: unknown) => Promise<unknown>;
+    _ready?: boolean;
+}
+
+declare function logInfo(...args: unknown[]): void;
+declare function logWarn(...args: unknown[]): void;
+declare function logError(...args: unknown[]): void;
+
+export class MonacoEditorManager {
+    currentEditor: monaco.editor.IStandaloneCodeEditor | null;
+    editors: Map<string, monaco.editor.IStandaloneCodeEditor>;
+    isInitialized: boolean;
+    currentFilePath: string | null;
+    currentFileName: string | null;
+    tabIdToFilePath: Map<string, string>;
+    groupContainers: Map<string, HTMLElement>;
+    tabIdToGroupId: Map<string, string>;
+    groupActiveTab: Map<string, string>;
+    tabIdToContainer: Map<string, HTMLElement>;
+    diffEditors: Map<string, monaco.editor.IStandaloneDiffEditor>;
+    markerOwner: string;
+    lspMarkerOwner: string;
+    _compilerErrorDecorations: Map<string, monaco.editor.IEditorDecorationsCollection>;
+    breakpoints: Map<string, Set<number>>;
+    _execHighlights: Map<string, monaco.editor.IEditorDecorationsCollection>;
+    completionProviders: Map<string, monaco.languages.CompletionItemProvider>;
+    _globalKeysRegistered: boolean;
+    userSnippets: Array<{ keyword?: string; description?: string; content?: string }>;
+    defaultKeybindings: Record<string, string>;
+    keybindings: Record<string, string>;
+    _keybindingParseCache: Map<string, unknown>;
+    _headerCache: string | null;
+    _includePathCache: Map<string, string[]>;
+    _compilerIncludeDirsCache: { compilerPath: string | null; dirs: string[] };
+    _compilerIncludeDirsPromise: Promise<string[]> | null;
+    _includeCacheToken: number;
+    _includeRootsCache: Map<string, string[]>;
+    _fileIncludeCache: Map<string, string[]>;
+    lineHeightSetting: number;
+    syntaxColorsByTheme: Record<string, Record<string, string>>;
+    syntaxStyles: Record<string, Record<string, string>>;
+    unifiedPreprocessorColor: boolean;
+    formatterIndentStyle: string;
+    clangFormatStyle: monaco.languages.FormattingOptions | string | Record<string, unknown>;
+    clangFormatRaw: string;
+    _lspSemanticProviders: unknown[];
+    _lspSemanticTokenCache: WeakMap<monaco.editor.ITextModel, unknown>;
+    _lspDiagnosticsByModel: WeakMap<monaco.editor.ITextModel, monaco.editor.IMarkerData[]>;
+    _lspDocuments: Map<monaco.editor.ITextModel, monaco.editor.ITextModel>;
+    _lspChangeTimers: Map<string, NodeJS.Timeout>;
+    _lspChangeInFlight: Set<string>;
+    _lspChangePromises: Map<string, Promise<void>>;
+    _lspChangePending: Set<string>;
+    _lspReadyPromise: Promise<void | boolean> | null;
+    _lspStartFailure: { at: number; error: Error } | null;
+    _lspCompletionEnabled: boolean;
+    _syntaxCheckEnabled: boolean;
+    _lspCompilerPath: string | undefined;
+    _lspProviders: Map<string, monaco.IDisposable>;
+    _lspInlayHintCache: WeakMap<monaco.editor.ITextModel, monaco.languages.InlayHint[]>;
+    _lspDiagnosticRetryTimers: Map<string, NodeJS.Timeout> | undefined;
+    _lspProvidersRegistered: boolean;
+    _lspDisposables: monaco.IDisposable[];
+    _cppSemanticHighlightingProviders: monaco.IDisposable[];
+    _cppSemanticHighlightingEnabled: boolean;
+    _lspConfigurationChangeTimer: NodeJS.Timeout | null;
+    _pendingLspConfigurationChange: boolean;
+    _lspReadyResolve: (() => void) | null;
+    _lspReadyReject: ((err: Error) => void) | null;
+    _lspInitializationPromise: Promise<void | boolean> | null;
+    _clangFormatProviders: Map<string, monaco.IDisposable>;
+    _lspCommandArguments: Map<string, unknown>;
+    _lspProvidersReady: boolean;
+    _lspGuardedModels: WeakSet<monaco.editor.ITextModel>;
+    _lspGuardDetails: WeakMap<monaco.editor.ITextModel, unknown>;
+    lspClient: LSPClient | null;
+    _onMonacoContextMenuPasteCapture: ((event: Event) => void) | null;
+    _themesDefined: boolean;
+
     constructor() {
         this.currentEditor = null;
         this.editors = new Map();
@@ -55,11 +146,11 @@ class MonacoEditorManager {
         this._lspProviders = new Map();
         this._lspInlayHintCache = new WeakMap();
         this._clangFormatProviders = new Map();
-        this._lspCommandArguments = new Map();
+        this._lspCommandArguments = new Map<string, unknown>();
         this._lspProvidersReady = false;
-        this._lspGuardedModels = new WeakSet();
-        this._lspGuardDetails = new WeakMap();
-        this.lspClient = window.lspClient || null;
+        this._lspGuardedModels = new WeakSet<monaco.editor.ITextModel>();
+        this._lspGuardDetails = new WeakMap<monaco.editor.ITextModel, unknown>();
+        this.lspClient = (window.lspClient as unknown as LSPClient) || null;
         this.setupLspIntegration();
         this._onMonacoContextMenuPasteCapture = this.handleMonacoContextMenuPasteCapture.bind(this);
         
@@ -79,7 +170,7 @@ class MonacoEditorManager {
 
         if (window.electronAPI?.onSettingsChanged) {
             try {
-                window.electronAPI.onSettingsChanged((_event, _settingsType, payload) => {
+                window.electronAPI.onSettingsChanged((_event, _settingsType, payload: { compilerPath?: string }) => {
                     if (payload && Object.prototype.hasOwnProperty.call(payload, 'compilerPath')) {
                         const newCompilerPath = payload.compilerPath || '';
                         this._lspCompilerPath = newCompilerPath;
@@ -105,7 +196,7 @@ class MonacoEditorManager {
                                 try {
                                     const model = editor?.getModel?.();
                                     if (model && Object.prototype.hasOwnProperty.call(model, '__oicppIncludeCache')) {
-                                        delete model.__oicppIncludeCache;
+                                        delete (model as monaco.editor.ITextModel & { __oicppIncludeCache?: unknown }).__oicppIncludeCache;
                                     }
                                 } catch (_) {}
                             }
@@ -395,7 +486,7 @@ class MonacoEditorManager {
                 workspaceRoot,
                 rootUri,
                 workspaceName,
-                compileFlags: this.buildRequestedCompileFlags(compilerArgs),
+                compileFlags: this.buildRequestedCompileFlags(compilerArgs).join(' '),
                 compilerPath: compilerPath || newCompilerPath
             });
 
@@ -518,7 +609,7 @@ class MonacoEditorManager {
         // clangd 不可用时启动会失败，而 _ensureLspDocumentReady 被每个 LSP 特性请求
         // 调用，若每次都重试就会在启动/开文件关键路径上重复发 lsp-start（每次数十毫秒）。
         // 冷却期内直接复用上次的失败结果，不再产生多余 IPC。
-        if (this._lspStartFailure && (Date.now() - this._lspStartFailure.at) < LSP_START_RETRY_COOLDOWN_MS) {
+        if (this._lspStartFailure && (Date.now() - this._lspStartFailure!.at) < LSP_START_RETRY_COOLDOWN_MS) {
             logInfo('[LSP] 处于启动失败冷却期，跳过重复的 lsp-start 调用');
             throw this._lspStartFailure.error;
         }
@@ -549,11 +640,11 @@ class MonacoEditorManager {
 
             logInfo('[LSP] 准备初始化 LSP, 工作区:', workspaceRoot || '(无)');
             try {
-                await this.lspClient.start({
+                await this.lspClient.restart({
                     workspaceRoot,
                     rootUri,
                     workspaceName,
-                    compileFlags,
+                    compileFlags: compileFlags.join(' '),
                     compilerPath
                 });
             } catch (startErr) {

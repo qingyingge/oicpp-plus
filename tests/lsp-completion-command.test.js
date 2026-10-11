@@ -54,6 +54,8 @@ function loadManager() {
     };
 
     const context = {
+        exports: {},
+        module: { exports: {} },
         window: {
             electronAPI: {},
             i18n: { t: (key) => key }

@@ -1,7 +1,114 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.MonacoEditorManager = void 0;
 // lsp-start 失败后的重试冷却期：避免每个 LSP 特性请求都重新发起一次启动 IPC
 const LSP_START_RETRY_COOLDOWN_MS = 3000;
+/// <reference types="monaco-editor" />
+/// <reference path="../../types/global.d.ts" />
+const monaco = __importStar(require("monaco-editor"));
 class MonacoEditorManager {
+    currentEditor;
+    editors;
+    isInitialized;
+    currentFilePath;
+    currentFileName;
+    tabIdToFilePath;
+    groupContainers;
+    tabIdToGroupId;
+    groupActiveTab;
+    tabIdToContainer;
+    diffEditors;
+    markerOwner;
+    lspMarkerOwner;
+    _compilerErrorDecorations;
+    breakpoints;
+    _execHighlights;
+    completionProviders;
+    _globalKeysRegistered;
+    userSnippets;
+    defaultKeybindings;
+    keybindings;
+    _keybindingParseCache;
+    _headerCache;
+    _includePathCache;
+    _compilerIncludeDirsCache;
+    _compilerIncludeDirsPromise;
+    _includeCacheToken;
+    _includeRootsCache;
+    _fileIncludeCache;
+    lineHeightSetting;
+    syntaxColorsByTheme;
+    syntaxStyles;
+    unifiedPreprocessorColor;
+    formatterIndentStyle;
+    clangFormatStyle;
+    clangFormatRaw;
+    _lspSemanticProviders;
+    _lspSemanticTokenCache;
+    _lspDiagnosticsByModel;
+    _lspDocuments;
+    _lspChangeTimers;
+    _lspChangeInFlight;
+    _lspChangePromises;
+    _lspChangePending;
+    _lspReadyPromise;
+    _lspStartFailure;
+    _lspCompletionEnabled;
+    _syntaxCheckEnabled;
+    _lspCompilerPath;
+    _lspProviders;
+    _lspInlayHintCache;
+    _lspDiagnosticRetryTimers;
+    _lspProvidersRegistered;
+    _lspDisposables;
+    _cppSemanticHighlightingProviders;
+    _cppSemanticHighlightingEnabled;
+    _lspConfigurationChangeTimer;
+    _pendingLspConfigurationChange;
+    _lspReadyResolve;
+    _lspReadyReject;
+    _lspInitializationPromise;
+    _clangFormatProviders;
+    _lspCommandArguments;
+    _lspProvidersReady;
+    _lspGuardedModels;
+    _lspGuardDetails;
+    lspClient;
+    _onMonacoContextMenuPasteCapture;
+    _themesDefined;
     constructor() {
         this.currentEditor = null;
         this.editors = new Map();
@@ -379,7 +486,7 @@ class MonacoEditorManager {
                 workspaceRoot,
                 rootUri,
                 workspaceName,
-                compileFlags: this.buildRequestedCompileFlags(compilerArgs),
+                compileFlags: this.buildRequestedCompileFlags(compilerArgs).join(' '),
                 compilerPath: compilerPath || newCompilerPath
             });
             await this._lspReadyPromise;
@@ -534,11 +641,11 @@ class MonacoEditorManager {
             const workspaceName = workspaceRoot ? this.getFileNameFromPath(workspaceRoot) : 'workspace';
             logInfo('[LSP] 准备初始化 LSP, 工作区:', workspaceRoot || '(无)');
             try {
-                await this.lspClient.start({
+                await this.lspClient.restart({
                     workspaceRoot,
                     rootUri,
                     workspaceName,
-                    compileFlags,
+                    compileFlags: compileFlags.join(' '),
                     compilerPath
                 });
             }
@@ -9077,6 +9184,7 @@ class MonacoEditorManager {
         return result;
     }
 }
+exports.MonacoEditorManager = MonacoEditorManager;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = MonacoEditorManager;
 }
