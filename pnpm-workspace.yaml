@@ -11,3 +11,4 @@ allowBuilds:
   electron-winstaller: true
 minimumReleaseAgeExclude:
   - electron@44.5.1
+  - i18next@26.4.4

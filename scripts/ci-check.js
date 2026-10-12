@@ -950,9 +950,23 @@ if (fileExists(buildInfoPath)) {
 // H4: Electron version check
 console.log(`\n${Y}[H4] Electron version${R}`);
 if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
-  const electronVer = pkg.devDependencies.electron.replace(/[^0-9.]/g, '');
-  const firstDot = electronVer.indexOf('.');
-  const majorVer = firstDot > 0 ? parseInt(electronVer.substring(0, firstDot), 10) : parseInt(electronVer, 10);
+  // Get actual installed version from node_modules (more reliable than package.json range)
+  const electronPkgPath = path.join(root, 'node_modules', 'electron', 'package.json');
+  let electronVer = '';
+  let majorVer = 0;
+  if (fileExists(electronPkgPath)) {
+    const ep = readJson(electronPkgPath);
+    if (ep && ep.version) {
+      electronVer = ep.version;
+      majorVer = parseInt(electronVer.split('.')[0], 10);
+    }
+  }
+  // Fallback to package.json declared range
+  if (!electronVer) {
+    const declared = pkg.devDependencies.electron.replace(/[^0-9.]/g, '');
+    electronVer = declared;
+    majorVer = parseInt(declared.split('.')[0], 10);
+  }
   if (majorVer < 35) {
     fail(`Electron ${electronVer} is too old (security risk)`);
   } else if (majorVer < 39) {
