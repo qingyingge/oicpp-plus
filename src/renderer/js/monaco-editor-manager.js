@@ -1469,6 +1469,73 @@ class MonacoEditorManager {
             value: signatureHelp,
             dispose() { }
         });
+
+        // 解析签名 label，重新计算每个参数在 label 中的偏移对齐
+        // clangd 返回的 sig.label 可能含模板/返回类型/命名空间，导致其偏移对与 label 本体错位
+        const realignParameterOffsets = (label, parameters) => {
+            if (!label || !Array.isArray(parameters) || parameters.length === 0) {
+                return parameters.map((_, idx) => `[${idx}]`);
+            }
+            const paramNames = parameters.map((p, idx) => {
+                // 优先用 clangd 给的参数名（label 字符串或偏移切片）
+                if (typeof p.label === 'string' && p.label.trim()) {
+                    return p.label.trim();
+                }
+                if (Array.isArray(p.label) && p.label.length === 2
+                    && Number.isInteger(p.label[0]) && Number.isInteger(p.label[1])) {
+                    const [start, end] = p.label;
+                    if (start >= 0 && end <= label.length && start < end) {
+                        return label.slice(start, end).trim();
+                    }
+                }
+                // 兜底：用位置占位符
+                return `param${idx + 1}`;
+            });
+
+            // 在 label 中逐个搜索参数名，计算实际偏移
+            // 从左到右贪婪匹配，避免同名参数重复匹配
+            let searchFrom = 0;
+            return paramNames.map((name, idx) => {
+                if (!name) return `[${idx}]`;
+                // 转义正则特殊字符
+                const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                // 匹配完整标识符边界
+                const regex = new RegExp(`\\b${escaped}\\b`);
+                const match = label.slice(searchFrom).match(regex);
+                if (match) {
+                    const start = searchFrom + match.index;
+                    const end = start + match[0].length;
+                    searchFrom = end;
+                    return [start, end];
+                }
+                // 匹配失败：兜底用 clangd 原始偏移或索引占位
+                const orig = parameters[idx]?.label;
+                if (Array.isArray(orig) && orig.length === 2
+                    && Number.isInteger(orig[0]) && Number.isInteger(orig[1])) {
+                    return orig;
+                }
+                return `[${idx}]`;
+            });
+        };
+
+        // 从当前光标位置推断 activeParameter（数逗号）
+        const inferActiveParameterFromCursor = (model, position, label) => {
+            if (!model || !position) return 0;
+            try {
+                const lineContent = model.getLineContent(position.lineNumber);
+                const beforeCursor = lineContent.slice(0, position.column - 1);
+                // 找最后一个 '(' 到光标之间的逗号数
+                const lastParen = beforeCursor.lastIndexOf('(');
+                if (lastParen === -1) return 0;
+                const paramArea = beforeCursor.slice(lastParen + 1);
+                // 简单计数：逗号数 = 参数索引
+                const commas = (paramArea.match(/,/g) || []).length;
+                return commas;
+            } catch (_) {
+                return 0;
+            }
+        };
+
         for (const language of languages) {
             const key = `${language}:signatureHelp`;
             if (this._lspProviders.has(key)) continue;
@@ -1477,8 +1544,18 @@ class MonacoEditorManager {
                 signatureHelpTriggerCharacters: ['(', ','],
                 signatureHelpRetriggerCharacters: [','],
                 provideSignatureHelp: async (model, position, token, context) => {
+                    // 方案 B：模型已释放或请求已取消 → 直接返回空
+                    if (!model || model.isDisposed?.() || token?.isCancellationRequested) {
+                        return createSignatureHelpResult(emptySignatureHelp);
+                    }
+                    // 记录请求时的文档版本，返回后若版本已变则丢弃（避免旧版本结果覆盖新位置）
+                    const requestVersion = model.getVersionId?.();
                     try {
                         const lspReady = await this._ensureLspDocumentReady(model);
+                        // 再次校验：长时间 await 期间模型可能已释放或请求被取消
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) {
+                            return createSignatureHelpResult(emptySignatureHelp);
+                        }
                         if (!lspReady) return createSignatureHelpResult(emptySignatureHelp);
                         if (!this.lspClient) return createSignatureHelpResult(emptySignatureHelp);
                         const uri = await this.getDocumentUriForModel(model);
@@ -1496,31 +1573,49 @@ class MonacoEditorManager {
                                 isRetrigger: context.isRetrigger === true
                             } : undefined
                         }, token);
+
+                        // 返回后再次校验：模型释放、取消、或文档版本已变
+                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) {
+                            return createSignatureHelpResult(emptySignatureHelp);
+                        }
+                        if (requestVersion !== undefined && model.getVersionId?.() !== requestVersion) {
+                            return createSignatureHelpResult(emptySignatureHelp);
+                        }
+
                         if (!result || !Array.isArray(result.signatures) || result.signatures.length === 0) {
                             return createSignatureHelpResult(emptySignatureHelp);
                         }
+
+                        const activeSigIdx = Number.isInteger(result.activeSignature) ? result.activeSignature : 0;
+                        // 兜底 activeParameter：clangd 未给/越界时，用光标位置推断
+                        let activeParamIdx = Number.isInteger(result.activeParameter) ? result.activeParameter : 0;
+                        const activeSignature = result.signatures[activeSigIdx];
+                        const maxParam = activeSignature?.parameters?.length ?? 0;
+                        if (activeParamIdx < 0 || activeParamIdx >= maxParam) {
+                            activeParamIdx = inferActiveParameterFromCursor(model, position, activeSignature?.label);
+                            if (activeParamIdx < 0) activeParamIdx = 0;
+                            if (activeParamIdx >= maxParam) activeParamIdx = Math.max(0, maxParam - 1);
+                        }
+
                         return createSignatureHelpResult({
-                            activeSignature: Number.isInteger(result.activeSignature) ? result.activeSignature : 0,
-                            activeParameter: Number.isInteger(result.activeParameter) ? result.activeParameter : 0,
-                            signatures: result.signatures.map((sig) => ({
-                                label: sig.label || '',
-                                documentation: sig.documentation
-                                    ? (typeof sig.documentation === 'string' ? sig.documentation : (sig.documentation.value || ''))
-                                    : undefined,
-                                parameters: Array.isArray(sig.parameters)
-                                    ? sig.parameters.map((p, idx) => ({
-                                        label: typeof p.label === 'string'
-                                            ? p.label
-                                            : (Array.isArray(p.label) && p.label.length === 2
-                                                && Number.isInteger(p.label[0]) && Number.isInteger(p.label[1])
-                                                ? [p.label[0], p.label[1]]
-                                                : `[${idx}]`),
+                            activeSignature: activeSigIdx,
+                            activeParameter: activeParamIdx,
+                            signatures: result.signatures.map((sig) => {
+                                const rawParams = Array.isArray(sig.parameters) ? sig.parameters : [];
+                                const alignedOffsets = realignParameterOffsets(sig.label || '', rawParams);
+                                return {
+                                    label: sig.label || '',
+                                    documentation: sig.documentation
+                                        ? (typeof sig.documentation === 'string' ? sig.documentation : (sig.documentation.value || ''))
+                                        : undefined,
+                                    parameters: rawParams.map((p, idx) => ({
+                                        label: alignedOffsets[idx],
                                         documentation: p.documentation
                                             ? (typeof p.documentation === 'string' ? p.documentation : (p.documentation.value || ''))
                                             : undefined
                                     }))
-                                    : []
-                            }))
+                                };
+                            })
                         });
                     } catch (_) {
                         return createSignatureHelpResult(emptySignatureHelp);
