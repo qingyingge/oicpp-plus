@@ -936,6 +936,7 @@ class MonacoEditorManager {
             const disposable = monaco.languages.registerCompletionItemProvider(language, {
                 provideCompletionItems: (model, position) => {
                     if (!this._lspCompletionEnabled || !model || model.isDisposed?.()) return { suggestions: [] };
+                    if (this.isInComment(model, position)) return { suggestions: [] };
                     const lspOwnsDocument = this.lspClient?._ready && this._lspDocuments.has(model);
                     const fallbackActive = Number(model.__oicppLspCompletionFallbackUntil || 0) > Date.now();
                     if (lspOwnsDocument && !fallbackActive) return { suggestions: [] };
@@ -1084,6 +1085,7 @@ class MonacoEditorManager {
                 if (!this._lspCompletionEnabled) {
                     return { suggestions: [] };
                 }
+                if (this.isInComment(model, position)) return { suggestions: [] };
                 try {
                     const lspReady = await this._ensureLspDocumentReady(model);
                     if (!lspReady) {
