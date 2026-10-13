@@ -362,10 +362,7 @@ class CompilerManager {
                 compilerArgs = compilerArgs.replace(/\s+/g, ' ').trim();
                 this.appendOutput((window.i18n?.t?.('compileOutput.modeDebug', null) || 'Compilation mode: Debug (debug info, optimizations disabled)') + '\n', 'info');
             } else {
-                if (!compilerArgs.includes('-g')) {
-                    compilerArgs = compilerArgs + ' -g';
-                    this.appendOutput((window.i18n?.t?.('compileOutput.modeNormal', null) || 'Compilation mode: Normal (with debug info)') + '\n', 'info');
-                }
+                this.appendOutput((window.i18n?.t?.('compileOutput.modeNormal', null) || 'Compilation mode: Normal (optimized)') + '\n', 'info');
             }
 
             const compileCommand = this.buildCompileCommand(inputFile, outputFile, compilerArgs);

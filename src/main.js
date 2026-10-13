@@ -1936,7 +1936,7 @@ const ALLOWED_REMOTE_API_PATHS = new Set([
 ]);
 
 function getDefaultSettings() {
-    let compilerArgs = '-std=c++14 -O2 -static';
+    let compilerArgs = '-std=c++14 -O2 -Wall';
     let cppTemplate = '';
     const compileAndRunShortcut = process.platform === 'darwin' ? 'Ctrl+F11' : 'F11';
 
