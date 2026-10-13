@@ -726,7 +726,25 @@ class ClangdLspManager {
         this.canceledIds.clear();
         proc.stdout.on('data', (data) => this._handleData(data));
         proc.stderr.on('data', (data) => {
-            try { logWarn('[clangd]', data.toString('utf8').trim()); } catch (_) {}
+            try {
+                const text = data.toString('utf8').trim();
+                if (!text) return;
+                // clangd 使用 I[ / W[ / E[ 前缀表示 Info/Warning/Error
+                // 解析前缀并按相应级别记录，避免将所有输出都记为 WARN
+                const lines = text.split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    if (trimmed.startsWith('E[') || trimmed.startsWith('ERROR')) {
+                        logError('[clangd]', trimmed);
+                    } else if (trimmed.startsWith('W[') || trimmed.startsWith('WARNING')) {
+                        logWarn('[clangd]', trimmed);
+                    } else {
+                        // I[ 或其他视为 INFO
+                        logInfo('[clangd]', trimmed);
+                    }
+                }
+            } catch (_) {}
         });
         proc.on('exit', (code, signal) => {
             if (generation !== this.procGeneration) {
