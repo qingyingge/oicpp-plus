@@ -620,6 +620,25 @@ class ClangdLspManager {
             '--header-insertion=iwyu',
             '--pch-storage=memory'
         ];
+
+        // 添加 --resource-dir 以消除 clangd 启动警告
+        // clangd 需要 resource directory (lib/clang/<version>) 来查找内置头文件
+        // 尝试在 clangdRoot 下查找 lib/clang/<version> 目录
+        let resourceDir = null;
+        try {
+            const libClangDir = path.join(clangdRoot, 'lib', 'clang');
+            if (fs.existsSync(libClangDir)) {
+                const versions = fs.readdirSync(libClangDir).filter(v => fs.statSync(path.join(libClangDir, v)).isDirectory());
+                if (versions.length > 0) {
+                    // 使用找到的第一个版本目录
+                    resourceDir = path.join(libClangDir, versions[0]);
+                    args.push(`--resource-dir=${resourceDir.replace(/\\/g, '/')}`);
+                    logInfo('[LSP] 配置 resource-dir:', resourceDir);
+                }
+            }
+        } catch (err) {
+            logWarn('[LSP] 查找 resource-dir 失败:', err?.message || err);
+        }
         const compilerPath = options.compilerPath || '';
         if (compilerPath && typeof compilerPath === 'string' && fs.existsSync(compilerPath)) {
             const normalized = compilerPath.replace(/\\/g, '/');
