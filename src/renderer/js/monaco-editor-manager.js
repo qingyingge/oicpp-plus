@@ -1112,6 +1112,7 @@ class MonacoEditorManager {
                     }, token);
 
                     if (token?.isCancellationRequested) return { suggestions: [] };
+                    if (!model || model.isDisposed?.()) return { suggestions: [] };
                     const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
                     const isIncomplete = result?.isIncomplete === true;
 
@@ -1383,6 +1384,7 @@ class MonacoEditorManager {
                             }))
                         }, token);
                         if (token?.isCancellationRequested) return null;
+                        if (!model || model.isDisposed?.()) return positions.map(() => []);
                         if (!Array.isArray(result)) return positions.map(() => []);
                         return result.map((selectionRange) => this.lspSelectionRangeToMonaco(selectionRange));
                     } catch (_) {
@@ -1964,6 +1966,7 @@ class MonacoEditorManager {
                         const result = await this.lspClient.request('textDocument/documentSymbol', {
                             textDocument: { uri }
                         }, token);
+                        if (!model || model.isDisposed?.()) return [];
                         if (!Array.isArray(result)) return [];
 
                         const toRange = (range) => new monaco.Range(
@@ -2087,6 +2090,7 @@ class MonacoEditorManager {
                             },
                             context: { includeDeclaration: context.includeDeclaration }
                         }, token);
+                        if (!model || model.isDisposed?.()) return [];
                         if (!Array.isArray(result)) return [];
 
                         return result.filter(Boolean).map((loc) => {
@@ -2134,6 +2138,7 @@ class MonacoEditorManager {
                             },
                             newName
                         }, token);
+                        if (!model || model.isDisposed?.()) return null;
                         const workspaceEdit = this.lspWorkspaceEditToMonaco(result);
                         return workspaceEdit || null;
                     } catch (_) {
@@ -2155,6 +2160,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
+                        if (!model || model.isDisposed?.()) return null;
                         if (!result) return null;
                         if (result.range) {
                             return {
@@ -2284,6 +2290,7 @@ class MonacoEditorManager {
                                 only: ['quickfix', 'refactor', 'source']
                             }
                         }, token);
+                        if (!model || model.isDisposed?.()) return { actions: [], dispose: () => {} };
                         if (!Array.isArray(result)) return { actions: [], dispose: () => {} };
 
                         const actions = result.filter(Boolean).map((item) => {
@@ -2339,6 +2346,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
+                        if (!model || model.isDisposed?.()) return [];
                         if (!result) return null;
 
                         const locations = Array.isArray(result) ? result : [result];
@@ -2376,6 +2384,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
+                        if (!model || model.isDisposed?.()) return [];
                         if (!result) return null;
 
                         const locations = Array.isArray(result) ? result : [result];
@@ -2413,6 +2422,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
+                        if (!model || model.isDisposed?.()) return [];
                         if (!Array.isArray(result)) return [];
 
                         return result.filter(Boolean).map((item) => ({
