@@ -2052,6 +2052,9 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
+                        if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
+                            return null;
+                        }
                         if (!result) return null;
 
                         const locations = Array.isArray(result) ? result : [result];
@@ -2523,6 +2526,7 @@ class MonacoEditorManager {
                         const result = await this.lspClient.request('textDocument/codeLens', {
                             textDocument: { uri }
                         }, token);
+                        if (!model || model.isDisposed?.()) return { lenses: [], dispose: () => {} };
                         if (!Array.isArray(result)) return { lenses: [], dispose: () => {} };
 
                         const lenses = result.filter(Boolean).map((item) => {
