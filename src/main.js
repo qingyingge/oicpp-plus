@@ -278,6 +278,20 @@ function resolveClangdExecutable(rootDir) {
     return fs.existsSync(candidate) ? candidate : null;
 }
 
+function findClangdExecutableOnPath() {
+    const exeName = getClangdExecutableName();
+    const entries = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+    for (const entry of entries) {
+        const candidate = path.join(entry.replace(/^"|"$/g, ''), exeName);
+        try {
+            if (fs.statSync(candidate).isFile()) {
+                return candidate;
+            }
+        } catch (_) { }
+    }
+    return null;
+}
+
 function getClangFormatExecutableName() {
     return process.platform === 'win32' ? 'clang-format.exe' : 'clang-format';
 }
@@ -602,15 +616,20 @@ class ClangdLspManager {
     async _startClangdInternal(options = {}) {
         const ensured = await ensureClangdUserBundle();
         if (!ensured.ok) {
-            logError('[LSP] 启动 clangd 失败:', ensured.error || 'clangd bundle missing');
-            return { ok: false, error: ensured.error || 'clangd missing' };
+            logWarn('[LSP] 打包/用户目录无 clangd，尝试系统 PATH:', ensured.error || '');
         }
 
         const clangdRoot = ensured.root || getUserClangdRoot();
-        const clangdPath = resolveClangdExecutable(clangdRoot);
+        let clangdPath = resolveClangdExecutable(clangdRoot);
         if (!clangdPath) {
-            logError('[LSP] 未找到 clangd 可执行文件，路径:', clangdRoot);
-            return { ok: false, error: 'clangd executable not found' };
+            clangdPath = findClangdExecutableOnPath();
+            if (clangdPath) {
+                logInfo('[LSP] 用户目录无 clangd，回退系统 PATH:', clangdPath);
+            }
+        }
+        if (!clangdPath) {
+            logError('[LSP] 未找到 clangd 可执行文件，路径:', clangdRoot, '(打包/用户目录与系统 PATH 均未命中)');
+            return { ok: false, error: ensured.ok ? 'clangd executable not found' : (ensured.error || 'clangd missing') };
         }
 
         const args = [
@@ -645,6 +664,11 @@ class ClangdLspManager {
         // 2. 回退到用户目录（仅含二进制的精简版通常没有 lib/clang）
         if (!resourceDir) {
             resourceDir = checkResourceDir(clangdRoot);
+        }
+
+        // 3. 最后尝试 PATH 上 clangd 的安装前缀（系统 LLVM：bin/../lib/clang/<ver>）
+        if (!resourceDir && clangdPath) {
+            resourceDir = checkResourceDir(path.dirname(path.dirname(clangdPath)));
         }
 
         if (resourceDir) {

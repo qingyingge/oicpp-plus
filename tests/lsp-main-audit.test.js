@@ -40,7 +40,9 @@ function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
         // These are only needed if a future test exercises start(); keeping the
         // harness small makes it safe to use the class without booting Electron.
         ensureClangdUserBundle: async () => ({ ok: true, root: '/fake/clangd' }),
+        resolveClangdRootFromBundle: () => null,
         resolveClangdExecutable: () => '/fake/clangd/bin/clangd',
+        findClangdExecutableOnPath: () => null,
         getUserClangdRoot: () => '/fake/clangd',
         getCompilerRuntimeBinPaths: () => [],
         queryCompilerInfo: async () => ({ includePaths: [], target: '' }),
@@ -338,6 +340,18 @@ class FakeProc extends EventEmitter {
     check('L36: identical format requests are merged and cached',
         mainSource.includes('clangFormatInFlight') && mainSource.includes('clangFormatResultCache') &&
         mainSource.includes('cacheClangFormatResult'));
+
+    // clangd 可执行文件解析与 clang-format 同构：打包目录 → 用户 LSP 目录 → 系统 PATH
+    const clangdStartFn = /async _startClangdInternal\(options = \{\}\) \{[\s\S]*?\n {4}\}/.exec(mainSource);
+    check('clangd startup falls back to the system PATH',
+        !!clangdStartFn &&
+        clangdStartFn[0].includes('findClangdExecutableOnPath()') &&
+        clangdStartFn[0].includes('resolveClangdExecutable(clangdRoot)'));
+    check('clangd executable resolution offers a PATH walker',
+        /function findClangdExecutableOnPath\(\) \{/.test(mainSource) &&
+        mainSource.includes('getClangdExecutableName()'));
+    check('PATH-hosted clangd still resolves its resource-dir from its install prefix',
+        !!clangdStartFn && clangdStartFn[0].includes('path.dirname(path.dirname(clangdPath))'));
 
     console.log(`[INFO] lsp-main-audit completed: ${failures ? failures + ' failure(s)' : 'all executable contracts passed'}`);    process.exitCode = failures ? 1 : 0;
 })().catch((error) => {

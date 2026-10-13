@@ -42,6 +42,7 @@ function loadManagerClass(records) {
         logError: (...args) => records.push({ level: 'error', text: args.join(' ') }),
         ensureClangdUserBundle: async () => ({ ok: true, root: '/fake/clangd' }),
         resolveClangdExecutable: () => '/fake/clangd/bin/clangd',
+        findClangdExecutableOnPath: () => null,
         getUserClangdRoot: () => '/fake/clangd',
         getCompilerRuntimeBinPaths: () => [],
         queryCompilerInfo: async () => ({ includePaths: [], target: '' }),
