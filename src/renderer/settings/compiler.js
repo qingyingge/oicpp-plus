@@ -1,25 +1,3 @@
-const elCtl = (id) => {
-    const el = document.getElementById(id);
-    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || el instanceof HTMLButtonElement) return el;
-    return null;
-};
-const elCheckbox = (id) => {
-    const el = document.getElementById(id);
-    return el instanceof HTMLInputElement && el.type === 'checkbox' ? el : null;
-};
-const setElValue = (id, v) => {
-    const el = elCtl(id);
-    if (el) el.value = v;
-};
-const elById = (id) => {
-    const el = document.getElementById(id);
-    return el instanceof HTMLElement ? el : null;
-};
-const evtValue = (e) => {
-    const target = e && e.target;
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return target.value;
-    return '';
-};
 // 编译器/Testlib 列表下载依赖上游服务 oicpp.mywwzh.top，fork 需自建列表源
 function escapeHtml(value) {
     return String(value)
@@ -69,7 +47,7 @@ class CompilerSettings {
                 sections.forEach(section => section.classList.remove('active'));
                 
                 const targetId = item.getAttribute('data-target');
-                const targetSection = elById(targetId);
+                const targetSection = document.getElementById(targetId);
                 if (targetSection) {
                     targetSection.classList.add('active');
                 }
@@ -155,7 +133,7 @@ class CompilerSettings {
         
         this.setupSidebarNavigation();
         
-        const browseBtn = elCtl('browse-compiler');
+        const browseBtn = document.getElementById('browse-compiler');
         if (browseBtn) {
             logInfo('[编译器设置] 浏览编译器按钮事件已绑定');
             browseBtn.addEventListener('click', (e) => {
@@ -167,7 +145,7 @@ class CompilerSettings {
             logError('[编译器设置] 未找到浏览编译器按钮');
         }
 
-        const browsePythonBtn = elCtl('browse-python-interpreter');
+        const browsePythonBtn = document.getElementById('browse-python-interpreter');
         if (browsePythonBtn) {
             browsePythonBtn.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -175,7 +153,7 @@ class CompilerSettings {
             });
         }
 
-        const browseTestlibBtn = elCtl('browse-testlib');
+        const browseTestlibBtn = document.getElementById('browse-testlib');
         if (browseTestlibBtn) {
             browseTestlibBtn.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -183,7 +161,7 @@ class CompilerSettings {
             });
         }
         
-        const installBtn = elCtl('install-compiler');
+        const installBtn = document.getElementById('install-compiler');
         if (installBtn) {
             this.getCurrentPlatform().then(p => {
                 if (p !== 'windows') {
@@ -201,7 +179,7 @@ class CompilerSettings {
             });
         }
         
-        const installTestlibBtn = elCtl('install-testlib');
+        const installTestlibBtn = document.getElementById('install-testlib');
         if (installTestlibBtn) {       
           installTestlibBtn.addEventListener('click', (e) => {
               e.preventDefault();
@@ -209,7 +187,7 @@ class CompilerSettings {
           });
         }
         
-        const closeBtn = elCtl('close-install-dialog');
+        const closeBtn = document.getElementById('close-install-dialog');
         if (closeBtn) {
             logInfo('[编译器设置] 关闭安装对话框按钮事件已绑定');
             closeBtn.addEventListener('click', (e) => {
@@ -219,7 +197,7 @@ class CompilerSettings {
             });
         }
         
-        const closeTestlibBtn = elCtl('close-testlib-install-dialog');
+        const closeTestlibBtn = document.getElementById('close-testlib-install-dialog');
         if (closeTestlibBtn) {
             closeTestlibBtn.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -227,7 +205,7 @@ class CompilerSettings {
             });
         }
         
-        const installDialog = elById('install-dialog');
+        const installDialog = document.getElementById('install-dialog');
         if (installDialog) {
             installDialog.addEventListener('click', (e) => {
                 if (e.target === installDialog) {
@@ -237,7 +215,7 @@ class CompilerSettings {
             });
         }
         
-        const saveBtn = elCtl('save-settings');
+        const saveBtn = document.getElementById('save-settings');
         if (saveBtn) {
             logInfo('[编译器设置] 保存设置按钮事件已绑定');
             saveBtn.addEventListener('click', (e) => {
@@ -249,7 +227,7 @@ class CompilerSettings {
             logError('[编译器设置] 未找到保存设置按钮');
         }
         
-        const cancelBtn = elCtl('cancel-settings');
+        const cancelBtn = document.getElementById('cancel-settings');
         if (cancelBtn) {
             logInfo('[编译器设置] 取消按钮事件已绑定');
             cancelBtn.addEventListener('click', (e) => {
@@ -261,7 +239,7 @@ class CompilerSettings {
             logError('[编译器设置] 未找到取消按钮');
         }
         
-        const resetBtn = elCtl('reset-settings');
+        const resetBtn = document.getElementById('reset-settings');
         if (resetBtn) {
             logInfo('[编译器设置] 重置按钮事件已绑定');
             resetBtn.addEventListener('click', (e) => {
@@ -271,36 +249,36 @@ class CompilerSettings {
             });
         }
         
-        const compilerOptions = elCtl('compiler-options');
+        const compilerOptions = document.getElementById('compiler-options');
         if (compilerOptions) {
             compilerOptions.addEventListener('input', (e) => {
-                logInfo('[编译器设置] 编译器选项发生变化:', evtValue(e));
-                this.settings.compilerArgs = evtValue(e);
+                logInfo('[编译器设置] 编译器选项发生变化:', e.target.value);
+                this.settings.compilerArgs = e.target.value;
             });
             logInfo('[编译器设置] 编译器选项变化监听已绑定');
         } else {
             logError('[编译器设置] 未找到编译器选项元素');
         }
         
-        const compilerPath = elCtl('compiler-path');
+        const compilerPath = document.getElementById('compiler-path');
         if (compilerPath) {
             compilerPath.addEventListener('input', (e) => {
-                logInfo('[编译器设置] 编译器路径发生变化:', evtValue(e));
-                this.settings.compilerPath = evtValue(e);
+                logInfo('[编译器设置] 编译器路径发生变化:', e.target.value);
+                this.settings.compilerPath = e.target.value;
             });
             logInfo('[编译器设置] 编译器路径变化监听已绑定');
         } else {
             logError('[编译器设置] 未找到编译器路径元素');
         }
 
-        const pythonInterpreterPath = elCtl('python-interpreter-path');
+        const pythonInterpreterPath = document.getElementById('python-interpreter-path');
         if (pythonInterpreterPath) {
             pythonInterpreterPath.addEventListener('input', (e) => {
-                this.settings.pythonInterpreterPath = evtValue(e);
+                this.settings.pythonInterpreterPath = e.target.value;
             });
         }
 
-        const testTestlibBtn = elCtl('test-testlib');
+        const testTestlibBtn = document.getElementById('test-testlib');
         if (testTestlibBtn) {
             testTestlibBtn.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -308,15 +286,15 @@ class CompilerSettings {
             });
         }
 
-        const runModeSelect = elCtl('run-mode');
+        const runModeSelect = document.getElementById('run-mode');
         if (runModeSelect) {
             runModeSelect.addEventListener('change', (e) => {
                 if (this.isIntegratedOnlyPlatform) {
-                    if (e.target instanceof HTMLSelectElement) e.target.value = 'integrated-terminal';
+                    e.target.value = 'integrated-terminal';
                     this.settings.runMode = 'integrated-terminal';
                     return;
                 }
-                this.settings.runMode = evtValue(e) === 'integrated-terminal'
+                this.settings.runMode = e.target.value === 'integrated-terminal'
                     ? 'integrated-terminal'
                     : 'popup';
             });
@@ -367,18 +345,17 @@ class CompilerSettings {
     }
 
     updateUI() {
-        const compilerPathInput = elCtl('compiler-path');
-        const pythonInterpreterPathInput = elCtl('python-interpreter-path');
-        const compilerOptionsInput = elCtl('compiler-options');
-        const runModeSelect = elCtl('run-mode');
-        const testlibPathInput = elCtl('testlib-path');
+        const compilerPathInput = document.getElementById('compiler-path');
+        const pythonInterpreterPathInput = document.getElementById('python-interpreter-path');
+        const compilerOptionsInput = document.getElementById('compiler-options');
+        const runModeSelect = document.getElementById('run-mode');
+        const testlibPathInput = document.getElementById('testlib-path');
         
         if (compilerPathInput) compilerPathInput.value = this.settings.compilerPath || '';
         if (pythonInterpreterPathInput) pythonInterpreterPathInput.value = this.settings.pythonInterpreterPath || '';
         if (compilerOptionsInput) compilerOptionsInput.value = this.settings.compilerArgs || '-std=c++14 -O2 -static';
         if (runModeSelect) {
-            const rawOption = runModeSelect.querySelector('option[value="popup"]');
-            const popupOption = rawOption instanceof HTMLOptionElement ? rawOption : null;
+            const popupOption = runModeSelect.querySelector('option[value="popup"]');
             const runModeHint = runModeSelect.parentElement ? runModeSelect.parentElement.querySelector('.hint') : null;
             if (this.isIntegratedOnlyPlatform) {
                 if (popupOption) popupOption.disabled = true;
@@ -420,7 +397,7 @@ class CompilerSettings {
             if (!result.canceled && result.filePaths.length > 0) {
                 const selectedPath = result.filePaths[0];
                 this.settings.pythonInterpreterPath = selectedPath;
-                const input = elCtl('python-interpreter-path');
+                const input = document.getElementById('python-interpreter-path');
                 if (input) {
                     input.value = selectedPath;
                 }
@@ -486,7 +463,7 @@ class CompilerSettings {
                 }
                 
                 this.settings.compilerPath = selectedPath;
-                setElValue('compiler-path', this.settings.compilerPath);
+                document.getElementById('compiler-path').value = this.settings.compilerPath;
                 
                 this.showMessage(window.i18n.t('compiler.selectedCompiler', { name: fileName }), 'success');
                 
@@ -502,7 +479,7 @@ class CompilerSettings {
 
 
     showInstallDialog() {
-        const dialog = elById('install-dialog');
+        const dialog = document.getElementById('install-dialog');
         if (dialog) {
             dialog.style.display = 'block';
         }
@@ -511,14 +488,14 @@ class CompilerSettings {
     }
 
     closeInstallDialog() {
-        const dialog = elById('install-dialog');
+        const dialog = document.getElementById('install-dialog');
         if (dialog) {
             dialog.style.display = 'none';
         }
     }
 
     async loadAvailableCompilers() {
-        const compilerList = elById('compiler-list');
+        const compilerList = document.getElementById('compiler-list');
         if (!compilerList) return;
         if (this._compilerListAbort) {
             this._compilerListAbort.abort();
@@ -530,7 +507,7 @@ class CompilerSettings {
         compilerList.innerHTML = '<div class="loading">' + (window.i18n.t('compiler.fetchingList')) + '</div>';
         
         try {
-            const response = /** @type {{ ok: boolean; status: number; statusText: string; data: Array<{ platform: string; version: string; name: string; download_url: string }> }} */ (await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableCompilerList', method: 'GET' }));
+            const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableCompilerList', method: 'GET' });
             
             if (!response.ok) {
                 throw new Error(window.i18n.t('compiler.networkRequestFailed', {
@@ -651,10 +628,10 @@ class CompilerSettings {
                 return;
             }
 
-            const compilerPath = elCtl('compiler-path')?.value;
-            const pythonInterpreterPath = elCtl('python-interpreter-path')?.value;
-            let compilerArgs = elCtl('compiler-options')?.value;
-            const runModeSelect = elCtl('run-mode');
+            const compilerPath = document.getElementById('compiler-path').value;
+            const pythonInterpreterPath = document.getElementById('python-interpreter-path').value;
+            let compilerArgs = document.getElementById('compiler-options').value;
+            const runModeSelect = document.getElementById('run-mode');
             const runMode = this.isIntegratedOnlyPlatform
                 ? 'integrated-terminal'
                 : (runModeSelect && runModeSelect.value === 'integrated-terminal'
@@ -796,8 +773,7 @@ class CompilerSettings {
     }
 
     addCompilerItemListeners(compilerDiv, compiler) {
-        const rawBtn = compilerDiv.querySelector('.download-btn');
-        const downloadBtn = rawBtn instanceof HTMLButtonElement ? rawBtn : null;
+        const downloadBtn = compilerDiv.querySelector('.download-btn');
         if (downloadBtn) {
             logInfo('绑定下载按钮事件，编译器:', compiler.name, compiler.version);
             downloadBtn.addEventListener('click', (e) => {
@@ -830,8 +806,7 @@ class CompilerSettings {
     async downloadCompiler(compiler) {
         logInfo('[编译器设置] 开始下载编译器流程:', compiler);
 
-        const rawBtn = this.findListItem('compiler', compiler.version)?.querySelector('button.download-btn') || null;
-        const downloadBtn = rawBtn instanceof HTMLButtonElement ? rawBtn : null;
+        const downloadBtn = this.findListItem('compiler', compiler.version)?.querySelector('button.download-btn') || null;
         if (!downloadBtn) {
             logError('[编译器设置] 未找到下载按钮，compiler.version:', compiler.version);
             return;
@@ -953,7 +928,7 @@ class CompilerSettings {
 
     async setCompilerPath(path) {
         this.settings.compilerPath = path;
-        const compilerPathInput = elCtl('compiler-path');
+        const compilerPathInput = document.getElementById('compiler-path');
         if (compilerPathInput) {
             compilerPathInput.value = path;
         }
@@ -991,7 +966,7 @@ class CompilerSettings {
     }
 
     showMessage(message, type = 'info') {
-        const existingToast = (document.querySelector('.message-toast'));
+        const existingToast = document.querySelector('.message-toast');
         if (existingToast) {
             existingToast.remove();
         }
@@ -1132,7 +1107,7 @@ class CompilerSettings {
     // 任何 document 级查询都会把另一类列表的行一起改写（按钮被清掉且需重开弹窗才恢复），
     // 因此查找一律按容器作用域。
     getListContainer(kind) {
-        return (document.getElementById(kind === 'testlib' ? 'testlib-list' : 'compiler-list'));
+        return document.getElementById(kind === 'testlib' ? 'testlib-list' : 'compiler-list');
     }
 
     getListItems(kind) {
@@ -1231,7 +1206,7 @@ class CompilerSettings {
                         return;
                     }
                     
-                    setElValue('testlib-path', testlibPath);
+                    document.getElementById('testlib-path').value = testlibPath;
                     
                     if (window.electronAPI && window.electronAPI.saveSetting) {
                         await window.electronAPI.saveSetting('testlibPath', testlibPath);
@@ -1246,12 +1221,12 @@ class CompilerSettings {
     }
     
     async testTestlib() {
-        const testlibPathInput = elCtl('testlib-path');
+        const testlibPathInput = document.getElementById('testlib-path');
         if (!testlibPathInput) {
             return;
         }
         const testlibPath = testlibPathInput.value;
-        const resultDiv = elById('testlib-test-result');
+        const resultDiv = document.getElementById('testlib-test-result');
 
         const renderTestResult = (type, message) => {
             if (!resultDiv) return;
@@ -1293,7 +1268,7 @@ class CompilerSettings {
     }
     
     showTestlibInstallDialog() {
-        const dialog = elById('testlib-install-dialog');
+        const dialog = document.getElementById('testlib-install-dialog');
         if (dialog) {
             dialog.style.display = 'flex';
             this.loadAvailableTestlibs();
@@ -1301,14 +1276,14 @@ class CompilerSettings {
     }
     
     closeTestlibInstallDialog() {
-        const dialog = elById('testlib-install-dialog');
+        const dialog = document.getElementById('testlib-install-dialog');
         if (dialog) {
             dialog.style.display = 'none';
         }
     }
     
     async loadAvailableTestlibs() {
-        const testlibList = elById('testlib-list');
+        const testlibList = document.getElementById('testlib-list');
         if (!testlibList) return;
         if (this._testlibListAbort) {
             this._testlibListAbort.abort();
@@ -1320,7 +1295,7 @@ class CompilerSettings {
         testlibList.innerHTML = `<div class="loading">${window.i18n.t('compiler.fetchingTestlibList')}</div>`;
         
         try {
-            const response = /** @type {{ ok: boolean; status: number; statusText: string; data: Array<{ version: string; name: string; description: string; file_size_mb?: number | string; downloadUrl?: string; download_url?: string }> }} */ (await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableTestlibList', method: 'GET' }));
+            const response = await window.electronIPC.invoke('fetch-remote-json', { path: '/api/getAvailableTestlibList', method: 'GET' });
             
             if (!response.ok) {
                 throw new Error(window.i18n.t('compiler.networkRequestFailed', {
@@ -1425,8 +1400,7 @@ class CompilerSettings {
     }
     
     addTestlibItemListeners(testlibDiv, testlib) {
-        const rawBtn = testlibDiv.querySelector('.download-btn');
-        const downloadBtn = rawBtn instanceof HTMLButtonElement ? rawBtn : null;
+        const downloadBtn = testlibDiv.querySelector('.download-btn');
         if (downloadBtn) {
             downloadBtn.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -1444,8 +1418,7 @@ class CompilerSettings {
     }
     
     async downloadTestlib(testlib) {
-        const rawBtn = this.findListItem('testlib', testlib.version)?.querySelector('button.download-btn') || null;
-        const downloadBtn = rawBtn instanceof HTMLButtonElement ? rawBtn : null;
+        const downloadBtn = this.findListItem('testlib', testlib.version)?.querySelector('button.download-btn') || null;
         if (!downloadBtn) return;
         
         try {
@@ -1555,7 +1528,7 @@ class CompilerSettings {
     }
     
     async setTestlibPath(path) {
-        const testlibPathInput = elCtl('testlib-path');
+        const testlibPathInput = document.getElementById('testlib-path');
         if (testlibPathInput) {
             testlibPathInput.value = path;
         }

@@ -54,6 +54,8 @@ interface HTMLElement {
   __hideTimer?: NodeJS.Timeout;
 }
 
+
+
 interface Window {
   logInfo: (...args: unknown[]) => void;
   logWarn: (...args: unknown[]) => void;
