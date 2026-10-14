@@ -19,6 +19,8 @@ declare global {
         };
         fontDetector: {
             validateFont(font: string): string;
+            getAllAvailableFonts(): Promise<string[]>;
+            getAllAvailableFontsSync(): string[];
         };
         applySettings: (settings: Record<string, unknown>) => void;
         getCurrentSettings: () => Promise<Record<string, unknown>>;
