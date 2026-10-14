@@ -80,6 +80,14 @@ class I18nManager {
             // Load current language file
             await this._loadCurrentLanguage();
 
+            // _initI18next hard-codes lng:'zh-cn'; i18next.init normalizes it and
+            // changeLanguage was never called for the settings language. Without this
+            // the store keeps serving Chinese while _currentLang and <html lang>
+            // report the configured language. Bring i18next in line.
+            if (i18next.language !== this._currentLang) {
+                await i18next.changeLanguage(this._currentLang);
+            }
+
             // Listen for language changes pushed by the main process
             if (window.electronAPI && typeof window.electronAPI.onLanguageChanged === 'function') {
                 window.electronAPI.onLanguageChanged(async (langCode) => {

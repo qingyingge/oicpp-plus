@@ -130,6 +130,28 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
 
 // --- 1. init() 后立即可翻译（await 时序）--------------------------------------
 (async () => {
+    // --- 0. 启动语言一致性 ---
+    // i18n.js 的 i18next.init 硬编码 lng:'zh-cn'，而真实语言来自 settings。
+    // 历史上读出 settings.language='en' 后只灌 bundle、从不 changeLanguage，
+    // 结果 i18next 仍按 zh-cn 查表：界面显示中文，但 <html lang> 是 en。
+    {
+        const enBoot = bootRenderer({ lang: 'en' });
+        await enBoot.sandbox.window.i18n.init();
+        check('booting with settings.language=en actually serves English',
+            enBoot.sandbox.window.i18n.t('menu.file') === 'File',
+            enBoot.sandbox.window.i18n.t('menu.file'));
+        check('booting with a non-default language keeps i18next in sync',
+            enBoot.sandbox.window.i18n.getCurrentLanguage() === enBoot.sandbox.i18next.language,
+            `${enBoot.sandbox.window.i18n.getCurrentLanguage()} vs ${enBoot.sandbox.i18next.language}`);
+        check('booting with settings.language=en sets <html lang> to en',
+            enBoot.dom.documentElement.lang === 'en', enBoot.dom.documentElement.lang);
+
+        const zhBoot = bootRenderer({ lang: 'zh-cn' });
+        await zhBoot.sandbox.window.i18n.init();
+        check('booting with settings.language=zh-cn serves Chinese',
+            zhBoot.sandbox.window.i18n.t('menu.file') === '文件',
+            zhBoot.sandbox.window.i18n.t('menu.file'));
+    }
     const { sandbox } = bootRenderer();
     const i18n = sandbox.window.i18n;
     // i18next.init 对空 resources 是同步生效的，所以 init() 返回前 t() 就能查到 zh-cn；
