@@ -58,7 +58,9 @@ check('renderer Buffer bridge is removed', !preloadSource.includes("exposeInMain
 check('renderer startup awaits ordered initialization', /await setUserIconPath\(\)[\s\S]*await window\.i18n\.init\(\)[\s\S]*await initializeApp\(\)/.test(rendererInitSource));
 check('startup font validation stays local', !settingsInitSource.includes('updateSettings({ font: validatedFont })') && settingsInitSource.includes('fontFamily = validatedFont'));
 check('PDF message listener is disposed', tabsSource.includes('dispose()') && tabsSource.includes("removeEventListener('message', this.handlePdfViewerMessage"));
-check('compiler settings listener binding is idempotent', compilerSettingsSource.includes('if (this._eventListenersBound) return;'));
+// 空白容忍：tsc printer 会把单行 `if (x) return;` 拆成两行，锁死排版会在
+// .ts 迁移后误报。断言的语义是「幂等守卫存在」，与源码排版无关。
+check('compiler settings listener binding is idempotent', /if \(this\._eventListenersBound\)\s*\{?\s*return;/.test(compilerSettingsSource));
 check('editor opacity uses cancellable preview updates', editorSettingsSource.includes('sendSettingsPreview({ windowOpacity })'));
 check('downloader releases probe response bodies', (downloaderSource.match(/\.body\.resume\(\)/g) || []).length >= 3);
 check('comparer tracks all children and observes stop between awaits', workerSource.includes('const activeProcesses = new Set()') && !workerSource.includes('currentProc') && (workerSource.match(/if \(!running\) break;/g) || []).length >= 3);

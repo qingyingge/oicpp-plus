@@ -27,6 +27,7 @@ pnpm@11.7.0
 已登记：
 - [打安装包](#workflows打安装包)
 - [改界面文案 / 加翻译](#workflows改界面文案--加翻译i18n)
+- [迁移 .js → .ts](#workflows迁移-js--ts)
 
 ### 打安装包（Build / Installer）
 本项目的安装包**不用** electron-builder 的 nsis target 出，而是用仓库根目录自带的 `installer.nsi` + 本机 NSIS。`package.json` 里 `build.win.target = "dir"`，electron-builder 只负责产出 `dist\win-unpacked`；`installer.nsi` 直接从该目录取文件，输出 `dist\OICPP-Plus-<version>-Setup.exe`（`installer.nsi:69`）。CI 同流程，见 `.github/workflows/build.yml:319`。
@@ -93,6 +94,31 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 - I7 自己报的「未静态引用 266」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
 - 改语言包时 `zh-cn.json` 与 `en.json` 键集必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
+
+### 迁移 .js → .ts（TypeScript 路线甲）
+单进程仓库的渐进式迁移：**`.ts` 是唯一手写源，`.js` 由 `tsc -p tsconfig.build.json`就地 emit 出来**（`rootDir`/`outDir` 同为 `src`），所以 `.js` 不许手改。`tsconfig.json` 负责全量 typecheck，`tsconfig.build.json` 带 `noCheck: true` 且用 `files` 白名单，只 emit 已迁移文件；迁移一个文件 = 写 `.ts` + 把路径加进 `files` 数组。
+
+正确命令序列：
+```bash
+npx tsc -p tsconfig.build.json   # 重新生成 .js（注意：会用 emit 结果覆盖工作区里的 .js）
+node tests/run-tests.js          # 快速回归，定位断言失败
+pnpm run ci                      # 完整校验（75 项检查 + 35 个回归测试）
+npx tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
+```
+迁移完必须把新文件自身的 error 清到 0，再把 `scripts/ci-check.js:1332` 的 `TS_ERROR_BASELINE` **往下压到实测总数**（ratchet 只减不增，每清一批降一档）。
+
+**反模式：**
+
+- ❌ 给被 `<script src="…js">` 加载的渲染层文件加 `export`/`import`。`module: commonjs` 会把 `export class` emit 成 `Object.defineProperty(exports, "__esModule", …)`，浏览器脚本标签下 `exports` 未定义 → 整文件运行期炸。判据：**文件尾有没有 `module.exports` 守卫**。有的（Node 侧，如 `terminal-manager.ts`）随意用 ES 语法；没有的（浏览器 script 形态，如 `settings/compiler.ts`、`settings/templates.ts`）必须保持**全局 script**，不加任何 import/export。注意 `templates.ts` 已经踩了这个坑。
+- ❌ **用 `any` 躲类型错误**（项目明令禁止）。改用 `unknown` + 局部收窄。收窄后若为保住测试锁定的正文形状而必须换形参名（如 `isTimeoutError(cause)` 内部 `const error = cause as TimeoutLikeError`），同步把那条断言从 `/function isTimeoutError\(error\)/` 放宽成 `/function isTimeoutError\(/`。
+- ❌ 改测试断言去迎合 emit 产物里**语义**的变化。放宽只能针对**排版**（见下条坑），语义收紧就是自废守卫。
+
+**坑：**
+
+- **tsc 的 printer 会重排源码**：`if (x) return;` → `if (x)\n    return;`，`} catch (e) {` → `}\ncatch (e) {`，空行全被删掉。所以所有**读源码做正则断言**的测试在迁移后必然误报（本轮实测 `security-regression`、`compiler-settings-hardening`、`i18n-main-process` 三处）。修法是把断言的排版敏感点改成空白容忍：`\} catch` → `\}\s*catch`，单行 if 的 `\) return 'x'` → `\)\s*return 'x'`。断言的语义（守卫存在、结构顺序、行为验证）不能动。
+- **类型标注要写在会被完全擦除的位置**，这样 emit 产物与原 `.js` 逐字一致：`as T`、`<T>` 泛型实参、`!`、`e.target as HTMLInputElement` 都会擦成原表达式。用 `(expr as T)` 单表达式形式包住整个语句，别拆成 `const a = expr; const b = a as T;`（多出一行，且部分断言按行号/前后文切片）。反过来 `catch (e)` 在 strict 下是 `unknown`，写 `e.message` 必须 `(e as Error).message`。
+- **锁定形参名的断言**靠签名擦除成立：`async setCompilerPath(path: string)` → emit 成 `async setCompilerPath(path)`。别把形参改成解构或改名，`tests/audit-fixes-2026-10-01.test.js:298` 用 `indexOf('async setCompilerPath(path)')` 定位。
+- 字段声明（`settings: T;`）在 es2022 目标下会 emit 成真实 class field（`settings;`），构造赋值之前先置 `undefined`；字段**只声明不初始化**，赋值全留在构造函数里，否则顺序会覆盖。
 
 ## CI / Verification
 No lint/typecheck scripts. Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.) plus a `[T1]` regression-test step: auto-discovers `tests/*.test.js` via `tests/run-tests.js` (add a new `*.test.js` file to extend the suite; failing test → CI FAIL). CI modes via runtime args: `pnpm run ci:tests` (T1 only), `ci:fast` (skip T1), `ci:strict` (WARN counts as FAIL), `ci:verbose`. No Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes).

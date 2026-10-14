@@ -165,7 +165,8 @@ const enMain = en.main || {};
 
 {
     check('compiler.js 提供 isTimeoutError 助手',
-        /function isTimeoutError\(error\)/.test(compilerSource));
+        // 形参名不锁：迁移后签名改为 isTimeoutError(cause) + 局部收窄到 error
+        /function isTimeoutError\(/.test(compilerSource));
     check('isTimeoutError 只看 name/code',
         /error\.name === 'AbortError' \|\| error\.name === 'TimeoutError'/.test(compilerSource) &&
         /error\.code === 'ECONNABORTED' \|\| error\.code === 'ETIMEDOUT'/.test(compilerSource));

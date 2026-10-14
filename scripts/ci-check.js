@@ -1329,7 +1329,8 @@ function runFastspawnSyntaxCheck() {
 // （仅 global.d.ts 时是 1395；preload.d.ts 把 electronAPI 从 any 收成接口后，
 //  暴露出 10 条真实的参数不匹配——这是收窄带来的信号，不是退化）。
 // 装上 @types 或换 tsc 版本后必须重跑基线脚本，并同步更新这里。
-const TS_ERROR_BASELINE = 4664;
+// 4664 → 4034：src/renderer/settings/compiler.ts 迁移到 .ts 并收窄到 0 error。
+const TS_ERROR_BASELINE = 4034;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

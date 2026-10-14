@@ -1,4 +1,5 @@
-module.exports = String.raw`#include <windows.h>
+"use strict";
+module.exports = String.raw `#include <windows.h>
 #include <conio.h>
 #include <stdio.h>
 #include <psapi.h>

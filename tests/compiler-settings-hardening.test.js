@@ -43,13 +43,15 @@ function methodBody(name) {
 {
     const body = methodBody('init');
     check('init 存在', !!body);
-    check('loadSettings 有独立 try/catch', /await this\.loadSettings\(\);\s*\n\s*\} catch/.test(body));
+    // 空白容忍：tsc printer 会把 `} catch (e) {` 拆成 `}` + 换行 + `catch`，
+    // .ts 迁移后源码不再是同一排版。断言的语义是「独立 try/catch 存在」。
+    check('loadSettings 有独立 try/catch', /await this\.loadSettings\(\);\s*\n\s*\}\s*catch/.test(body));
     check('detectMacPlatform 有独立 try/catch 且失败回落 false',
-        /this\.isMacPlatform = await this\.detectMacPlatform\(\);\s*\n\s*\} catch[\s\S]{0,200}?this\.isMacPlatform = false;/.test(body));
+        /this\.isMacPlatform = await this\.detectMacPlatform\(\);\s*\n\s*\}\s*catch[\s\S]{0,200}?this\.isMacPlatform = false;/.test(body));
     check('detectIntegratedOnlyPlatform 有独立 try/catch 且失败回落 false',
-        /this\.isIntegratedOnlyPlatform = await this\.detectIntegratedOnlyPlatform\(\);\s*\n\s*\} catch[\s\S]{0,240}?this\.isIntegratedOnlyPlatform = false;/.test(body));
+        /this\.isIntegratedOnlyPlatform = await this\.detectIntegratedOnlyPlatform\(\);\s*\n\s*\}\s*catch[\s\S]{0,240}?this\.isIntegratedOnlyPlatform = false;/.test(body));
     check('applyCurrentTheme 有独立 try/catch',
-        /await this\.applyCurrentTheme\(\);\s*\n\s*\} catch/.test(body));
+        /await this\.applyCurrentTheme\(\);\s*\n\s*\}\s*catch/.test(body));
 
     // 结构验证：事件绑定排在全部探测之后，且不在任何 catch 块内
     const afterAllAwaits = body.indexOf('this.setupEventListeners();') >
@@ -122,9 +124,10 @@ function methodBody(name) {
 {
     const body = methodBody('getCurrentPlatform');
     check('getCurrentPlatform 内含归一化逻辑', /const normalize = \(value\)/.test(body));
-    check('win32/windows 归一化', /v\.startsWith\('win'\)\) return 'windows'/.test(body));
-    check('darwin/mac 归一化', /v\.startsWith\('darwin'\).*return 'macos'/.test(body));
-    check('linux 归一化', /v\.startsWith\('linux'\)\) return 'linux'/.test(body));
+    // \s* 容忍 tsc printer 把单行 `if (...) return 'x';` 拆成两行
+    check('win32/windows 归一化', /v\.startsWith\('win'\)\)\s*return 'windows'/.test(body));
+    check('darwin/mac 归一化', /v\.startsWith\('darwin'\)[\s\S]{0,80}?return 'macos'/.test(body));
+    check('linux 归一化', /v\.startsWith\('linux'\)\)\s*return 'linux'/.test(body));
     check('getPlatform 的返回值经过归一化',
         /return normalize\(await window\.electronAPI\.getPlatform\(\)\)/.test(body));
 

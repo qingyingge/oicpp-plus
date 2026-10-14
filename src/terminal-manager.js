@@ -1,24 +1,57 @@
-const os = require('os');
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
-const { spawn, spawnSync } = require('child_process');
-const { t } = require('./lang');
-const { terminateProcessTree } = require('./utils/process-supervisor');
-
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+const os = __importStar(require("os"));
+const crypto = __importStar(require("crypto"));
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
+const child_process_1 = require("child_process");
+const lang_1 = require("./lang");
+const process_supervisor_1 = require("./utils/process-supervisor");
 let pty = null;
 let ptyLoadError = null;
 let ptyLoadTargets = [];
-
 function tryLoadPty(moduleId) {
     try {
         return require(moduleId);
-    } catch (error) {
+    }
+    catch (error) {
         ptyLoadError = error;
         return null;
     }
 }
-
 /**
  * 创建带业务错误码的 Error。调用方用 error.code 判断失败类型，而非匹配 message 文本。
  * @param {string} message
@@ -26,39 +59,26 @@ function tryLoadPty(moduleId) {
  * @returns {Error & { code: string }}
  */
 function errorWithCode(message, code) {
-    const err = /** @type {Error & { code: string }} */ (new Error(message));
+    const err = new Error(message);
     err.code = code;
     return err;
 }
-
 function resolvePackagedNodePtyCandidates() {
     const candidates = [];
-
     // In packaged apps, node-pty native binaries should live under app.asar.unpacked.
     if (process.resourcesPath) {
         candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty', 'lib', 'index.js'));
     }
-
     const bundledRoot = path.resolve(__dirname, '..', 'node_modules', 'node-pty');
     candidates.push(path.join(bundledRoot, 'lib', 'index.js'));
-
     const asarSegment = `${path.sep}app.asar${path.sep}`;
     if (bundledRoot.includes(asarSegment)) {
-        candidates.push(
-            path.join(
-                bundledRoot.replace(asarSegment, `${path.sep}app.asar.unpacked${path.sep}`),
-                'lib',
-                'index.js'
-            )
-        );
+        candidates.push(path.join(bundledRoot.replace(asarSegment, `${path.sep}app.asar.unpacked${path.sep}`), 'lib', 'index.js'));
     }
-
     return Array.from(new Set(candidates));
 }
-
 pty = tryLoadPty('node-pty');
 ptyLoadTargets.push('node-pty');
-
 if (!pty) {
     const candidates = resolvePackagedNodePtyCandidates();
     for (const candidate of candidates) {
@@ -72,16 +92,19 @@ if (!pty) {
         }
     }
 }
-
 // 终端输出聚合窗口：足够小以保持跟手感，又能把高频 chunk 合并成少量 IPC
 const TERMINAL_DATA_FLUSH_MS = 8;
-
 class IntegratedTerminalManager {
+    sessions;
+    _pendingTerminalData;
+    _terminalDataFlushTimer;
+    _rawSend;
+    sendToRenderer;
     constructor(options = {}) {
         this.sessions = new Map();
         const rawSendToRenderer = typeof options.sendToRenderer === 'function'
             ? options.sendToRenderer
-            : () => {};
+            : () => { };
         this._pendingTerminalData = new Map();
         this._terminalDataFlushTimer = null;
         this._rawSend = rawSendToRenderer;
@@ -92,7 +115,8 @@ class IntegratedTerminalManager {
                 const chunks = this._pendingTerminalData.get(payload.terminalId);
                 if (chunks) {
                     chunks.push(payload.data);
-                } else {
+                }
+                else {
                     this._pendingTerminalData.set(payload.terminalId, [payload.data]);
                 }
                 if (!this._terminalDataFlushTimer) {
@@ -110,11 +134,11 @@ class IntegratedTerminalManager {
             rawSendToRenderer(channel, payload);
         };
     }
-
     _flushTerminalData(onlyTerminalId) {
         if (onlyTerminalId) {
             const chunks = this._pendingTerminalData.get(onlyTerminalId);
-            if (!chunks) return;
+            if (!chunks)
+                return;
             this._pendingTerminalData.delete(onlyTerminalId);
             this._rawSend('terminal-data', { terminalId: onlyTerminalId, data: chunks.join('') });
             return;
@@ -123,28 +147,26 @@ class IntegratedTerminalManager {
             clearTimeout(this._terminalDataFlushTimer);
             this._terminalDataFlushTimer = null;
         }
-        if (this._pendingTerminalData.size === 0) return;
+        if (this._pendingTerminalData.size === 0)
+            return;
         const pending = this._pendingTerminalData;
         this._pendingTerminalData = new Map();
         for (const [terminalId, chunks] of pending) {
             this._rawSend('terminal-data', { terminalId, data: chunks.join('') });
         }
     }
-
     isAvailable() {
         return !!pty || this._isInteractiveFallbackAvailable();
     }
-
     _getPtyLoadErrorDetail() {
         const message = ptyLoadError
             ? (ptyLoadError.message || String(ptyLoadError))
-            : t('terminal.nodePtyNotInstalled');
+            : (0, lang_1.t)('terminal.nodePtyNotInstalled');
         const targetInfo = ptyLoadTargets.length > 0
-            ? `\n${t('terminal.ptyLoadTargets', { targets: ptyLoadTargets.join(' | ') })}`
+            ? `\n${(0, lang_1.t)('terminal.ptyLoadTargets', { targets: ptyLoadTargets.join(' | ') })}`
             : '';
         return `${message}${targetInfo}`;
     }
-
     getStatus() {
         if (pty) {
             return {
@@ -153,34 +175,29 @@ class IntegratedTerminalManager {
                 detail: ''
             };
         }
-
         if (this._isInteractiveFallbackAvailable()) {
             return {
                 available: true,
-                reason: t('terminal.ptyFallbackActive'),
+                reason: (0, lang_1.t)('terminal.ptyFallbackActive'),
                 detail: this._getPtyLoadErrorDetail()
             };
         }
-
         if (this._isProcessFallbackAvailable() && process.platform === 'win32') {
             return {
                 available: false,
-                reason: t('terminal.ptyRequiredWindows'),
-                detail: `${this._getPtyLoadErrorDetail()}\n${t('terminal.reinstallPty')}`
+                reason: (0, lang_1.t)('terminal.ptyRequiredWindows'),
+                detail: `${this._getPtyLoadErrorDetail()}\n${(0, lang_1.t)('terminal.reinstallPty')}`
             };
         }
-
         return {
             available: false,
-            reason: t('terminal.ptyUnavailable'),
+            reason: (0, lang_1.t)('terminal.ptyUnavailable'),
             detail: this._getPtyLoadErrorDetail()
         };
     }
-
     _isProcessFallbackAvailable() {
-        return typeof spawn === 'function';
+        return typeof child_process_1.spawn === 'function';
     }
-
     _isInteractiveFallbackAvailable() {
         if (!this._isProcessFallbackAvailable()) {
             return false;
@@ -189,7 +206,6 @@ class IntegratedTerminalManager {
         // so it cannot be treated as a usable integrated terminal backend.
         return process.platform !== 'win32';
     }
-
     _resolveDefaultShell() {
         if (process.platform === 'win32') {
             return process.env.POWERSHELL_EXE || 'powershell.exe';
@@ -199,13 +215,11 @@ class IntegratedTerminalManager {
         }
         return process.env.SHELL || '/bin/bash';
     }
-
     _extractExecutablePath(shellValue) {
         const raw = String(shellValue || '').trim();
         if (!raw) {
             return '';
         }
-
         const quote = raw[0];
         if ((quote === '"' || quote === '\'') && raw.length > 1) {
             const end = raw.indexOf(quote, 1);
@@ -213,19 +227,16 @@ class IntegratedTerminalManager {
                 return raw.slice(1, end).trim();
             }
         }
-
         const firstSpace = raw.search(/\s/);
         if (firstSpace === -1) {
             return raw;
         }
         return raw.slice(0, firstSpace).trim();
     }
-
     _buildShellCandidates(preferredShell) {
         const preferred = this._extractExecutablePath(preferredShell);
         const envShell = this._extractExecutablePath(process.env.SHELL);
         const candidates = [];
-
         const pushCandidate = (value) => {
             const next = this._extractExecutablePath(value);
             if (!next) {
@@ -243,9 +254,7 @@ class IntegratedTerminalManager {
                 candidates.push(next);
             }
         };
-
         pushCandidate(preferred);
-
         if (process.platform === 'win32') {
             pushCandidate(envShell);
             pushCandidate(process.env.POWERSHELL_EXE);
@@ -254,7 +263,6 @@ class IntegratedTerminalManager {
             pushCandidate('cmd.exe');
             return candidates;
         }
-
         pushCandidate(envShell);
         if (process.platform === 'darwin') {
             pushCandidate('/bin/zsh');
@@ -263,29 +271,25 @@ class IntegratedTerminalManager {
         pushCandidate('/bin/sh');
         return candidates;
     }
-
     _isUsableShellCandidate(shellPath) {
         const candidate = this._extractExecutablePath(shellPath);
         if (!candidate) {
             return false;
         }
-
         if (process.platform === 'win32') {
             return true;
         }
-
         if (!path.isAbsolute(candidate)) {
             return true;
         }
-
         try {
             fs.accessSync(candidate, fs.constants.X_OK);
             return true;
-        } catch (_) {
+        }
+        catch (_) {
             return false;
         }
     }
-
     _resolveDefaultArgs(shellPath) {
         const lower = String(shellPath || '').toLowerCase();
         if (process.platform === 'win32') {
@@ -294,24 +298,21 @@ class IntegratedTerminalManager {
             }
             return [];
         }
-
         return [];
     }
-
     _resolveFallbackCwd() {
         const candidates = [];
         try {
             candidates.push(process.cwd());
-        } catch (_) {
         }
-
+        catch (_) {
+        }
         try {
             candidates.push(os.homedir());
-        } catch (_) {
         }
-
+        catch (_) {
+        }
         candidates.push(process.platform === 'win32' ? 'C:\\' : '/');
-
         for (const candidate of candidates) {
             if (!candidate || typeof candidate !== 'string') {
                 continue;
@@ -321,13 +322,12 @@ class IntegratedTerminalManager {
                 if (stat.isDirectory()) {
                     return candidate;
                 }
-            } catch (_) {
+            }
+            catch (_) {
             }
         }
-
         return process.platform === 'win32' ? 'C:\\' : '/';
     }
-
     _resolveCwd(candidate) {
         const fallback = this._resolveFallbackCwd();
         if (!candidate || typeof candidate !== 'string') {
@@ -337,15 +337,14 @@ class IntegratedTerminalManager {
         if (!trimmed) {
             return fallback;
         }
-
         try {
             const stat = fs.statSync(trimmed);
             return stat.isDirectory() ? trimmed : fallback;
-        } catch (_) {
+        }
+        catch (_) {
             return fallback;
         }
     }
-
     _buildSpawnEnv() {
         const nextEnv = {};
         for (const [key, value] of Object.entries(process.env || {})) {
@@ -357,7 +356,6 @@ class IntegratedTerminalManager {
             }
             nextEnv[key] = typeof value === 'string' ? value : String(value);
         }
-
         if (process.platform === 'darwin') {
             // Avoid inheriting parent Terminal.app/iTerm session identity into embedded shells.
             delete nextEnv.TERM_SESSION_ID;
@@ -366,7 +364,6 @@ class IntegratedTerminalManager {
             nextEnv.TERM_PROGRAM = 'oicpp';
             nextEnv.TERM_PROGRAM_VERSION = 'embedded';
         }
-
         if (process.platform === 'win32') {
             if (!nextEnv.LANG) {
                 nextEnv.LANG = 'zh_CN.UTF-8';
@@ -378,16 +375,13 @@ class IntegratedTerminalManager {
                 nextEnv.PYTHONIOENCODING = 'utf-8';
             }
         }
-
         nextEnv.TERM = 'xterm-256color';
         return nextEnv;
     }
-
     _resolveProcessFallbackArgs(shellPath, requestedArgs) {
         if (Array.isArray(requestedArgs) && requestedArgs.length > 0) {
             return requestedArgs;
         }
-
         const lower = String(shellPath || '').toLowerCase();
         if (process.platform === 'win32') {
             if (lower.includes('powershell') || lower.includes('pwsh')) {
@@ -398,14 +392,11 @@ class IntegratedTerminalManager {
             }
             return [];
         }
-
         // No PTY mode must avoid forcing interactive flags, otherwise zsh/bash may fail with TTY read errors.
         return [];
     }
-
     _resolveProcessFallbackSpawnSpec(shellPath, args) {
         const normalizedArgs = Array.isArray(args) ? args : [];
-
         const quotePosixArg = (value) => {
             const text = String(value ?? '');
             if (!text) {
@@ -413,12 +404,10 @@ class IntegratedTerminalManager {
             }
             return `'${text.replace(/'/g, `'"'"'`)}'`;
         };
-
         const buildPosixCommand = () => {
             const chunks = [quotePosixArg(shellPath), ...normalizedArgs.map((item) => quotePosixArg(item))];
             return chunks.join(' ');
         };
-
         if (process.platform === 'linux') {
             const scriptCandidates = ['/usr/bin/script', '/bin/script'];
             for (const scriptBin of scriptCandidates) {
@@ -429,11 +418,11 @@ class IntegratedTerminalManager {
                         args: ['-q', '-f', '-c', buildPosixCommand(), '/dev/null'],
                         wrappedWithScript: true
                     };
-                } catch (_) {
+                }
+                catch (_) {
                 }
             }
         }
-
         if (process.platform === 'darwin') {
             const scriptBin = '/usr/bin/script';
             try {
@@ -445,45 +434,42 @@ class IntegratedTerminalManager {
                         wrappedWithScript: true
                     };
                 }
-            } catch (_) {
+            }
+            catch (_) {
             }
         }
-
         return {
             command: shellPath,
             args: normalizedArgs,
             wrappedWithScript: false
         };
     }
-
     _runShellPreflight(shellPath, args, cwd, env) {
         if (process.platform !== 'darwin') {
             return { ok: true, detail: '' };
         }
-
         try {
             const testArgs = Array.isArray(args) ? args.slice() : [];
             const quotedMarker = '__oicpp_preflight__';
             if (shellPath.toLowerCase().includes('powershell')) {
                 testArgs.push('-Command', `Write-Output ${quotedMarker}`);
-            } else {
+            }
+            else {
                 testArgs.push('-c', `echo ${quotedMarker}`);
             }
-            const result = spawnSync(shellPath, testArgs, {
+            const result = (0, child_process_1.spawnSync)(shellPath, testArgs, {
                 cwd,
                 env,
                 encoding: 'utf8',
                 timeout: 2500,
                 windowsHide: true
             });
-
             if (result.error) {
                 return {
                     ok: false,
                     detail: result.error.message || String(result.error)
                 };
             }
-
             if (typeof result.status === 'number' && result.status !== 0) {
                 const stderr = String(result.stderr || '').trim();
                 return {
@@ -491,33 +477,29 @@ class IntegratedTerminalManager {
                     detail: stderr || `exit=${result.status}`
                 };
             }
-
             return { ok: true, detail: '' };
-        } catch (error) {
+        }
+        catch (error) {
             return {
                 ok: false,
                 detail: error?.message || String(error)
             };
         }
     }
-
     _spawnProcessFallbackSession({ shellPath, requestedArgs, cwd, env, cols, rows, name }) {
         const args = this._resolveProcessFallbackArgs(shellPath, requestedArgs);
         const preflight = this._runShellPreflight(shellPath, [], cwd, env);
         if (!preflight.ok) {
-            throw errorWithCode(t('terminal.preflightFailed', { error: preflight.detail }), 'SHELL_PREFLIGHT_FAILED');
+            throw errorWithCode((0, lang_1.t)('terminal.preflightFailed', { error: preflight.detail }), 'SHELL_PREFLIGHT_FAILED');
         }
-
         const spawnSpec = this._resolveProcessFallbackSpawnSpec(shellPath, args);
-
-        const child = spawn(spawnSpec.command, spawnSpec.args, {
+        const child = (0, child_process_1.spawn)(spawnSpec.command, spawnSpec.args, {
             cwd,
             env,
             windowsHide: true,
             stdio: ['pipe', 'pipe', 'pipe'],
             detached: process.platform !== 'win32'
         });
-
         const sessionId = crypto.randomUUID();
         const session = {
             id: sessionId,
@@ -533,38 +515,35 @@ class IntegratedTerminalManager {
                 ? name.trim()
                 : `${os.userInfo().username}@${os.hostname()}`
         };
-
         this.sessions.set(sessionId, session);
-
         const onData = (data) => {
-            if (session.disposed) return;
+            if (session.disposed)
+                return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
                 data: typeof data === 'string' ? data : Buffer.from(data || '').toString('utf8')
             });
         };
-
         child.stdout?.on('data', onData);
         child.stderr?.on('data', onData);
-
         child.on('error', (error) => {
-            if (session.disposed) return;
+            if (session.disposed)
+                return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
-                data: `\r\n[Error] ${t('terminal.processError', { error: error?.message || String(error) })}\r\n`
+                data: `\r\n[Error] ${(0, lang_1.t)('terminal.processError', { error: error?.message || String(error) })}\r\n`
             });
         });
-
         child.on('close', (code, signal) => {
             this.sessions.delete(sessionId);
-            if (session.disposed) return;
+            if (session.disposed)
+                return;
             this.sendToRenderer('terminal-exit', {
                 terminalId: sessionId,
                 exitCode: typeof code === 'number' ? code : null,
                 signal: signal || null
             });
         });
-
         return {
             terminalId: sessionId,
             shell: shellPath,
@@ -576,14 +555,12 @@ class IntegratedTerminalManager {
             backend: 'process'
         };
     }
-
     createSession(options = {}) {
         if (!this.isAvailable()) {
             const status = this.getStatus();
             const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_UNAVAILABLE');
             throw err;
         }
-
         const requestedShell = typeof options.shell === 'string' && options.shell.trim()
             ? options.shell.trim()
             : this._resolveDefaultShell();
@@ -596,12 +573,10 @@ class IntegratedTerminalManager {
         const rows = Number.isFinite(Number(options.rows)) ? Math.max(8, Math.floor(Number(options.rows))) : 30;
         const cwd = this._resolveCwd(options.cwd);
         const spawnEnv = this._buildSpawnEnv();
-
         if (shellCandidates.length === 0) {
-            const err = errorWithCode(t('terminal.shellUnavailable'), 'SHELL_UNAVAILABLE');
+            const err = errorWithCode((0, lang_1.t)('terminal.shellUnavailable'), 'SHELL_UNAVAILABLE');
             throw err;
         }
-
         if (!pty) {
             if (!this._isInteractiveFallbackAvailable()) {
                 const status = this.getStatus();
@@ -620,33 +595,29 @@ class IntegratedTerminalManager {
                         rows,
                         name: options.name
                     });
-                } catch (fallbackError) {
+                }
+                catch (fallbackError) {
                     fallbackErrors.push(`${fallbackShell} -> ${fallbackError?.message || String(fallbackError)}`);
                 }
             }
-
-            const errorDetail = fallbackErrors.join(' || ') || t('terminal.unknownError');
-            const err = errorWithCode(t('terminal.fallbackStartFailed', { error: errorDetail }), 'PROCESS_FALLBACK_FAILED');
+            const errorDetail = fallbackErrors.join(' || ') || (0, lang_1.t)('terminal.unknownError');
+            const err = errorWithCode((0, lang_1.t)('terminal.fallbackStartFailed', { error: errorDetail }), 'PROCESS_FALLBACK_FAILED');
             throw err;
         }
-
         let ptyProcess = null;
         let activeShell = shellCandidates[0];
         let activeArgs = requestedArgs || this._resolveDefaultArgs(activeShell);
         let lastSpawnError = null;
         const spawnErrors = [];
-
         for (let index = 0; index < shellCandidates.length; index += 1) {
             const candidateShell = shellCandidates[index];
             const candidateArgs = (requestedArgs && index === 0)
                 ? requestedArgs
                 : this._resolveDefaultArgs(candidateShell);
             const attempts = [candidateArgs];
-
             if (process.platform !== 'win32' && Array.isArray(candidateArgs) && candidateArgs.length > 0) {
                 attempts.push([]);
             }
-
             for (const argsAttempt of attempts) {
                 try {
                     ptyProcess = pty.spawn(candidateShell, argsAttempt, {
@@ -660,18 +631,17 @@ class IntegratedTerminalManager {
                     activeShell = candidateShell;
                     activeArgs = argsAttempt;
                     break;
-                } catch (error) {
+                }
+                catch (error) {
                     lastSpawnError = error;
                     const errMsg = error?.message || String(error);
                     spawnErrors.push(`${candidateShell} ${JSON.stringify(argsAttempt)} -> ${errMsg}`);
                 }
             }
-
             if (ptyProcess) {
                 break;
             }
         }
-
         if (!ptyProcess) {
             const fallbackErrors = [];
             for (const candidateShell of shellCandidates) {
@@ -685,31 +655,29 @@ class IntegratedTerminalManager {
                         rows,
                         name: options.name
                     });
-                } catch (fallbackError) {
+                }
+                catch (fallbackError) {
                     fallbackErrors.push(`${candidateShell} -> ${fallbackError?.message || String(fallbackError)}`);
                 }
             }
-
             const detail = lastSpawnError
                 ? (lastSpawnError.message || String(lastSpawnError))
-                : t('terminal.unknownError');
+                : (0, lang_1.t)('terminal.unknownError');
             const attempted = shellCandidates.join(' | ');
             const ptyTrace = spawnErrors.length > 0
-                ? `; ${t('terminal.ptyAttempts', { attempts: spawnErrors.join(' || ') })}`
+                ? `; ${(0, lang_1.t)('terminal.ptyAttempts', { attempts: spawnErrors.join(' || ') })}`
                 : '';
             const fallbackTrace = fallbackErrors.length > 0
-                ? `; ${t('terminal.fallbackAttempts', { attempts: fallbackErrors.join(' || ') })}`
+                ? `; ${(0, lang_1.t)('terminal.fallbackAttempts', { attempts: fallbackErrors.join(' || ') })}`
                 : '';
-            throw errorWithCode(t('terminal.shellSpawnFailed', {
+            throw errorWithCode((0, lang_1.t)('terminal.shellSpawnFailed', {
                 error: detail,
                 candidates: attempted,
                 ptyTrace,
                 fallbackTrace
             }), 'SHELL_SPAWN_FAILED');
         }
-
         const sessionId = crypto.randomUUID();
-
         const session = {
             id: sessionId,
             shell: activeShell,
@@ -723,27 +691,25 @@ class IntegratedTerminalManager {
                 ? options.name.trim()
                 : `${os.userInfo().username}@${os.hostname()}`
         };
-
         this.sessions.set(sessionId, session);
-
         ptyProcess.onData((data) => {
-            if (session.disposed) return;
+            if (session.disposed)
+                return;
             this.sendToRenderer('terminal-data', {
                 terminalId: sessionId,
                 data
             });
         });
-
         ptyProcess.onExit((event = {}) => {
             this.sessions.delete(sessionId);
-            if (session.disposed) return;
+            if (session.disposed)
+                return;
             this.sendToRenderer('terminal-exit', {
                 terminalId: sessionId,
                 exitCode: event.exitCode,
                 signal: event.signal
             });
         });
-
         return {
             terminalId: sessionId,
             shell: activeShell,
@@ -755,13 +721,11 @@ class IntegratedTerminalManager {
             backend: 'pty'
         };
     }
-
     write(terminalId, data) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
         }
-
         if (session.backend === 'process') {
             if (!session.process || !session.process.stdin || session.process.killed) {
                 return false;
@@ -769,19 +733,17 @@ class IntegratedTerminalManager {
             try {
                 session.process.stdin.write(String(data ?? ''));
                 return true;
-            } catch (_) {
+            }
+            catch (_) {
                 return false;
             }
         }
-
         if (!session.pty) {
             return false;
         }
-
         session.pty.write(String(data ?? ''));
         return true;
     }
-
     resize(terminalId, cols, rows) {
         const session = this.sessions.get(terminalId);
         if (!session) {
@@ -791,47 +753,41 @@ class IntegratedTerminalManager {
         const nextRows = Number.isFinite(Number(rows)) ? Math.max(6, Math.floor(Number(rows))) : session.rows;
         session.cols = nextCols;
         session.rows = nextRows;
-
         if (session.backend === 'process') {
             // 管道后端无法动态调整子进程窗口大小，仅记录尺寸供后续会话使用
             return true;
         }
-
         if (!session.pty) {
             return false;
         }
-
         session.pty.resize(nextCols, nextRows);
         return true;
     }
-
     kill(terminalId) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
         }
-
         if (session.backend === 'process') {
             try {
                 if (session.process && !session.process.killed) {
-                    terminateProcessTree(session.process);
+                    (0, process_supervisor_1.terminateProcessTree)(session.process);
                 }
-            } catch (_) {}
+            }
+            catch (_) { }
             this.sessions.delete(terminalId);
             return true;
         }
-
         if (!session.pty) {
             return false;
         }
-
         try {
             session.pty.kill();
-        } catch (_) {}
+        }
+        catch (_) { }
         this.sessions.delete(terminalId);
         return true;
     }
-
     listSessions() {
         return Array.from(this.sessions.values()).map((session) => ({
             terminalId: session.id,
@@ -845,44 +801,45 @@ class IntegratedTerminalManager {
             createdAt: session.createdAt
         }));
     }
-
     _resolveSessionPid(session) {
         if (!session) {
             return null;
         }
-
         const pid = session.backend === 'process'
             ? session.process?.pid
             : session.pty?.pid;
         return Number.isInteger(pid) && pid > 0 ? pid : null;
     }
-
     _readProcessStartToken(pid) {
-        if (!Number.isInteger(Number(pid)) || Number(pid) <= 0) return null;
+        if (!Number.isInteger(Number(pid)) || Number(pid) <= 0)
+            return null;
         if (process.platform === 'linux') {
             try {
                 const stat = fs.readFileSync(`/proc/${Number(pid)}/stat`, 'utf8');
                 const close = stat.lastIndexOf(')');
-                if (close === -1) return null;
+                if (close === -1)
+                    return null;
                 const fields = stat.slice(close + 2).trim().split(/\s+/);
                 return fields[19] || null;
-            } catch (_) {
+            }
+            catch (_) {
                 return null;
             }
         }
         if (process.platform === 'darwin') {
             try {
-                const result = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' });
-                if (result.status === 0) return String(result.stdout || '').trim() || null;
-            } catch (_) { }
+                const result = (0, child_process_1.spawnSync)('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' });
+                if (result.status === 0)
+                    return String(result.stdout || '').trim() || null;
+            }
+            catch (_) { }
         }
         return null;
     }
-
     _resolvePosixTTYFromPid(pid) {
         if (process.platform === 'darwin') {
             try {
-                const ps = spawnSync('ps', ['-p', String(pid), '-o', 'tty='], { encoding: 'utf8' });
+                const ps = (0, child_process_1.spawnSync)('ps', ['-p', String(pid), '-o', 'tty='], { encoding: 'utf8' });
                 if (ps && ps.status === 0) {
                     const tty = String(ps.stdout || '')
                         .split(/\r?\n/)
@@ -892,15 +849,14 @@ class IntegratedTerminalManager {
                         return tty.startsWith('/dev/') ? tty : `/dev/${tty}`;
                     }
                 }
-            } catch (_) {
+            }
+            catch (_) {
             }
             return null;
         }
-
         if (process.platform !== 'linux') {
             return null;
         }
-
         let candidateFds = [0, 1, 2];
         try {
             const fdDir = `/proc/${pid}/fd`;
@@ -908,9 +864,9 @@ class IntegratedTerminalManager {
                 .map((name) => Number.parseInt(name, 10))
                 .filter((n) => Number.isInteger(n) && n >= 0);
             candidateFds = Array.from(new Set([...candidateFds, ...dynamicFds])).sort((a, b) => a - b);
-        } catch (_) {
         }
-
+        catch (_) {
+        }
         for (const fd of candidateFds) {
             try {
                 const fdPath = `/proc/${pid}/fd/${fd}`;
@@ -918,7 +874,6 @@ class IntegratedTerminalManager {
                 if (!linkPath) {
                     continue;
                 }
-
                 if (linkPath.startsWith('/dev/')) {
                     if (/^\/dev\/(pts\/\d+|tty\d+|tty)$/.test(linkPath)) {
                         return linkPath;
@@ -927,44 +882,41 @@ class IntegratedTerminalManager {
                         continue;
                     }
                 }
-
                 try {
                     const realPath = fs.realpathSync(linkPath);
                     if (/^\/dev\/(pts\/\d+|tty\d+|tty)$/.test(realPath)) {
                         return realPath;
                     }
-                } catch (_) {
                 }
-            } catch (_) {
+                catch (_) {
+                }
+            }
+            catch (_) {
             }
         }
-
         return null;
     }
-
     getSessionTTY(terminalId) {
         if (process.platform !== 'linux' && process.platform !== 'darwin') {
             return null;
         }
-
         const session = this.sessions.get(terminalId);
         if (!session) {
             return null;
         }
-
         const pid = this._resolveSessionPid(session);
         if (!pid) {
             return null;
         }
         const startToken = this._readProcessStartToken(pid);
         const tty = this._resolvePosixTTYFromPid(pid);
-        if (!tty) return null;
+        if (!tty)
+            return null;
         const afterToken = this._readProcessStartToken(pid);
-        if (startToken && afterToken && startToken !== afterToken) return null;
-
+        if (startToken && afterToken && startToken !== afterToken)
+            return null;
         return tty;
     }
-
     disposeAll() {
         for (const [id, session] of this.sessions.entries()) {
             session.disposed = true;
@@ -973,5 +925,6 @@ class IntegratedTerminalManager {
         this.sessions.clear();
     }
 }
-
-module.exports = IntegratedTerminalManager;
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = IntegratedTerminalManager;
+}

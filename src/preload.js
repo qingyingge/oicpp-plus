@@ -1,7 +1,7 @@
+"use strict";
 const { contextBridge, ipcRenderer, shell, clipboard } = require('electron');
 const path = require('path');
 const os = require('os');
-
 // P4: path.join / path.dirname / 路径拆解 / os.homedir 都是同步纯函数，
 // 原先逐个搬上 IPC（path-join、path-dirname、get-path-info、get-home-dir），
 // 一次路径计算就要串行多次跨进程往返。preload 里直接本地计算，仍返回 Promise
@@ -17,7 +17,6 @@ const localGetPathInfo = (filePath) => Promise.resolve().then(() => {
         basenameWithoutExt: path.basename(filePath, extname)
     };
 });
-
 const htmlToPlainText = (html) => {
     const source = String(html || '');
     if (typeof DOMParser === 'function') {
@@ -32,7 +31,8 @@ const htmlToPlainText = (html) => {
                 }
             });
             return documentNode.body?.textContent || '';
-        } catch (_) { }
+        }
+        catch (_) { }
     }
     return source
         .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -41,23 +41,21 @@ const htmlToPlainText = (html) => {
         .replace(/\s+/g, ' ')
         .trim();
 };
-
 const showToast = (message, type = 'info', durationMs = 1200) => {
     try {
         const safeMsg = String(message ?? '');
         const safeType = ['info', 'success', 'error', 'warning'].includes(type) ? type : 'info';
         const dur = Number.isFinite(durationMs) ? durationMs : 1200;
-
         const ensure = () => {
             const existing = (document.querySelector('.message-toast'));
-            if (existing instanceof HTMLElement) return existing;
+            if (existing instanceof HTMLElement)
+                return existing;
             const div = document.createElement('div');
             div.className = 'message-toast info';
             div.style.pointerEvents = 'none';
             document.body.appendChild(div);
             return div;
         };
-
         const show = () => {
             const toast = ensure();
             toast.className = `message-toast ${safeType}`;
@@ -67,32 +65,31 @@ const showToast = (message, type = 'info', durationMs = 1200) => {
             toast.__hideTimer = setTimeout(() => {
                 try {
                     toast.style.display = 'none';
-                } catch (_) { }
+                }
+                catch (_) { }
             }, dur);
         };
-
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', show, { once: true });
-        } else {
+        }
+        else {
             show();
         }
-    } catch (_) {
+    }
+    catch (_) {
     }
 };
-
 let md = null;
 let TurndownService = null;
 let turndownInstance = null;
-
 const normalizeMarkdownMath = (input) => {
-    if (!input || typeof input !== 'string') return input;
-
+    if (!input || typeof input !== 'string')
+        return input;
     const normalizeInlineMathInLine = (line) => {
         let out = '';
         let inCode = false;
         let codeFence = '';
         let i = 0;
-
         while (i < line.length) {
             const ch = line[i];
             if (ch === '`') {
@@ -104,7 +101,8 @@ const normalizeMarkdownMath = (input) => {
                 if (!inCode) {
                     inCode = true;
                     codeFence = fence;
-                } else if (fence === codeFence) {
+                }
+                else if (fence === codeFence) {
                     inCode = false;
                     codeFence = '';
                 }
@@ -112,7 +110,6 @@ const normalizeMarkdownMath = (input) => {
                 i += count;
                 continue;
             }
-
             if (!inCode && ch === '$') {
                 const next = line[i + 1];
                 if (next === '$' || (i > 0 && line[i - 1] === '\\')) {
@@ -135,19 +132,15 @@ const normalizeMarkdownMath = (input) => {
                     continue;
                 }
             }
-
             out += ch;
             i += 1;
         }
-
         return out;
     };
-
     const lines = input.split('\n');
     let inFence = false;
     let fenceMarker = '';
     let inMathBlock = false;
-
     for (let idx = 0; idx < lines.length; idx++) {
         const line = lines[idx];
         const fenceMatch = line.match(/^\s{0,3}(```+|~~~+)/);
@@ -156,7 +149,8 @@ const normalizeMarkdownMath = (input) => {
             if (!inFence) {
                 inFence = true;
                 fenceMarker = marker;
-            } else if (marker === fenceMarker) {
+            }
+            else if (marker === fenceMarker) {
                 inFence = false;
                 fenceMarker = '';
             }
@@ -180,15 +174,14 @@ const normalizeMarkdownMath = (input) => {
             lines[idx] = normalizeInlineMathInLine(line);
         }
     }
-
     return lines.join('\n');
 };
-
 // markdown-it / highlight.js / katex / turndown 合计 300ms+ 的同步 require，
 // 放在 preload 顶层会阻塞每个渲染进程（含各设置窗口）的首帧绘制。
 // 改为首次真正调用渲染/转换 API 时才初始化。
 function ensureTurndown() {
-    if (turndownInstance) return turndownInstance;
+    if (turndownInstance)
+        return turndownInstance;
     try {
         TurndownService = require('turndown');
         turndownInstance = new TurndownService({
@@ -201,11 +194,10 @@ function ensureTurndown() {
             strongDelimiter: '**',
             linkStyle: 'inlined',
         });
-
         turndownInstance.addRule('taskListItem', {
             filter: function (node) {
-                return node.nodeName === 'LI' && 
-                       node.classList.contains('task-list-item');
+                return node.nodeName === 'LI' &&
+                    node.classList.contains('task-list-item');
             },
             replacement: function (content, node) {
                 const checkbox = node.querySelector('input[type="checkbox"]');
@@ -214,14 +206,11 @@ function ensureTurndown() {
                 return prefix + content.trim().replace(/^\[[ x]\]\s*/i, '') + '\n';
             }
         });
-
         turndownInstance.addRule('fencedCodeBlock', {
             filter: function (node) {
-                return (
-                    node.nodeName === 'PRE' &&
+                return (node.nodeName === 'PRE' &&
                     node.firstChild &&
-                    node.firstChild.nodeName === 'CODE'
-                );
+                    node.firstChild.nodeName === 'CODE');
             },
             replacement: function (content, node, options) {
                 const code = node.firstChild;
@@ -229,17 +218,13 @@ function ensureTurndown() {
                 const langMatch = className.match(/language-(\S+)/);
                 const lang = langMatch ? langMatch[1] : '';
                 const fence = options.fence;
-            
                 return '\n\n' + fence + lang + '\n' + code.textContent + '\n' + fence + '\n\n';
             }
         });
-
         turndownInstance.addRule('hljsCodeBlock', {
             filter: function (node) {
-                return (
-                    node.nodeName === 'PRE' &&
-                    node.classList.contains('hljs')
-                );
+                return (node.nodeName === 'PRE' &&
+                    node.classList.contains('hljs'));
             },
             replacement: function (content, node, options) {
                 const codeText = node.textContent || '';
@@ -248,18 +233,17 @@ function ensureTurndown() {
         });
         turndownInstance.addRule('ignoreCopyButton', {
             filter: function (node) {
-                return node.nodeName === 'BUTTON' && 
-                       node.classList.contains('copy-code-btn');
+                return node.nodeName === 'BUTTON' &&
+                    node.classList.contains('copy-code-btn');
             },
             replacement: function () {
                 return '';
             }
         });
-
         turndownInstance.addRule('codeBlockWrapper', {
             filter: function (node) {
-                return node.nodeName === 'DIV' && 
-                       node.classList.contains('code-block-wrapper');
+                return node.nodeName === 'DIV' &&
+                    node.classList.contains('code-block-wrapper');
             },
             replacement: function (content, node, options) {
                 const pre = node.querySelector('pre');
@@ -270,22 +254,21 @@ function ensureTurndown() {
                 return content;
             }
         });
-
-    } catch (e) {
+    }
+    catch (e) {
         console.error('Failed to initialize Turndown:', e);
     }
     return turndownInstance;
 }
-
 function ensureMarkdown() {
-    if (md) return md;
+    if (md)
+        return md;
     try {
         const MarkdownIt = require('markdown-it');
         const mk = require('@iktakahiro/markdown-it-katex');
         const taskLists = require('markdown-it-task-lists');
         const imageFigures = require('markdown-it-image-figures');
-        const hljs = /** @type {import('highlight.js').HLJSApi} */ (/** @type {unknown} */ (require('highlight.js')));
-
+        const hljs = /** @type {import('highlight.js').HLJSApi} */ ( /** @type {unknown} */(require('highlight.js')));
         md = new MarkdownIt({
             html: false,
             linkify: true,
@@ -294,51 +277,49 @@ function ensureMarkdown() {
                 if (lang && hljs.getLanguage(lang)) {
                     try {
                         return '<pre class="hljs"><code>' +
-                               hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
-                               '</code></pre>';
-                    } catch (__) {}
+                            hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+                            '</code></pre>';
+                    }
+                    catch (__) { }
                 }
                 return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
             }
         })
-        .use(mk, {
+            .use(mk, {
             throwOnError: false,
             strict: 'ignore'
         })
-        .use(taskLists)
-        .use(imageFigures, {
+            .use(taskLists)
+            .use(imageFigures, {
             figcaption: true
         });
-
-        const defaultFence = md.renderer.rules.fence || function(tokens, idx, options, env, self) {
+        const defaultFence = md.renderer.rules.fence || function (tokens, idx, options, env, self) {
             return self.renderToken(tokens, idx, options);
         };
-
         // 无语言标注的代码块自动探测时的候选语言：highlightAuto 对全部注册语言
         // 逐个试匹配是 markdown 渲染里最贵的分支，限定到常用集合可大幅降低单次按键成本
         const AUTO_DETECT_LANGUAGES = ['cpp', 'c', 'python', 'javascript', 'java', 'bash', 'json', 'xml', 'sql', 'go', 'rust', 'csharp'];
-
         md.renderer.rules.fence = function (tokens, idx, options, env, self) {
             const token = tokens[idx];
             const code = token.content;
             const lang = token.info.trim();
-        
             let highlighted;
             try {
                 if (lang && hljs.getLanguage(lang)) {
                     highlighted = '<pre class="hljs"><code>' +
-                                  hljs.highlight(code, { language: lang, ignoreIllegals: true }).value +
-                                  '</code></pre>';
-                } else {
-                    highlighted = '<pre class="hljs"><code>' +
-                                  hljs.highlightAuto(code, AUTO_DETECT_LANGUAGES).value +
-                                  '</code></pre>';
+                        hljs.highlight(code, { language: lang, ignoreIllegals: true }).value +
+                        '</code></pre>';
                 }
-            } catch (__) {
+                else {
+                    highlighted = '<pre class="hljs"><code>' +
+                        hljs.highlightAuto(code, AUTO_DETECT_LANGUAGES).value +
+                        '</code></pre>';
+                }
+            }
+            catch (__) {
                 highlighted = '<pre class="hljs"><code>' + md.utils.escapeHtml(code) + '</code></pre>';
             }
             const encodedCode = encodeURIComponent(code);
-
             return `<div class="code-block-wrapper" style="position: relative;">
                 <button class="copy-code-btn" type="button" data-code="${encodedCode}"
                         style="position: absolute; top: 5px; right: 5px; z-index: 10; padding: 4px 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; color: inherit; cursor: pointer; font-size: 12px;">
@@ -347,66 +328,64 @@ function ensureMarkdown() {
                 ${highlighted}
             </div>`;
         };
-
-    } catch (e) {
+    }
+    catch (e) {
         console.error('Failed to initialize markdown-it:', e);
     }
-
     if (md) {
-            const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
-                return self.renderToken(tokens, idx, options);
-            };
-
-            md.renderer.rules.image = function (tokens, idx, options, env, self) {
-                const token = tokens[idx];
-                const srcIndex = token.attrIndex('src');
-                if (srcIndex >= 0) {
-                    let src = token.attrs[srcIndex][1];
-                    const filePath = env && env.filePath;
-                    if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
-                        if (filePath) {
-                            if (path.isAbsolute(src)) {
+        const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
+            return self.renderToken(tokens, idx, options);
+        };
+        md.renderer.rules.image = function (tokens, idx, options, env, self) {
+            const token = tokens[idx];
+            const srcIndex = token.attrIndex('src');
+            if (srcIndex >= 0) {
+                let src = token.attrs[srcIndex][1];
+                const filePath = env && env.filePath;
+                if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
+                    if (filePath) {
+                        if (path.isAbsolute(src)) {
+                            token.attrs[srcIndex][1] = '';
+                            return defaultImageRender(tokens, idx, options, env, self);
+                        }
+                        const dir = path.dirname(filePath);
+                        if (!path.isAbsolute(src)) {
+                            const resolved = path.resolve(dir, src);
+                            const relative = path.relative(dir, resolved);
+                            if (relative.startsWith('..') || path.isAbsolute(relative)) {
                                 token.attrs[srcIndex][1] = '';
                                 return defaultImageRender(tokens, idx, options, env, self);
                             }
-                            const dir = path.dirname(filePath);
-                            if (!path.isAbsolute(src)) {
-                                const resolved = path.resolve(dir, src);
-                                const relative = path.relative(dir, resolved);
-                                if (relative.startsWith('..') || path.isAbsolute(relative)) {
-                                    token.attrs[srcIndex][1] = '';
-                                    return defaultImageRender(tokens, idx, options, env, self);
-                                }
-                                src = resolved;
-                            }
-                            src = src.replace(/\\/g, '/');
-                            if (!src.startsWith('/')) {
-                                src = '/' + src;
-                            }
-                            token.attrs[srcIndex][1] = `file://${src}`;
+                            src = resolved;
                         }
+                        src = src.replace(/\\/g, '/');
+                        if (!src.startsWith('/')) {
+                            src = '/' + src;
+                        }
+                        token.attrs[srcIndex][1] = `file://${src}`;
                     }
                 }
-                return defaultImageRender(tokens, idx, options, env, self);
-            };
+            }
+            return defaultImageRender(tokens, idx, options, env, self);
+        };
     }
     return md;
 }
-
 contextBridge.exposeInMainWorld('markdownAPI', {
     render: (text, filePath) => {
         const renderer = ensureMarkdown();
-        if (!renderer) return text;
+        if (!renderer)
+            return text;
         try {
             const normalizedText = normalizeMarkdownMath(text || '');
             return renderer.render(normalizedText, { filePath });
-        } catch (err) {
+        }
+        catch (err) {
             console.error('Markdown render error:', err);
             return text;
         }
     }
 });
-
 contextBridge.exposeInMainWorld('turndownAPI', {
     toMarkdown: (html) => {
         const instance = ensureTurndown();
@@ -416,73 +395,78 @@ contextBridge.exposeInMainWorld('turndownAPI', {
         }
         try {
             return instance.turndown(html);
-        } catch (err) {
+        }
+        catch (err) {
             console.error('Turndown error:', err);
             return htmlToPlainText(html);
         }
     }
 });
-
 if (!globalThis.__oicppPreloadInitialized) {
-globalThis.__oicppPreloadInitialized = true;
-
-try {
-    window.addEventListener('click', async (ev) => {
-        const target = ev.target;
-        if (!(target instanceof HTMLElement)) return;
-
-        const anchor = target.closest('a[href]');
-        if (anchor instanceof HTMLAnchorElement) {
-            const href = anchor.getAttribute('href') || '';
-            if (href && !href.startsWith('#') && !href.toLowerCase().startsWith('javascript:') && (ev.ctrlKey || ev.metaKey)) {
-                try {
-                    const resolvedUrl = new URL(href, window.location.href);
-                    // 原先含 file: —— markdown 预览里的 file: 链接能被用来
-                    // 拉起本地程序/读取本地资源
-                    if (!ALLOWED_EXTERNAL_PROTOCOLS.has(resolvedUrl.protocol)) {
-                        return;
-                    }
-                    ev.preventDefault();
-                    ev.stopPropagation();
-                    if (typeof shell?.openExternal === 'function') {
-                        await shell.openExternal(resolvedUrl.href);
-                    }
-                } catch (error) {
-                    console.error('Failed to open external link:', error);
-                }
+    globalThis.__oicppPreloadInitialized = true;
+    try {
+        window.addEventListener('click', async (ev) => {
+            const target = ev.target;
+            if (!(target instanceof HTMLElement))
                 return;
+            const anchor = target.closest('a[href]');
+            if (anchor instanceof HTMLAnchorElement) {
+                const href = anchor.getAttribute('href') || '';
+                if (href && !href.startsWith('#') && !href.toLowerCase().startsWith('javascript:') && (ev.ctrlKey || ev.metaKey)) {
+                    try {
+                        const resolvedUrl = new URL(href, window.location.href);
+                        // 原先含 file: —— markdown 预览里的 file: 链接能被用来
+                        // 拉起本地程序/读取本地资源
+                        if (!ALLOWED_EXTERNAL_PROTOCOLS.has(resolvedUrl.protocol)) {
+                            return;
+                        }
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        if (typeof shell?.openExternal === 'function') {
+                            await shell.openExternal(resolvedUrl.href);
+                        }
+                    }
+                    catch (error) {
+                        console.error('Failed to open external link:', error);
+                    }
+                    return;
+                }
             }
-        }
-
-        const btn = target.closest('.copy-code-btn');
-        if (!(btn instanceof HTMLElement)) return;
-        const encoded = btn.getAttribute('data-code');
-        if (!encoded) return;
-
-        ev.preventDefault();
-        ev.stopPropagation();
-
-        let text = '';
-        try {
-            text = decodeURIComponent(encoded);
-        } catch (_) {
-            text = encoded;
-        }
-
-        try {
-            if (window.electronAPI && typeof window.electronAPI.clipboardWriteText === 'function') {
-                await window.electronAPI.clipboardWriteText(text);
-            } else {
-                safeIpcRenderer.invoke('clipboard-write-text', text);
+            const btn = target.closest('.copy-code-btn');
+            if (!(btn instanceof HTMLElement))
+                return;
+            const encoded = btn.getAttribute('data-code');
+            if (!encoded)
+                return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            let text = '';
+            try {
+                text = decodeURIComponent(encoded);
             }
-            showToast(window.i18n.t('message.copySuccess'), 'success', 1200);
-        } catch (err) {
-            showToast(window.i18n.t('message.copyFailed'), 'error', 1600);
-            try { console.error('Copy code failed:', err); } catch (_) { }
-        }
-    }, true);
-} catch (_) { }
-
+            catch (_) {
+                text = encoded;
+            }
+            try {
+                if (window.electronAPI && typeof window.electronAPI.clipboardWriteText === 'function') {
+                    await window.electronAPI.clipboardWriteText(text);
+                }
+                else {
+                    safeIpcRenderer.invoke('clipboard-write-text', text);
+                }
+                showToast(window.i18n.t('message.copySuccess'), 'success', 1200);
+            }
+            catch (err) {
+                showToast(window.i18n.t('message.copyFailed'), 'error', 1600);
+                try {
+                    console.error('Copy code failed:', err);
+                }
+                catch (_) { }
+            }
+        }, true);
+    }
+    catch (_) { }
+}
 const ALLOWED_SEND_CHANNELS = new Set([
     'open-file-dialog', 'open-folder-dialog', 'save-file-as',
     'toggle-devtools', 'toggle-always-on-top',
@@ -503,7 +487,6 @@ const ALLOWED_SEND_CHANNELS = new Set([
     'debug-add-watch', 'debug-request-variables', 'terminal-write',
     'open-template-settings', 'check-updates-manual', 'logger-log-batch'
 ]);
-
 const ALLOWED_INVOKE_CHANNELS = new Set([
     'save-file', 'save-as-file', 'read-file-content', 'read-file-buffer',
     'read-zip-text-files', 'open-path', 'show-open-dialog', 'show-save-dialog',
@@ -524,7 +507,6 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'compile-file', 'run-program', 'run-interactive', 'run-executable', 'check-file-exists', 'format-cpp-code',
     'get-settings', 'reset-settings', 'export-settings', 'import-settings', 'save-setting', 'get-platform', 'get-user-home', 'get-user-icon-path', 'get-build-info', 'get-downloaded-compilers', 'download-compiler', 'select-compiler', 'get-downloaded-testlibs', 'download-testlib', 'select-testlib', 'test-testlib', 'compare-start', 'compare-stop', 'read-directory', 'rename-file-invoke', 'delete-file-invoke', 'clear-directory-contents', 'write-file', 'create-file', 'create-folder', 'ensure-directory', 'watch-file', 'unwatch-file', 'ensure-dir', 'terminal-feature-status', 'terminal-create', 'terminal-resize', 'terminal-kill', 'terminal-list', 'terminal-get-tty', 'get-update-download-status', 'consume-startup-workspace-to-open', 'get-cpu-threads', 'list-client-logs', 'upload-client-log', 'get-device-info', 'get-encoded-token', 'open-external', 'get-language', 'get-available-languages', 'ide-login-start', 'ide-login-status', 'ide-logout', 'cloud-sync-request', 'backup-settings-to-cloud', 'get-settings-backup-info', 'sync-settings-from-cloud', 'get-recent-files', 'open-recent-file', 'get-file-history', 'add-to-file-history', 'open-file-from-history', 'clear-file-history', 'save-last-open-tabs', 'get-last-open-tabs', 'relaunch-app', 'clipboard-write-text', 'clipboard-read-text', 'walk-directory', 'lsp-start', 'lsp-stop', 'lsp-restart', 'lsp-request', 'lsp-cancel', 'lsp-apply-edit-result', 'lsp-notify', 'browser-resolve-url', 'browser-get-page-title',
 ]);
-
 // 事件通道白名单：渲染进程仅可监听以下通道，防 IPC 事件窃听（H8）
 const ALLOWED_EVENT_CHANNELS = new Set([
     // 调试会话
@@ -543,7 +525,6 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     'lsp-apply-edit',
     'compare-progress', 'compare-error', 'compare-complete', 'compare-warning', 'menu-save-file', 'apply-settings-preview', 'settings-applied', 'menu-format-code', 'menu-find-replace', 'menu-compile', 'menu-compile-run', 'menu-debug', 'menu-new-temp-file', 'menu-open-file', 'menu-open-folder', 'menu-save-as', 'menu-open-terminal', 'menu-open-browser', 'menu-new-browser-tab', 'menu-about', 'menu-settings', 'menu-check-updates', 'update-download-status', 'app-toast', 'show-debug-developing-message', 'file-opened', 'folder-opened', 'file-opened-from-args', 'external-file-changed', 'sample-tester-create-problem', 'terminal-data', 'terminal-exit', 'ide-login-updated', 'ide-login-error', 'menu-open-file-history', 'lsp-notification', 'request-save-all', 'browser-open-new-tab',
 ]);
-
 // P2: get-all-settings 在启动/开文件关键路径上被多处（compile-manager、monaco、
 // init、settings-init 等）连调 5~12 次，每次都是整对象跨进程 + 主进程序列化。
 // preload 侧做短 TTL 缓存 + 在途去重，写设置或收到 settings-changed 时失效。
@@ -560,13 +541,11 @@ let settingsCacheInflight = null;
 // 否则「读取在途 + 期间发生写入」会让写入前的旧快照被重新写回缓存并续 1s，
 // 表现为改了设置反而读到更旧的旧值。
 let settingsCacheGeneration = 0;
-
 function invalidateSettingsCache() {
     settingsCache = null;
     settingsCacheTime = 0;
     settingsCacheGeneration++;
 }
-
 // 主进程广播的设置变更同样让本窗口缓存失效（含其他设置窗口的写入）。
 // settings-applied / apply-settings-preview 也在列：前者是 update-settings
 // 成功后唯一的广播（该 handler 不发 settings-changed），后者是设置页预览应用。
@@ -574,14 +553,20 @@ function invalidateSettingsCache() {
 for (const ch of ['settings-changed', 'settings-reset', 'settings-imported', 'settings-applied', 'apply-settings-preview']) {
     ipcRenderer.on(ch, invalidateSettingsCache);
 }
-
 const cloneSettings = (value) => {
     if (typeof structuredClone === 'function') {
-        try { return structuredClone(value); } catch (_) { }
+        try {
+            return structuredClone(value);
+        }
+        catch (_) { }
     }
-    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    }
+    catch (_) {
+        return value;
+    }
 };
-
 function getAllSettings() {
     const now = Date.now();
     if (settingsCache && (now - settingsCacheTime) < SETTINGS_CACHE_TTL_MS) {
@@ -591,46 +576,47 @@ function getAllSettings() {
         const generation = settingsCacheGeneration;
         settingsCacheInflight = safeIpcRenderer.invoke('get-all-settings')
             .then((value) => {
-                // 期间发生过失效就不再回填：这个响应反映的是写入之前的状态
-                if (generation === settingsCacheGeneration) {
-                    settingsCache = value;
-                    settingsCacheTime = Date.now();
-                }
-                return value;
-            })
+            // 期间发生过失效就不再回填：这个响应反映的是写入之前的状态
+            if (generation === settingsCacheGeneration) {
+                settingsCache = value;
+                settingsCacheTime = Date.now();
+            }
+            return value;
+        })
             .finally(() => { settingsCacheInflight = null; });
     }
     return settingsCacheInflight.then((value) => cloneSettings(value));
 }
-
 const safeIpcRenderer = {
     send: (channel, ...args) => {
-        if (SETTINGS_MUTATING_CHANNELS.has(channel)) invalidateSettingsCache();
+        if (SETTINGS_MUTATING_CHANNELS.has(channel))
+            invalidateSettingsCache();
         if (ALLOWED_SEND_CHANNELS.has(channel)) {
             return ipcRenderer.send(channel, ...args);
         }
         console.warn(`IPC send blocked: ${channel}`);
     },
     invoke: (channel, ...args) => {
-        if (SETTINGS_MUTATING_CHANNELS.has(channel)) invalidateSettingsCache();
+        if (SETTINGS_MUTATING_CHANNELS.has(channel))
+            invalidateSettingsCache();
         if (ALLOWED_INVOKE_CHANNELS.has(channel)) {
             return ipcRenderer.invoke(channel, ...args);
         }
         return Promise.reject(new Error(`IPC invoke blocked: ${channel}`));
     },
     on: (channel, listener) => {
-        if (ALLOWED_EVENT_CHANNELS.has(channel)) return ipcRenderer.on(channel, listener);
+        if (ALLOWED_EVENT_CHANNELS.has(channel))
+            return ipcRenderer.on(channel, listener);
         console.warn('IPC event blocked: ' + channel);
     },
     once: (channel, listener) => {
-        if (ALLOWED_EVENT_CHANNELS.has(channel)) return ipcRenderer.once(channel, listener);
+        if (ALLOWED_EVENT_CHANNELS.has(channel))
+            return ipcRenderer.once(channel, listener);
         console.warn('IPC event blocked: ' + channel);
     },
     removeListener: (channel, listener) => ipcRenderer.removeListener(channel, listener),
     removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
 };
-
-
 // 协议白名单：shell.openExternal 把 URL 直接交给操作系统，
 // file: / ms-settings: / smb: 等能直达系统处理器甚至拉起本地程序。
 // 渲染层多处（monaco-editor-manager、terminal-panel）把 shell.openExternal
@@ -641,7 +627,8 @@ const safeOpenExternal = (url) => {
     let parsed;
     try {
         parsed = new URL(String(url || '').trim());
-    } catch (_) {
+    }
+    catch (_) {
         return Promise.reject(new Error('invalid external url'));
     }
     if (!ALLOWED_EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
@@ -649,12 +636,11 @@ const safeOpenExternal = (url) => {
     }
     return shell.openExternal(parsed.href);
 };
-
 contextBridge.exposeInMainWorld('electron', {
     ipcRenderer: safeIpcRenderer,
     shell: {
         openExternal: safeOpenExternal,
-        showItemInFolder: (path) => shell.showItemInFolder(path),
+        showItemInFolder: (p) => shell.showItemInFolder(p),
         openPath: (targetPath) => shell.openPath(targetPath)
     }
 });
@@ -664,17 +650,15 @@ contextBridge.exposeInMainWorld('getElectronModule', () => {
         ipcRenderer: safeIpcRenderer,
         shell: {
             openExternal: safeOpenExternal,
-            showItemInFolder: (path) => shell.showItemInFolder(path),
+            showItemInFolder: (p) => shell.showItemInFolder(p),
             openPath: (targetPath) => shell.openPath(targetPath)
         }
     };
 });
-
 const subscribeIpc = (channel, listener) => {
     safeIpcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
 };
-
 contextBridge.exposeInMainWorld('electronAPI', {
     openFile: () => safeIpcRenderer.send('open-file-dialog'),
     openFolder: () => safeIpcRenderer.send('open-folder-dialog'),
@@ -687,55 +671,45 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openPath: (targetPath, options = {}) => safeIpcRenderer.invoke('open-path', targetPath, options),
     showOpenDialog: (options) => safeIpcRenderer.invoke('show-open-dialog', options),
     showSaveDialog: (options) => safeIpcRenderer.invoke('show-save-dialog', options),
-
     saveTempFile: (filePath, content) => safeIpcRenderer.invoke('save-temp-file', filePath, content),
     saveBinaryTempFile: (fileName, base64Data) => safeIpcRenderer.invoke('save-binary-temp-file', fileName, base64Data),
     loadTempFile: (filePath) => safeIpcRenderer.invoke('load-temp-file', filePath),
     deleteTempFile: (filePath) => safeIpcRenderer.invoke('delete-temp-file', filePath),
-
     getAllSettings: () => getAllSettings(),
     getSettings: () => safeIpcRenderer.invoke('get-settings'),
     sendSettingsPreview: (settings) => safeIpcRenderer.send('settings-preview', settings),
     updateSettings: (newSettings) => safeIpcRenderer.invoke('update-settings', newSettings),
-    updateEditorSettings: () => {}, // deprecated, kept for backward compatibility
+    updateEditorSettings: () => { }, // deprecated, kept for backward compatibility
     resetSettings: () => safeIpcRenderer.invoke('reset-settings'),
     exportSettings: () => safeIpcRenderer.invoke('export-settings'),
     importSettings: () => safeIpcRenderer.invoke('import-settings'),
     saveSetting: (key, value) => safeIpcRenderer.invoke('save-setting', key, value),
-
     openCompilerSettings: () => safeIpcRenderer.invoke('open-compiler-settings'),
     openEditorSettings: () => safeIpcRenderer.invoke('open-editor-settings'),
     openTemplateSettings: () => safeIpcRenderer.send('open-template-settings'),
     openBackupSettings: () => safeIpcRenderer.invoke('open-backup-settings'),
-
     getPlatform: () => safeIpcRenderer.invoke('get-platform'),
     getUserHome: () => safeIpcRenderer.invoke('get-user-home'),
     getUserIconPath: () => safeIpcRenderer.invoke('get-user-icon-path'),
     getBuildInfo: () => safeIpcRenderer.invoke('get-build-info'),
-
     getDownloadedCompilers: () => safeIpcRenderer.invoke('get-downloaded-compilers'),
     downloadCompiler: (config) => safeIpcRenderer.invoke('download-compiler', config),
     selectCompiler: (version) => safeIpcRenderer.invoke('select-compiler', version),
-
-
     getDownloadedTestlibs: () => safeIpcRenderer.invoke('get-downloaded-testlibs'),
     downloadTestlib: (config) => safeIpcRenderer.invoke('download-testlib', config),
     selectTestlib: (version) => safeIpcRenderer.invoke('select-testlib', version),
     testTestlib: (testlibPath) => safeIpcRenderer.invoke('test-testlib', testlibPath),
-
     compileFile: (options) => safeIpcRenderer.invoke('compile-file', options),
     formatCppCode: (options) => safeIpcRenderer.invoke('format-cpp-code', options),
     runExecutable: (options) => safeIpcRenderer.invoke('run-executable', options),
     runProgram: (executablePath, input, timeLimit, memoryLimit) => safeIpcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
     runInteractive: (options) => safeIpcRenderer.invoke('run-interactive', options),
-
     startCompare: (config) => safeIpcRenderer.invoke('compare-start', config),
     stopCompare: () => safeIpcRenderer.invoke('compare-stop'),
     onCompareProgress: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-progress', l); return () => ipcRenderer.removeListener('compare-progress', l); },
     onCompareError: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-error', l); return () => ipcRenderer.removeListener('compare-error', l); },
     onCompareComplete: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
     onCompareWarning: (cb) => { const l = (_, data) => cb(data); subscribeIpc('compare-warning', l); return () => ipcRenderer.removeListener('compare-warning', l); },
-
     readDirectory: (dirPath) => safeIpcRenderer.invoke('read-directory', dirPath),
     renameFile: (oldPath, newPath, options = {}) => safeIpcRenderer.invoke('rename-file-invoke', oldPath, newPath, options),
     deleteFile: (filePath, options = {}) => safeIpcRenderer.invoke('delete-file-invoke', filePath, options),
@@ -748,12 +722,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ensureDirectory: (dirPath) => safeIpcRenderer.invoke('ensure-directory', dirPath),
     watchFile: (filePath) => safeIpcRenderer.invoke('watch-file', filePath),
     unwatchFile: (filePath) => safeIpcRenderer.invoke('unwatch-file', filePath),
-
     pathJoin: (...paths) => localPathJoin(...paths),
     pathDirname: (filePath) => localPathDirname(filePath),
     getHomeDir: () => Promise.resolve(os.homedir()),
     ensureDir: (dirPath) => safeIpcRenderer.invoke('ensure-dir', dirPath),
-
     getTerminalFeatureStatus: () => safeIpcRenderer.invoke('terminal-feature-status'),
     createTerminal: (options) => safeIpcRenderer.invoke('terminal-create', options),
     writeTerminal: (terminalId, data) => safeIpcRenderer.send('terminal-write', terminalId, data),
@@ -761,10 +733,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     killTerminal: (terminalId) => safeIpcRenderer.invoke('terminal-kill', terminalId),
     listTerminals: () => safeIpcRenderer.invoke('terminal-list'),
     getTerminalTTY: (terminalId) => safeIpcRenderer.invoke('terminal-get-tty', terminalId),
-
     onMenuSaveFile: (callback) => subscribeIpc('menu-save-file', callback),
-    onApplySettingsPreview: (callback) => subscribeIpc('apply-settings-preview', (event, ...args) => callback(...args)),
-    onSettingsApplied: (callback) => subscribeIpc('settings-applied', (event, ...args) => callback(...args)),
+    onApplySettingsPreview: (callback) => subscribeIpc('apply-settings-preview', (_event, ...args) => callback(...args)),
+    onSettingsApplied: (callback) => subscribeIpc('settings-applied', (_event, ...args) => callback(...args)),
     onMenuFormatCode: (callback) => subscribeIpc('menu-format-code', callback),
     onMenuFindReplace: (callback) => subscribeIpc('menu-find-replace', callback),
     onMenuCompile: (callback) => subscribeIpc('menu-compile', callback),
@@ -783,20 +754,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getUpdateDownloadStatus: () => safeIpcRenderer.invoke('get-update-download-status'),
     onUpdateDownloadStatus: (callback) => subscribeIpc('update-download-status', (_event, payload) => callback && callback(payload)),
     onAppToast: (callback) => subscribeIpc('app-toast', (_event, payload) => callback && callback(payload)),
-
     onShowDebugDevelopingMessage: (callback) => subscribeIpc('show-debug-developing-message', callback),
     onSettingsChanged: (callback) => subscribeIpc('settings-changed', callback),
     onSettingsReset: (callback) => subscribeIpc('settings-reset', (_e, payload) => callback(payload)),
     onSettingsImported: (callback) => subscribeIpc('settings-imported', (_e, payload) => callback(payload)),
     onThemeChanged: (callback) => subscribeIpc('theme-changed', (_e, payload) => callback(payload)),
     onFileOpened: (callback) => subscribeIpc('file-opened', callback),
-    onFileSaved: (callback) => subscribeIpc('file-saved', (event, filePath, error) => callback(filePath, error)),
-    onFolderOpened: (callback) => subscribeIpc('folder-opened', (event, folderPath) => callback(folderPath)),
+    onFileSaved: (callback) => subscribeIpc('file-saved', (_event, filePath, error) => callback(filePath, error)),
+    onFolderOpened: (callback) => subscribeIpc('folder-opened', (_event, folderPath) => callback(folderPath)),
     reportWorkspacePath: (folderPath) => safeIpcRenderer.send('workspace-path-report', folderPath),
-    onFileOpenedFromArgs: (callback) => subscribeIpc('file-opened-from-args', (event, data) => callback(data)),
+    onFileOpenedFromArgs: (callback) => subscribeIpc('file-opened-from-args', (_event, data) => callback(data)),
     consumeStartupWorkspaceToOpen: () => safeIpcRenderer.invoke('consume-startup-workspace-to-open'),
     onExternalFileChange: (callback) => {
-        if (typeof callback !== 'function') return () => { };
+        if (typeof callback !== 'function')
+            return () => { };
         const listener = (_event, payload) => callback(payload);
         subscribeIpc('external-file-changed', listener);
         return () => ipcRenderer.removeListener('external-file-changed', listener);
@@ -804,22 +775,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onSampleTesterCreateProblem: (callback) => subscribeIpc('sample-tester-create-problem', (_e, data) => callback && callback(data)),
     onTerminalData: (callback) => subscribeIpc('terminal-data', (_event, payload) => callback && callback(payload)),
     onTerminalExit: (callback) => subscribeIpc('terminal-exit', (_event, payload) => callback && callback(payload)),
-
     getCpuThreads: () => safeIpcRenderer.invoke('get-cpu-threads'),
-
-    sendFeedback: () => {}, // deprecated, kept for backward compatibility
+    sendFeedback: () => { }, // deprecated, kept for backward compatibility
     listClientLogs: () => safeIpcRenderer.invoke('list-client-logs'),
     uploadClientLog: (filePath) => safeIpcRenderer.invoke('upload-client-log', filePath),
     getDeviceInfo: () => safeIpcRenderer.invoke('get-device-info'),
     getEncodedToken: () => safeIpcRenderer.invoke('get-encoded-token'),
-
     openExternal: (url) => safeIpcRenderer.invoke('open-external', url),
-
     getLanguage: () => safeIpcRenderer.invoke('get-language'),
     getLanguageFile: (langCode) => safeIpcRenderer.invoke('get-language-file', langCode),
     getAvailableLanguages: () => safeIpcRenderer.invoke('get-available-languages'),
     onLanguageChanged: (callback) => subscribeIpc('language-changed', (_event, langCode) => callback && callback(langCode)),
-
     startIdeLogin: () => safeIpcRenderer.invoke('ide-login-start'),
     getIdeLoginStatus: () => safeIpcRenderer.invoke('ide-login-status'),
     logoutIdeAccount: () => safeIpcRenderer.invoke('ide-logout'),
@@ -829,10 +795,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     syncSettingsFromCloud: () => safeIpcRenderer.invoke('sync-settings-from-cloud'),
     onIdeLoginUpdated: (callback) => subscribeIpc('ide-login-updated', (_event, payload) => callback && callback(payload)),
     onIdeLoginError: (callback) => subscribeIpc('ide-login-error', (_event, payload) => callback && callback(payload)),
-
     getRecentFiles: () => safeIpcRenderer.invoke('get-recent-files'),
     openRecentFile: (filePath) => safeIpcRenderer.invoke('open-recent-file', filePath),
-
     getFileHistory: () => safeIpcRenderer.invoke('get-file-history'),
     addToFileHistory: (filePath) => safeIpcRenderer.invoke('add-to-file-history', filePath),
     openFileFromHistory: (filePath) => safeIpcRenderer.invoke('open-file-from-history', filePath),
@@ -840,17 +804,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveLastOpenTabs: (tabs) => safeIpcRenderer.invoke('save-last-open-tabs', tabs),
     getLastOpenTabs: () => safeIpcRenderer.invoke('get-last-open-tabs'),
     onMenuOpenFileHistory: (callback) => subscribeIpc('menu-open-file-history', callback),
-
     versions: process.versions,
     platform: process.platform,
-
     relaunchApp: () => safeIpcRenderer.invoke('relaunch-app'),
-
     clipboardWriteText: (text) => safeIpcRenderer.invoke('clipboard-write-text', text),
     clipboardReadText: () => safeIpcRenderer.invoke('clipboard-read-text'),
-
     walkDirectory: (dirPath, options) => safeIpcRenderer.invoke('walk-directory', dirPath, options),
-
     lspStart: (options) => safeIpcRenderer.invoke('lsp-start', options),
     lspStop: () => safeIpcRenderer.invoke('lsp-stop'),
     lspRestart: (options) => safeIpcRenderer.invoke('lsp-restart', options),
@@ -859,32 +818,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
     lspApplyEditResult: (requestId, result) => safeIpcRenderer.invoke('lsp-apply-edit-result', requestId, result),
     lspNotify: (method, params) => safeIpcRenderer.invoke('lsp-notify', method, params),
     onLspNotification: (callback) => {
-        if (typeof callback !== 'function') return () => {};
+        if (typeof callback !== 'function')
+            return () => { };
         const listener = (_event, payload) => callback(payload);
         subscribeIpc('lsp-notification', listener);
         return () => ipcRenderer.removeListener('lsp-notification', listener);
     },
     onLspApplyEdit: (callback) => {
-        if (typeof callback !== 'function') return () => {};
+        if (typeof callback !== 'function')
+            return () => { };
         const listener = (_event, payload) => callback(payload);
         subscribeIpc('lsp-apply-edit', listener);
         return () => ipcRenderer.removeListener('lsp-apply-edit', listener);
     },
-
     onRequestSaveAll: (callback) => subscribeIpc('request-save-all', () => callback && callback()),
     notifySaveAllComplete: () => safeIpcRenderer.send('save-all-complete'),
-
     // === 内置浏览器 API ===
     browserResolveUrl: (url) => safeIpcRenderer.invoke('browser-resolve-url', url),
     browserGetPageTitle: (url) => safeIpcRenderer.invoke('browser-get-page-title', url),
     onBrowserOpenNewTab: (callback) => {
-        if (typeof callback !== 'function') return () => {};
+        if (typeof callback !== 'function')
+            return () => { };
         const listener = (_event, payload) => callback(payload);
         subscribeIpc('browser-open-new-tab', listener);
         return () => ipcRenderer.removeListener('browser-open-new-tab', listener);
     }
 });
-
 contextBridge.exposeInMainWorld('electronIPC', {
     ...safeIpcRenderer,
     ipcRenderer: safeIpcRenderer,
@@ -909,7 +868,6 @@ contextBridge.exposeInMainWorld('electronIPC', {
         return ipcRenderer.once(channel, listener);
     }
 });
-
 contextBridge.exposeInMainWorld('process', {
     versions: process.versions,
     platform: process.platform,
@@ -918,7 +876,6 @@ contextBridge.exposeInMainWorld('process', {
         CI: process.env.CI || false
     }
 });
-
 // 渲染进程日志合并发送：原先每条 logInfo/logWarn/logError 都会跨进程一次
 // （warn/error 还附带 preload 内部抓取的、无调用点意义的 stack），启动即产生
 // 上百次 IPC 往返。现改为在 preload 侧排队，按时间窗/条数批量发往主进程。
@@ -927,24 +884,26 @@ const LOG_BATCH_MAX = 200;
 const LOG_QUEUE_MAX = 2000;
 const logQueue = [];
 let logFlushTimer = null;
-
 const flushLogQueue = () => {
-    if (logFlushTimer) { clearTimeout(logFlushTimer); logFlushTimer = null; }
-    if (logQueue.length === 0) return;
+    if (logFlushTimer) {
+        clearTimeout(logFlushTimer);
+        logFlushTimer = null;
+    }
+    if (logQueue.length === 0)
+        return;
     const batch = logQueue.splice(0, LOG_BATCH_MAX);
     safeIpcRenderer.send('logger-log-batch', batch);
-    if (logQueue.length > 0) scheduleLogFlush();
+    if (logQueue.length > 0)
+        scheduleLogFlush();
 };
-
 function scheduleLogFlush() {
-    if (logFlushTimer) return;
+    if (logFlushTimer)
+        return;
     logFlushTimer = setTimeout(flushLogQueue, LOG_FLUSH_DELAY_MS);
 }
-
 if (typeof window !== 'undefined' && window.addEventListener) {
     window.addEventListener('beforeunload', flushLogQueue);
 }
-
 const safeSendLog = (level, args) => {
     try {
         let meta;
@@ -955,24 +914,33 @@ const safeSendLog = (level, args) => {
                 userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
             };
         }
-        if (logQueue.length >= LOG_QUEUE_MAX) logQueue.splice(0, logQueue.length - LOG_QUEUE_MAX + 1);
+        if (logQueue.length >= LOG_QUEUE_MAX)
+            logQueue.splice(0, logQueue.length - LOG_QUEUE_MAX + 1);
         logQueue.push({ level, args, meta });
-        if (logQueue.length >= LOG_BATCH_MAX) flushLogQueue();
-        else scheduleLogFlush();
-    } catch (_) { }
+        if (logQueue.length >= LOG_BATCH_MAX)
+            flushLogQueue();
+        else
+            scheduleLogFlush();
+    }
+    catch (_) { }
     // 仅在开发模式或显式开启时输出到控制台
     if (process.env.NODE_ENV === 'development' || process.env.OICPP_CONSOLE_LOG === '1') {
         try {
-            if (level === 'warn') console.warn(...args);
-            else if (level === 'error') console.error(...args);
-            else console.log(...args);
-        } catch (_) { }
+            if (level === 'warn')
+                console.warn(...args);
+            else if (level === 'error')
+                console.error(...args);
+            else
+                console.log(...args);
+        }
+        catch (_) { }
     }
 };
-
 contextBridge.exposeInMainWorld('logInfo', (...args) => safeSendLog('info', args));
 contextBridge.exposeInMainWorld('logWarn', (...args) => safeSendLog('warn', args));
 contextBridge.exposeInMainWorld('logError', (...args) => safeSendLog('error', args));
 contextBridge.exposeInMainWorld('logwarn', (...args) => safeSendLog('warn', args));
 contextBridge.exposeInMainWorld('logerror', (...args) => safeSendLog('error', args));
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {};
 }
