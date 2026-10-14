@@ -33,6 +33,12 @@ class I18nManager {
             lng: 'zh-cn',
             fallbackLng: 'zh-cn',
             resources: {},
+            // i18next normalizes language codes to Title-Case ('zh-cn' -> 'zh-CN').
+            // Bundles are added afterwards via addResourceBundle('zh-cn', ...), so
+            // without this the lookup key would not match and t() would silently
+            // return the key itself. Keep codes lowercase to match the file names
+            // and the main process's lng.
+            lowerCaseLng: true,
             // Keep the hand-written placeholder syntax: {token}, not {{token}}.
             interpolation: { prefix: '{', suffix: '}' },
             returnNull: false,
@@ -150,7 +156,11 @@ class I18nManager {
         if (!key || typeof key !== 'string') {
             return key || '';
         }
-        return i18next.t(key, params);
+        // Before init() (or while the bundle is still loading) i18next has no language
+        // set and returns undefined. Consumers assign this straight into textContent,
+        // so degrade to the key rather than letting `undefined` reach the DOM.
+        const translated = i18next.t(key, params);
+        return (translated === undefined || translated === null || translated === '') ? key : translated;
     }
 
     /**
