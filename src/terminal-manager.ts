@@ -1,0 +1,1012 @@
+import * as os from 'os';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import { spawn, spawnSync } from 'child_process';
+import { t } from './lang';
+import { terminateProcessTree } from './utils/process-supervisor';
+
+let pty: any = null;
+let ptyLoadError: Error | null = null;
+let ptyLoadTargets: string[] = [];
+
+function tryLoadPty(moduleId: string): any {
+    try {
+        return require(moduleId);
+    } catch (error) {
+        ptyLoadError = error as Error;
+        return null;
+    }
+}
+
+/**
+ * 创建带业务错误码的 Error。调用方用 error.code 判断失败类型，而非匹配 message 文本。
+ * @param {string} message
+ * @param {string} code
+ * @returns {Error & { code: string }}
+ */
+function errorWithCode(message: string, code: string): Error & { code: string } {
+    const err = new Error(message) as Error & { code: string };
+    err.code = code;
+    return err;
+}
+
+function resolvePackagedNodePtyCandidates(): string[] {
+    const candidates: string[] = [];
+
+    // In packaged apps, node-pty native binaries should live under app.asar.unpacked.
+    if (process.resourcesPath) {
+        candidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'node-pty', 'lib', 'index.js'));
+    }
+
+    const bundledRoot = path.resolve(__dirname, '..', 'node_modules', 'node-pty');
+    candidates.push(path.join(bundledRoot, 'lib', 'index.js'));
+
+    const asarSegment = `${path.sep}app.asar${path.sep}`;
+    if (bundledRoot.includes(asarSegment)) {
+        candidates.push(
+            path.join(
+                bundledRoot.replace(asarSegment, `${path.sep}app.asar.unpacked${path.sep}`),
+                'lib',
+                'index.js'
+            )
+        );
+    }
+
+    return Array.from(new Set(candidates));
+}
+
+pty = tryLoadPty('node-pty');
+ptyLoadTargets.push('node-pty');
+
+if (!pty) {
+    const candidates = resolvePackagedNodePtyCandidates();
+    for (const candidate of candidates) {
+        ptyLoadTargets.push(candidate);
+        if (!fs.existsSync(candidate)) {
+            continue;
+        }
+        pty = tryLoadPty(candidate);
+        if (pty) {
+            break;
+        }
+    }
+}
+
+// 终端输出聚合窗口：足够小以保持跟手感，又能把高频 chunk 合并成少量 IPC
+const TERMINAL_DATA_FLUSH_MS = 8;
+
+interface Session {
+    id: string;
+    shell: string;
+    cwd: string;
+    cols: number;
+    rows: number;
+    createdAt: number;
+    backend: 'pty' | 'process';
+    pty?: any;
+    process?: any;
+    wrappedWithScript?: boolean;
+    name: string;
+    disposed?: boolean;
+}
+
+interface SendToRenderer {
+    (channel: string, payload: any): void;
+}
+
+class IntegratedTerminalManager {
+    sessions: Map<string, Session>;
+    _pendingTerminalData: Map<string, string[]>;
+    _terminalDataFlushTimer: NodeJS.Timeout | null;
+    _rawSend: SendToRenderer;
+    sendToRenderer: SendToRenderer;
+
+    constructor(options: { sendToRenderer?: SendToRenderer } = {}) {
+        this.sessions = new Map();
+        const rawSendToRenderer = typeof options.sendToRenderer === 'function'
+            ? options.sendToRenderer
+            : () => { };
+        this._pendingTerminalData = new Map();
+        this._terminalDataFlushTimer = null;
+        this._rawSend = rawSendToRenderer;
+        this.sendToRenderer = (channel: string, payload: any) => {
+            // 终端输出按 8ms 窗口聚合：cat/ls -R 这类命令下 PTY 每秒可产生
+            // 数百个 chunk，逐条 send 会打满 IPC 队列并让终端掉帧
+            if (channel === 'terminal-data' && payload && typeof payload.terminalId === 'string') {
+                const chunks = this._pendingTerminalData.get(payload.terminalId);
+                if (chunks) {
+                    chunks.push(payload.data);
+                } else {
+                    this._pendingTerminalData.set(payload.terminalId, [payload.data]);
+                }
+                if (!this._terminalDataFlushTimer) {
+                    this._terminalDataFlushTimer = setTimeout(() => this._flushTerminalData(), TERMINAL_DATA_FLUSH_MS);
+                    if (typeof this._terminalDataFlushTimer.unref === 'function') {
+                        this._terminalDataFlushTimer.unref();
+                    }
+                }
+                return;
+            }
+            // 会话退出前先把该会话的待发数据送出去，避免丢失
+            if (channel === 'terminal-exit' && payload && typeof payload.terminalId === 'string') {
+                this._flushTerminalData(payload.terminalId);
+            }
+            rawSendToRenderer(channel, payload);
+        };
+    }
+
+    _flushTerminalData(onlyTerminalId?: string): void {
+        if (onlyTerminalId) {
+            const chunks = this._pendingTerminalData.get(onlyTerminalId);
+            if (!chunks) return;
+            this._pendingTerminalData.delete(onlyTerminalId);
+            this._rawSend('terminal-data', { terminalId: onlyTerminalId, data: chunks.join('') });
+            return;
+        }
+        if (this._terminalDataFlushTimer) {
+            clearTimeout(this._terminalDataFlushTimer);
+            this._terminalDataFlushTimer = null;
+        }
+        if (this._pendingTerminalData.size === 0) return;
+        const pending = this._pendingTerminalData;
+        this._pendingTerminalData = new Map();
+        for (const [terminalId, chunks] of pending) {
+            this._rawSend('terminal-data', { terminalId, data: chunks.join('') });
+        }
+    }
+
+    isAvailable(): boolean {
+        return !!pty || this._isInteractiveFallbackAvailable();
+    }
+
+    _getPtyLoadErrorDetail(): string {
+        const message = ptyLoadError
+            ? (ptyLoadError.message || String(ptyLoadError))
+            : t('terminal.nodePtyNotInstalled');
+        const targetInfo = ptyLoadTargets.length > 0
+            ? `\n${t('terminal.ptyLoadTargets', { targets: ptyLoadTargets.join(' | ') })}`
+            : '';
+        return `${message}${targetInfo}`;
+    }
+
+    getStatus(): { available: boolean; reason: string; detail: string } {
+        if (pty) {
+            return {
+                available: true,
+                reason: '',
+                detail: ''
+            };
+        }
+
+        if (this._isInteractiveFallbackAvailable()) {
+            return {
+                available: true,
+                reason: t('terminal.ptyFallbackActive'),
+                detail: this._getPtyLoadErrorDetail()
+            };
+        }
+
+        if (this._isProcessFallbackAvailable() && process.platform === 'win32') {
+            return {
+                available: false,
+                reason: t('terminal.ptyRequiredWindows'),
+                detail: `${this._getPtyLoadErrorDetail()}\n${t('terminal.reinstallPty')}`
+            };
+        }
+
+        return {
+            available: false,
+            reason: t('terminal.ptyUnavailable'),
+            detail: this._getPtyLoadErrorDetail()
+        };
+    }
+
+    _isProcessFallbackAvailable(): boolean {
+        return typeof spawn === 'function';
+    }
+
+    _isInteractiveFallbackAvailable(): boolean {
+        if (!this._isProcessFallbackAvailable()) {
+            return false;
+        }
+        // Windows pipe fallback is non-interactive (no readline/history/completion),
+        // so it cannot be treated as a usable integrated terminal backend.
+        return process.platform !== 'win32';
+    }
+
+    _resolveDefaultShell(): string {
+        if (process.platform === 'win32') {
+            return process.env.POWERSHELL_EXE || 'powershell.exe';
+        }
+        if (process.platform === 'darwin') {
+            return process.env.SHELL || '/bin/zsh';
+        }
+        return process.env.SHELL || '/bin/bash';
+    }
+
+    _extractExecutablePath(shellValue: string): string {
+        const raw = String(shellValue || '').trim();
+        if (!raw) {
+            return '';
+        }
+
+        const quote = raw[0];
+        if ((quote === '"' || quote === '\'') && raw.length > 1) {
+            const end = raw.indexOf(quote, 1);
+            if (end > 1) {
+                return raw.slice(1, end).trim();
+            }
+        }
+
+        const firstSpace = raw.search(/\s/);
+        if (firstSpace === -1) {
+            return raw;
+        }
+        return raw.slice(0, firstSpace).trim();
+    }
+
+    _buildShellCandidates(preferredShell: string): string[] {
+        const preferred = this._extractExecutablePath(preferredShell);
+        const envShell = this._extractExecutablePath(process.env.SHELL);
+        const candidates: string[] = [];
+
+        const pushCandidate = (value: string) => {
+            const next = this._extractExecutablePath(value);
+            if (!next) {
+                return;
+            }
+            if (process.platform === 'win32') {
+                const lower = next.toLowerCase();
+                if (candidates.some((item) => item.toLowerCase() === lower)) {
+                    return;
+                }
+                candidates.push(next);
+                return;
+            }
+            if (!candidates.includes(next)) {
+                candidates.push(next);
+            }
+        };
+
+        pushCandidate(preferred);
+
+        if (process.platform === 'win32') {
+            pushCandidate(envShell);
+            pushCandidate(process.env.POWERSHELL_EXE);
+            pushCandidate('powershell.exe');
+            pushCandidate('pwsh.exe');
+            pushCandidate('cmd.exe');
+            return candidates;
+        }
+
+        pushCandidate(envShell);
+        if (process.platform === 'darwin') {
+            pushCandidate('/bin/zsh');
+        }
+        pushCandidate('/bin/bash');
+        pushCandidate('/bin/sh');
+        return candidates;
+    }
+
+    _isUsableShellCandidate(shellPath: string): boolean {
+        const candidate = this._extractExecutablePath(shellPath);
+        if (!candidate) {
+            return false;
+        }
+
+        if (process.platform === 'win32') {
+            return true;
+        }
+
+        if (!path.isAbsolute(candidate)) {
+            return true;
+        }
+
+        try {
+            fs.accessSync(candidate, fs.constants.X_OK);
+            return true;
+        } catch (_) {
+            return false;
+        }
+    }
+
+    _resolveDefaultArgs(shellPath: string): string[] {
+        const lower = String(shellPath || '').toLowerCase();
+        if (process.platform === 'win32') {
+            if (lower.includes('powershell')) {
+                return ['-NoLogo'];
+            }
+            return [];
+        }
+
+        return [];
+    }
+
+    _resolveFallbackCwd(): string {
+        const candidates: string[] = [];
+        try {
+            candidates.push(process.cwd());
+        } catch (_) {
+        }
+
+        try {
+            candidates.push(os.homedir());
+        } catch (_) {
+        }
+
+        candidates.push(process.platform === 'win32' ? 'C:\\' : '/');
+
+        for (const candidate of candidates) {
+            if (!candidate || typeof candidate !== 'string') {
+                continue;
+            }
+            try {
+                const stat = fs.statSync(candidate);
+                if (stat.isDirectory()) {
+                    return candidate;
+                }
+            } catch (_) {
+            }
+        }
+
+        return process.platform === 'win32' ? 'C:\\' : '/';
+    }
+
+    _resolveCwd(candidate: string | undefined): string {
+        const fallback = this._resolveFallbackCwd();
+        if (!candidate || typeof candidate !== 'string') {
+            return fallback;
+        }
+        const trimmed = candidate.trim();
+        if (!trimmed) {
+            return fallback;
+        }
+
+        try {
+            const stat = fs.statSync(trimmed);
+            return stat.isDirectory() ? trimmed : fallback;
+        } catch (_) {
+            return fallback;
+        }
+    }
+
+    _buildSpawnEnv(): Record<string, string> {
+        const nextEnv: Record<string, string> = {};
+        for (const [key, value] of Object.entries(process.env || {})) {
+            if (typeof key !== 'string' || !key) {
+                continue;
+            }
+            if (value === undefined || value === null) {
+                continue;
+            }
+            nextEnv[key] = typeof value === 'string' ? value : String(value);
+        }
+
+        if (process.platform === 'darwin') {
+            // Avoid inheriting parent Terminal.app/iTerm session identity into embedded shells.
+            delete nextEnv.TERM_SESSION_ID;
+            delete nextEnv.SECURITYSESSIONID;
+            delete nextEnv.ITERM_SESSION_ID;
+            nextEnv.TERM_PROGRAM = 'oicpp';
+            nextEnv.TERM_PROGRAM_VERSION = 'embedded';
+        }
+
+        if (process.platform === 'win32') {
+            if (!nextEnv.LANG) {
+                nextEnv.LANG = 'zh_CN.UTF-8';
+            }
+            if (!nextEnv.LC_ALL) {
+                nextEnv.LC_ALL = 'C.UTF-8';
+            }
+            if (!nextEnv.PYTHONIOENCODING) {
+                nextEnv.PYTHONIOENCODING = 'utf-8';
+            }
+        }
+
+        nextEnv.TERM = 'xterm-256color';
+        return nextEnv;
+    }
+
+    _resolveProcessFallbackArgs(shellPath: string, requestedArgs: string[] | null | undefined): string[] {
+        if (Array.isArray(requestedArgs) && requestedArgs.length > 0) {
+            return requestedArgs;
+        }
+
+        const lower = String(shellPath || '').toLowerCase();
+        if (process.platform === 'win32') {
+            if (lower.includes('powershell') || lower.includes('pwsh')) {
+                return ['-NoLogo', '-NoExit'];
+            }
+            if (lower.includes('cmd.exe')) {
+                return ['/K'];
+            }
+            return [];
+        }
+
+        // No PTY mode must avoid forcing interactive flags, otherwise zsh/bash may fail with TTY read errors.
+        return [];
+    }
+
+    _resolveProcessFallbackSpawnSpec(shellPath: string, args: string[] | undefined): { command: string; args: string[]; wrappedWithScript: boolean } {
+        const normalizedArgs = Array.isArray(args) ? args : [];
+
+        const quotePosixArg = (value: any): string => {
+            const text = String(value ?? '');
+            if (!text) {
+                return "''";
+            }
+            return `'${text.replace(/'/g, `'"'"'`)}'`;
+        };
+
+        const buildPosixCommand = () => {
+            const chunks = [quotePosixArg(shellPath), ...normalizedArgs.map((item) => quotePosixArg(item))];
+            return chunks.join(' ');
+        };
+
+        if (process.platform === 'linux') {
+            const scriptCandidates = ['/usr/bin/script', '/bin/script'];
+            for (const scriptBin of scriptCandidates) {
+                try {
+                    fs.accessSync(scriptBin, fs.constants.X_OK);
+                    return {
+                        command: scriptBin,
+                        args: ['-q', '-f', '-c', buildPosixCommand(), '/dev/null'],
+                        wrappedWithScript: true
+                    };
+                } catch (_) {
+                }
+            }
+        }
+
+        if (process.platform === 'darwin') {
+            const scriptBin = '/usr/bin/script';
+            try {
+                const stat = fs.statSync(scriptBin);
+                if (stat.isFile()) {
+                    return {
+                        command: scriptBin,
+                        args: ['-q', '/dev/null', shellPath, ...normalizedArgs],
+                        wrappedWithScript: true
+                    };
+                }
+            } catch (_) {
+            }
+        }
+
+        return {
+            command: shellPath,
+            args: normalizedArgs,
+            wrappedWithScript: false
+        };
+    }
+
+    _runShellPreflight(shellPath: string, args: string[], cwd: string, env: Record<string, string>): { ok: boolean; detail: string } {
+        if (process.platform !== 'darwin') {
+            return { ok: true, detail: '' };
+        }
+
+        try {
+            const testArgs = Array.isArray(args) ? args.slice() : [];
+            const quotedMarker = '__oicpp_preflight__';
+            if (shellPath.toLowerCase().includes('powershell')) {
+                testArgs.push('-Command', `Write-Output ${quotedMarker}`);
+            } else {
+                testArgs.push('-c', `echo ${quotedMarker}`);
+            }
+            const result = spawnSync(shellPath, testArgs, {
+                cwd,
+                env,
+                encoding: 'utf8',
+                timeout: 2500,
+                windowsHide: true
+            });
+
+            if (result.error) {
+                return {
+                    ok: false,
+                    detail: result.error.message || String(result.error)
+                };
+            }
+
+            if (typeof result.status === 'number' && result.status !== 0) {
+                const stderr = String(result.stderr || '').trim();
+                return {
+                    ok: false,
+                    detail: stderr || `exit=${result.status}`
+                };
+            }
+
+            return { ok: true, detail: '' };
+        } catch (error) {
+            return {
+                ok: false,
+                detail: error?.message || String(error)
+            };
+        }
+    }
+
+    _spawnProcessFallbackSession({ shellPath, requestedArgs, cwd, env, cols, rows, name }: {
+        shellPath: string;
+        requestedArgs: string[] | null | undefined;
+        cwd: string;
+        env: Record<string, string>;
+        cols: number;
+        rows: number;
+        name?: string;
+    }): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number; backend: string } {
+        const args = this._resolveProcessFallbackArgs(shellPath, requestedArgs);
+        const preflight = this._runShellPreflight(shellPath, [], cwd, env);
+        if (!preflight.ok) {
+            throw errorWithCode(t('terminal.preflightFailed', { error: preflight.detail }), 'SHELL_PREFLIGHT_FAILED');
+        }
+
+        const spawnSpec = this._resolveProcessFallbackSpawnSpec(shellPath, args);
+
+        const child = spawn(spawnSpec.command, spawnSpec.args, {
+            cwd,
+            env,
+            windowsHide: true,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            detached: process.platform !== 'win32'
+        });
+
+        const sessionId = crypto.randomUUID();
+        const session: Session = {
+            id: sessionId,
+            shell: shellPath,
+            cwd,
+            cols,
+            rows,
+            createdAt: Date.now(),
+            backend: 'process',
+            process: child,
+            wrappedWithScript: !!spawnSpec.wrappedWithScript,
+            name: typeof name === 'string' && name.trim()
+                ? name.trim()
+                : `${os.userInfo().username}@${os.hostname()}`
+        };
+
+        this.sessions.set(sessionId, session);
+
+        const onData = (data: string | Buffer) => {
+            if (session.disposed) return;
+            this.sendToRenderer('terminal-data', {
+                terminalId: sessionId,
+                data: typeof data === 'string' ? data : Buffer.from(data || '').toString('utf8')
+            });
+        };
+
+        child.stdout?.on('data', onData);
+        child.stderr?.on('data', onData);
+
+        child.on('error', (error: Error) => {
+            if (session.disposed) return;
+            this.sendToRenderer('terminal-data', {
+                terminalId: sessionId,
+                data: `\r\n[Error] ${t('terminal.processError', { error: error?.message || String(error) })}\r\n`
+            });
+        });
+
+        child.on('close', (code: number | null, signal: string | null) => {
+            this.sessions.delete(sessionId);
+            if (session.disposed) return;
+            this.sendToRenderer('terminal-exit', {
+                terminalId: sessionId,
+                exitCode: typeof code === 'number' ? code : null,
+                signal: signal || null
+            });
+        });
+
+        return {
+            terminalId: sessionId,
+            shell: shellPath,
+            cwd,
+            name: session.name,
+            cols,
+            rows,
+            pid: child.pid,
+            backend: 'process'
+        };
+    }
+
+    createSession(options: { shell?: string; args?: string[]; cwd?: string; cols?: number; rows?: number; name?: string } = {}): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number; backend: string } {
+        if (!this.isAvailable()) {
+            const status = this.getStatus();
+            const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_UNAVAILABLE');
+            throw err;
+        }
+
+        const requestedShell = typeof options.shell === 'string' && options.shell.trim()
+            ? options.shell.trim()
+            : this._resolveDefaultShell();
+        const requestedArgs = Array.isArray(options.args) && options.args.length > 0
+            ? options.args
+            : null;
+        const shellCandidates = this._buildShellCandidates(requestedShell)
+            .filter((candidate) => this._isUsableShellCandidate(candidate));
+        const cols = Number.isFinite(Number(options.cols)) ? Math.max(40, Math.floor(Number(options.cols))) : 120;
+        const rows = Number.isFinite(Number(options.rows)) ? Math.max(8, Math.floor(Number(options.rows))) : 30;
+        const cwd = this._resolveCwd(options.cwd);
+        const spawnEnv = this._buildSpawnEnv();
+
+        if (shellCandidates.length === 0) {
+            const err = errorWithCode(t('terminal.shellUnavailable'), 'SHELL_UNAVAILABLE');
+            throw err;
+        }
+
+        if (!pty) {
+            if (!this._isInteractiveFallbackAvailable()) {
+                const status = this.getStatus();
+                const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_REQUIRES_PTY');
+                throw err;
+            }
+            const fallbackErrors: string[] = [];
+            for (const fallbackShell of shellCandidates) {
+                try {
+                    return this._spawnProcessFallbackSession({
+                        shellPath: fallbackShell,
+                        requestedArgs,
+                        cwd,
+                        env: spawnEnv,
+                        cols,
+                        rows,
+                        name: options.name
+                    });
+                } catch (fallbackError) {
+                    fallbackErrors.push(`${fallbackShell} -> ${fallbackError?.message || String(fallbackError)}`);
+                }
+            }
+
+            const errorDetail = fallbackErrors.join(' || ') || t('terminal.unknownError');
+            const err = errorWithCode(t('terminal.fallbackStartFailed', { error: errorDetail }), 'PROCESS_FALLBACK_FAILED');
+            throw err;
+        }
+
+        let ptyProcess: any = null;
+        let activeShell = shellCandidates[0];
+        let activeArgs = requestedArgs || this._resolveDefaultArgs(activeShell);
+        let lastSpawnError: Error | null = null;
+        const spawnErrors: string[] = [];
+
+        for (let index = 0; index < shellCandidates.length; index += 1) {
+            const candidateShell = shellCandidates[index];
+            const candidateArgs = (requestedArgs && index === 0)
+                ? requestedArgs
+                : this._resolveDefaultArgs(candidateShell);
+            const attempts: string[][] = [candidateArgs];
+
+            if (process.platform !== 'win32' && Array.isArray(candidateArgs) && candidateArgs.length > 0) {
+                attempts.push([]);
+            }
+
+            for (const argsAttempt of attempts) {
+                try {
+                    ptyProcess = pty.spawn(candidateShell, argsAttempt, {
+                        name: 'xterm-256color',
+                        cols,
+                        rows,
+                        cwd,
+                        env: spawnEnv,
+                        useConpty: process.platform === 'win32'
+                    });
+                    activeShell = candidateShell;
+                    activeArgs = argsAttempt;
+                    break;
+                } catch (error) {
+                    lastSpawnError = error as Error;
+                    const errMsg = error?.message || String(error);
+                    spawnErrors.push(`${candidateShell} ${JSON.stringify(argsAttempt)} -> ${errMsg}`);
+                }
+            }
+
+            if (ptyProcess) {
+                break;
+            }
+        }
+
+        if (!ptyProcess) {
+            const fallbackErrors: string[] = [];
+            for (const candidateShell of shellCandidates) {
+                try {
+                    return this._spawnProcessFallbackSession({
+                        shellPath: candidateShell,
+                        requestedArgs,
+                        cwd,
+                        env: spawnEnv,
+                        cols,
+                        rows,
+                        name: options.name
+                    });
+                } catch (fallbackError) {
+                    fallbackErrors.push(`${candidateShell} -> ${fallbackError?.message || String(fallbackError)}`);
+                }
+            }
+
+            const detail = lastSpawnError
+                ? (lastSpawnError.message || String(lastSpawnError))
+                : t('terminal.unknownError');
+            const attempted = shellCandidates.join(' | ');
+            const ptyTrace = spawnErrors.length > 0
+                ? `; ${t('terminal.ptyAttempts', { attempts: spawnErrors.join(' || ') })}`
+                : '';
+            const fallbackTrace = fallbackErrors.length > 0
+                ? `; ${t('terminal.fallbackAttempts', { attempts: fallbackErrors.join(' || ') })}`
+                : '';
+            throw errorWithCode(t('terminal.shellSpawnFailed', {
+                error: detail,
+                candidates: attempted,
+                ptyTrace,
+                fallbackTrace
+            }), 'SHELL_SPAWN_FAILED');
+        }
+
+        const sessionId = crypto.randomUUID();
+
+        const session: Session = {
+            id: sessionId,
+            shell: activeShell,
+            cwd,
+            cols,
+            rows,
+            createdAt: Date.now(),
+            backend: 'pty',
+            pty: ptyProcess,
+            name: typeof options.name === 'string' && options.name.trim()
+                ? options.name.trim()
+                : `${os.userInfo().username}@${os.hostname()}`
+        };
+
+        this.sessions.set(sessionId, session);
+
+        ptyProcess.onData((data: string) => {
+            if (session.disposed) return;
+            this.sendToRenderer('terminal-data', {
+                terminalId: sessionId,
+                data
+            });
+        });
+
+        ptyProcess.onExit((event: { exitCode?: number; signal?: string } = {}) => {
+            this.sessions.delete(sessionId);
+            if (session.disposed) return;
+            this.sendToRenderer('terminal-exit', {
+                terminalId: sessionId,
+                exitCode: event.exitCode,
+                signal: event.signal
+            });
+        });
+
+        return {
+            terminalId: sessionId,
+            shell: activeShell,
+            cwd,
+            name: session.name,
+            cols,
+            rows,
+            pid: ptyProcess.pid,
+            backend: 'pty'
+        };
+    }
+
+    write(terminalId: string, data: string): boolean {
+        const session = this.sessions.get(terminalId);
+        if (!session) {
+            return false;
+        }
+
+        if (session.backend === 'process') {
+            if (!session.process || !session.process.stdin || session.process.killed) {
+                return false;
+            }
+            try {
+                session.process.stdin.write(String(data ?? ''));
+                return true;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        if (!session.pty) {
+            return false;
+        }
+
+        session.pty.write(String(data ?? ''));
+        return true;
+    }
+
+    resize(terminalId: string, cols: number, rows: number): boolean {
+        const session = this.sessions.get(terminalId);
+        if (!session) {
+            return false;
+        }
+        const nextCols = Number.isFinite(Number(cols)) ? Math.max(20, Math.floor(Number(cols))) : session.cols;
+        const nextRows = Number.isFinite(Number(rows)) ? Math.max(6, Math.floor(Number(rows))) : session.rows;
+        session.cols = nextCols;
+        session.rows = nextRows;
+
+        if (session.backend === 'process') {
+            // 管道后端无法动态调整子进程窗口大小，仅记录尺寸供后续会话使用
+            return true;
+        }
+
+        if (!session.pty) {
+            return false;
+        }
+
+        session.pty.resize(nextCols, nextRows);
+        return true;
+    }
+
+    kill(terminalId: string): boolean {
+        const session = this.sessions.get(terminalId);
+        if (!session) {
+            return false;
+        }
+
+        if (session.backend === 'process') {
+            try {
+                if (session.process && !session.process.killed) {
+                    terminateProcessTree(session.process);
+                }
+            } catch (_) { }
+            this.sessions.delete(terminalId);
+            return true;
+        }
+
+        if (!session.pty) {
+            return false;
+        }
+
+        try {
+            session.pty.kill();
+        } catch (_) { }
+        this.sessions.delete(terminalId);
+        return true;
+    }
+
+    listSessions(): Array<{ terminalId: string; shell: string; cwd: string; cols: number; rows: number; pid: number | null; backend: string; name: string; createdAt: number }> {
+        return Array.from(this.sessions.values()).map((session) => ({
+            terminalId: session.id,
+            shell: session.shell,
+            cwd: session.cwd,
+            cols: session.cols,
+            rows: session.rows,
+            pid: session.backend === 'process' ? session.process?.pid : session.pty?.pid,
+            backend: session.backend || 'pty',
+            name: session.name,
+            createdAt: session.createdAt
+        }));
+    }
+
+    _resolveSessionPid(session: Session): number | null {
+        if (!session) {
+            return null;
+        }
+
+        const pid = session.backend === 'process'
+            ? session.process?.pid
+            : session.pty?.pid;
+        return Number.isInteger(pid) && pid > 0 ? pid : null;
+    }
+
+    _readProcessStartToken(pid: number): string | null {
+        if (!Number.isInteger(Number(pid)) || Number(pid) <= 0) return null;
+        if (process.platform === 'linux') {
+            try {
+                const stat = fs.readFileSync(`/proc/${Number(pid)}/stat`, 'utf8');
+                const close = stat.lastIndexOf(')');
+                if (close === -1) return null;
+                const fields = stat.slice(close + 2).trim().split(/\s+/);
+                return fields[19] || null;
+            } catch (_) {
+                return null;
+            }
+        }
+        if (process.platform === 'darwin') {
+            try {
+                const result = spawnSync('ps', ['-p', String(pid), '-o', 'lstart='], { encoding: 'utf8' });
+                if (result.status === 0) return String(result.stdout || '').trim() || null;
+            } catch (_) { }
+        }
+        return null;
+    }
+
+    _resolvePosixTTYFromPid(pid: number): string | null {
+        if (process.platform === 'darwin') {
+            try {
+                const ps = spawnSync('ps', ['-p', String(pid), '-o', 'tty='], { encoding: 'utf8' });
+                if (ps && ps.status === 0) {
+                    const tty = String(ps.stdout || '')
+                        .split(/\r?\n/)
+                        .map((line) => line.trim())
+                        .find((line) => !!line && line !== '?' && line !== '-');
+                    if (tty) {
+                        return tty.startsWith('/dev/') ? tty : `/dev/${tty}`;
+                    }
+                }
+            } catch (_) {
+            }
+            return null;
+        }
+
+        if (process.platform !== 'linux') {
+            return null;
+        }
+
+        let candidateFds = [0, 1, 2];
+        try {
+            const fdDir = `/proc/${pid}/fd`;
+            const dynamicFds = fs.readdirSync(fdDir)
+                .map((name) => Number.parseInt(name, 10))
+                .filter((n) => Number.isInteger(n) && n >= 0);
+            candidateFds = Array.from(new Set([...candidateFds, ...dynamicFds])).sort((a, b) => a - b);
+        } catch (_) {
+        }
+
+        for (const fd of candidateFds) {
+            try {
+                const fdPath = `/proc/${pid}/fd/${fd}`;
+                let linkPath = fs.readlinkSync(fdPath);
+                if (!linkPath) {
+                    continue;
+                }
+
+                if (linkPath.startsWith('/dev/')) {
+                    if (/^\/dev\/(pts\/\d+|tty\d+|tty)$/.test(linkPath)) {
+                        return linkPath;
+                    }
+                    if (linkPath === '/dev/ptmx') {
+                        continue;
+                    }
+                }
+
+                try {
+                    const realPath = fs.realpathSync(linkPath);
+                    if (/^\/dev\/(pts\/\d+|tty\d+|tty)$/.test(realPath)) {
+                        return realPath;
+                    }
+                } catch (_) {
+                }
+            } catch (_) {
+            }
+        }
+
+        return null;
+    }
+
+    getSessionTTY(terminalId: string): string | null {
+        if (process.platform !== 'linux' && process.platform !== 'darwin') {
+            return null;
+        }
+
+        const session = this.sessions.get(terminalId);
+        if (!session) {
+            return null;
+        }
+
+        const pid = this._resolveSessionPid(session);
+        if (!pid) {
+            return null;
+        }
+        const startToken = this._readProcessStartToken(pid);
+        const tty = this._resolvePosixTTYFromPid(pid);
+        if (!tty) return null;
+        const afterToken = this._readProcessStartToken(pid);
+        if (startToken && afterToken && startToken !== afterToken) return null;
+
+        return tty;
+    }
+
+    disposeAll(): void {
+        for (const [id, session] of this.sessions.entries()) {
+            session.disposed = true;
+            this.kill(id);
+        }
+        this.sessions.clear();
+    }
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = IntegratedTerminalManager;
+}
