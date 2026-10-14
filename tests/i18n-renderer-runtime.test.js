@@ -130,7 +130,44 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
 
 // --- 1. init() 后立即可翻译（await 时序）--------------------------------------
 (async () => {
-    // --- 0. 启动语言一致性 ---
+    // --- 0a. 每个加载 i18n.js 的 HTML 都必须先加载 i18next UMD ---
+    // 漏掉时 i18n.js 能加载成功，但 init() 抛 ReferenceError 被 catch 吞掉，
+    // t() 更是直接抛 —— 该窗口全程裸 key，且静态检查完全看不见。
+    {
+        const walk = (dir, out = []) => {
+            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, e.name);
+                if (e.isDirectory()) walk(full, out);
+                else if (e.name.endsWith('.html')) out.push(full);
+            }
+            return out;
+        };
+        const windows = walk(path.join(root, 'src', 'renderer'))
+            .filter((f) => fs.readFileSync(f, 'utf8').includes('js/i18n.js'));
+        check('found every HTML entry point that loads i18n.js', windows.length >= 6, `${windows.length} 个窗口`);
+
+        const missingUmd = [];
+        for (const f of windows) {
+            const lines = fs.readFileSync(f, 'utf8').split('\n');
+            const umdAt = lines.findIndex((l) => l.includes('i18next.min.js'));
+            const i18nAt = lines.findIndex((l) => l.includes('js/i18n.js'));
+            if (umdAt < 0 || umdAt > i18nAt) {
+                missingUmd.push(`${path.relative(root, f)}(umd=${umdAt}, i18n=${i18nAt})`);
+                continue;
+            }
+            // 相对路径按 HTML 所在目录解析。settings/*.html 比 index.html 深一层，
+            // 用 ../../ 会指到 src/node_modules —— 文件不存在，CI 的引用检查才会报。
+            const m = /<script src="([^"]*i18next\.min\.js)"/.exec(lines[umdAt]);
+            const resolved = path.resolve(path.dirname(f), m[1]);
+            if (!fs.existsSync(resolved)) {
+                missingUmd.push(`${path.relative(root, f)} -> unresolvable ${m[1]}`);
+            }
+        }
+        check('every i18n.js consumer loads an existing i18next UMD before it', missingUmd.length === 0,
+            missingUmd.join(' | '));
+    }
+
+    // --- 0b. 启动语言一致性 ---
     // i18n.js 的 i18next.init 硬编码 lng:'zh-cn'，而真实语言来自 settings。
     // 历史上读出 settings.language='en' 后只灌 bundle、从不 changeLanguage，
     // 结果 i18next 仍按 zh-cn 查表：界面显示中文，但 <html lang> 是 en。
