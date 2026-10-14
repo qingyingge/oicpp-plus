@@ -3394,7 +3394,7 @@ class OICPPApp {
     }
 
     showFeedback() {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
         dialog.innerHTML = `
@@ -3457,7 +3457,7 @@ class OICPPApp {
     }
 
     showUploadLogPickerDialog(logs) {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
 
@@ -3557,7 +3557,7 @@ class OICPPApp {
     }
 
     showTraceCodeDialog(traceCode, uploadedAt) {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
 
@@ -3656,7 +3656,7 @@ class OICPPApp {
     }
 
     setupFeedbackDialogListeners(dialog) {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         const closeBtn = dialog.querySelector('#feedback-close-btn');
         closeBtn.addEventListener('click', () => {
             dialog.remove();
@@ -3757,7 +3757,7 @@ class OICPPApp {
     }
 
     showOpenSourceLicenses() {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         const openSourceLibs = [
             { name: 'Electron', license: 'MIT', url: 'https://github.com/electron/electron' },
             { name: 'Monaco Editor', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },

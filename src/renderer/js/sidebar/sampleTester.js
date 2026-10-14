@@ -963,7 +963,7 @@ class SampleTester {
     }
 
     applyDynamicTranslations() {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         document.querySelectorAll('.sample-title').forEach((el) => {
             const id = el.closest('.sample-group')?.dataset.sampleId || '';
             el.textContent = t('tester.testGroup', { i: id }, `Test ${id}`);

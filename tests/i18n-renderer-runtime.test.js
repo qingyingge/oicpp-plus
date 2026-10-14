@@ -295,6 +295,44 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
             });
         });
     });
+// --- 13. 独立设置窗口的加载时序 ---
+    // settings/compiler.html 内联的 init() 是 async 的，而 compiler.js 的
+    // DOMContentLoaded handler 同步 new CompilerSettings()；它里面直接给
+    // installBtn.textContent 赋值（不走 data-i18n，_applyToDOM 救不回来）。
+    // 漏掉 await init() 会让界面持久显示裸 key —— 这里锁住修复。
+    {
+        const compilerJs = fs.readFileSync(path.join(root, 'src', 'renderer', 'settings', 'compiler.js'), 'utf8');
+        const handler = /window\.addEventListener\('DOMContentLoaded',\s*async[\s\S]{0,400}?await window\.i18n\.init\(\)/.test(compilerJs);
+        check('compiler.js awaits i18n.init() before constructing CompilerSettings', handler);
+    }
+
+    // --- 14. 局部 t() 别名不得留死掉的第三形参 ---
+    // fallback 形参零调用方，且 t() 缺键时返回 key 本身（非空 truthy），
+    // 所以 `t() || fallback` 永远不触发 —— 形参存在即误导。
+    {
+        const aliasRe = /^\s*const (_?t)\s*=\s*\(([^)]*)\)\s*=>/gm;
+        const dead = [];
+        const walk = (dir, out = []) => {
+            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, e.name);
+                if (e.isDirectory()) walk(full, out);
+                else if (e.name.endsWith('.js')) out.push(full);
+            }
+            return out;
+        };
+        for (const f of walk(path.join(root, 'src'))) {
+            const lines = fs.readFileSync(f, 'utf8').split('\n');
+            lines.forEach((l, i) => {
+                const m = aliasRe.exec(l);
+                aliasRe.lastIndex = 0;
+                if (!m) return;
+                if (/,\s*fallback\s*$/.test(m[2])) {
+                    dead.push(`${path.relative(root, f)}:${i + 1} -> ${l.trim().slice(0, 80)}`);
+                }
+            });
+        }
+        check('no local t() alias keeps an unused fallback parameter', dead.length === 0, dead.slice(0, 5).join(' | '));
+    }
 })().then(() => {
     console.log(`i18n renderer runtime tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
     process.exitCode = failures ? 1 : 0;
