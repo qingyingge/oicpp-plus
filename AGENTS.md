@@ -63,20 +63,24 @@ const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback |
 
 主进程没有 `window`，走 `src/main.js:20` 的 `const { t } = require('./lang')`（i18next），`utils/` 下的模块用 `require('../lang')`。这条不受「统一 window.i18n.t」约束。
 
+**渲染层底层已是 i18next**（`src/renderer/js/i18n.js` 只是薄适配层）。`index.html` 用 `<script src="../../node_modules/i18next/dist/umd/i18next.min.js">` 引入 UMD 全局（沿用 monaco `loader.js` / xterm 的既有先例），资源经 IPC `get-language-file` 拉原始 JSON 后 `addResourceBundle(code,'translation',data)` 灌入 —— **语言包文件形状不要改**，它同时是 i18next 的 translation bundle。DOM 层（`_applyToDOM` / `enableAutoTranslate` / `onChange`）仍是手写，因为 `data-i18n-args`、`<html lang>` 这些是本项目特有契约，且 `i18next.on()` 返回值不能当 unsubscribe 用。
+
+改渲染层 i18n 后，`tests/i18n-renderer-runtime.test.js` 是运行时行为守卫（vm 里跑真实 i18next UMD + 真实语言包，断言界面实际看到什么），`tests/i18n.test.js` 是契约守卫。两者都要跑。
+
 **形参个数是最容易翻车的地方**：给两参的入口传三个参数只会**静默丢弃** —— 不报错、界面照常显示、CI 全绿，只有 i18n 未就绪时才暴露成裸 key 名。
 
 | 入口 | 形参 | 说明 |
 |------|------|------|
-| `window.i18n.t(key, params)`（`src/renderer/js/i18n.js:103`） | **2** | **唯一入口** |
+| `window.i18n.t(key, params)`（`src/renderer/js/i18n.js:163`） | **2** | **唯一入口** |
 | 局部 `const t = ...` 别名 | 按自己定义 | 允许，但形参数必须与调用处一致 |
 | `t(key, params)`（`src/main.js:20`） | 2 | 主进程，长期保留 |
 
-`window.__`（`i18n.js:318`，`i18n.t.bind(i18n)`）与 `this.t` 已全部清理完毕，不要再用。
+`this.t` 与 `window.__` 已全部清理完毕，不要再用（`window.__` 的定义点 `i18n.js` 旧 318 行随 i18next 迁移一并删除，唯一消费 `browser-manager.js` 已改为 `window.i18n?.t?.(k) || k`）。
 注意 `src/main.js`（主进程）和 `src/renderer/js/main.js`（渲染层）是两个同名文件，行号别看串。
 
-HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` / `data-i18n-aria-label`，由 `src/renderer/js/i18n.js:215 _applyToDOM` 统一覆盖。**行内中文只是 JS 加载前的默认值，保留即可**，I8 不计入这类行。
+HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` / `data-i18n-aria-label`（另支持 `data-i18n-args` 传插值参数），由 `src/renderer/js/i18n.js:242 _applyToDOM` 统一覆盖。**行内中文只是 JS 加载前的默认值，保留即可**，I8 不计入这类行。
 
-主进程语言切换：启动时 `src/main.js:2663` 加载、设置变更时 `src/main.js:7891` `setLanguage`，无状态，`t()` 直接调即可。
+主进程语言切换：启动时 `src/main.js:2802`（`createWindow` 内）`setLanguage`、设置变更时 `src/main.js:8163` `setLanguage` + `createMenuBar()`，无状态，`t()` 直接调即可。
 
 改完必须跑 `pnpm run ci`（I1~I8 + 回归测试）。
 
@@ -89,8 +93,8 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 **坑：**
 
 - 取消/失败这类**要被代码识别**的状态，不要拿文案匹配。改用错误码：下载器已改为 `error.code = 'DOWNLOAD_CANCELLED'` + 导出的 `isCancelledError`（`utils/multi-thread-downloader.js`），别退回 `error.message.includes(...)`。
-- I8 拦硬编码 CJK（baseline 0）；I7 拦孤儿键（baseline 205，`scripts/ci-check.js:843`）—— 语言包里有、源码里查不到引用的键，存量 205 暂不清理，只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上。判定口径同时认字符串字面量和**属性访问**（`main.js:3617` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
-- I7 自己报的「未静态引用 266」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
+- I8 拦硬编码 CJK（baseline 0）；I7 拦孤儿键（baseline 202，`scripts/ci-check.js:984`）—— 语言包里有、源码里查不到引用的键，存量 202 暂不清理，只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
+- I7 自己报的「未静态引用」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
 - 改语言包时 `zh-cn.json` 与 `en.json` 键集必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
 
