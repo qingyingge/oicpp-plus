@@ -10,7 +10,7 @@ const getNewTabPageHtml = () => {
     const fg = isDark ? '#cccccc' : '#333333';
     const muted = isDark ? '#6a6a6a' : '#999999';
     const accent = '#007acc';
-    const _t = window.__ || ((k) => k);
+    const _t = (k) => window.i18n?.t?.(k) || k;
     const title = _t('browser.title');
     const welcomeHint = _t('browser.welcomeHint');
     const splitHint = _t('browser.splitHint');

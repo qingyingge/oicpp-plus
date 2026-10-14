@@ -1,27 +1,50 @@
 /**
  * Renderer-side i18n module.
  *
- * Provides translation capabilities to the renderer process.
- * Language files are loaded from the main process via IPC.
+ * Translation lookup, {token} interpolation and language switching are delegated to
+ * i18next (loaded as a UMD global by index.html). The main process already runs
+ * i18next in src/lang/index.js, so both sides now share one implementation.
+ *
+ * Resource bundles are still fetched over IPC (`get-language-file` returns the raw
+ * language JSON, which is exactly an i18next `translation` bundle), so no main-process
+ * IPC changes were required.
+ *
+ * The DOM layer (data-i18n / -placeholder / -title / -aria-label, plus the
+ * MutationObserver in enableAutoTranslate) stays hand-written: it encodes project
+ * specific attributes that i18next's DOM bindings do not cover.
  *
  * Usage:
- *   const __ = i18n.t;  // or use i18n.t directly
- *   __('menu.file');     // => "文件" or "File"
- *   __('message.updateDownloading', { version: ' v2.0', progress: 50 });
+ *   window.i18n.t('menu.file');
+ *   window.i18n.t('message.updateDownloading', { version: ' v2.0', progress: 50 });
  */
 class I18nManager {
     constructor() {
-        this._messages = {};
-        this._fallbackMessages = {};
         this._currentLang = 'zh-cn';
-        this._loaded = false;
         this._readyPromise = null;
         this._listeners = [];
+        this._observer = null;
+        this._boundLanguageChanged = null;
+    }
+
+    // i18next.init is async but resolves synchronously for an inline resource set,
+    // so the first translation request is only made after init() has been awaited.
+    _initI18next() {
+        return i18next.init({
+            lng: 'zh-cn',
+            fallbackLng: 'zh-cn',
+            resources: {},
+            // Keep the hand-written placeholder syntax: {token}, not {{token}}.
+            interpolation: { prefix: '{', suffix: '}' },
+            returnNull: false,
+            returnEmptyString: false,
+            parseMissingKeyHandler: (key) => key,
+        });
     }
 
     /**
-     * Initialize: load from main process settings.
-     * Call this early in app initialization.
+     * Initialize: resolve the current language, load its bundle, then subscribe to
+     * language changes. Awaited by every entry point (init.js, settings-init.js and
+     * the backup / editor / templates settings windows).
      */
     async init() {
         if (this._readyPromise) return this._readyPromise;
@@ -32,6 +55,17 @@ class I18nManager {
 
     async _doInit() {
         try {
+            await this._initI18next();
+
+            // Register once so repeated init() calls cannot stack subscriptions.
+            if (!this._boundLanguageChanged) {
+                this._boundLanguageChanged = () => {
+                    this._notifyListeners();
+                    this._applyToDOM();
+                };
+                i18next.on('languageChanged', this._boundLanguageChanged);
+            }
+
             // Load current language from settings
             if (window.electronAPI && typeof window.electronAPI.getLanguage === 'function') {
                 this._currentLang = await window.electronAPI.getLanguage();
@@ -40,25 +74,18 @@ class I18nManager {
             // Load current language file
             await this._loadCurrentLanguage();
 
-            // Listen for language changes
+            // Listen for language changes pushed by the main process
             if (window.electronAPI && typeof window.electronAPI.onLanguageChanged === 'function') {
                 window.electronAPI.onLanguageChanged(async (langCode) => {
-                    this._currentLang = langCode || 'zh-cn';
-                    await this._loadCurrentLanguage();
-                    this._notifyListeners();
-                    this._applyToDOM();
+                    await this._applyLanguage(langCode || 'zh-cn');
                 });
             }
 
             // Also listen for settings-changed (which includes language)
             if (window.electronIPC && window.electronIPC.on) {
-                const originalOn = window.electronIPC.on.bind(window.electronIPC);
                 window.electronIPC.on('settings-changed', async (_event, _settingsType, newSettings) => {
                     if (newSettings && newSettings.language && newSettings.language !== this._currentLang) {
-                        this._currentLang = newSettings.language;
-                        await this._loadCurrentLanguage();
-                        this._notifyListeners();
-                        this._applyToDOM();
+                        await this._applyLanguage(newSettings.language);
                     }
                 });
             }
@@ -72,20 +99,24 @@ class I18nManager {
         }
     }
 
+    /**
+     * Load the bundle for a language and hand it to i18next.
+     * `get-language-file` returns the raw zh-cn.json / en.json object, which matches
+     * i18next's translation resource shape, so it can be added as-is.
+     */
     async _loadCurrentLanguage() {
         try {
-            if (window.electronAPI && typeof window.electronAPI.getLanguageFile === 'function') {
-                const messages = await window.electronAPI.getLanguageFile(this._currentLang);
-                if (messages) {
-                    this._messages = messages;
-                    this._loaded = true;
+            if (!window.electronAPI || typeof window.electronAPI.getLanguageFile !== 'function') return;
 
-                    // Also try to load fallback (Chinese)
-                    if (this._currentLang !== 'zh-cn') {
-                        const fallback = await window.electronAPI.getLanguageFile('zh-cn');
-                        if (fallback) {
-                            this._fallbackMessages = fallback;
-                        }
+            const messages = await window.electronAPI.getLanguageFile(this._currentLang);
+            if (messages) {
+                i18next.addResourceBundle(this._currentLang, 'translation', messages, true, true);
+
+                // Also try to load fallback (Chinese)
+                if (this._currentLang !== 'zh-cn') {
+                    const fallback = await window.electronAPI.getLanguageFile('zh-cn');
+                    if (fallback) {
+                        i18next.addResourceBundle('zh-cn', 'translation', fallback, true, true);
                     }
                 }
             }
@@ -95,44 +126,31 @@ class I18nManager {
     }
 
     /**
-     * Translate a key.
-     * @param {string} key - Dot-notation key, e.g. 'menu.file'
-     * @param {object} [params] - Template parameters for substitution
-     * @returns {string}
+     * Switch language in this renderer. The main process persists the choice and
+     * echoes it back over the language-changed IPC, which is handled above.
+     */
+    async _applyLanguage(langCode) {
+        this._currentLang = langCode;
+        await this._loadCurrentLanguage();
+        if (i18next.language !== langCode) {
+            await i18next.changeLanguage(langCode);
+        } else {
+            // Same language but a fresh bundle: still need listeners + DOM re-applied.
+            this._notifyListeners();
+            this._applyToDOM();
+        }
+    }
+
+    /**
+     * Translate a key. Thin delegate: i18next handles dotted key lookup, {token}
+     * interpolation (missing tokens are left visible on purpose) and returning the
+     * key itself for unknown entries.
      */
     t(key, params) {
         if (!key || typeof key !== 'string') {
             return key || '';
         }
-
-        let value = this._getNested(this._messages, key);
-        if (value === undefined || value === null) {
-            value = this._getNested(this._fallbackMessages, key);
-        }
-
-        if (value === undefined || value === null) {
-            return key;
-        }
-
-        if (typeof value !== 'string') {
-            return String(value);
-        }
-
-        if (params && typeof params === 'object') {
-            return value.replace(/\{(\w+)\}/g, (match, paramName) => {
-                const paramValue = params[paramName];
-                return paramValue !== undefined && paramValue !== null ? String(paramValue) : match;
-            });
-        }
-
-        return value;
-    }
-
-    /**
-     * Short alias for t()
-     */
-    translate(key, params) {
-        return this.t(key, params);
+        return i18next.t(key, params);
     }
 
     /**
@@ -172,7 +190,7 @@ class I18nManager {
 
     /**
      * Register a listener for language changes.
-     * @param {Function} callback
+     * @param {Function} callback - receives the language code
      * @returns {Function} Unsubscribe function
      */
     onChange(callback) {
@@ -199,18 +217,9 @@ class I18nManager {
 
     /**
      * Apply translation to DOM elements with data-i18n attributes.
-     * Elements with data-i18n="key" will have their textContent replaced.
-     * Elements with data-i18n-placeholder="key" will have their placeholder replaced.
-     * Elements with data-i18n-title="key" will have their title replaced.
-     * 
-     * This is the public method - panels can call it after dynamic rendering.
-     */
-    applyTranslation() {
-        this._applyToDOM();
-    }
-
-    /**
      * Internal: apply translation to DOM elements with data-i18n attributes.
+     * Kept hand-written (not an i18next DOM binding) because data-i18n-args and the
+     * html lang attribute are project specific. Called externally by settings-init.js.
      */
     _applyToDOM() {
         try {
@@ -295,19 +304,6 @@ class I18nManager {
             });
         } catch (_) {}
     }
-
-    _getNested(obj, key) {
-        if (!obj || !key) return undefined;
-        const keys = key.split('.');
-        let current = obj;
-        for (const k of keys) {
-            if (current === null || current === undefined || typeof current !== 'object') {
-                return undefined;
-            }
-            current = current[k];
-        }
-        return current;
-    }
 }
 
 // Create global singleton
@@ -315,4 +311,3 @@ const i18n = new I18nManager();
 
 // Expose globally
 window.i18n = i18n;
-window.__ = i18n.t.bind(i18n);

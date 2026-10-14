@@ -304,29 +304,66 @@ if (packs['zh-cn'] && packs.en) {
     }
 }
 
-// --- renderer 查表实现行为 ---------------------------------------------------
-// 渲染层用的是自研 I18nManager（不是 i18next），这里固定它的既有契约。
+// --- 渲染层查表 / 插值契约 ---------------------------------------------------
+// 渲染层的 t() 现已委托 i18next（src/renderer/js/i18n.js）。这里用真实 i18next
+// 实例跑真实语言包来验证契约，而不是对源码做正则匹配——旧版断言匹配的是手写
+// `_getNested` 与 `value.replace(/\{(\w+)\}/g, …)`，内核交给 i18next 后必然失效。
+// 真正要守住的是「界面行为」：查得到、缺 key 返 key 本身、漏参数保持 {token} 可见。
 {
     const i18nSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'i18n.js'), 'utf8');
     const enPack = JSON.parse(fs.readFileSync(path.join(langDir, 'en.json'), 'utf8'));
 
-    const resolve = (messages, key) => key.split('.').reduce((acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined), messages);
+    // 契约：渲染层已接 i18next，且配置与主进程 lang/index.js 保持一致
+    check('renderer delegates lookup to i18next', i18nSource.includes('i18next.t('));
+    check('renderer configures the {token} placeholder syntax',
+        /interpolation:\s*\{\s*prefix:\s*'\{',\s*suffix:\s*'\}'\s*\}/.test(i18nSource));
+    check('renderer loads the current language over IPC',
+        i18nSource.includes('getLanguageFile') && i18nSource.includes('addResourceBundle'));
+    // 兜底语言交给 i18next 的 fallbackLng，不再自持 _fallbackMessages
+    check('renderer relies on i18next for fallback instead of a private pack',
+        i18nSource.includes('fallbackLng') && !i18nSource.includes('_fallbackMessages'));
+    // 手写内核必须真的删干净，避免两套实现并存
+    check('the hand-rolled nested lookup is gone', !i18nSource.includes('_getNested'));
+    check('window.__ is no longer exposed', !/window\.__\s*=/.test(i18nSource));
 
-    // 契约：缺 key 时返回 key 本身（而不是空串或 undefined），这是 CI 必须存在的原因
-    check('renderer returns the key itself for unknown keys', resolve(enPack, 'definitely.not.a.real.key') === undefined);
-    check('renderer resolves a real dotted key', resolve(enPack, 'browser.reload') === enPack.browser.reload);
-    check('renderer resolves a nested dotted key', resolve(enPack, 'settings.language') === enPack.settings.language);
+    // 以下用真实 i18next + 真实语言包验证行为（与渲染层同一份 UMD）
+    const I18nProbe = require(path.join(root, 'node_modules', 'i18next'));
+    const missingKeySample = 'definitely.not.a.real.key';
 
-    // 契约：占位符替换保持未提供的 {token} 原样，方便肉眼发现漏传参数
-    const interpolate = (value, params) => value.replace(/\{(\w+)\}/g, (m, name) => (
-        params && params[name] !== undefined && params[name] !== null ? String(params[name]) : m
-    ));
-    check('interpolation substitutes provided params', interpolate('{a} and {b}', { a: 1, b: 2 }) === '1 and 2');
-    check('interpolation keeps missing params visible', interpolate('{a} and {b}', { a: 1 }) === '1 and {b}');
+    if (typeof I18nProbe.init === 'function') {
+        const instance = I18nProbe.createInstance();
+        instance.init({
+            lng: 'en',
+            fallbackLng: 'zh-cn',
+            resources: { en: { translation: enPack }, 'zh-cn': { translation: {} } },
+            interpolation: { prefix: '{', suffix: '}' },
+            returnNull: false,
+            returnEmptyString: false,
+            parseMissingKeyHandler: (key) => key,
+        });
 
-    check('renderer t() substitutes {token} placeholders', /replace\(\/\\\{\(\\w\+\)\\\}\/g/.test(i18nSource));
-    check('renderer loads the current language over IPC', i18nSource.includes("getLanguageFile"));
-    check('renderer keeps a fallback pack for missing keys', i18nSource.includes('_fallbackMessages'));
+        // 契约：缺 key 时返回 key 本身（而不是空串或 undefined），这样漏查能一眼看见
+        check('i18next returns the key itself for unknown keys', instance.t(missingKeySample) === missingKeySample);
+        check('i18next resolves a real dotted key', instance.t('browser.reload') === enPack.browser.reload);
+        check('i18next resolves a nested dotted key', instance.t('settings.language') === enPack.settings.language);
+
+        // 契约：漏传的 {token} 保持原样，方便肉眼发现漏传参数（i18next 默认行为）
+        const phKey = Object.keys(packs.en).find((k) => (packs.en[k].match(/\{\w+\}/g) || []).length >= 2);
+        if (phKey) {
+            const tokens = packs.en[phKey].match(/\{\w+\}/g).map((s) => s.slice(1, -1));
+            const partial = instance.t(phKey, { [tokens[0]]: 'X' });
+            check('i18next keeps an unprovided {token} visible',
+                partial.includes(`{${tokens[1]}}`), `${phKey} -> ${partial}`);
+
+            const full = instance.t(phKey, Object.fromEntries(tokens.map((tk) => [tk, 'X'])));
+            check('i18next substitutes every provided token',
+                !/\{\w+\}/.test(full), `${phKey} -> ${full}`);
+        } else {
+            check('language pack exposes a key with 2+ tokens to probe', false, 'no candidate found');
+        }
+    } else {
+        check('i18next UMD/cjs entry is resolvable from node_modules', false);
+    }
 }
 
 // --- 主进程 i18next 接线 -----------------------------------------------------
