@@ -1,4 +1,4 @@
-import i18next from 'i18next';
+import i18next = require('i18next');
 import * as fs from 'fs';
 import * as path from 'path';
 
