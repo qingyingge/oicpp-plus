@@ -93,7 +93,8 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 **坑：**
 
 - 取消/失败这类**要被代码识别**的状态，不要拿文案匹配。改用错误码：下载器已改为 `error.code = 'DOWNLOAD_CANCELLED'` + 导出的 `isCancelledError`（`utils/multi-thread-downloader.js`），别退回 `error.message.includes(...)`。
-- I8 拦硬编码 CJK（baseline 0）；I7 拦孤儿键（baseline 202，`scripts/ci-check.js:984`）—— 语言包里有、源码里查不到引用的键，存量 202 暂不清理，只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
+- I8 拦硬编码 CJK（baseline 0）；**I8b 拦用户可见行上的硬编码英文散文（baseline 0）** —— 默认语言是 zh-cn，硬编码英文同样会原样显示给用户，只是 I8 的 CJK 判定看不见。I8b 依赖三条豁免把误报压到 0：`throw new Error`/`new Error(` 视为开发者诊断、`writeJson(`/`res.end(`/`code:`/`invalidField:` 视为给 SampleTester 与浏览器扩展的机器可读载荷、判别字段（`type`/`code`/…）向上回看 6 行以覆盖分行书写的对象字面量。**任何一条被放宽，检查会从零容忍退化成几乎不查，而 PASS 看起来一模一样** —— `tests/i18n.test.js` 尾部已锁死这三条 + baseline 0，并对 `looksLikeProse` 做真实行为断言（4 条散文应命中 / 9 条标识符、路径、URL、MIME、枚举、format token 不应命中）。散文识别要求 **≥2 个 ≥3 字母的完整词**，这一条是把标识符和 CSS 类名挡在外面的关键。写新豁免前先想清楚它会不会顺手放过真阳性。
+- I7 拦孤儿键（baseline 202，`scripts/ci-check.js:984`）—— 语言包里有、源码里查不到引用的键，存量 202 暂不清理，只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
 - I7 自己报的「未静态引用」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
 - 改语言包时 `zh-cn.json` 与 `en.json` 键集必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。

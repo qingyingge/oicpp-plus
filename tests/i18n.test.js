@@ -524,5 +524,64 @@ if (packs['zh-cn'] && packs.en) {
     check('application menu is rebuilt when keybindings change', keybindingGate, `${rebuildTriggers.length} call site(s)`);
 }
 
+// --- I8b（硬编码英文）不得被悄悄放宽 -----------------------------------------
+// I8b 与 I8 一样是 ratchet：baseline 0，含义是「现在一处都不许有」。它比 I8 更依赖
+// 一串豁免规则（开发者诊断、机器可读载荷、判别字段回看）—— 任何一条被无意删掉或
+// 放宽，检查就会从「零容忍」退化成「几乎不查」，而 PASS 看起来完全一样。
+// 这里把三条豁免的存在性与 baseline 的 0 锁死。
+{
+    const ciSrc2 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
+
+    check('ci-check defines the hardcoded-English baseline', /const I18N_HARDCODED_EN_BASELINE = (\d+);/.test(ciSrc2));
+    const enBase = /const I18N_HARDCODED_EN_BASELINE = (\d+);/.exec(ciSrc2);
+    check('hardcoded-English baseline stays at 0', !!enBase && enBase[1] === '0', enBase ? enBase[1] : 'missing');
+
+    // I8b 段落存在
+    check('ci-check runs an I8b hardcoded-English check', /\[I8b\] Hardcoded English prose ratchet/.test(ciSrc2));
+
+    // 三条豁免各自还在（它们是把误报压到 0 的关键，删一条就会冒出一片假阳性）
+    check('I8b keeps the developer-diagnostic exemption',
+        /devDiagnosticRe = \/.*throw\\s\+new\?\\s\*Error/.test(ciSrc2));
+    check('I8b keeps the machine-readable payload exemption',
+        /payloadRe = \/[^\n]*writeJson/.test(ciSrc2) && /payloadRe = \/[^\n]*res\\\.end/.test(ciSrc2));
+    check('I8b keeps the discriminator lookback for multi-line payloads',
+        /DISCRIMINATOR_LOOKBACK = (\d+);/.test(ciSrc2) && Number(/DISCRIMINATOR_LOOKBACK = (\d+);/.exec(ciSrc2)[1]) >= 3);
+
+    // 散文识别的收窄条件还在 —— 这是把标识符/路径/CSS 类名挡在外面的那几条
+    for (const [name, re] of [
+        ['rejects single-token identifiers', /if \(words\.length < 2\) return false;/],
+        ['rejects paths and URLs', /if \(\/\[\/\\\\\]\/\.test\(s\)\) return false;/],
+        ['rejects file names', /\.\(js\|html\|css\|json\|png\|txt\|exe\|zip\)/],
+        ['requires >=2 words of >=3 letters', /\[A-Za-z\]\{3,\}/]
+    ]) {
+        check(`I8b prose detection ${name}`, re.test(ciSrc2));
+    }
+
+    // 行为验证：把 I8b 真正的判定函数抠出来实跑，证明启发式既不恒绿也不过宽。
+    // 只断言源码形态是不够的 —— 本轮已经吃过「断言 PASS 但检查空转」的亏。
+    const enSection = /\[I8b\] Hardcoded English prose ratchet[\s\S]*?\n}\n/.exec(ciSrc2);
+    check('I8b block is extractable for behavioural testing', !!enSection);
+    if (enSection) {
+        // 抠出 looksLikeProse 整个函数体
+        const fnSrc = /const looksLikeProse = \(s\) => \{[\s\S]*?\n {2}\};\n/.exec(enSection[0]);
+        check('I8b looksLikeProse is extractable', !!fnSrc);
+        if (fnSrc) {
+            // eslint-disable-next-line no-new-func
+            const looksLikeProse = new Function('return (' + fnSrc[0].replace(/^const looksLikeProse = /, '').replace(/;\n$/, '') + ')')();
+            // 应命中：真实界面文案（含刚修掉的 tabs.js 那条）
+            for (const s of ['Markdown API not available', 'File system is temporarily unavailable',
+                'The compiler path is invalid', 'Failed to generate drag image data URL']) {
+                check(`I8b flags hardcoded English: ${JSON.stringify(s).slice(0, 40)}`, looksLikeProse(s) === true);
+            }
+            // 不应命中：标识符、CSS 类名、路径、URL、MIME、枚举、format token
+            for (const s of ['success', 'dialog-btn dialog-btn-cancel', 'src/main.js',
+                'https://example.com/a', 'text/plain', 'CONTENT_TYPE', '{count} items',
+                'compileOutput.alreadyRunning', 'node-pty']) {
+                check(`I8b ignores non-prose: ${JSON.stringify(s).slice(0, 40)}`, looksLikeProse(s) === false);
+            }
+        }
+    }
+}
+
 console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;
