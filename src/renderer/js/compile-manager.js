@@ -68,7 +68,7 @@ class CompilerManager {
             </div>
             <div class="compile-output-content">
                 <div class="compile-output-toolbar">
-                    <div class="compile-output-tabs" role="tablist" aria-label="${window.i18n?.t?.('panel.compileOutputView', null) || 'Toggle compile output view'}">
+                    <div class="compile-output-tabs" role="tablist" aria-label="${window.i18n?.t?.('panel.compileOutputView', null)}">
                         <button class="compile-tab-btn active" data-pane="raw" role="tab" aria-selected="true"><span data-i18n="panel.rawOutput">原始输出</span></button>
                         <button class="compile-tab-btn" data-pane="analysis" role="tab" aria-selected="false"><span data-i18n="panel.errorParsing">报错解析</span></button>
                     </div>
@@ -290,7 +290,7 @@ class CompilerManager {
 
             if (!this.settings.compilerPath) {
                 logInfo('编译器路径为空，显示设置提示');
-                this.showMessage(window.i18n?.t?.('message.setCompilerFirst', null) || 'Please configure the compiler first', 'error');
+                this.showMessage(window.i18n?.t?.('message.setCompilerFirst', null), 'error');
                 this.openCompilerSettings();
                 return;
             }
@@ -299,7 +299,7 @@ class CompilerManager {
 
             const currentEditor = window.editorManager?.getCurrentEditor();
             if (!currentEditor) {
-                this.showMessage(window.i18n?.t?.('message.noOpenFile', null) || 'No file is open', 'error');
+                this.showMessage(window.i18n?.t?.('message.noOpenFile', null), 'error');
                 return;
             }
 
@@ -313,7 +313,7 @@ class CompilerManager {
             logInfo('[编译管理器] currentEditor.filePath:', currentEditor.filePath);
             if (!filePath || filePath === 'null' || filePath === 'undefined' || filePath.toString().startsWith('untitled')) {
                 logInfo('[编译管理器] 文件路径无效，提示保存文件');
-                this.showMessage(window.i18n?.t?.('message.saveFileFirst', null) || 'Please save the file first', 'error');
+                this.showMessage(window.i18n?.t?.('message.saveFileFirst', null), 'error');
                 return;
             }
 
@@ -328,7 +328,7 @@ class CompilerManager {
             // 同一个 outputFile（Windows 下后一个直接失败），
             // 且状态栏先显示「成功」再被后到的失败覆盖
             if (this.isCompiling) {
-                this.appendOutput((window.i18n?.t?.('compileOutput.alreadyRunning', null) || 'A compilation is already in progress.') + '\n', 'warning');
+                this.appendOutput((window.i18n?.t?.('compileOutput.alreadyRunning', null)) + '\n', 'warning');
                 // 显式告知调用方本次被拒：否则 compileAndRun 里的
                 // `if (!this.isCompiling)` 因 isCompiling 恰为 true 而不成立，
                 // shouldRunAfterCompile 残留到下一次编译完成，把「编译」
@@ -337,7 +337,7 @@ class CompilerManager {
             }
             this.isCompiling = true;
             this.showOutput();
-            this.setStatus(window.i18n?.t?.('compileOutput.compiling', null) || 'Compiling...');
+            this.setStatus(window.i18n?.t?.('compileOutput.compiling', null));
             this.clearOutput();
 
             const inputFile = filePath;
@@ -360,9 +360,9 @@ class CompilerManager {
                 }
                 compilerArgs = compilerArgs.replace(/-s\b/g, '');
                 compilerArgs = compilerArgs.replace(/\s+/g, ' ').trim();
-                this.appendOutput((window.i18n?.t?.('compileOutput.modeDebug', null) || 'Compilation mode: Debug (debug info, optimizations disabled)') + '\n', 'info');
+                this.appendOutput((window.i18n?.t?.('compileOutput.modeDebug', null)) + '\n', 'info');
             } else {
-                this.appendOutput((window.i18n?.t?.('compileOutput.modeNormal', null) || 'Compilation mode: Normal (optimized)') + '\n', 'info');
+                this.appendOutput((window.i18n?.t?.('compileOutput.modeNormal', null)) + '\n', 'info');
             }
 
             const compileCommand = this.buildCompileCommand(inputFile, outputFile, compilerArgs);
@@ -373,9 +373,9 @@ class CompilerManager {
 
             // 换行必须无条件生效：写成 `t(...) || 'fallback' + '\n'` 时，
             // '+' 只作用于 fallback 分支，i18n 一旦就绪相邻行就会黏成一行
-            this.appendOutput((window.i18n?.t?.('compileOutput.command', { command: compileCommand }) || `Compilation command: ${compileCommand}`) + '\n', 'command');
-            this.appendOutput((window.i18n?.t?.('compileOutput.targetFile', { file: outputFile }) || `Output file: ${outputFile}`) + '\n', 'info');
-            this.appendOutput((window.i18n?.t?.('compileOutput.compiling', null) || 'Compiling...') + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.command', { command: compileCommand })) + '\n', 'command');
+            this.appendOutput((window.i18n?.t?.('compileOutput.targetFile', { file: outputFile })) + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.compiling', null)) + '\n', 'info');
 
             if (typeof require !== 'undefined') {
                 try {
@@ -412,13 +412,13 @@ class CompilerManager {
 
             const currentEditor = window.editorManager?.getCurrentEditor();
             if (!currentEditor) {
-                this.showMessage(window.i18n?.t?.('message.noOpenFile', null) || 'No file is open', 'error');
+                this.showMessage(window.i18n?.t?.('message.noOpenFile', null), 'error');
                 return;
             }
 
             const filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
             if (!filePath || filePath.startsWith('untitled')) {
-                this.showMessage(window.i18n?.t?.('message.saveFileFirst', null) || 'Please save the file first', 'error');
+                this.showMessage(window.i18n?.t?.('message.saveFileFirst', null), 'error');
                 return;
             }
 
@@ -429,18 +429,18 @@ class CompilerManager {
             logInfo(`可执行文件存在性检查结果: ${exists}`);
             
             if (!exists) {
-                this.showMessage(window.i18n?.t?.('message.compileBeforeRun', { file: executablePath }) || `Please compile the program first (not found: ${executablePath})`, 'error');
+                this.showMessage(window.i18n?.t?.('message.compileBeforeRun', { file: executablePath }), 'error');
                 return;
             }
 
             this.isRunning = true;
             this.showOutput();
-            this.appendOutput((window.i18n?.t?.('compileOutput.startingProgram', { file: executablePath }) || `Starting program: ${executablePath}`) + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.startingProgram', { file: executablePath })) + '\n', 'info');
             this.runExecutable(executablePath);
 
         } catch (error) {
             logError('运行失败:', error);
-            this.showMessage(window.i18n?.t?.('message.runFailed', { error: error.message }) || `Failed to run: ${error.message}`, 'error');
+            this.showMessage(window.i18n?.t?.('message.runFailed', { error: error.message }), 'error');
         }
     }
 
@@ -538,7 +538,7 @@ class CompilerManager {
             this.setStatus(window.i18n?.t?.('cloudCompile.timedOut'));
             this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.timedOutMsg'), 'error');
             this.appendOutput(window.i18n?.t?.('cloudCompile.timedOutRetry'), 'error');
-            this.showMessage(window.i18n?.t?.('message.cloudCompileTimeout', null) || 'Cloud compilation timed out. Please try again later.', 'error');
+            this.showMessage(window.i18n?.t?.('message.cloudCompileTimeout', null), 'error');
             this.resetCloudCompileState();
             return;
         }
@@ -580,7 +580,7 @@ class CompilerManager {
                 this.setStatus(window.i18n?.t?.('cloudCompile.failed'));
                 this.setCloudProgressMessage(window.i18n?.t?.('cloudCompile.statusQueryFailedRetry'), 'error');
                 this.appendOutput(message, 'error');
-                this.showMessage(window.i18n?.t?.('message.cloudCompileStatusFailed', null) || 'Failed to retrieve cloud compilation status. Please try again later.', 'error');
+                this.showMessage(window.i18n?.t?.('message.cloudCompileStatusFailed', null), 'error');
                 this.resetCloudCompileState();
                 return;
             }
@@ -1095,11 +1095,11 @@ class CompilerManager {
         this.isCompiling = false;
         
             if (result.success) {
-            this.setStatus(window.i18n?.t?.('compileOutput.successSimple', null) || 'Compilation successful');
-            this.appendOutput((window.i18n?.t?.('compileOutput.successSimple', null) || 'Compilation successful') + '!\n', 'success');
+            this.setStatus(window.i18n?.t?.('compileOutput.successSimple', null));
+            this.appendOutput((window.i18n?.t?.('compileOutput.successSimple', null)) + '!\n', 'success');
             
             if (result.warnings && result.warnings.length > 0) {
-                this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length }) || `Found ${result.warnings.length} warnings:`) + '\n', 'warning');
+                this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length })) + '\n', 'warning');
                     result.warnings.forEach(warning => {
                         this.appendOutput(`${warning}\n`, 'warning');
                     });
@@ -1118,12 +1118,12 @@ class CompilerManager {
                 this.runCurrentFile();
             }
             } else {
-            this.setStatus(window.i18n?.t?.('compileOutput.failSimple', null) || 'Compilation failed');
-            this.appendOutput((window.i18n?.t?.('compileOutput.failSimple', null) || 'Compilation failed') + '!\n', 'error');
+            this.setStatus(window.i18n?.t?.('compileOutput.failSimple', null));
+            this.appendOutput((window.i18n?.t?.('compileOutput.failSimple', null)) + '!\n', 'error');
             this.shouldRunAfterCompile = false;
             
             if (result.errors && result.errors.length > 0) {
-                this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo', null) || 'Error information:') + '\n', 'error');
+                this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo', null)) + '\n', 'error');
                 result.errors.forEach(error => {
                     this.appendOutput(`${this._stringifyError(error)}\n`, 'error');
                 });
@@ -1157,9 +1157,9 @@ class CompilerManager {
     handleCompileError(error) {
         this.isCompiling = false;
         this.shouldRunAfterCompile = false;
-        this.setStatus(window.i18n?.t?.('compileOutput.failSimple', null) || 'Compilation failed');
+        this.setStatus(window.i18n?.t?.('compileOutput.failSimple', null));
         const msg = this._stringifyError(error);
-        this.appendOutput(`${window.i18n?.t?.('compileOutput.failSimple', null) || 'Compilation failed'}: ${msg}\n`, 'error');
+        this.appendOutput(`${window.i18n?.t?.('compileOutput.failSimple', null)}: ${msg}\n`, 'error');
 
         this.renderSmartAnalysis({ errors: [msg] });
         if (this.analysisHasContent && this.analysisAvailable) {
@@ -1180,24 +1180,24 @@ class CompilerManager {
         this.setStatus(success ? `${title} ${window.i18n?.t?.('compileOutput.successSimple')}` : `${title} ${window.i18n?.t?.('compileOutput.failSimple')}`);
 
         if (result.stdout) {
-            this.appendOutput((window.i18n?.t?.('compileOutput.standardOutput', null) || 'Standard output:') + '\n', 'info');
+            this.appendOutput((window.i18n?.t?.('compileOutput.standardOutput', null)) + '\n', 'info');
             this.appendOutput(`${result.stdout}\n`, 'info');
         }
 
         if (result.stderr) {
-            this.appendOutput((window.i18n?.t?.('compileOutput.standardError', null) || 'Standard error:') + '\n', 'error');
+            this.appendOutput((window.i18n?.t?.('compileOutput.standardError', null)) + '\n', 'error');
             this.appendOutput(`${result.stderr}\n`, 'error');
         }
 
         if (result.errors && result.errors.length > 0) {
-            this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo', null) || 'Error information:') + '\n', 'error');
+            this.appendOutput((window.i18n?.t?.('compileOutput.errorInfo', null)) + '\n', 'error');
             result.errors.forEach((err) => {
                 this.appendOutput(`${this._stringifyError(err)}\n`, 'error');
             });
         }
 
         if (result.warnings && result.warnings.length > 0) {
-            this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length }) || `Found ${result.warnings.length} warnings:`) + '\n', 'warning');
+            this.appendOutput((window.i18n?.t?.('compileOutput.warningCount', { count: result.warnings.length })) + '\n', 'warning');
             result.warnings.forEach((warning) => {
                 this.appendOutput(`${warning}\n`, 'warning');
             });
@@ -1225,7 +1225,7 @@ class CompilerManager {
             return;
         }
         if (result.success) {
-            const message = window.i18n?.t?.('compileOutput.programStartedNewWindow', null) || 'Program started in a new window';
+            const message = window.i18n?.t?.('compileOutput.programStartedNewWindow', null);
             this.appendOutput(message + '\n', 'success');
             this.showMessage(message, 'success');
         }
@@ -1249,7 +1249,7 @@ class CompilerManager {
             });
 
             this.hideOutput();
-            const message = window.i18n?.t?.('compileOutput.programStartedIntegratedTerminal', null) || 'Program started in the integrated terminal';
+            const message = window.i18n?.t?.('compileOutput.programStartedIntegratedTerminal', null);
             this.appendOutput(message + '\n', 'success');
             this.showMessage(message, 'success');
             logInfo('程序运行完成(内置终端):', result);
@@ -1261,7 +1261,7 @@ class CompilerManager {
     handleRunError(error) {
         this.isRunning = false;
         this.appendOutput(`${window.i18n?.t?.('message.runError', { error })}\n`, 'error');
-        this.showMessage(window.i18n?.t?.('message.runError', { error }) || `Run error: ${error}`, 'error');
+        this.showMessage(window.i18n?.t?.('message.runError', { error }), 'error');
     }
 
     showOutput() {

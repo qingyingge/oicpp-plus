@@ -2867,7 +2867,7 @@ class TabManager {
 
         const loader = document.createElement('div');
         loader.className = 'pdf-viewer-loading';
-        loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.loading') || 'PDF 加载中…') + '</div>';
+        loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.loading')) + '</div>';
 
         const iframe = document.createElement('iframe');
         iframe.className = 'pdf-viewer-frame';
@@ -2880,7 +2880,7 @@ class TabManager {
         if (viewerSrc) {
             iframe.src = viewerSrc;
         } else {
-            loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.notFound') || '未找到 PDF 文件') + '</div>';
+            loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.notFound')) + '</div>';
         }
 
         iframe.addEventListener('load', () => {
@@ -5216,7 +5216,7 @@ void hello() {
                     this._welcomeVersionLabel = label;
                     // 已渲染的欢迎页同步刷新
                     document.querySelectorAll('.welcome-version').forEach((el) => {
-                        el.textContent = `${window.i18n?.t?.('app.version') || ''} ${label}`;
+                        el.textContent = `${window.i18n?.t?.('app.version')} ${label}`;
                     });
                 })
                 .catch(() => { });

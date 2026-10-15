@@ -451,7 +451,7 @@ class MonacoEditorManager {
         const fileName = fileNameHint || filePath.split(/[\\/]/).pop() || window.i18n.t('panel.unknownFile');
         const line = Number.isFinite(safety?.line) ? safety.line : null;
         const translationKey = 'lsp.largeArrayDisabled';
-        let message = window.i18n?.t?.(translationKey, { fileName, line: line || '?' }) || '';
+        let message = window.i18n?.t?.(translationKey, { fileName, line: line || '?' });
 
         const details = {
             fileName,

@@ -2098,7 +2098,7 @@ class CodeComparer {
     }
 
     getTruncationText() {
-        return window.i18n?.t?.('compare.outputTruncated') || '[truncated]';
+        return window.i18n?.t?.('compare.outputTruncated');
     }
 
     formatCompareOutput(currentOutput, otherOutput, outputType, upstreamTruncated = false) {

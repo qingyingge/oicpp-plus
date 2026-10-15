@@ -1157,9 +1157,8 @@ class SampleTester {
             const autoHeight = lines <= 1 ? 'auto-height' : '';
 
             const placeholderKey = type === 'input' ? 'tester.inputPlaceholder' : 'tester.expectedOutputPlaceholder';
-            const placeholderFallback = type === 'input' ? 'Enter test data...' : 'Enter expected output...';
             return `<textarea class="sample-textarea ${autoHeight}" spellcheck="false"
-           data-i18n-placeholder="${placeholderKey}" placeholder="${window.i18n?.t?.(placeholderKey) || placeholderFallback}"
+           data-i18n-placeholder="${placeholderKey}" placeholder="${window.i18n?.t?.(placeholderKey)}"
            onfocus="sampleTester.expandTextarea(this)"
            onblur="sampleTester.collapseTextarea(this)"
            oninput="sampleTester.autoResizeTextarea(this); sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)"
