@@ -3403,18 +3403,18 @@ class OICPPApp {
                     <div class="about-logo">
                         <img id="feedback-dialog-icon" src="" width="48" height="48" alt="OICPP-Plus">
                     </div>
-                    <h2>${t('feedback.title', null, 'Feedback')}</h2>
+                    <h2>${t('feedback.title')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="feedback-section">
-                        <p class="feedback-description">${t('feedback.description', null, 'Click the button to open GitHub Issues.')}</p>
+                        <p class="feedback-description">${t('feedback.description')}</p>
                         <div class="feedback-actions">
-                            <button id="open-github-btn" class="feedback-btn primary">${t('feedback.openIssues', null, 'Open GitHub Issues')}</button>
+                            <button id="open-github-btn" class="feedback-btn primary">${t('feedback.openIssues')}</button>
                         </div>
                     </div>
                 </div>
                 <div class="about-footer">
-                    <button id="feedback-close-btn">${t('dialog.close', null, 'Close')}</button>
+                    <button id="feedback-close-btn">${t('dialog.close')}</button>
                 </div>
             </div>
         `;
@@ -3470,7 +3470,7 @@ class OICPPApp {
 
         const formatTime = (ms) => {
             const date = new Date(Number(ms) || 0);
-            if (Number.isNaN(date.getTime())) return t('feedback.unknownTime', null, 'Unknown time');
+            if (Number.isNaN(date.getTime())) return t('feedback.unknownTime');
             const pad = (v) => String(v).padStart(2, '0');
             return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
         };
@@ -3500,18 +3500,18 @@ class OICPPApp {
         dialog.innerHTML = `
             <div class="about-dialog log-picker-dialog">
                 <div class="about-header">
-                    <h2>${t('feedback.selectLogTitle', null, 'Select a log to upload')}</h2>
+                    <h2>${t('feedback.selectLogTitle')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="feedback-section">
-                        <p class="feedback-description">${t('feedback.selectLogDescription', null, 'Click a log to start uploading.')}</p>
+                        <p class="feedback-description">${t('feedback.selectLogDescription')}</p>
                         <div class="log-picker-list">
                             ${rows}
                         </div>
                     </div>
                 </div>
                 <div class="about-footer">
-                    <button id="pick-log-close-btn">${t('dialog.cancel', null, 'Cancel')}</button>
+                    <button id="pick-log-close-btn">${t('dialog.cancel')}</button>
                 </div>
             </div>
         `;
@@ -3534,15 +3534,15 @@ class OICPPApp {
             btn.addEventListener('click', async () => {
                 const logPath = btn.getAttribute('data-log-path') || '';
                 if (!logPath) {
-                    this.showMessage(t('feedback.invalidLogPath', null, 'Invalid log path'), 'error');
+                    this.showMessage(t('feedback.invalidLogPath'), 'error');
                     return;
                 }
 
                 try {
-                    this.showMessage(t('feedback.uploadingLog', null, 'Uploading log, please wait...'), 'info');
+                    this.showMessage(t('feedback.uploadingLog'), 'info');
                     const result = await window.electronAPI.uploadClientLog(logPath);
                     if (!result || result.success !== true) {
-                        this.showMessage(result?.message || t('feedback.logUploadFailed', { error: '' }, 'Log upload failed'), 'error');
+                        this.showMessage(result?.message || t('feedback.logUploadFailed', { error: '' }), 'error');
                         return;
                     }
 
@@ -3550,7 +3550,7 @@ class OICPPApp {
                     this.showTraceCodeDialog(result.traceCode || '', result.uploadedAt || '');
                 } catch (error) {
                     logError('上传日志失败:', error);
-                    this.showMessage(t('feedback.logUploadFailed', { error: error?.message || error }, `Log upload failed: ${error?.message || error}`), 'error');
+                    this.showMessage(t('feedback.logUploadFailed', { error: error?.message || error }), 'error');
                 }
             });
         });
@@ -3561,29 +3561,29 @@ class OICPPApp {
         const dialog = document.createElement('div');
         dialog.className = 'about-dialog-overlay';
 
-        const safeTraceCode = String(traceCode || '').trim() || t('feedback.traceCodeMissing', null, 'No trace code returned');
+        const safeTraceCode = String(traceCode || '').trim() || t('feedback.traceCodeMissing');
         const uploadedAtText = String(uploadedAt || '').trim();
 
         dialog.innerHTML = `
             <div class="about-dialog trace-code-dialog">
                 <div class="about-header">
-                    <h2>${t('feedback.uploadSuccessTitle', null, 'Log uploaded successfully')}</h2>
+                    <h2>${t('feedback.uploadSuccessTitle')}</h2>
                 </div>
                 <div class="about-content">
                     <div class="feedback-section">
-                        <p class="feedback-description">${t('feedback.traceDescription', null, 'Please include the trace code below when reporting an issue.')}</p>
+                        <p class="feedback-description">${t('feedback.traceDescription')}</p>
                         <div class="about-info">
-                            <p><strong>${t('feedback.traceCode', null, 'Trace code:')}</strong> <span id="trace-code-value" class="trace-code-value"></span></p>
-                            ${uploadedAtText ? `<p><strong>${t('feedback.uploadedAt', null, 'Uploaded at:')}</strong> ${uploadedAtText}</p>` : ''}
+                            <p><strong>${t('feedback.traceCode')}</strong> <span id="trace-code-value" class="trace-code-value"></span></p>
+                            ${uploadedAtText ? `<p><strong>${t('feedback.uploadedAt')}</strong> ${uploadedAtText}</p>` : ''}
                         </div>
                         <div class="feedback-actions">
-                            <button id="copy-trace-code-btn" class="feedback-btn primary">${t('feedback.copyTraceCode', null, 'Copy Trace Code')}</button>
-                            <button id="open-issue-from-trace-btn" class="feedback-btn">${t('feedback.openFeedback', null, 'Open Feedback')}</button>
+                            <button id="copy-trace-code-btn" class="feedback-btn primary">${t('feedback.copyTraceCode')}</button>
+                            <button id="open-issue-from-trace-btn" class="feedback-btn">${t('feedback.openFeedback')}</button>
                         </div>
                     </div>
                 </div>
                 <div class="about-footer">
-                    <button id="trace-close-btn">${t('dialog.close', null, 'Close')}</button>
+                    <button id="trace-close-btn">${t('dialog.close')}</button>
                 </div>
             </div>
         `;
@@ -3613,13 +3613,13 @@ class OICPPApp {
                 try {
                     if (window.electronAPI && typeof window.electronAPI.clipboardWriteText === 'function') {
                         await window.electronAPI.clipboardWriteText(safeTraceCode);
-                        this.showMessage(t('feedback.traceCodeCopied', null, 'Trace code copied'), 'success');
+                        this.showMessage(t('feedback.traceCodeCopied'), 'success');
                     } else {
-                        this.showMessage(t('feedback.copyUnavailable', null, 'Copy is unavailable; please copy the trace code manually'), 'warning');
+                        this.showMessage(t('feedback.copyUnavailable'), 'warning');
                     }
                 } catch (error) {
                     logWarn('复制追踪码失败:', error);
-                    this.showMessage(t('feedback.copyFailed', null, 'Copy failed; please copy the trace code manually'), 'error');
+                    this.showMessage(t('feedback.copyFailed'), 'error');
                 }
             });
         }
@@ -3635,7 +3635,7 @@ class OICPPApp {
                 } catch (error) {
                     logWarn('打开反馈页失败:', error);
                 }
-                this.showMessage(t('feedback.includeTraceCode', { code: safeTraceCode }, `Please include this trace code in your feedback: ${safeTraceCode}`), 'info');
+                this.showMessage(t('feedback.includeTraceCode', { code: safeTraceCode }), 'info');
                 closeDialog();
             });
         }
@@ -3803,17 +3803,17 @@ class OICPPApp {
         dialog.innerHTML = `
             <div class="about-dialog oss-dialog">
                 <div class="about-header">
-                    <h2>${t('openSource.title', null, 'Open Source Licenses')}</h2>
+                    <h2>${t('openSource.title')}</h2>
                 </div>
                 <div class="about-content oss-content">
-                    <p class="oss-intro">${t('openSource.intro', null, 'OICPP-Plus uses the following open-source software. We thank their developers and contributors.')}</p>
+                    <p class="oss-intro">${t('openSource.intro')}</p>
                     <div class="oss-table-wrap">
                         <table class="oss-table">
                             <thead>
                                 <tr>
-                                    <th>${t('openSource.name', null, 'Name')}</th>
-                                    <th>${t('openSource.license', null, 'License')}</th>
-                                    <th>${t('openSource.projectUrl', null, 'Project URL')}</th>
+                                    <th>${t('openSource.name')}</th>
+                                    <th>${t('openSource.license')}</th>
+                                    <th>${t('openSource.projectUrl')}</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -3823,7 +3823,7 @@ class OICPPApp {
                     </div>
                 </div>
                 <div class="about-footer">
-                    <button id="oss-close-btn">${t('dialog.close', null, 'Close')}</button>
+                    <button id="oss-close-btn">${t('dialog.close')}</button>
                 </div>
             </div>
         `;

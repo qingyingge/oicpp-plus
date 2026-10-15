@@ -204,6 +204,65 @@ if (packs['zh-cn'] && packs.en) {
     check('no window.i18n.t()/window.__() call passes a third argument', overlong.length === 0,
         overlong.slice(0, 5).join(' | '));
 
+    // 局部别名 `const t = (key, params) => ...` 后的**裸 t() 调用**同样只有两个形参。
+    // 历史教训：把别名的形参从三参缩成两参时漏改了调用处，40 处第三参被静默丢弃
+    // —— 不报错、界面正常、CI 全绿，只有读代码才知道那是死代码。
+    // 上面的守卫只认 `window.i18n.t(` / `window.__(`，看不见裸 `t(`，故此处单独守。
+    // 用括号配对而非正则：`t('k', {a:1}, \`x, ${y}\`)` 里的逗号会骗过正则。
+    {
+        const splitTopArgs = (s) => {
+            const parts = []; let cur = '', d = 0, q = null;
+            for (let i = 0; i < s.length; i++) {
+                const c = s[i];
+                if (q) { cur += c; if (c === '\\') { cur += s[++i] || ''; continue; } if (c === q) q = null; continue; }
+                if (c === "'" || c === '"' || c === '`') { q = c; cur += c; continue; }
+                if ('([{'.includes(c)) d++;
+                else if (')]}'.includes(c)) d--;
+                if (c === ',' && d === 0) { parts.push(cur); cur = ''; continue; }
+                cur += c;
+            }
+            parts.push(cur);
+            return parts;
+        };
+        const closeParenOf = (line, openIdx) => {
+            let d = 0, q = null;
+            for (let i = openIdx; i < line.length; i++) {
+                const c = line[i];
+                if (q) { if (c === '\\') { i++; continue; } if (c === q) q = null; continue; }
+                if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+                if ('([{'.includes(c)) d++;
+                else if (')]}'.includes(c)) { d--; if (d === 0) return i; }
+            }
+            return -1;
+        };
+        // 裸 t(：前面不是 . 或标识符字符（排除 window.i18n.t( / obj.t(）
+        const bareTRe = /(?<![.\w$])t\s*\(/g;
+        const bareOverlong = [];
+        for (const f of scanFiles) {
+            fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+                if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+                for (const m of line.matchAll(bareTRe)) {
+                    const open = m.index + m[0].length - 1;
+                    const close = closeParenOf(line, open);
+                    if (close === -1) continue;
+                    const args = splitTopArgs(line.slice(open + 1, close));
+                    if (args.filter((a) => a.trim()).length > 2) {
+                        bareOverlong.push(`${path.relative(root, f)}:${i + 1} -> ${line.trim().slice(0, 90)}`);
+                    }
+                }
+            });
+        }
+        check('no bare t() alias call passes a third argument', bareOverlong.length === 0,
+            bareOverlong.slice(0, 5).join(' | '));
+
+        // 反向锁定前提：确实存在两参局部别名调用，否则上面的守卫可能恒绿。
+        const bareTCalls = scanFiles.reduce((n, f) => {
+            const src = fs.readFileSync(f, 'utf8');
+            return n + [...src.matchAll(/(?<![.\w$])t\s*\(\s*['"`][a-zA-Z]/g)].length;
+        }, 0);
+        check('the bare t() guard has real call sites to inspect', bareTCalls > 50, `${bareTCalls} call sites`);
+    }
+
     // 反向锁定前提：window.i18n.t 确实只有两个形参。
     // 另锁定本轮收敛的成果：类上不再提供三参的 this.t，渲染层也不再调 this.t / window.__。
     const i18nSource2 = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'i18n.js'), 'utf8');

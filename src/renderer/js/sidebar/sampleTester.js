@@ -966,25 +966,25 @@ class SampleTester {
         const t = (key, params) => window.i18n?.t?.(key, params) || key;
         document.querySelectorAll('.sample-title').forEach((el) => {
             const id = el.closest('.sample-group')?.dataset.sampleId || '';
-            el.textContent = t('tester.testGroup', { i: id }, `Test ${id}`);
+            el.textContent = t('tester.testGroup', { i: id });
         });
         document.querySelectorAll('.sample-run-btn').forEach((el) => {
-            el.textContent = t('tester.run', null, 'Run');
-            el.title = t('tester.runSample', null, 'Run Sample');
+            el.textContent = t('tester.run');
+            el.title = t('tester.runSample');
         });
-        document.querySelectorAll('.sample-delete-btn').forEach((el) => el.title = t('tester.deleteSample', null, 'Delete Sample'));
-        document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => el.textContent = t(el.dataset.i18n, null, el.textContent));
-        document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => el.placeholder = t(el.dataset.i18nPlaceholder, null, el.placeholder));
+        document.querySelectorAll('.sample-delete-btn').forEach((el) => el.title = t('tester.deleteSample'));
+        document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => el.textContent = t(el.dataset.i18n, null));
+        document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => el.placeholder = t(el.dataset.i18nPlaceholder, null));
         document.querySelectorAll('.sample-io-group .file-btn').forEach((el) => {
             const key = el.classList.contains('switch-btn') ? 'tester.manualInput' : 'tester.readFromFile';
-            el.textContent = t(key, null, el.textContent.trim());
-            el.title = t(key, null, el.title);
+            el.textContent = t(key, null);
+            el.title = t(key, null);
         });
         document.querySelectorAll('.export-output-btn').forEach((el) => {
             if (el.classList.contains('expand-output-btn')) {
-                el.textContent = t('tester.expand', null, 'Expand');
+                el.textContent = t('tester.expand');
             } else {
-                el.textContent = t('tester.export', null, 'Export');
+                el.textContent = t('tester.export');
             }
         });
     }
