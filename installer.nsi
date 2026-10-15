@@ -171,9 +171,19 @@ Section "OICPP 主程序" SEC01
   SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus"
   SetOverwrite on
   File "oicpp-plus.ico"
-  SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
+  ; 工具二进制扁平放进 .oicpp-plus\bin，主进程按该目录解析（不再套 LSP/bin）
+  SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus\bin"
   SetOverwrite on
-  File /r "dist\win-unpacked\resources\clangd\*"
+  File /r "dist\win-unpacked\resources\clangd\bin\*"
+  ; resource-dir (lib/clang/<ver>) 也要放进用户目录，供便携/解包安装回退使用
+  SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus\lib\clang"
+  SetOverwrite on
+  File /r "dist\win-unpacked\resources\clangd\lib\clang\*"
+  ; 1.6 之前装在 .oicpp-plus\LSP\bin，这里清掉残留，避免留下 ~96MB 孤儿
+  RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
+  ; 二进制再分发要求随附许可正文，download-clangd.js 会把兜底正文补进构建目录
+  SetOutPath "$OICPP_USER_PROFILE\.oicpp-plus"
+  File "dist\win-unpacked\resources\clangd\LICENSE.TXT"
   ; clang-format 必须落到 $INSTDIR\resources\clang-format，主进程按 process.resourcesPath 解析
   SetOutPath "$INSTDIR\resources\clang-format"
   SetOverwrite on
@@ -446,6 +456,8 @@ Section Uninstall
   Delete "$INSTDIR\chrome_100_percent.pak"
   Delete "$OICPP_USER_PROFILE\.oicpp-plus\ConsolePauser.exe"
   Delete "$OICPP_USER_PROFILE\.oicpp-plus\oicpp-plus.ico"
+  Delete "$OICPP_USER_PROFILE\.oicpp-plus\LICENSE.TXT"
+  RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\bin"
   RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
   RMDir "$OICPP_USER_PROFILE\.oicpp-plus"
 

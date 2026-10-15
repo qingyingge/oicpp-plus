@@ -1134,7 +1134,11 @@
     "intro": "OICPP-Plus 使用了以下开源软件，在此向这些项目的开发者和贡献者表示感谢。",
     "name": "名称",
     "license": "许可证",
-    "projectUrl": "项目地址"
+    "projectUrl": "项目地址",
+    "licenseText": "许可全文",
+    "viewLicense": "查看全文",
+    "licenseLoadFailed": "许可正文读取失败。",
+    "back": "返回"
   },
   "fileExplorer": {
     "noFolder": "没有打开的文件夹",

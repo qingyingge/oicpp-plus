@@ -846,6 +846,83 @@ if (lsResult !== null) {
   info('pnpm ls timed out after 60s (inconclusive)');
 }
 
+// F3: Third-party license coverage
+// 以二进制形式再分发的组件（clangd / clang-format）必须随附许可正文，
+// 因此正文、清单、构建注入、安装器落盘这四处要同时在位，缺一处就是分发不合规
+console.log(`\n${Y}[F3] Third-party license coverage${R}`);
+{
+  const licenseDir = path.join(root, 'third-party', 'licenses');
+  const noticesPath = path.join(licenseDir, 'THIRD-PARTY-NOTICES.md');
+  const llvmLicensePath = path.join(licenseDir, 'llvm-apache-2.0-with-llvm-exception.txt');
+  const issues = [];
+
+  const llvmBody = readFile(llvmLicensePath) || '';
+  if (!llvmBody) {
+    issues.push('missing third-party/licenses/llvm-apache-2.0-with-llvm-exception.txt');
+  } else if (!/Apache License/.test(llvmBody) || !/LLVM Exceptions to the Apache 2\.0 License/.test(llvmBody)) {
+    issues.push('LLVM license body lacks the expected Apache-2.0 / LLVM-exception sections');
+  }
+
+  const mainSrc = readFile(path.join(root, 'src', 'main.js')) || '';
+  const whitelistBlock = /const THIRD_PARTY_LICENSE_FILES = new Set\(\[([\s\S]*?)\]\)/.exec(mainSrc);
+  const whitelisted = whitelistBlock ? [...whitelistBlock[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : [];
+  if (whitelisted.length === 0) {
+    issues.push('THIRD_PARTY_LICENSE_FILES whitelist not found in src/main.js');
+  }
+
+  let onDisk = [];
+  try {
+    onDisk = fs.readdirSync(licenseDir).filter((n) => n !== 'README.md');
+  } catch (err) {
+    issues.push('cannot read third-party/licenses/: ' + (err && err.message));
+  }
+  for (const name of onDisk) {
+    if (!whitelisted.includes(name)) issues.push(`license file not readable by the UI: ${name} (absent from THIRD_PARTY_LICENSE_FILES)`);
+  }
+  for (const name of whitelisted) {
+    if (!onDisk.includes(name)) issues.push(`whitelisted license file missing on disk: ${name}`);
+  }
+
+  const rendererSrc = readFile(path.join(root, 'src', 'renderer', 'js', 'main.js')) || '';
+  for (const m of rendererSrc.matchAll(/licenseFile:\s*'([^']+)'/g)) {
+    if (!whitelisted.includes(m[1])) issues.push(`showOpenSourceLicenses() references an unknown licenseFile: ${m[1]}`);
+  }
+
+  const buildFiles = (pkg && pkg.build && pkg.build.files) || [];
+  if (!buildFiles.some((f) => String(f).includes('third-party'))) {
+    issues.push('build.files does not ship third-party/**/* — read-third-party-license would fail in a packaged app');
+  }
+
+  for (const script of ['scripts/download-clangd.js', 'scripts/download-clang-format.js']) {
+    if (!(readFile(path.join(root, script)) || '').includes('llvm-apache-2.0-with-llvm-exception.txt')) {
+      issues.push(`${script} does not fall back to third-party/licenses for the license body`);
+    }
+  }
+
+  const installerSrc = readFile(path.join(root, 'installer.nsi')) || '';
+  if (!/File\s+"dist\\win-unpacked\\resources\\clangd\\LICENSE\.TXT"/.test(installerSrc)) {
+    issues.push('installer.nsi does not ship resources/clangd/LICENSE.TXT');
+  }
+  if (!/Delete\s+"\$OICPP_USER_PROFILE\\\.oicpp-plus\\LICENSE\.TXT"/.test(installerSrc)) {
+    issues.push('installer.nsi uninstaller does not remove the shipped clangd license');
+  }
+
+  const notices = readFile(noticesPath) || '';
+  if (!notices) {
+    issues.push('missing third-party/licenses/THIRD-PARTY-NOTICES.md');
+  } else if (pkg) {
+    for (const dep of Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })) {
+      if (!notices.includes('`' + dep + '`')) issues.push(`dependency not listed in THIRD-PARTY-NOTICES.md: ${dep}`);
+    }
+  }
+
+  if (issues.length > 0) {
+    fail(`third-party license coverage: ${issues.join(' | ')}`);
+  } else {
+    ok(`third-party licenses covered (${onDisk.length} file(s), ${whitelisted.length} readable via IPC)`);
+  }
+}
+
 // ============================================================
 // G. Code Quality
 // ============================================================

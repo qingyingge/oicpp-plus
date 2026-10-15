@@ -1155,7 +1155,11 @@
     "intro": "OICPP-Plus uses the following open-source software. We thank their developers and contributors.",
     "name": "Name",
     "license": "License",
-    "projectUrl": "Project URL"
+    "projectUrl": "Project URL",
+    "licenseText": "License Text",
+    "viewLicense": "View License",
+    "licenseLoadFailed": "Failed to read the license text.",
+    "back": "Back"
   },
   "fileExplorer": {
     "noFolder": "No Folder Open",

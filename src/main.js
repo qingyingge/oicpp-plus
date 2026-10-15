@@ -268,14 +268,21 @@ function resolveClangdRootFromBundle() {
     return null;
 }
 
-function getUserClangdRoot() {
-    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP');
+// 用户侧工具目录：随包分发的二进制（clangd、可能的 clang-format）都扁平地放这里，
+// 不再套一层 bin/，也不再按功能拆成 LSP/ 之类会误导的子目录。
+function getUserToolsRoot() {
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'bin');
+}
+
+// 旧版把工具放在 <userData>/LSP/bin 下，升级时需要把它搬过来
+function getLegacyUserToolsRoot() {
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP', 'bin');
 }
 
 function resolveClangdExecutable(rootDir) {
     if (!rootDir) return null;
     const exeName = getClangdExecutableName();
-    const candidate = path.join(rootDir, 'bin', exeName);
+    const candidate = path.join(rootDir, exeName);
     return fs.existsSync(candidate) ? candidate : null;
 }
 
@@ -306,7 +313,7 @@ function resolveClangFormatRootFromBundle() {
 
 function resolveClangFormatExecutable(rootDir) {
     if (!rootDir) return null;
-    const candidate = path.join(rootDir, 'bin', getClangFormatExecutableName());
+    const candidate = path.join(rootDir, getClangFormatExecutableName());
     return fs.existsSync(candidate) ? candidate : null;
 }
 
@@ -324,7 +331,7 @@ function findClangFormatExecutableOnPath() {
     return null;
 }
 
-// 打包目录 → 用户 LSP 目录（与 clangd 同级）→ 系统 PATH，逐级回退，避免单点缺失导致格式化完全不可用
+// 打包目录 → 用户工具目录 → 系统 PATH，逐级回退，避免单点缺失导致格式化完全不可用
 // 解析结果与进程生命周期无关，缓存一次即可，避免每次格式化都遍历整个 PATH
 let cachedClangFormatExecutablePath;
 let clangFormatExecutablePathResolved = false;
@@ -335,7 +342,7 @@ function resolveClangFormatExecutablePath() {
     }
     cachedClangFormatExecutablePath =
         resolveClangFormatExecutable(resolveClangFormatRootFromBundle())
-        || resolveClangFormatExecutable(getUserClangdRoot())
+        || resolveClangFormatExecutable(getUserToolsRoot())
         || findClangFormatExecutableOnPath();
     clangFormatExecutablePathResolved = true;
     return cachedClangFormatExecutablePath;
@@ -347,7 +354,7 @@ function describeClangFormatSearchPaths() {
         : path.join(__dirname, '..', 'build', 'clang-format', getClangdPlatformKey());
     return [
         path.join(bundled, 'bin', getClangFormatExecutableName()),
-        path.join(getUserClangdRoot(), 'bin', getClangFormatExecutableName()),
+        path.join(getUserToolsRoot(), getClangFormatExecutableName()),
         'PATH'
     ].join(' | ');
 }
@@ -356,14 +363,46 @@ function describeClangFormatSearchPaths() {
 // 期间终端、编译、文件读写、clangd stdin 全部无响应。改为异步拷贝并做在途去重。
 let clangdBundlePromise = null;
 
-function ensureClangdUserBundle() {
+// 旧版把工具装在 <userData>/LSP/bin，1.6 起改为 <userData>/bin。
+// 升级后若新目录还没有 clangd 而旧目录有，把旧目录内容平移过来，避免用户重新下载 96MB。
+async function migrateLegacyUserTools() {
+    const legacyRoot = getLegacyUserToolsRoot();
+    try {
+        if (!fs.existsSync(legacyRoot)) {
+            return;
+        }
+        const userRoot = getUserToolsRoot();
+        if (resolveClangdExecutable(userRoot)) {
+            return;
+        }
+        const legacyExe = resolveClangdExecutable(legacyRoot);
+        if (!legacyExe) {
+            return;
+        }
+        await fs.promises.mkdir(userRoot, { recursive: true });
+        for (const entry of await fs.promises.readdir(legacyRoot)) {
+            const from = path.join(legacyRoot, entry);
+            if (!(await fs.promises.stat(from)).isFile()) continue;
+            await fs.promises.copyFile(from, path.join(userRoot, entry));
+        }
+        logInfo('[LSP] 已从旧目录迁移工具:', legacyRoot, '->', userRoot);
+        const legacyParent = path.dirname(legacyRoot);
+        await fs.promises.rm(legacyParent, { recursive: true, force: true });
+        logInfo('[LSP] 已移除旧工具目录:', legacyParent);
+    } catch (error) {
+        logWarn('[LSP] 迁移旧工具目录失败:', error?.message || error);
+    }
+}
+
+async function ensureClangdUserBundle() {
     if (clangdBundlePromise) {
         return clangdBundlePromise;
     }
 
     const promise = (async () => {
         try {
-            const userRoot = getUserClangdRoot();
+            await migrateLegacyUserTools();
+            const userRoot = getUserToolsRoot();
             const userExe = resolveClangdExecutable(userRoot);
             if (userExe) {
                 logInfo('[LSP] clangd 已存在于用户目录:', userExe);
@@ -378,7 +417,18 @@ function ensureClangdUserBundle() {
 
             logInfo('[LSP] 从安装包复制 clangd 到用户目录:', bundledRoot, '->', userRoot);
             await fs.promises.mkdir(userRoot, { recursive: true });
-            await fs.promises.cp(bundledRoot, userRoot, { recursive: true });
+            // 打包目录保持 <root>/bin/clangd 的上游结构，用户目录已扁平化，
+            // 这里搬 bin/ 的内容、lib/clang/（resource-dir 所需），并把 root 下的附属文件（如 LICENSE.TXT）一并带过去
+            await fs.promises.cp(path.join(bundledRoot, 'bin'), userRoot, { recursive: true });
+            const libClangSrc = path.join(bundledRoot, 'lib', 'clang');
+            const libClangDst = path.join(userRoot, 'lib', 'clang');
+            if (fs.existsSync(libClangSrc)) {
+                await fs.promises.cp(libClangSrc, libClangDst, { recursive: true });
+            }
+            for (const entry of await fs.promises.readdir(bundledRoot, { withFileTypes: true })) {
+                if (!entry.isFile()) continue;
+                await fs.promises.copyFile(path.join(bundledRoot, entry.name), path.join(userRoot, entry.name));
+            }
             const copiedExe = resolveClangdExecutable(userRoot);
             logInfo('[LSP] clangd 已复制到用户目录:', copiedExe || userRoot);
             return { ok: true, root: userRoot };
@@ -620,7 +670,7 @@ class ClangdLspManager {
             logWarn('[LSP] 打包/用户目录无 clangd，尝试系统 PATH:', ensured.error || '');
         }
 
-        const clangdRoot = ensured.root || getUserClangdRoot();
+        const clangdRoot = ensured.root || getUserToolsRoot();
         let clangdPath = resolveClangdExecutable(clangdRoot);
         if (!clangdPath) {
             clangdPath = findClangdExecutableOnPath();
@@ -2697,6 +2747,25 @@ ipcMain.handle('get-build-info', () => {
     return { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh (修改: qingyingge)' };
 });
 
+// 第三方许可正文只允许读白名单里的两个文件，参数不参与路径拼接
+const THIRD_PARTY_LICENSE_FILES = new Set([
+    'THIRD-PARTY-NOTICES.md',
+    'llvm-apache-2.0-with-llvm-exception.txt'
+]);
+
+ipcMain.handle('read-third-party-license', (_event, name) => {
+    const fileName = String(name || '');
+    if (!THIRD_PARTY_LICENSE_FILES.has(fileName)) {
+        return null;
+    }
+    try {
+        return fs.readFileSync(path.join(__dirname, '..', 'third-party', 'licenses', fileName), 'utf8');
+    } catch (error) {
+        logger.logwarn('读取第三方许可文件失败:', error);
+        return null;
+    }
+});
+
 function requestSaveAllAndClose(context = '关闭窗口') {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (pendingSaveAllClose) {
@@ -3856,7 +3925,7 @@ function setupIPC() {
             if (!executablePath) {
                 return {
                     ok: false,
-                    error: `clang-format not found. Searched: ${describeClangFormatSearchPaths()}. Reinstall the app, or place ${getClangFormatExecutableName()} into ${path.join(getUserClangdRoot(), 'bin')}.`
+                    error: `clang-format not found. Searched: ${describeClangFormatSearchPaths()}. Reinstall the app, or place ${getClangFormatExecutableName()} into ${getUserToolsRoot()}.`
                 };
             }
             // clang-format 每次格式化都要 spawn 一个新进程（Windows 上 30~150ms），

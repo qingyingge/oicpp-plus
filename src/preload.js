@@ -519,7 +519,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'test-compiler', 'get-language-file', 'get-workspace-info',
     'get-font-list', 'check-font-exists', 'get-installed-fonts',
     'get-global-settings', 'save-global-settings', 'get-user-data-path',
-    'get-app-version', 'get-app-path', 'check-for-updates',
+    'get-app-version', 'get-app-path', 'check-for-updates', 'read-third-party-license',
     'get-all-settings', 'update-settings', 'update-top-level-settings',
     'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
@@ -715,6 +715,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getUserHome: () => safeIpcRenderer.invoke('get-user-home'),
     getUserIconPath: () => safeIpcRenderer.invoke('get-user-icon-path'),
     getBuildInfo: () => safeIpcRenderer.invoke('get-build-info'),
+    readThirdPartyLicense: (name) => safeIpcRenderer.invoke('read-third-party-license', name),
 
     getDownloadedCompilers: () => safeIpcRenderer.invoke('get-downloaded-compilers'),
     downloadCompiler: (config) => safeIpcRenderer.invoke('download-compiler', config),

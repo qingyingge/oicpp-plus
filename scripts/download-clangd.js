@@ -38,6 +38,10 @@ const { requestJson, ensureDownload } = createReleaseDownloader({
     maxRedirects: 10
 });
 
+// clangd 的 release 包只带 bin/clangd(.exe)，没有许可正文；随包二进制再分发要求
+// 随附一份副本，缺了会让 resources/clangd 里的 clangd 没有出处说明
+const fallbackLicense = path.join(__dirname, '..', 'third-party', 'licenses', 'llvm-apache-2.0-with-llvm-exception.txt');
+
 const platformPatterns = {
     win32: [
         /^clangd-windows-.*\.zip$/i,
@@ -127,14 +131,27 @@ const main = async () => {
 
     const targetRoot = path.join(outputRoot, platform);
     const targetBinary = path.join(targetRoot, 'bin', platform === 'win32' ? 'clangd.exe' : 'clangd');
+    const targetLicense = path.join(targetRoot, 'LICENSE.TXT');
+    if (fs.existsSync(targetBinary) && fs.existsSync(targetLicense)) {
+        console.log(`[clangd] Target exists: ${targetBinary}, skipping`);
+        return;
+    }
+    // 二进制已就位、只差许可正文时不必重下 96MB 工具链，直接用仓库里的同一份补齐
+    if (fs.existsSync(targetBinary) && fs.existsSync(fallbackLicense)) {
+        ensureDir(targetRoot);
+        fs.copyFileSync(fallbackLicense, targetLicense);
+        console.log(`[clangd] Filled in missing license from ${fallbackLicense}`);
+        return;
+    }
     if (fs.existsSync(targetBinary)) {
         const versionCheck = spawnSync(targetBinary, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
         if (versionCheck.status === 0 && /clangd version/i.test(versionCheck.stdout || '')) {
-            console.log(`[clangd] Target exists: ${targetBinary}, skipping`);
-            return;
+            console.warn('[clangd] Existing target is incomplete (missing license); reinstalling');
+            fs.rmSync(targetRoot, { recursive: true, force: true });
+        } else {
+            console.warn('[clangd] Existing target is incomplete or invalid; reinstalling');
+            fs.rmSync(targetRoot, { recursive: true, force: true });
         }
-        console.warn('[clangd] Existing target is incomplete or invalid; reinstalling');
-        fs.rmSync(targetRoot, { recursive: true, force: true });
     }
 
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';

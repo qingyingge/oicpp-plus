@@ -43,7 +43,7 @@ function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
         resolveClangdRootFromBundle: () => null,
         resolveClangdExecutable: () => '/fake/clangd/bin/clangd',
         findClangdExecutableOnPath: () => null,
-        getUserClangdRoot: () => '/fake/clangd',
+        getUserToolsRoot: () => '/fake/clangd',
         getCompilerRuntimeBinPaths: () => [],
         queryCompilerInfo: async () => ({ includePaths: [], target: '' }),
         compilerInfoCache: new Map(),

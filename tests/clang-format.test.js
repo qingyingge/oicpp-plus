@@ -122,7 +122,7 @@ class FakeChildProcess extends EventEmitter {
     const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
     check('main process exposes the standalone formatter IPC', mainSource.includes("ipcMain.handle('format-cpp-code'"));
     check('packaged app resolves a separately bundled clang-format', mainSource.includes("path.join(process.resourcesPath, 'clang-format')"));
-    check('clang-format resolution falls back to the user LSP dir and PATH', mainSource.includes('resolveClangFormatExecutable(getUserClangdRoot())') && mainSource.includes('findClangFormatExecutableOnPath()'));
+    check('clang-format resolution falls back to the user tools dir and PATH', mainSource.includes('resolveClangFormatExecutable(getUserToolsRoot())') && mainSource.includes('findClangFormatExecutableOnPath()'));
     check('missing clang-format error reports the searched paths instead of build instructions', mainSource.includes('describeClangFormatSearchPaths()') && !mainSource.includes('Run pnpm run prebuild:clang-format'));
 
     const installerSource = fs.readFileSync(path.join(root, 'installer.nsi'), 'utf8');

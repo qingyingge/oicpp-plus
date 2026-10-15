@@ -3761,8 +3761,8 @@ class OICPPApp {
         const openSourceLibs = [
             { name: 'Electron', license: 'MIT', url: 'https://github.com/electron/electron' },
             { name: 'Monaco Editor', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },
-            { name: 'LLVM clangd 23.1.0', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clangd.llvm.org/' },
-            { name: 'LLVM clang-format 23.1.2', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clang.llvm.org/docs/ClangFormat.html' },
+            { name: 'LLVM clangd 23.1.0', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clangd.llvm.org/', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
+            { name: 'LLVM clang-format 23.1.2', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clang.llvm.org/docs/ClangFormat.html', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
             { name: 'xterm.js', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
             { name: '@xterm/addon-fit', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
             { name: 'node-pty', license: 'MIT', url: 'https://github.com/nicely-bot/node-pty' },
@@ -3795,6 +3795,9 @@ class OICPPApp {
                 <td class="oss-lib-name">${lib.name}</td>
                 <td class="oss-lib-license">${lib.license}</td>
                 <td class="oss-lib-url">${lib.url}</td>
+                <td class="oss-lib-license-text">${lib.licenseFile
+                    ? `<button type="button" class="oss-license-link" data-license-file="${lib.licenseFile}">${t('openSource.viewLicense')}</button>`
+                    : ''}</td>
             </tr>
         `).join('');
 
@@ -3811,20 +3814,23 @@ class OICPPApp {
                         <table class="oss-table">
                             <thead>
                                 <tr>
+<tr>
                                     <th>${t('openSource.name')}</th>
                                     <th>${t('openSource.license')}</th>
                                     <th>${t('openSource.projectUrl')}</th>
-                                </tr>
+                                    <th>${t('openSource.licenseText')}</th>
+                                </tr></tr>
                             </thead>
                             <tbody>
                                 ${libRows}
                             </tbody>
                         </table>
                     </div>
+                    <pre class="oss-license-body" id="oss-license-body" hidden></pre>
                 </div>
                 <div class="about-footer">
-                    <button id="oss-close-btn">${t('dialog.close')}</button>
-                </div>
+<button id="oss-back-btn" hidden>${t('openSource.back')}</button>
+                    <button id="oss-close-btn">${t('dialog.close')}</button></div>
             </div>
         `;
         document.body.appendChild(dialog);
@@ -3833,6 +3839,41 @@ class OICPPApp {
         if (closeBtn) {
             closeBtn.addEventListener('click', () => {
                 dialog.remove();
+            });
+        }
+
+        const licenseBody = dialog.querySelector('#oss-license-body');
+        const tableWrap = dialog.querySelector('.oss-table-wrap');
+        const backBtn = dialog.querySelector('#oss-back-btn');
+        const showLicense = async (fileName) => {
+            const text = await window.electronAPI?.readThirdPartyLicense?.(fileName);
+            if (!licenseBody) return;
+            if (!text) {
+                licenseBody.textContent = t('openSource.licenseLoadFailed');
+                licenseBody.hidden = false;
+                if (tableWrap) tableWrap.hidden = true;
+                if (backBtn) backBtn.hidden = false;
+                return;
+            }
+            licenseBody.textContent = text;
+            licenseBody.hidden = false;
+            if (tableWrap) tableWrap.hidden = true;
+            if (backBtn) backBtn.hidden = false;
+            licenseBody.scrollTop = 0;
+        };
+        dialog.querySelectorAll('.oss-license-link').forEach((button) => {
+            button.addEventListener('click', () => {
+                showLicense(button.dataset.licenseFile).catch(() => null);
+            });
+        });
+        if (backBtn) {
+            backBtn.addEventListener('click', () => {
+                if (licenseBody) {
+                    licenseBody.hidden = true;
+                    licenseBody.textContent = '';
+                }
+                if (tableWrap) tableWrap.hidden = false;
+                backBtn.hidden = true;
             });
         }
 

@@ -43,6 +43,22 @@ const { requestJson, ensureDownload } = createReleaseDownloader({
     maxRedirects: 10
 });
 
+// 官方压缩包内的 LICENSE.TXT 才是与该二进制严格对应的副本；但它并非每次都存在，
+// 缺了就会因为「二进制在、许可不在」而重下整个工具链。仓库内这份是同一份正文
+// （Apache-2.0 WITH LLVM-exception，随 LLVM 版本更新），仅在压缩包里抽不到时兜底。
+const fallbackLicense = path.join(__dirname, '..', 'third-party', 'licenses', 'llvm-apache-2.0-with-llvm-exception.txt');
+
+const resolveLicenseSource = (extractedLicense) => {
+    if (extractedLicense) {
+        return extractedLicense;
+    }
+    if (fs.existsSync(fallbackLicense)) {
+        console.log(`[clang-format] LICENSE.TXT missing from the archive, using ${fallbackLicense}`);
+        return fallbackLicense;
+    }
+    return null;
+};
+
 const assetNames = {
     'win32-x64': `clang+llvm-${assetVersion}-x86_64-pc-windows-msvc.tar.xz`,
     'win32-arm64': `clang+llvm-${assetVersion}-aarch64-pc-windows-msvc.tar.xz`,
@@ -167,6 +183,13 @@ const main = async () => {
         console.log(`[clang-format] Target exists: ${targetBinary}, skipping`);
         return;
     }
+    // 二进制已就位、只差许可正文时不必重下 1 GB 工具链，直接用仓库里的同一份补齐
+    if (fs.existsSync(targetBinary) && fs.existsSync(fallbackLicense)) {
+        ensureDir(targetRoot);
+        fs.copyFileSync(fallbackLicense, targetLicense);
+        console.log(`[clang-format] Filled in missing license from ${fallbackLicense}`);
+        return;
+    }
 
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
     const asset = await selectReleaseAsset(token);
@@ -193,7 +216,8 @@ const main = async () => {
         throw new Error(`Unable to locate ${binaryName} in ${path.basename(downloadPath)}`);
     }
     const extractedLicense = findFile(extractRoot, 'LICENSE.TXT');
-    if (!extractedLicense) {
+    const licenseSource = resolveLicenseSource(extractedLicense);
+    if (!licenseSource) {
         throw new Error(`Unable to locate LICENSE.TXT in ${path.basename(downloadPath)}`);
     }
 
@@ -203,7 +227,7 @@ const main = async () => {
     fs.rmSync(stagingRoot, { recursive: true, force: true });
     ensureDir(path.dirname(stagedBinary));
     fs.copyFileSync(extractedBinary, stagedBinary);
-    fs.copyFileSync(extractedLicense, stagedLicense);
+    fs.copyFileSync(licenseSource, stagedLicense);
     if (platform !== 'win32') {
         fs.chmodSync(stagedBinary, 0o755);
     }

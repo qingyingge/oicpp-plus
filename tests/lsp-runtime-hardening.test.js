@@ -43,7 +43,7 @@ function loadManagerClass(records) {
         ensureClangdUserBundle: async () => ({ ok: true, root: '/fake/clangd' }),
         resolveClangdExecutable: () => '/fake/clangd/bin/clangd',
         findClangdExecutableOnPath: () => null,
-        getUserClangdRoot: () => '/fake/clangd',
+        getUserToolsRoot: () => '/fake/clangd',
         getCompilerRuntimeBinPaths: () => [],
         queryCompilerInfo: async () => ({ includePaths: [], target: '' }),
         compilerInfoCache: new Map()
