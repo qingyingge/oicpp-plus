@@ -31,6 +31,7 @@ const {
 } = require('./utils/settings-schema');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
 const clangdCompileFlags = require('./utils/clangd-compile-flags');
+const { filterGccPrivateIncludes } = require('./utils/compiler-paths');
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
@@ -542,6 +543,13 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
                     }
                 }
             }
+
+            // Filter out GCC private builtin include directories (lib/gcc/<triple>/<ver>/include and include-fixed)
+            // These contain GCC-specific intrinsics headers (x86intrin.h, ia32intrin.h, etc.) that conflict with clang's own builtins.
+            // clang provides its own equivalents via -resource-dir; keeping GCC's private headers only causes false diagnostics.
+            // Important: we must NOT filter out libstdc++ paths like .../include/c++ or .../include/c++/<triple>
+            // which are needed for bits/stdc++.h etc.
+            result.includePaths = filterGccPrivateIncludes(result.includePaths);
 
             if (result.includePaths.length > 0) {
                 logInfo('[LSP] 从编译器获取到 ' + result.includePaths.length + ' 个 include 路径');
@@ -1271,6 +1279,17 @@ class ClangdLspManager {
                 if (diagCount > 0) {
                     const uri = (message.params?.uri || '').replace(/^file:\/\//, '').split('/').pop();
                     logInfo('[LSP] 收到诊断: ' + diagCount + ' 条, 文件: ' + uri);
+                    // Debug: log diagnostic messages for troubleshooting (e.g. bits/stdc++.h issues)
+                    try {
+                        const diags = message.params?.diagnostics || [];
+                        for (const d of diags) {
+                            const msg = d?.message ? String(d.message).slice(0, 200) : '';
+                            const sev = d?.severity ?? 0;
+                            if (msg) {
+                                logInfo('[LSP] 诊断详情: ' + uri + ' | severity=' + sev + ' | ' + msg);
+                            }
+                        }
+                    } catch (_) { }
                 }
                 this._queueDiagnostics(message.params?.uri || '', message.params || null);
                 return;

@@ -8571,8 +8571,11 @@ class MonacoEditorManager {
             for (const targetDir of targetDirs) {
                 const versionDirs = await this.listSubdirectories(targetDir);
                 for (const versionDir of versionDirs) {
-                    await addDir(await this.joinPath(versionDir, 'include'));
-                    await addDir(await this.joinPath(versionDir, 'include-fixed'));
+                    // Skip GCC private builtin include directories (include, include-fixed).
+                    // These contain GCC-specific intrinsics headers (x86intrin.h, ia32intrin.h, etc.)
+                    // that conflict with clang's own builtins. clang provides its own equivalents
+                    // via -resource-dir; keeping GCC's private headers only causes false diagnostics.
+                    // We still keep include/c++ and its subdirectories (libstdc++ headers, bits/ etc.).
                     const cxxRoot = await this.joinPath(versionDir, 'include', 'c++');
                     await addDir(cxxRoot);
                     const cxxVersionDirs = await this.listSubdirectories(cxxRoot);
