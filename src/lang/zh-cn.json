@@ -1450,6 +1450,7 @@
   },
   "tabs": {
     "readFileUnavailable": "读文件接口不可用",
+    "markdownApiUnavailable": "Markdown 预览接口不可用",
     "reloadFailed": "重新加载文件失败：{error}",
     "tempFileUnsaved": "临时文件 \"{name}\" 未保存。<br><br>请选择如何处理临时文件。",
     "tabUnsaved": "标签页 \"{name}\" 有未保存修改。<br><br>请选择如何处理这些修改。",

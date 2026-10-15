@@ -1409,6 +1409,7 @@
   },
   "tabs": {
     "readFileUnavailable": "File read interface unavailable",
+    "markdownApiUnavailable": "Markdown preview interface unavailable",
     "reloadFailed": "Failed to reload file: {error}",
     "tempFileUnsaved": "Temp file \"{name}\" is unsaved.<br><br>How would you like to handle it?",
     "tabUnsaved": "Tab \"{name}\" has unsaved changes.<br><br>How would you like to handle them?",

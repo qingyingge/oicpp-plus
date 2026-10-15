@@ -3594,7 +3594,7 @@ class TabManager {
         if (window.markdownAPI) {
             container.innerHTML = window.markdownAPI.render(content || '', filePath);
         } else {
-            container.textContent = 'Markdown API not available';
+            container.textContent = window.i18n.t('tabs.markdownApiUnavailable');
         }
     }
 
