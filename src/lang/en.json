@@ -82,6 +82,11 @@
     "loginStateMismatch": "State verification failed.",
     "loginBadParams": "Incomplete callback parameters or service mismatch.",
     "loginVerifyFailed": "Verification failed.",
+    "loginNoCredential": "No sign-in credential was received.",
+    "loginVerifyRequestFailed": "The verification request failed.",
+    "loginServerStartFailed": "Failed to start the local callback server. Please try again.",
+    "loginTimeout": "Sign-in timed out. Please try again.",
+    "loginCompleted": "Signed in successfully.",
     "debugReadyWithBreakpoints": "Debugger started with breakpoints loaded. Click continue to start debugging",
     "debugReadyNoBreakpoints": "Debugger started and the program is ready. Click continue to run"
   },

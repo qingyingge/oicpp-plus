@@ -82,6 +82,11 @@
     "loginStateMismatch": "状态校验失败。",
     "loginBadParams": "回调参数不完整或服务标识不匹配。",
     "loginVerifyFailed": "验证失败。",
+    "loginNoCredential": "未获取到登录凭证。",
+    "loginVerifyRequestFailed": "验证请求失败。",
+    "loginServerStartFailed": "本地回调服务启动失败，请重试。",
+    "loginTimeout": "登录超时，请重试。",
+    "loginCompleted": "已完成登录。",
     "debugReadyWithBreakpoints": "调试器已启动，程序已加载断点，点击继续执行开始调试",
     "debugReadyNoBreakpoints": "调试器已启动，程序已准备就绪，点击继续执行开始运行"
   },

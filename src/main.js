@@ -1413,7 +1413,7 @@ async function handleIdeLoginCallback(req, res) {
     if (!state || state !== ideLoginState) {
         logWarn('[登录] 状态校验失败:', { hasState: !!state, match: state === ideLoginState });
         sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginStateMismatch'));
-        broadcastIdeLoginError('状态校验失败');
+        broadcastIdeLoginError(t('main.loginStateMismatch'));
         clearIdeLoginServer();
         return;
     }
@@ -1427,7 +1427,7 @@ async function handleIdeLoginCallback(req, res) {
             service: service || ''
         });
         sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginBadParams'));
-        broadcastIdeLoginError('回调参数不完整');
+        broadcastIdeLoginError(t('main.loginBadParams'));
         clearIdeLoginServer();
         return;
     }
@@ -1441,7 +1441,7 @@ async function handleIdeLoginCallback(req, res) {
                 error: verifyResult?.error || verifyResult?.message || ''
             });
             sendLoginHtml(res, t('main.loginFailedTitle'), verifyResult?.error || t('main.loginVerifyFailed'));
-            broadcastIdeLoginError(verifyResult?.error || '验证失败');
+            broadcastIdeLoginError(verifyResult?.error || t('main.loginVerifyFailed'));
             clearIdeLoginServer();
             return;
         }
@@ -1458,8 +1458,8 @@ async function handleIdeLoginCallback(req, res) {
                 hasVerifyLoginToken: !!verifyResult?.login_token,
                 hasVerifyToken: !!verifyResult?.token
             });
-            sendLoginHtml(res, t('main.loginFailedTitle'), '未获取到登录凭证。');
-            broadcastIdeLoginError('未获取到登录凭证');
+            sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginNoCredential'));
+            broadcastIdeLoginError(t('main.loginNoCredential'));
             clearIdeLoginServer();
             return;
         }
@@ -1478,13 +1478,13 @@ async function handleIdeLoginCallback(req, res) {
             sendHeartbeat('start', verifyResult.user?.username || '');
         } catch (_) { }
 
-        sendLoginHtml(res, t('main.loginSuccess'), '已完成登录。');
+        sendLoginHtml(res, t('main.loginSuccess'), t('main.loginCompleted'));
         broadcastIdeLoginState({ loggedIn: true, user: verifyResult.user, message: t('main.loginSuccess') });
         clearIdeLoginServer();
     } catch (err) {
         logError('[登录] 验证请求失败:', err?.message || err);
-        sendLoginHtml(res, t('main.loginFailedTitle'), '验证请求失败。');
-        broadcastIdeLoginError('验证请求失败');
+        sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginVerifyRequestFailed'));
+        broadcastIdeLoginError(t('main.loginVerifyRequestFailed'));
         clearIdeLoginServer();
     }
 }
@@ -1504,7 +1504,7 @@ function startIdeLoginFlow() {
 
         ideLoginServer.on('error', (err) => {
             logError('[登录] 本地回调服务失败:', err?.message || err);
-            broadcastIdeLoginError('本地回调服务启动失败');
+            broadcastIdeLoginError(t('main.loginServerStartFailed'));
             clearIdeLoginServer();
         });
 
@@ -1515,7 +1515,7 @@ function startIdeLoginFlow() {
                 const loginUrl = `${AUTH_BASE}${AUTH_LOGIN_PATH}?redirect=${encodeURIComponent(redirect)}&service=${encodeURIComponent(AUTH_SERVICE)}&state=${encodeURIComponent(state)}`;
                 await shell.openExternal(loginUrl);
                 ideLoginTimeout = setTimeout(() => {
-                    broadcastIdeLoginError('登录超时，请重试');
+                    broadcastIdeLoginError(t('main.loginTimeout'));
                     clearIdeLoginServer();
                 }, IDE_LOGIN_TIMEOUT_MS);
                 resolve({ ok: true });
