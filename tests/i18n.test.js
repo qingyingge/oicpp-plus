@@ -81,7 +81,7 @@ if (packs['zh-cn'] && packs.en) {
 
     const walk = (dir, out = []) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue;
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) walk(full, out);
             else if (/\.(js|html)$/.test(entry.name)) out.push(full);
@@ -166,7 +166,7 @@ if (packs['zh-cn'] && packs.en) {
 {
     const getAllJs = (dir, out = []) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue;
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) getAllJs(full, out);
             else if (entry.name.endsWith('.js')) out.push(full);
@@ -302,7 +302,7 @@ if (packs['zh-cn'] && packs.en) {
 {
     const getAllJs3 = (dir, out = []) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue;
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) getAllJs3(full, out);
             else if (entry.name.endsWith('.js')) out.push(full);
@@ -385,7 +385,7 @@ if (packs['zh-cn'] && packs.en) {
 {
     const getAllJs2 = (dir, out = []) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue;
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) getAllJs2(full, out);
             else if (/\.(js|html)$/.test(entry.name)) out.push(full);
@@ -419,7 +419,7 @@ if (packs['zh-cn'] && packs.en) {
 {
     const walk = (dir, out = []) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'lib') continue;
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) walk(full, out);
             else if (/\.(js|html)$/.test(entry.name)) out.push(full);
