@@ -48,6 +48,9 @@ interface HTMLDivElement {
 }
 
 interface HTMLElement {
+  __oicppFile?: unknown;
+  __oicppFileTreeEventsBound?: boolean;
+  __oicppDragAndDropBound?: boolean;
   hasGlobalWheelZoomListener?: boolean;
   _input?: HTMLInputElement;
   _list?: HTMLDivElement;
@@ -77,16 +80,16 @@ interface Window {
   electronIPC: {
     send: (channel: string, ...args: unknown[]) => void;
     invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-    on: (channel: string, listener: (...args: unknown[]) => void) => void;
-    once: (channel: string, listener: (...args: unknown[]) => void) => void;
-    removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+    on: (channel: string, listener: (...args: never[]) => void) => void;
+    once: (channel: string, listener: (...args: never[]) => void) => void;
+    removeListener: (channel: string, listener: (...args: never[]) => void) => void;
     removeAllListeners: (channel: string) => void;
     ipcRenderer: {
       send: (channel: string, ...args: unknown[]) => void;
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-      on: (channel: string, listener: (...args: unknown[]) => void) => void;
-      once: (channel: string, listener: (...args: unknown[]) => void) => void;
-      removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+      on: (channel: string, listener: (...args: never[]) => void) => void;
+      once: (channel: string, listener: (...args: never[]) => void) => void;
+      removeListener: (channel: string, listener: (...args: never[]) => void) => void;
       removeAllListeners: (channel: string) => void;
     };
   };
@@ -94,9 +97,9 @@ interface Window {
     ipcRenderer: {
       send: (channel: string, ...args: unknown[]) => void;
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-      on: (channel: string, listener: (...args: unknown[]) => void) => void;
-      once: (channel: string, listener: (...args: unknown[]) => void) => void;
-      removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+      on: (channel: string, listener: (...args: never[]) => void) => void;
+      once: (channel: string, listener: (...args: never[]) => void) => void;
+      removeListener: (channel: string, listener: (...args: never[]) => void) => void;
       removeAllListeners: (channel: string) => void;
     };
     shell: import('electron').Shell;
@@ -107,9 +110,9 @@ interface Window {
     ipcRenderer: {
       send: (channel: string, ...args: unknown[]) => void;
       invoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
-      on: (channel: string, listener: (...args: unknown[]) => void) => void;
-      once: (channel: string, listener: (...args: unknown[]) => void) => void;
-      removeListener: (channel: string, listener: (...args: unknown[]) => void) => void;
+      on: (channel: string, listener: (...args: never[]) => void) => void;
+      once: (channel: string, listener: (...args: never[]) => void) => void;
+      removeListener: (channel: string, listener: (...args: never[]) => void) => void;
       removeAllListeners: (channel: string) => void;
     };
     shell: import('electron').Shell;
