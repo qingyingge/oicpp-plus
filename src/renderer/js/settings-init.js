@@ -36,11 +36,16 @@ document.addEventListener('DOMContentLoaded', async function () {
 function applySettingsToUI(settings) {
     if (!settings)
         return;
-    if (typeof settings.theme === 'string') {
-        logInfo('应用主题到设置页面:', settings.theme);
-        document.body.setAttribute('data-theme', settings.theme);
-        document.documentElement.setAttribute('data-theme', settings.theme);
-        const normalizedTheme = String(settings.theme || '').toLowerCase();
+    // 索引签名对象先读一次收窄成局部量，后续分支就不再触发 noPropertyAccessFromIndexSignature
+    const theme = typeof settings['theme'] === 'string' ? settings['theme'] : undefined;
+    const font = typeof settings['font'] === 'string' ? settings['font'] : undefined;
+    const fontSizeRaw = typeof settings['fontSize'] === 'number' ? settings['fontSize'] : undefined;
+    const backgroundImage = settings['backgroundImage'];
+    if (theme) {
+        logInfo('应用主题到设置页面:', theme);
+        document.body.setAttribute('data-theme', theme);
+        document.documentElement.setAttribute('data-theme', theme);
+        const normalizedTheme = theme.toLowerCase();
         const tone = normalizedTheme.includes('light') ? 'light' : 'dark';
         document.body.setAttribute('data-editor-theme', tone);
         document.documentElement.setAttribute('data-editor-theme', tone);
@@ -55,19 +60,19 @@ function applySettingsToUI(settings) {
             document.documentElement.classList.add('theme-dark', 'dark-theme');
         }
     }
-    if (typeof settings.language === 'string') {
+    if (typeof settings['language'] === 'string') {
         if (window.i18n && typeof window.i18n.t === 'function') {
             if (typeof window.i18n._applyToDOM === 'function') {
                 window.i18n._applyToDOM();
             }
         }
     }
-    if (settings.font || settings.fontSize) {
-        let fontFamily = typeof settings.font === 'string' ? settings.font : 'Consolas';
-        const fontSize = typeof settings.fontSize === 'number' ? settings.fontSize : 14;
-        if (window.fontDetector && typeof settings.font === 'string') {
-            const validatedFont = window.fontDetector.validateFont(settings.font);
-            if (validatedFont !== settings.font) {
+    if (font || fontSizeRaw) {
+        let fontFamily = font || 'Consolas';
+        const fontSize = fontSizeRaw ?? 14;
+        if (window.fontDetector && font !== undefined) {
+            const validatedFont = window.fontDetector.validateFont(font);
+            if (validatedFont !== font) {
                 fontFamily = validatedFont;
             }
         }
@@ -75,26 +80,26 @@ function applySettingsToUI(settings) {
         editorElements.forEach((element) => {
             if (!(element instanceof HTMLElement))
                 return;
-            if (settings.font)
+            if (font)
                 element.style.fontFamily = fontFamily;
-            if (settings.fontSize)
+            if (fontSizeRaw)
                 element.style.fontSize = fontSize + 'px';
         });
         const breadcrumbEls = document.querySelectorAll('.folder-picker-breadcrumb');
         breadcrumbEls.forEach((el) => {
             if (!(el instanceof HTMLElement))
                 return;
-            if (settings.fontSize)
+            if (fontSizeRaw)
                 el.style.fontSize = fontSize + 'px';
-            if (settings.font)
+            if (font)
                 el.style.fontFamily = fontFamily;
         });
         document.documentElement.style.setProperty('--editor-font-family', fontFamily);
         document.documentElement.style.setProperty('--editor-font-size', fontSize + 'px');
     }
-    if (settings.backgroundImage !== undefined) {
-        if (settings.backgroundImage) {
-            let bgPath = String(settings.backgroundImage).replace(/\\/g, '/');
+    if (backgroundImage !== undefined) {
+        if (backgroundImage) {
+            let bgPath = String(backgroundImage).replace(/\\/g, '/');
             if (!bgPath.startsWith('http') && !bgPath.startsWith('file://')) {
                 if (bgPath.startsWith('/')) {
                     bgPath = 'file://' + bgPath;

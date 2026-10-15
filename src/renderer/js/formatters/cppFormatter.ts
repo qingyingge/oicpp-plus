@@ -172,7 +172,7 @@ function normalizeClangFormatStyle(raw: unknown): ClangFormatStyle {
         'formatterIndentStyle' in raw &&
         !('UseTab' in raw)
     ) {
-        const legacyStyle = String((raw as Record<string, unknown>).formatterIndentStyle || '').trim().toLowerCase();
+        const legacyStyle = String((raw as Record<string, unknown>)['formatterIndentStyle'] || '').trim().toLowerCase();
         if (legacyStyle === 'tabs') {
             normalized.UseTab = 'Always';
         } else if (legacyStyle === 'spaces') {
@@ -203,12 +203,12 @@ function formatCpp(code: string, options: unknown = {}): string {
     const optionsObj: Record<string, unknown> = (typeof options === 'object' && options !== null) ? options as Record<string, unknown> : {};
 
     const clangFormatStyle = normalizeClangFormatStyle(
-        (optionsObj.clangFormatStyle || optionsObj.clangFormat || {}) as Record<string, unknown>,
+        (optionsObj['clangFormatStyle'] || optionsObj['clangFormat'] || {}) as Record<string, unknown>,
     );
 
     const indentWidth: number = Number.isFinite(clangFormatStyle.IndentWidth) && clangFormatStyle.IndentWidth > 0
         ? clangFormatStyle.IndentWidth
-        : (typeof optionsObj.tabSize === 'number' && optionsObj.tabSize > 0 ? optionsObj.tabSize : 4);
+        : (typeof optionsObj['tabSize'] === 'number' && optionsObj['tabSize'] > 0 ? optionsObj['tabSize'] : 4);
 
     const insertSpaces: boolean = clangFormatStyle.UseTab === 'Never';
     const breakBeforeBraces: string = String(clangFormatStyle.BreakBeforeBraces || 'Attach');
@@ -264,8 +264,8 @@ function formatCpp(code: string, options: unknown = {}): string {
         };
 
         while (i < s.length) {
-            const ch = s[i];
-            const next = i + 1 < s.length ? s[i + 1] : '';
+            const ch = s[i] ?? '';
+            const next = i + 1 < s.length ? s[i + 1] ?? '' : '';
             const three = i + 2 < s.length ? s.substring(i, i + 3) : '';
 
             if (inBlockComment) {
@@ -415,7 +415,7 @@ function formatCpp(code: string, options: unknown = {}): string {
                     let depth = 1;
                     let k = i + 1;
                     while (k < s.length) {
-                        const c = s[k];
+                        const c = s[k] ?? '';
                         if (c === '<') depth++;
                         else if (c === '>') { depth--; if (depth === 0) break; }
                         else if (c === '"' || c === '\'') break;
@@ -461,7 +461,7 @@ function formatCpp(code: string, options: unknown = {}): string {
                 outStr += '(';
                 parenDepth++;
                 i++;
-                while (i < s.length && isSpace(s[i])) i++;
+                while (i < s.length && isSpace(s[i] ?? '')) i++;
                 continue;
             }
             if (ch === '{') {
@@ -475,7 +475,7 @@ function formatCpp(code: string, options: unknown = {}): string {
                 let shouldAddSpace = prevNonSpace && !/[\s{[(]/.test(prevNonSpace);
                 if (isInitializerBrace) {
                     const lastWordMatch = trimmedOut.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
-                    const lastWord = lastWordMatch ? lastWordMatch[1] : '';
+                    const lastWord = lastWordMatch ? lastWordMatch[1] ?? '' : '';
                     const keywordsNeedingSpace = new Set(['return', 'co_return', 'throw', 'new']);
                     const prevRequiresSpace = prevNonSpace && /[=,:]/.test(prevNonSpace);
                     shouldAddSpace = keywordsNeedingSpace.has(lastWord) || prevRequiresSpace;
@@ -609,7 +609,7 @@ function formatCpp(code: string, options: unknown = {}): string {
     }
 
     for (let idx = 0; idx < rawLines.length; idx++) {
-        let line = rawLines[idx];
+        let line = rawLines[idx] ?? '';
         line = line.replace(/[ \t]+$/g, '');
 
         const trimmedLeft = line.replace(/^[\t ]+/, '');
@@ -631,8 +631,9 @@ function formatCpp(code: string, options: unknown = {}): string {
 
         if (!res.noIndent && res.segments && res.segments.length > 0) {
             const lastSeg = res.segments[res.segments.length - 1];
-            if (lastSeg && lastSeg.trim() === '}' && rawLines[idx + 1]) {
-                const nextRaw = rawLines[idx + 1].trim();
+            const nextLine = rawLines[idx + 1];
+            if (lastSeg && lastSeg.trim() === '}' && nextLine) {
+                const nextRaw = nextLine.trim();
                 const nextBody = nextRaw.replace(/;\s*$/, '');
                 if (/^[A-Za-z_\*\&\<\[]/.test(nextRaw) && /;\s*$/.test(nextRaw) && !/=/.test(nextRaw) && !/\s/.test(nextBody)) {
                     res.segments[res.segments.length - 1] = lastSeg + ' ' + nextRaw;

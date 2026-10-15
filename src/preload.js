@@ -142,10 +142,10 @@ const normalizeMarkdownMath = (input) => {
     let fenceMarker = '';
     let inMathBlock = false;
     for (let idx = 0; idx < lines.length; idx++) {
-        const line = lines[idx];
+        const line = lines[idx] ?? '';
         const fenceMatch = line.match(/^\s{0,3}(```+|~~~+)/);
         if (fenceMatch) {
-            const marker = fenceMatch[1][0];
+            const marker = fenceMatch[1]?.[0] ?? '';
             if (!inFence) {
                 inFence = true;
                 fenceMarker = marker;
@@ -872,8 +872,8 @@ contextBridge.exposeInMainWorld('process', {
     versions: process.versions,
     platform: process.platform,
     env: {
-        NODE_ENV: process.env.NODE_ENV || 'development',
-        CI: process.env.CI || false
+        NODE_ENV: process.env['NODE_ENV'] || 'development',
+        CI: process.env['CI'] || false
     }
 });
 // 渲染进程日志合并发送：原先每条 logInfo/logWarn/logError 都会跨进程一次
@@ -924,7 +924,7 @@ const safeSendLog = (level, args) => {
     }
     catch (_) { }
     // 仅在开发模式或显式开启时输出到控制台
-    if (process.env.NODE_ENV === 'development' || process.env.OICPP_CONSOLE_LOG === '1') {
+    if (process.env['NODE_ENV'] === 'development' || process.env['OICPP_CONSOLE_LOG'] === '1') {
         try {
             if (level === 'warn')
                 console.warn(...args);

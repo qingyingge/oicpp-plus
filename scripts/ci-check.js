@@ -1341,7 +1341,12 @@ function runFastspawnSyntaxCheck() {
 //  quick-open.ts 里那整块 declare global { interface Window {...} } 与 global.d.ts 重复且
 //  更窄（TS2717/TS2687），已删除；walk-directory 的返回契约按主进程实际行为收紧
 //  （name/path/ext 三个字段其实恒为 string，原 preload.d.ts 声明成全可选）。
-const TS_ERROR_BASELINE = 3192;
+// 3192 → 3139：settings-init / cppFormatter / preload 清零。
+//  通法：索引签名对象（Record<string, unknown>、dataset、process.env、string[i]）只在
+//  定义处或入口读一次并收窄成局部量，后续分支不再触发 TS4111/TS2345/TS18048。
+//  preload.ts 是 CommonJS 脚本（require 而非 import），不能 declare global，
+//  __oicppPreloadInitialized 改在 src/types/preload.d.ts 里作全局 var 声明。
+const TS_ERROR_BASELINE = 3139;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

@@ -4,6 +4,9 @@
 // 批4：返回值已收窄（invoke → Promise<unknown>、订阅类 → 解订阅 () => void、send → void）。
 type AppSettings = InstanceType<typeof import('../js/main.js')>['settings'];
 
+// preload 幂等守卫标记：同一上下文重复求值时不重复绑定 IPC（preload.ts 是 CommonJS 脚本，不能 declare global）
+var __oicppPreloadInitialized: boolean | undefined;
+
 interface ElectronAPI {
   // 预加载块中的简写属性
   ipcRenderer: {
