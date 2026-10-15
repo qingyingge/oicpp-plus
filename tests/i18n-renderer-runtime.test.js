@@ -167,6 +167,54 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
             missingUmd.join(' | '));
     }
 
+    // --- 0c. UMD 必须落在「define 为空」的窗口内 ---
+    // 真实踩过的大坑：UMD 头是
+    //   "object"==typeof exports && module ? module.exports=t()
+    //   : "function"==typeof define && define.amd ? define(t)      ← 命中这里
+    //   : globalThis.i18next = t()
+    // 只要执行的那一刻 window.define 是 monaco 的 AMD loader（define.amd 为真），
+    // 就会走 define(t) 分支，**永不挂全局** → t() 抛 ReferenceError → 全站裸 key。
+    // 而脚本本身加载成功、无 console 错误、不过 CSP —— 静态检查与 vm 测试都看不见
+    //（vm 里没有 monaco loader.js，不存在 define）。
+    //
+    // index.html 已经为 xterm 造好了这个窗口：先存下 define 再 `window.define = undefined`，
+    // 加载完 UMD 类库后再恢复。UMD 必须落在两者之间。
+    {
+        const walk = (dir, out = []) => {
+            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, e.name);
+                if (e.isDirectory()) walk(full, out);
+                else if (e.name.endsWith('.html')) out.push(full);
+            }
+            return out;
+        };
+        const offenders = [];
+        let checkedWindows = 0;
+        for (const f of walk(path.join(root, 'src', 'renderer'))) {
+            const lines = fs.readFileSync(f, 'utf8').split('\n');
+            // 只有引了 monaco loader 的窗口才有 define 污染；其余窗口的 define 恒为 undefined
+            if (!lines.some((l) => l.includes('vs/loader.js'))) continue;
+            checkedWindows++;
+            const umdAt = lines.findIndex((l) => l.includes('i18next.min.js'));
+            const clearAt = lines.findIndex((l) => /window\.define\s*=\s*undefined/.test(l));
+            const restoreAt = lines.findIndex((l) => /window\.__oicppAmdDefine\s*\)/.test(l));
+            if (umdAt < 0 || clearAt < 0 || restoreAt < 0) {
+                offenders.push(`${path.relative(root, f)}: 找不到 UMD/清 define/恢复 define 的位置`
+                    + ` (umd=${umdAt}, clear=${clearAt}, restore=${restoreAt})`);
+                continue;
+            }
+            // 必须严格落在窗口内。放到恢复之后（哪怕仍在 i18n.js 之前）同样会挂不上全局。
+            if (umdAt <= clearAt || umdAt >= restoreAt) {
+                offenders.push(`${path.relative(root, f)}: UMD 在第 ${umdAt + 1} 行，`
+                    + `必须落在第 ${clearAt + 1}..${restoreAt} 行之间（define 为空的窗口）`);
+            }
+        }
+        check('at least one loader-bearing window was checked for the define-free window',
+            checkedWindows >= 1, `${checkedWindows} 个窗口引 monaco loader`);
+        check('i18next UMD is loaded while window.define is undefined', offenders.length === 0,
+            offenders.join(' | '));
+    }
+
     // --- 0b. 启动语言一致性 ---
     // i18n.js 的 i18next.init 硬编码 lng:'zh-cn'，而真实语言来自 settings。
     // 历史上读出 settings.language='en' 后只灌 bundle、从不 changeLanguage，

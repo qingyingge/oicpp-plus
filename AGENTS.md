@@ -67,6 +67,14 @@ const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback |
 
 改渲染层 i18n 后，`tests/i18n-renderer-runtime.test.js` 是运行时行为守卫（vm 里跑真实 i18next UMD + 真实语言包，断言界面实际看到什么），`tests/i18n.test.js` 是契约守卫。两者都要跑。
 
+**⚠️ UMD 的位置有硬约束：必须落在 `index.html` 里「define 为空」的窗口内。** UMD 头是三分支，`"function"==typeof define && define.amd ? define(t) : globalThis.i18next=t()` —— 只要执行的那一刻 `window.define` 是 monaco 的 AMD loader，就会走 `define(t)` 分支**永不挂全局**，`t()` 随即抛 `ReferenceError: i18next is not defined`，全站裸 key。而此时脚本**加载成功、无 console 错误、不过 CSP**，静态检查和 vm 测试全都看不见（vm 里没有 monaco loader.js）。`index.html` 已为 xterm 造好这个窗口：`window.define = undefined` 之后、恢复 `__oicppAmdDefine` 之前。移动该 `<script>` 时**只要求「在 `js/i18n.js` 之前」是不够的**（真实踩过：放在全部 app 脚本之后 → 整站失效）。`tests/i18n-renderer-runtime.test.js` 的 0c 组锁死了这个窗口。
+
+**改 UMD/`index.html` 脚本顺序后必须真实 Electron 实测**（这是唯一能抓到上一条的手段）：
+```bash
+xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-sandbox
+```
+它故意**不叫 `*.test.js`**（`run-tests.js` 只发现 `*.test.js`，而没装 electron 二进制的机器跑不了它，混进套件会直接让 CI 变红），因此不会被自动执行，需要手动跑。
+
 **形参个数是最容易翻车的地方**：给两参的入口传三个参数只会**静默丢弃** —— 不报错、界面照常显示、CI 全绿，只有 i18n 未就绪时才暴露成裸 key 名。
 
 | 入口 | 形参 | 说明 |
