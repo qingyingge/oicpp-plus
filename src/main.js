@@ -6541,7 +6541,7 @@ function setupIPC() {
                 };
 
                 if (backgroundDownload) {
-                    notifyUser('编译器下载完成', `${name} ${version} 已下载并安装完成。`, 'success');
+                    notifyUser(t('compiler.downloadCompleteTitle'), t('compiler.downloadSuccess', { name, version }), 'success');
                 }
 
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
@@ -6939,7 +6939,7 @@ function setupIPC() {
                 };
 
                 if (backgroundDownload) {
-                    notifyUser('testlib 下载完成', `${name} ${version} 已下载并安装完成。`, 'success');
+                    notifyUser(t('compiler.testlibDownloadCompleteTitle'), t('compiler.downloadSuccess', { name, version }), 'success');
                 }
 
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
@@ -7959,7 +7959,7 @@ function checkPendingUpdate() {
         if (fs.existsSync(pendingUpdate.installerPath)) {
             if (process.platform === 'win32') {
                 armPendingUpdateSilentInstallOnQuit('启动恢复待安装更新');
-                notifyUser('更新已准备就绪', `版本 ${pendingUpdate.version || ''} 将在退出 OICPP-Plus 时自动安装。`, 'info');
+                notifyUser(t('main.updateReadyTitle'), t('main.updateReadyMessage', { version: pendingUpdate.version || '' }), 'info');
             } else {
                 setTimeout(() => {
                     promptLinuxManualInstall(pendingUpdate);
