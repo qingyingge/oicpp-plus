@@ -1,7 +1,5 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.TemplatesSettings = void 0;
-const { ipcRenderer } = require('electron');
+const { ipcRenderer: tplIpcRenderer } = require('electron');
 const tplArea = (id) => { const el = document.getElementById(id); return el instanceof HTMLTextAreaElement ? el : null; };
 const tplInput = (id) => { const el = document.getElementById(id); return el instanceof HTMLInputElement ? el : null; };
 class TemplatesSettings {
@@ -216,7 +214,7 @@ class TemplatesSettings {
             }
             else {
                 logInfo('Electron API不可用，尝试使用ipcRenderer');
-                const allSettings = await ipcRenderer.invoke('get-all-settings');
+                const allSettings = await tplIpcRenderer.invoke('get-all-settings');
                 if (allSettings) {
                     if (allSettings.cppTemplate) {
                         this.settings.cppTemplate = allSettings.cppTemplate;
@@ -269,7 +267,7 @@ class TemplatesSettings {
                 result = await window.electronAPI.updateSettings(newSettings);
             }
             else {
-                result = await ipcRenderer.invoke('update-settings', newSettings);
+                result = await tplIpcRenderer.invoke('update-settings', newSettings);
             }
             if (result && result.success) {
                 this.showMessage(window.i18n.t('templates.saveSuccess'), 'success');
@@ -304,7 +302,7 @@ class TemplatesSettings {
                     result = await window.electronAPI.updateSettings(newSettings);
                 }
                 else {
-                    result = await ipcRenderer.invoke('update-settings', newSettings);
+                    result = await tplIpcRenderer.invoke('update-settings', newSettings);
                 }
                 if (result && result.success) {
                     this.showMessage(window.i18n.t('templates.resetSuccess'), 'success');
@@ -433,7 +431,7 @@ class TemplatesSettings {
         const rows = this.snippets.map((snippet, index) => {
             const row = document.createElement('div');
             row.className = 'snippet-row';
-            row.dataset.index = String(index);
+            row.dataset['index'] = String(index);
             row.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--settings-border);';
             const keyword = String(snippet.keyword || '');
             const keywordEl = document.createElement('div');
@@ -445,14 +443,14 @@ class TemplatesSettings {
             const editButton = document.createElement('button');
             editButton.type = 'button';
             editButton.className = 'preview-btn';
-            editButton.dataset.action = 'edit';
+            editButton.dataset['action'] = 'edit';
             editButton.style.background = '#6c757d';
             editButton.textContent = window.i18n.t('templates.edit');
             editButton.setAttribute('aria-label', `${window.i18n.t('templates.edit')}: ${keyword}`);
             const deleteButton = document.createElement('button');
             deleteButton.type = 'button';
             deleteButton.className = 'preview-btn';
-            deleteButton.dataset.action = 'delete';
+            deleteButton.dataset['action'] = 'delete';
             deleteButton.style.background = '#dc3545';
             deleteButton.textContent = window.i18n.t('templates.delete');
             deleteButton.setAttribute('aria-label', `${window.i18n.t('templates.delete')}: ${keyword}`);
@@ -468,14 +466,14 @@ class TemplatesSettings {
                 return;
             button.addEventListener('click', () => {
                 const row = button.closest('.snippet-row');
-                const index = parseInt(row instanceof HTMLElement ? (row.dataset.index || '-1') : '-1', 10);
+                const index = parseInt(row instanceof HTMLElement ? (row.dataset['index'] || '-1') : '-1', 10);
                 if (Number.isNaN(index) || index < 0)
                     return;
-                if (button.dataset.action === 'delete') {
+                if (button.dataset['action'] === 'delete') {
                     this.snippets.splice(index, 1);
                     this.renderSnippets();
                 }
-                else if (button.dataset.action === 'edit') {
+                else if (button.dataset['action'] === 'edit') {
                     this.openSnippetDialog(index);
                 }
             });
@@ -544,7 +542,6 @@ class TemplatesSettings {
         }
     }
 }
-exports.TemplatesSettings = TemplatesSettings;
 window.addEventListener('DOMContentLoaded', async () => {
     logInfo('DOM加载完成，初始化模板设置');
     try {

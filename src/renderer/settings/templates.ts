@@ -1,4 +1,4 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer: tplIpcRenderer } = require('electron');
 
 declare function logInfo(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
@@ -7,7 +7,7 @@ declare function logWarn(...args: unknown[]): void;
 const tplArea = (id: string): HTMLTextAreaElement | null => { const el = document.getElementById(id); return el instanceof HTMLTextAreaElement ? el : null; };
 const tplInput = (id: string): HTMLInputElement | null => { const el = document.getElementById(id); return el instanceof HTMLInputElement ? el : null; };
 
-export class TemplatesSettings {
+class TemplatesSettings {
     settings: { cppTemplate: string };
     snippets: Array<{ keyword?: string; description?: string; content?: string }>;
 
@@ -252,7 +252,7 @@ export class TemplatesSettings {
             } else {
                 logInfo('Electron API不可用，尝试使用ipcRenderer');
 
-                const allSettings = await ipcRenderer.invoke('get-all-settings');
+                const allSettings = await tplIpcRenderer.invoke('get-all-settings');
                 if (allSettings) {
                     if (allSettings.cppTemplate) {
                         this.settings.cppTemplate = allSettings.cppTemplate;
@@ -312,7 +312,7 @@ export class TemplatesSettings {
             if (window.electronAPI && window.electronAPI.updateSettings) {
                 result = await window.electronAPI.updateSettings(newSettings);
             } else {
-                result = await ipcRenderer.invoke('update-settings', newSettings);
+                result = await tplIpcRenderer.invoke('update-settings', newSettings);
             }
 
             if (result && result.success) {
@@ -326,7 +326,7 @@ export class TemplatesSettings {
 
         } catch (error) {
             logError('保存模板设置失败:', error);
-            this.showMessage(window.i18n.t('templates.saveFail', { error: error.message }), 'error');
+            this.showMessage(window.i18n.t('templates.saveFail', { error: (error as Error).message }), 'error');
         }
     }
 
@@ -351,7 +351,7 @@ export class TemplatesSettings {
                 if (window.electronAPI && window.electronAPI.updateSettings) {
                     result = await window.electronAPI.updateSettings(newSettings);
                 } else {
-                    result = await ipcRenderer.invoke('update-settings', newSettings);
+                    result = await tplIpcRenderer.invoke('update-settings', newSettings);
                 }
 
                 if (result && result.success) {
@@ -364,7 +364,7 @@ export class TemplatesSettings {
             }
         } catch (error) {
             logError('重置设置失败:', error);
-            this.showMessage(window.i18n.t('templates.resetFail', { error: error.message }), 'error');
+            this.showMessage(window.i18n.t('templates.resetFail', { error: (error as Error).message }), 'error');
         }
     }
 
@@ -379,7 +379,7 @@ export class TemplatesSettings {
 
         // 如果是编辑模式，加载已有数据
         if (editIndex >= 0 && editIndex < this.snippets.length) {
-            const item = this.snippets[editIndex];
+            const item = this.snippets[editIndex]!;
             if (kwEl) kwEl.value = item.keyword || '';
             if (descEl) descEl.value = item.description || '';
             if (contentEl) contentEl.value = item.content || '';
@@ -480,7 +480,7 @@ export class TemplatesSettings {
         const rows = this.snippets.map((snippet, index) => {
             const row = document.createElement('div');
             row.className = 'snippet-row';
-            row.dataset.index = String(index);
+            row.dataset['index'] = String(index);
             row.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--settings-border);';
 
             const keyword = String(snippet.keyword || '');
@@ -495,7 +495,7 @@ export class TemplatesSettings {
             const editButton = document.createElement('button');
             editButton.type = 'button';
             editButton.className = 'preview-btn';
-            editButton.dataset.action = 'edit';
+            editButton.dataset['action'] = 'edit';
             editButton.style.background = '#6c757d';
             editButton.textContent = window.i18n.t('templates.edit');
             editButton.setAttribute('aria-label', `${window.i18n.t('templates.edit')}: ${keyword}`);
@@ -503,7 +503,7 @@ export class TemplatesSettings {
             const deleteButton = document.createElement('button');
             deleteButton.type = 'button';
             deleteButton.className = 'preview-btn';
-            deleteButton.dataset.action = 'delete';
+            deleteButton.dataset['action'] = 'delete';
             deleteButton.style.background = '#dc3545';
             deleteButton.textContent = window.i18n.t('templates.delete');
             deleteButton.setAttribute('aria-label', `${window.i18n.t('templates.delete')}: ${keyword}`);
@@ -520,13 +520,13 @@ export class TemplatesSettings {
             if (!(button instanceof HTMLButtonElement)) return;
             button.addEventListener('click', () => {
                 const row = button.closest('.snippet-row');
-                const index = parseInt(row instanceof HTMLElement ? (row.dataset.index || '-1') : '-1', 10);
+                const index = parseInt(row instanceof HTMLElement ? (row.dataset['index'] || '-1') : '-1', 10);
                 if (Number.isNaN(index) || index < 0) return;
 
-                if (button.dataset.action === 'delete') {
+                if (button.dataset['action'] === 'delete') {
                     this.snippets.splice(index, 1);
                     this.renderSnippets();
-                } else if (button.dataset.action === 'edit') {
+                } else if (button.dataset['action'] === 'edit') {
                     this.openSnippetDialog(index);
                 }
             });
