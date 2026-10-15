@@ -67,7 +67,7 @@ const cacheBlock = mainSource.slice(
     mainSource.indexOf('const args = [', mainSource.indexOf('const compileCacheVersion'))
 );
 check('compile cache uses a dedicated cache dir', mainSource.includes("path.join(os.homedir(), USER_DATA_DIR_NAME, 'compile-cache')"));
-check('cache record no longer requires outputFile', /const createCompileCacheRecord = \(\) => \{\s*if \(!inputFile \|\| !compilerPath\) return null;/.test(cacheBlock));
+check('cache record no longer requires outputFile', /const createCompileCacheRecord = \(\) => \{\s*if \(!inputFile \|\| !compilerPath\)\s*return null;/.test(cacheBlock));
 check('cache signature payload drops outputFile', !/outputFile:\s*path\.resolve/.test(cacheBlock));
 check('cache payload still hashes source, compiler, args and cwd', /inputSize/.test(cacheBlock) && /compilerMtimeMs/.test(cacheBlock) && /compilerArgs/.test(cacheBlock) && /workingDirectory/.test(cacheBlock));
 check('cached exe and metadata are named by signature', cacheBlock.includes('`${sig}${path.extname(outputFile) || \'.exe\'}`') && cacheBlock.includes('`${sig}.oicpp-cache`'));
