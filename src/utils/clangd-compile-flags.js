@@ -165,7 +165,7 @@ function writeCompileFlagsFile({ workspaceRoot, includePaths = [], target = '', 
         return { ok: true, dir, filePath, written: true };
     }
     catch (error) {
-        return { ok: false, reason: error?.message || String(error), dir, filePath };
+        return { ok: false, reason: error instanceof Error ? error.message : String(error), dir, filePath };
     }
 }
 function removeCompileFlagsFile(filePath) {

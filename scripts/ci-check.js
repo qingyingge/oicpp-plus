@@ -1332,7 +1332,10 @@ function runFastspawnSyntaxCheck() {
 // 4664 → 4034：src/renderer/settings/compiler.ts 迁移到 .ts 并收窄到 0 error。
 // 3281 → 3274：lsp-utils 的 FileOperation/DocumentChange options 从 Record<string, unknown>
 // 收成精确接口，并把 global.d.ts 的 window.OicppLspUtils 由可选改成必选。
-const TS_ERROR_BASELINE = 3274;
+// 3274 → 3253：backup/logger/gdb-mi/compile-output/clangd-compile-flags 清零。
+//  其中 backup.ts 文件头注释里被误插了一行 `type BackupInfo = ...`（声明掉进 JSDoc 内，
+//  导致 BackupInfo 从未定义），已把注释复原并将该类型提到顶层。
+const TS_ERROR_BASELINE = 3253;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

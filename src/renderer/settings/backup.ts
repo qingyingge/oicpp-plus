@@ -1,9 +1,7 @@
 /**
  * 渲染层 备份/还原 设置管理。
  *
- * 以「脚本」形式参与构建（无 type BackupInfo = { displayTime?: string; timestampRaw?: string; deviceName?: string; timeLabel?: string };
-
-import/export）——在渲染层经 script 标签加载后挂到
+ * 以「脚本」形式参与构建（无 import/export）——在渲染层经 script 标签加载后挂到
  * window.BackupSettings；同时 tests/backup.test.js 用 require() 直接加载本文件
  * （Node 下 module 存在），因此文件尾用 guarded if/else 同时兼容两种宿主：
  * 有 module.exports 时走 CommonJS 导出，否则挂到 window。
@@ -11,6 +9,9 @@ import/export）——在渲染层经 script 标签加载后挂到
  * 所有对 window.i18n.t 的调用严格限定两参（key, params）。
  * 第三个参数会被静默丢弃，需兜底请用 `window.i18n?.t?.(key) || '文案'` 形式。
  */
+
+/** 主进程下发的备份元信息 */
+type BackupInfo = { displayTime?: string; timestampRaw?: string; deviceName?: string; timeLabel?: string };
 
 class BackupSettings {
     /** 当前设置项 */
@@ -21,7 +22,7 @@ class BackupSettings {
     /** 正在保存标志 */
     private _saving: boolean;
     /** 最新备份状态 */
-    private _latestBackupState: { type: string; params: Record<string, unknown> };
+    private _latestBackupState: { type: string; params: { timeLabel?: string; deviceName?: string } };
 
     constructor() {
         this.settings = {
@@ -155,7 +156,7 @@ class BackupSettings {
     }
 
     /** 设置最新备份状态 */
-    private setLatestBackupState(type: string, params: Record<string, unknown> = {}): void {
+    private setLatestBackupState(type: string, params: { timeLabel?: string; deviceName?: string } = {}): void {
         this._latestBackupState = { type, params };
         this.renderLatestBackupInfo();
     }

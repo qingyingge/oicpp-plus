@@ -29,7 +29,7 @@ export function decodeGdbString(value: unknown): string {
     let result = '';
     let escaped = false;
     for (let i = 1; i < text.length; i++) {
-        const ch = text[i];
+        const ch = text[i] ?? '';
         if (!escaped && ch === '"') break;
         if (!escaped && ch !== '\\') {
             result += ch;
@@ -52,7 +52,7 @@ export function decodeGdbString(value: unknown): string {
             case '"': result += '"'; break;
             case 'x': {
                 let hex = '';
-                while (hex.length < 2 && i + 1 < text.length && /[0-9a-fA-F]/.test(text[i + 1])) {
+                while (hex.length < 2 && i + 1 < text.length && /[0-9a-fA-F]/.test(text[i + 1] ?? '')) {
                     i++;
                     hex += text[i];
                 }
@@ -62,9 +62,9 @@ export function decodeGdbString(value: unknown): string {
             default:
                 if (/[0-7]/.test(ch)) {
                     let octal = ch;
-                    while (octal.length < 3 && i + 1 < text.length && /[0-7]/.test(text[i + 1])) {
+                    while (octal.length < 3 && i + 1 < text.length && /[0-7]/.test(text[i + 1] ?? '')) {
                         i++;
-                        octal += text[i];
+                        octal += text[i] ?? '';
                     }
                     result += String.fromCharCode(parseInt(octal, 8) || 0);
                 } else {
@@ -81,7 +81,7 @@ export function miQuote(value: unknown): string {
 
 export function parseMiValue(text: string, start: number): { value: MiValue; next: number } {
     let index = start;
-    while (index < text.length && /[\s,]/.test(text[index])) index++;
+    while (index < text.length && /[\s,]/.test(text[index] ?? '')) index++;
     if (index >= text.length) return { value: '', next: index };
 
     if (text[index] === '"') {
@@ -113,7 +113,7 @@ export function parseMiValue(text: string, start: number): { value: MiValue; nex
             const parsed = parseMiValue(text, cursor);
             values.push(parsed.value);
             cursor = parsed.next;
-            while (cursor < text.length && /[\s,]/.test(text[cursor])) cursor++;
+            while (cursor < text.length && /[\s,]/.test(text[cursor] ?? '')) cursor++;
         }
         return { value: values, next: Math.min(cursor + 1, text.length) };
     }
@@ -125,13 +125,13 @@ export function parseMiValue(text: string, start: number): { value: MiValue; nex
             const parsed = parseMiValue(text, cursor);
             values.push(parsed.value);
             cursor = parsed.next;
-            while (cursor < text.length && /[\s,]/.test(text[cursor])) cursor++;
+            while (cursor < text.length && /[\s,]/.test(text[cursor] ?? '')) cursor++;
         }
         return { value: values, next: Math.min(cursor + 1, text.length) };
     }
 
     let end = index;
-    while (end < text.length && !/[,\]}[]/.test(text[end])) end++;
+    while (end < text.length && !/[,\]}[]/.test(text[end] ?? '')) end++;
     return {
         value: text.slice(index, end).trim(),
         next: end
@@ -142,7 +142,7 @@ function parseMiObject(text: string, start: number): { value: Record<string, MiV
     const result: Record<string, MiValue> = {};
     let index = start;
     while (index < text.length && text[index] !== '}') {
-        while (index < text.length && /[\s,]/.test(text[index])) index++;
+        while (index < text.length && /[\s,]/.test(text[index] ?? '')) index++;
         if (index >= text.length || text[index] === '}') break;
         const keyStart = index;
         while (index < text.length && text[index] !== '=' && text[index] !== '}') index++;
@@ -219,7 +219,7 @@ export class GdbMiStream {
                     const record = parseMiRecord(line);
                     if (record) this._onRecord(record);
                 } catch (error) {
-                    this._onRecord({ type: 'parse-error', message: error?.message || String(error), raw: line });
+                    this._onRecord({ type: 'parse-error', message: error instanceof Error ? error.message : String(error), raw: line });
                 }
             }
         }
@@ -231,7 +231,7 @@ export class GdbMiStream {
                 const record = parseMiRecord(this._buffer);
                 if (record) this._onRecord(record);
             } catch (error) {
-                this._onRecord({ type: 'parse-error', message: error?.message || String(error), raw: this._buffer });
+                this._onRecord({ type: 'parse-error', message: error instanceof Error ? error.message : String(error), raw: this._buffer });
             }
         }
         this._buffer = '';

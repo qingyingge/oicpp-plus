@@ -28,6 +28,7 @@ export class CompileOutputManager {
         this.isVisible = false;
         this.currentCommand = '';
         this.startTime = null;
+        this._onGlobalKeydown = null;
 
         this.init();
     }

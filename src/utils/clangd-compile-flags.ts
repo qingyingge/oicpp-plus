@@ -150,7 +150,7 @@ function writeCompileFlagsFile({ workspaceRoot, includePaths = [], target = '', 
         fs.writeFileSync(filePath, flagsText, 'utf8');
         return { ok: true, dir, filePath, written: true };
     } catch (error) {
-        return { ok: false, reason: error?.message || String(error), dir, filePath };
+        return { ok: false, reason: error instanceof Error ? error.message : String(error), dir, filePath };
     }
 }
 

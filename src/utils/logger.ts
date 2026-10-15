@@ -111,7 +111,13 @@ export class Logger {
         const redactingReplacer = (_key: string, value: unknown): unknown => value;
         const serializeError = (err: unknown): Record<string, unknown> => {
             try {
-                const base = {
+                const base: {
+                    name: string;
+                    message: string;
+                    stack?: string;
+                    cause?: unknown;
+                    data?: unknown;
+                } = {
                     name: err instanceof Error ? err.name : 'Error',
                     message: err instanceof Error ? err.message : String(err),
                     stack: err instanceof Error ? err.stack : undefined,
@@ -123,10 +129,10 @@ export class Logger {
                 });
                 if (err && typeof err === 'object' && 'cause' in err) {
                     const cause = (err as ErrorLike).cause;
-                    (base as Record<string, unknown>).cause = typeof cause === 'object' && cause !== null ? serializeError(cause) : String(cause);
+                    base.cause = typeof cause === 'object' && cause !== null ? serializeError(cause) : String(cause);
                 }
                 if (err && typeof err === 'object' && 'data' in err) {
-                    (base as Record<string, unknown>).data = (err as ErrorLike).data;
+                    base.data = (err as ErrorLike).data;
                 }
                 return base;
             } catch (_) {
