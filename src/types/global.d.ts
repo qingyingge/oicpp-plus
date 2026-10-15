@@ -76,6 +76,8 @@ interface Window {
     enableAutoTranslate: () => void;
     setLanguage: (langCode: string) => Promise<void>;
     getAvailableLanguages: () => Promise<Array<{ code: string; name: string; nameEn: string }>>;
+    translate: (key: string, params?: Record<string, unknown>) => string;
+    applyTranslation: () => void;
   };
   electronIPC: {
     send: (channel: string, ...args: unknown[]) => void;

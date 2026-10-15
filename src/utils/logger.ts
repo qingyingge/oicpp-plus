@@ -1,3 +1,5 @@
+type ErrorLike = Record<string, unknown> & { cause?: unknown; data?: unknown; error?: unknown };
+
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -120,11 +122,11 @@ export class Logger {
                     }
                 });
                 if (err && typeof err === 'object' && 'cause' in err) {
-                    const cause = (err as Record<string, unknown>).cause;
+                    const cause = (err as ErrorLike).cause;
                     (base as Record<string, unknown>).cause = typeof cause === 'object' && cause !== null ? serializeError(cause) : String(cause);
                 }
                 if (err && typeof err === 'object' && 'data' in err) {
-                    (base as Record<string, unknown>).data = (err as Record<string, unknown>).data;
+                    (base as Record<string, unknown>).data = (err as ErrorLike).data;
                 }
                 return base;
             } catch (_) {
@@ -156,7 +158,7 @@ export class Logger {
                     const keys = Object.keys(v);
                     const pick = keys.slice(0, 12);
                     const sampleObj: Record<string, unknown> = {};
-                    for (const k of pick) sampleObj[k] = v[k];
+                    for (const k of pick) sampleObj[k] = (v as Record<string, unknown>)[k];
                     const sampleStr = JSON.stringify(sampleObj, redactingReplacer, 2);
                     const more = keys.length > pick.length ? `, ... ${keys.length - pick.length} more keys` : '';
                     return `{Object with ${keys.length} keys, sample}: ${clamp(sampleStr, INFO_PER_ARG_LIMIT)}${more}`;
@@ -171,8 +173,8 @@ export class Logger {
             if (v === null || v === undefined) return String(v);
             if (v instanceof Error) return JSON.stringify(serializeError(v), null, 2);
             if (typeof v === 'string') return v;
-            if (typeof v === 'object' && v && 'error' in v && (v as Record<string, unknown>).error instanceof Error && Object.keys(v).length === 1) {
-                return JSON.stringify({ error: serializeError((v as Record<string, unknown>).error) }, null, 2);
+            if (typeof v === 'object' && v && 'error' in v && (v as ErrorLike).error instanceof Error && Object.keys(v).length === 1) {
+                return JSON.stringify({ error: serializeError((v as ErrorLike).error) }, null, 2);
             }
             try { return JSON.stringify(v, redactingReplacer, 2); } catch (_) { return String(v); }
         };

@@ -1,7 +1,9 @@
 /**
  * 渲染层 备份/还原 设置管理。
  *
- * 以「脚本」形式参与构建（无 import/export）——在渲染层经 script 标签加载后挂到
+ * 以「脚本」形式参与构建（无 type BackupInfo = { displayTime?: string; timestampRaw?: string; deviceName?: string; timeLabel?: string };
+
+import/export）——在渲染层经 script 标签加载后挂到
  * window.BackupSettings；同时 tests/backup.test.js 用 require() 直接加载本文件
  * （Node 下 module 存在），因此文件尾用 guarded if/else 同时兼容两种宿主：
  * 有 module.exports 时走 CommonJS 导出，否则挂到 window。
@@ -233,7 +235,7 @@ class BackupSettings {
     }
 
     /** 立即备份 */
-    private async backupNow(silent: boolean = false): Promise<boolean> {
+    private async backupNow(silent: boolean = false): Promise<boolean | undefined> {
         if (!window.electronAPI?.backupSettingsToCloud) {
             if (!silent) this.showMessage(window.i18n.t('backup.backupUnavailable'), 'error');
             return;
@@ -283,7 +285,7 @@ class BackupSettings {
             return false;
         }
 
-        const info = (infoResult as { info?: Record<string, unknown> }).info || {};
+        const info = (infoResult as { info?: BackupInfo }).info || {};
         const timeLabel: string = String(info.displayTime || info.timestampRaw || window.i18n.t('backup.unknownTime'));
         const deviceName: string = String(info.deviceName || window.i18n.t('backup.unknownDevice'));
         // 必须两参：key + params 对象，严禁第三实参

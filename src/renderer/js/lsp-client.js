@@ -1,8 +1,4 @@
 "use strict";
-// 渲染层 LSP 客户端桥。以「脚本」形式参与构建（无 import/export）：
-// tests/lsp*.test.js 用 fs.readFileSync + vm.runInNewContext 直接执行本文件源码，
-// 沙箱 context 没有 exports/module，模块化输出的顶层 exports.* 引用会 ReferenceError。
-// 因此保持 script 形态：类经文件尾 guarded if/else 注入 window 或 module.exports。
 class LspClientBridge {
     _ready;
     _readyPromise;

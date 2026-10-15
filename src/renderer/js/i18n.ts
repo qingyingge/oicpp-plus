@@ -3,32 +3,6 @@ export {};
 declare function logInfo(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
 
-declare global {
-    interface Window {
-        electronAPI: {
-            getLanguage(): Promise<string>;
-            getLanguageFile(langCode: string): Promise<Record<string, unknown> | null>;
-            onLanguageChanged(callback: (langCode: string) => void): () => void;
-            updateSettings(settings: { language: string }): Promise<unknown>;
-        };
-        electronIPC: {
-            on(channel: string, listener: (...args: unknown[]) => void): () => void;
-        };
-        i18n: {
-            t: (key: string, params?: Record<string, unknown>) => string;
-            translate: (key: string, params?: Record<string, unknown>) => string;
-            getCurrentLanguage: () => string;
-            getAvailableLanguages: () => Promise<Array<{ code: string; name: string; nameEn: string }>>;
-            setLanguage: (langCode: string) => Promise<void>;
-            onChange: (callback: (lang: string) => void) => () => void;
-            applyTranslation: () => void;
-            enableAutoTranslate: () => void;
-            _applyToDOM: () => void;
-        };
-        __: (key: string, params?: Record<string, unknown>) => string;
-    }
-}
-
 class I18nManager {
     private _messages: Record<string, unknown> = {};
     private _fallbackMessages: Record<string, unknown> = {};
@@ -85,13 +59,13 @@ class I18nManager {
             if (window.electronAPI && typeof window.electronAPI.getLanguageFile === 'function') {
                 const messages = await window.electronAPI.getLanguageFile(this._currentLang);
                 if (messages) {
-                    this._messages = messages;
+                    this._messages = messages as Record<string, unknown>;
                     this._loaded = true;
 
                     if (this._currentLang !== 'zh-cn') {
                         const fallback = await window.electronAPI.getLanguageFile('zh-cn');
                         if (fallback) {
-                            this._fallbackMessages = fallback;
+                            this._fallbackMessages = fallback as Record<string, unknown>;
                         }
                     }
                 }
@@ -277,7 +251,7 @@ class I18nManager {
 const i18n = new I18nManager();
 
 window.i18n = i18n;
-window.__ = i18n.t.bind(i18n);
+window.__ = i18n.t.bind(i18n) as (key: string, params?: unknown) => string;
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = i18n;

@@ -35,6 +35,7 @@
 // case-sensitive NTFS directory to misbehave.
 
 import * as fs from 'fs';
+type CodedError = { code: string };
 import * as path from 'path';
 
 const realpathNative = typeof fs.realpathSync.native === 'function'
@@ -52,7 +53,7 @@ function realpath(p: string): string {
     try {
         return fn(p);
     } catch (err) {
-        if (err && err.code === 'EINVAL') return fs.realpathSync(p);
+        if (err && (err as CodedError).code === 'EINVAL') return fs.realpathSync(p);
         throw err;
     }
 }
@@ -73,7 +74,7 @@ function canon(target: string): string {
     try {
         return realpath(absolute);
     } catch (err) {
-        if (!err || !MISSING.has(err.code)) throw err;
+        if (!err || !MISSING.has((err as CodedError).code)) throw err;
     }
     const tail: string[] = [];
     let current = absolute;
@@ -85,7 +86,7 @@ function canon(target: string): string {
         try {
             return path.join(realpath(current), ...tail);
         } catch (err) {
-            if (!err || !MISSING.has(err.code)) throw err;
+            if (!err || !MISSING.has((err as CodedError).code)) throw err;
         }
     }
 }

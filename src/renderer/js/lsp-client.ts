@@ -1,3 +1,4 @@
+type LspDiagnosticsParams = { uri?: unknown; diagnostics?: unknown };
 // 渲染层 LSP 客户端桥。以「脚本」形式参与构建（无 import/export）：
 // tests/lsp*.test.js 用 fs.readFileSync + vm.runInNewContext 直接执行本文件源码，
 // 沙箱 context 没有 exports/module，模块化输出的顶层 exports.* 引用会 ReferenceError。
@@ -103,7 +104,7 @@ class LspClientBridge {
                 this._semanticTokensLegend = null;
             }
             if (payload.method === 'textDocument/publishDiagnostics') {
-                const params: Record<string, unknown> = payload.params || {};
+                const params: LspDiagnosticsParams = payload.params || {};
                 const uri = (params.uri as string) || '';
                 const diagnostics: unknown[] = Array.isArray(params.diagnostics) ? params.diagnostics : [];
                 this._diagnosticListeners.forEach((listener) => {

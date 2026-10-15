@@ -59,7 +59,7 @@ export class FontDetector {
         const lower = cleanFontName.toLowerCase();
         if (aliasMap[lower]) cleanFontName = aliasMap[lower];
 
-        const firstFont = cleanFontName.split(',')[0].trim();
+        const firstFont = cleanFontName.split(',')[0]!.trim();
         if (['monospace', 'serif', 'sans-serif'].includes(firstFont.toLowerCase())) {
             return firstFont;
         }
@@ -107,7 +107,7 @@ export class FontDetector {
 
         const icon = document.createElement('div');
         icon.className = 'font-warning-icon';
-        icon.dataset.uiIcon = 'warning';
+        icon.dataset['uiIcon'] = 'warning';
         icon.style.cssText = `
             font-size: 20px;
             flex-shrink: 0;
@@ -222,7 +222,7 @@ export class FontDetector {
     async getSystemFontsFromAPI(): Promise<string[]> {
         try {
             if ('queryLocalFonts' in window) {
-                const fonts = await window.queryLocalFonts();
+                const fonts = await window.queryLocalFonts!();
                 const fontNames = [...new Set(fonts.map(font => font.family))].sort();
                 logInfo('通过API获取到的系统字体:', fontNames.length, '个');
                 return fontNames;

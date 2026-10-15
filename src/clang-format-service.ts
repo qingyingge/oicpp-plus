@@ -65,8 +65,8 @@ function buildClangFormatArgs({
             args.push(`--fallback-style=${fallbackStyle || 'LLVM'}`);
         }
     }
-    const hasStartLine = Number.isInteger(startLine) && startLine > 0;
-    const hasEndLine = Number.isInteger(endLine) && endLine >= startLine;
+    const hasStartLine = Number.isInteger(startLine) && startLine! > 0;
+    const hasEndLine = Number.isInteger(endLine) && endLine! >= startLine!;
     if (hasStartLine !== hasEndLine) {
         throw new Error('clang-format range requires both startLine and endLine');
     }
@@ -154,7 +154,7 @@ function formatCodeWithClangFormat({
             startLine,
             endLine,
             inputFilePath
-        });
+        } as ClangFormatOptions);
         const requestedDirectory = typeof filePath === 'string' && path.isAbsolute(filePath) ? path.dirname(filePath) : '';
         const cwd = requestedDirectory && fs.existsSync(requestedDirectory) ? requestedDirectory : process.cwd();
 
@@ -176,7 +176,7 @@ function formatCodeWithClangFormat({
                 settled = true;
                 clearTimeout(timer);
                 if (error) reject(error);
-                else resolve(result);
+                else resolve(result as ClangFormatResult);
             };
 
             const append = (chunks: Buffer[], chunk: Buffer | string): boolean => {

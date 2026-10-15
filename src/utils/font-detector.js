@@ -100,7 +100,7 @@ class FontDetector {
         `;
         const icon = document.createElement('div');
         icon.className = 'font-warning-icon';
-        icon.dataset.uiIcon = 'warning';
+        icon.dataset['uiIcon'] = 'warning';
         icon.style.cssText = `
             font-size: 20px;
             flex-shrink: 0;
