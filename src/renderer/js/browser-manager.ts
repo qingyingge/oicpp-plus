@@ -21,7 +21,7 @@ interface BrowserTabState {
     _hasBeenShown: boolean;
     _needsContentRestore?: boolean;
     syncWebviewSize?: () => void;
-    resizeObserver?: ResizeObserver;
+    resizeObserver?: ResizeObserver | null;
 }
 
 // 新建标签页默认显示的欢迎页（data URI，避免约:blank 一片空白）
@@ -71,6 +71,7 @@ export class BrowserManager {
         this._currentFocusKey = null;
         this._pendingNav = new Map(); // uniqueKey -> url
         this._newTabPage = null;
+        this._removeOpenNewTabListener = null;
 
         if (window.electronAPI?.onBrowserOpenNewTab) {
             this._removeOpenNewTabListener = window.electronAPI.onBrowserOpenNewTab((request) => {
@@ -101,8 +102,8 @@ export class BrowserManager {
         // 主容器
         const container = document.createElement('div');
         container.className = 'browser-container';
-        container.dataset.groupId = groupId || '';
-        container.dataset.uniqueKey = uniqueKey || '';
+        container.dataset['groupId'] = groupId || '';
+        container.dataset['uniqueKey'] = uniqueKey || '';
         container.style.display = 'none';
 
         // 导航栏
@@ -233,7 +234,7 @@ export class BrowserManager {
             '<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
             '</svg>'
         ].join(''), window.i18n.t('browser.reload'));
-        refreshBtn.dataset.action = 'reload';
+        refreshBtn.dataset['action'] = 'reload';
         navButtons.appendChild(refreshBtn);
 
         navBar.appendChild(navButtons);
@@ -311,7 +312,7 @@ export class BrowserManager {
         const updateLocation = (url: string) => {
             if (!url || url === 'about:blank' || url.startsWith('data:text/html')) return;
             state.currentUrl = url;
-            urlInput.value = url;
+            if (urlInput) urlInput.value = url;
             this._updateNavButtons(uniqueKey);
         };
 
@@ -361,17 +362,18 @@ export class BrowserManager {
      * 处理网页中的 target="_blank"、window.open 和中键点击。
      * 主进程会拦截原生弹窗，并把目标地址送回这里创建 IDE 浏览器标签。
      */
-    _handleOpenNewTabRequest(request) {
-        const url = typeof request?.url === 'string' ? request.url : '';
+    _handleOpenNewTabRequest(request: unknown): void {
+        const payload = (request && typeof request === 'object' ? request : {}) as { url?: unknown; sourceWebContentsId?: unknown };
+        const url = typeof payload.url === 'string' ? payload.url : '';
         if (!url || !/^https?:\/\//i.test(url)) return;
 
         let sourceGroupId = '';
-        const sourceWebContentsId = Number(request?.sourceWebContentsId);
+        const sourceWebContentsId = Number(payload.sourceWebContentsId);
         if (Number.isInteger(sourceWebContentsId)) {
             for (const state of this.browserTabs.values()) {
                 try {
                     if (state.webview?.getWebContentsId?.() === sourceWebContentsId) {
-                        sourceGroupId = state.container?.dataset?.groupId || '';
+                        sourceGroupId = state.container?.dataset?.['groupId'] || '';
                         break;
                     }
                 } catch (_) {}
@@ -398,7 +400,7 @@ export class BrowserManager {
         if (!url) return;
         state.currentUrl = url;
         state.webview.loadURL(url).catch(() => {});
-        state.urlInput.value = url;
+        if (state.urlInput) state.urlInput.value = url;
         this._updateNavButtons(uniqueKey);
     }
 
@@ -479,7 +481,7 @@ export class BrowserManager {
                 '</svg>'
             ].join('');
             reloadBtn.title = window.i18n.t('browser.stop');
-            reloadBtn.dataset.action = 'stop';
+            reloadBtn.dataset['action'] = 'stop';
         } else {
             reloadBtn.innerHTML = [
                 '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">',
@@ -488,7 +490,7 @@ export class BrowserManager {
                 '</svg>'
             ].join('');
             reloadBtn.title = window.i18n.t('browser.reload');
-            reloadBtn.dataset.action = 'reload';
+            reloadBtn.dataset['action'] = 'reload';
         }
     }
 
@@ -566,8 +568,8 @@ export class BrowserManager {
         const existing = this.browserTabs.get(uniqueKey);
         if (existing && existing.container) {
             // 如果 groupId 变化，需要移动容器
-            if (existing.container.dataset.groupId !== groupId) {
-                existing.container.dataset.groupId = groupId;
+            if (existing.container.dataset['groupId'] !== groupId) {
+                existing.container.dataset['groupId'] = groupId;
             }
             return existing.container;
         }
@@ -642,7 +644,7 @@ export class BrowserManager {
      */
     hideGroupBrowserContainers(groupId: string): void {
         for (const [key, state] of this.browserTabs.entries()) {
-            if (state.container && state.container.dataset.groupId === groupId) {
+            if (state.container && state.container.dataset['groupId'] === groupId) {
                 state.container.classList.remove('active');
                 state.container.style.display = 'none';
             }
@@ -657,7 +659,7 @@ export class BrowserManager {
         if (!state || !state.container) return null;
 
         // 只更新分组 ID，DOM 节点由调用方通过 appendChild 搬移
-        state.container.dataset.groupId = newGroupId;
+        state.container.dataset['groupId'] = newGroupId;
 
         // appendChild 会自动从旧父节点移除，标记需要恢复以兼容 webview 重挂载
         state._needsContentRestore = true;

@@ -6,39 +6,6 @@ interface QuickOpenItem {
     __s?: number;
 }
 
-declare global {
-    interface Window {
-        i18n: {
-            t: (key: string, params?: Record<string, unknown>) => string;
-        };
-        electronAPI: {
-            walkDirectory(root: string, options: { excludeGlobs: string[] }): Promise<{ success?: boolean; files?: QuickOpenItem[] } | null>;
-            readFileContent(path: string): Promise<string>;
-        };
-        sidebarManager?: {
-            panels?: {
-                files?: {
-                    currentPath?: string;
-                    workspacePath?: string;
-                };
-            };
-        };
-        tabManager?: {
-            openFile: (name: string, content: string, isTemp: boolean, options: { filePath: string; viewType: string }) => Promise<void>;
-        };
-        editorManager?: {
-            openFile: (path: string, content: string) => void;
-        };
-        logWarn?: (...args: unknown[]) => void;
-        logError?: (...args: unknown[]) => void;
-        quickOpen: {
-            open: () => void;
-            close: () => void;
-            ensureIndex: () => Promise<boolean>;
-        };
-    }
-}
-
 let allFiles: QuickOpenItem[] = [];
 let indexedRoot = '';
 let indexDirty = true;
@@ -66,7 +33,7 @@ if (!overlay || !input || !results || !titleTrigger) {
         let qi = 0, score = 0;
         for (let i = 0; i < p.length && qi < q.length; i++) {
             if (p[i] === q[qi]) { score += 2; qi++; }
-            else if (q.includes(p[i])) { score += 1; }
+            else if (q.includes(p[i] ?? '')) { score += 1; }
         }
         if (qi === q.length) score += 5;
         return score;

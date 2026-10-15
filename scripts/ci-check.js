@@ -1337,7 +1337,11 @@ function runFastspawnSyntaxCheck() {
 //  导致 BackupInfo 从未定义），已把注释复原并将该类型提到顶层。
 // 3253 → 3221：sidebar/dialog 清零。panels 加 Record 索引签名、dataset 改括号访问、
 //  DialogManager.currentDialog 的 resolve 从 unknown 收成真实值域（strictFunctionTypes 逆变）。
-const TS_ERROR_BASELINE = 3221;
+// 3221 → 3194：browser-manager/quick-open 清零。
+//  quick-open.ts 里那整块 declare global { interface Window {...} } 与 global.d.ts 重复且
+//  更窄（TS2717/TS2687），已删除；walk-directory 的返回契约按主进程实际行为收紧
+//  （name/path/ext 三个字段其实恒为 string，原 preload.d.ts 声明成全可选）。
+const TS_ERROR_BASELINE = 3194;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

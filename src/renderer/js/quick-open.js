@@ -35,7 +35,7 @@ else {
                 score += 2;
                 qi++;
             }
-            else if (q.includes(p[i])) {
+            else if (q.includes(p[i] ?? '')) {
                 score += 1;
             }
         }

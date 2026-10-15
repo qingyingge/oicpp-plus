@@ -158,7 +158,7 @@ interface ElectronAPI {
   relaunchApp(): Promise<unknown>;
   clipboardWriteText(text: string): Promise<{ success?: boolean; error?: string } | null>;
   clipboardReadText(): Promise<unknown>;
-  walkDirectory(dirPath: string, options: Record<string, unknown>): Promise<{ success?: boolean; error?: string; files?: Array<{ name?: string; path?: string; ext?: string }> } | null>;
+  walkDirectory(dirPath: string, options?: { includeExts?: string[]; excludeGlobs?: string[]; maxFiles?: number }): Promise<{ success?: boolean; error?: string; files?: Array<{ name: string; path: string; ext: string }> } | null>;
   lspStart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string; initialized?: boolean; serverCapabilities?: unknown } | null>;
   lspStop(): Promise<unknown>;
   lspRestart(options: Record<string, unknown>): Promise<{ ok?: boolean; alreadyRunning?: boolean; clangdPath?: string; error?: string; initialized?: boolean; serverCapabilities?: unknown } | null>;
