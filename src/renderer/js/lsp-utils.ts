@@ -49,13 +49,11 @@ interface LspWorkspaceEdit {
     documentChanges?: ReadonlyArray<DocumentChange>;
 }
 
-interface FileOperationEdit {
-    fileOperation: 'create' | 'rename' | 'delete';
-    resource: unknown;
-    oldResource?: unknown;
-    newResource?: unknown;
-    options?: FileOperationOptions;
-}
+// create/delete 用 resource，rename 用 oldResource+newResource —— 两种形状互斥，
+// 合成一个接口会让 rename 分支被迫带上它没有的 resource。
+type FileOperationEdit =
+    | { fileOperation: 'create' | 'delete'; resource: unknown; options?: FileOperationOptions }
+    | { fileOperation: 'rename'; oldResource: unknown; newResource: unknown; options?: FileOperationOptions };
 
 interface TextEditEdit {
     resource: unknown;

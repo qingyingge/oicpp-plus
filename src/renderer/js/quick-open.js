@@ -160,10 +160,9 @@ else {
             }
             if (e.key === 'Enter') {
                 const list = lastList.length ? lastList : allFiles;
-                if (list.length > 0) {
-                    const idx = activeIndex >= 0 && activeIndex < list.length ? activeIndex : 0;
-                    openFile(list[idx]);
-                }
+                const picked = list[activeIndex >= 0 && activeIndex < list.length ? activeIndex : 0];
+                if (picked)
+                    openFile(picked);
             }
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
