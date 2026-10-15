@@ -11,7 +11,7 @@ export class SidebarManager {
         compare: CodeComparer;
         debug: InstanceType<typeof DebugPanel>;
         cloud: InstanceType<typeof CloudSyncPanel>;
-    };
+    } & Record<string, { activate: () => void; deactivate?: () => void }>;
     _pendingResizeRaf: number | ReturnType<typeof setTimeout> | null;
     _pendingResizeIsTimeout: boolean;
     // 以下字段在 setupResizer/hideForWelcome/collapseSidebar 中赋值
@@ -35,6 +35,13 @@ export class SidebarManager {
 
         this._pendingResizeRaf = null;
         this._pendingResizeIsTimeout = false;
+        this.resizer = null;
+        this.sidebar = null;
+        this.sidebarPanel = null;
+        this.isCollapsed = false;
+        this.savedWidth = 0;
+        this._prevWidth = '';
+        this._wasCollapsed = false;
 
         this.init();
     }
@@ -57,14 +64,14 @@ export class SidebarManager {
         logInfo('setupEventListeners: 找到', sidebarIcons.length, '个侧边栏图标');
         sidebarIcons.forEach((icon, index) => {
             if (!(icon instanceof HTMLElement)) return;
-            logInfo('绑定事件监听器到图标', index, '面板名:', icon.dataset.panel);
+            logInfo('绑定事件监听器到图标', index, '面板名:', icon.dataset['panel']);
             icon.tabIndex = 0;
             icon.setAttribute('role', 'button');
             icon.addEventListener('click', (e) => {
                 e.preventDefault();
                 icon.focus({ preventScroll: true });
                 const currentTarget = e.currentTarget;
-                const panelName = currentTarget instanceof HTMLElement ? currentTarget.dataset.panel : undefined;
+                const panelName = currentTarget instanceof HTMLElement ? currentTarget.dataset['panel'] : undefined;
                 logInfo('图标被点击，面板名:', panelName);
                 this.showPanel(panelName as string);
             });
@@ -72,7 +79,7 @@ export class SidebarManager {
                 if (e.key !== 'Enter' && e.key !== ' ') return;
                 e.preventDefault();
                 e.stopPropagation();
-                this.showPanel(icon.dataset.panel as string);
+                this.showPanel(icon.dataset['panel'] as string);
             });
         });
 
@@ -102,11 +109,9 @@ export class SidebarManager {
     setupLanguageListener(): void {
         document.addEventListener('i18n-language-changed', () => {
             this.updateCloudPanelLocks();
-            if (this.currentPanel && this.panels[this.currentPanel]) {
-                const panel = this.panels[this.currentPanel];
-                if (typeof panel.activate === 'function') {
-                    panel.activate();
-                }
+            const panel = this.panels[this.currentPanel];
+            if (panel && typeof panel.activate === 'function') {
+                panel.activate();
             }
         });
     }
@@ -459,16 +464,16 @@ export class SidebarManager {
         }
 
         // 离开当前面板时通知其 deactivate，释放定时器/监听器等资源。
-        if (this.currentPanel && this.panels[this.currentPanel]
-            && typeof this.panels[this.currentPanel].deactivate === 'function') {
-            this.panels[this.currentPanel].deactivate();
+        const leaving = this.panels[this.currentPanel];
+        if (leaving && typeof leaving.deactivate === 'function') {
+            leaving.deactivate();
         }
 
         const icons = document.querySelectorAll('.sidebar-icon');
         icons.forEach(icon => {
             if (!(icon instanceof HTMLElement)) return;
             icon.classList.remove('active');
-            if (icon.dataset.panel === panelName) {
+            if (icon.dataset['panel'] === panelName) {
                 icon.classList.add('active');
             }
         });

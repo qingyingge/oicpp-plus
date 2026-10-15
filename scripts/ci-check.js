@@ -1335,7 +1335,9 @@ function runFastspawnSyntaxCheck() {
 // 3274 → 3253：backup/logger/gdb-mi/compile-output/clangd-compile-flags 清零。
 //  其中 backup.ts 文件头注释里被误插了一行 `type BackupInfo = ...`（声明掉进 JSDoc 内，
 //  导致 BackupInfo 从未定义），已把注释复原并将该类型提到顶层。
-const TS_ERROR_BASELINE = 3253;
+// 3253 → 3221：sidebar/dialog 清零。panels 加 Record 索引签名、dataset 改括号访问、
+//  DialogManager.currentDialog 的 resolve 从 unknown 收成真实值域（strictFunctionTypes 逆变）。
+const TS_ERROR_BASELINE = 3221;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
@@ -1343,18 +1345,40 @@ function runTypecheckRatchet() {
     fail('typescript is not installed (pnpm add -D typescript)');
     return;
   }
-  let out = '';
-  try {
-    out = execSync(`node "${tscBin}" --noEmit`, { encoding: 'utf8', timeout: 300000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
-  } catch (err) {
-    out = `${err.stdout || ''}${err.stderr || ''}`;
+  const runTsc = () => {
+    let out = '';
+    try {
+      out = execSync(`node "${tscBin}" --noEmit`, { encoding: 'utf8', timeout: 300000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (err) {
+      out = `${err.stdout || ''}${err.stderr || ''}`;
+    }
+    const lines = out.split(/\r?\n/).filter((l) => /error TS\d+/.test(l));
+    return {
+      count: lines.length,
+      junk: lines.filter((l) => /TS6054|TS2307|TS2688/.test(l)).length,
+    };
+  };
+  let result = runTsc();
+  const samples = [result.count];
+  // PRoot/惰性文件系统下 tsc 的模块解析会偶发退化（@types/node 落到 /.l2s/ 临时 blob、
+  // monaco-editor 变 TS2307），单次读数可能虚高 30~125 条。只有「已经超线」时才复跑，
+  // 用多次最小值判定：真实增长仍会被拦，纯抖动不再假红。
+  if (result.count > TS_ERROR_BASELINE) {
+    for (let i = 0; i < 2 && result.count > TS_ERROR_BASELINE; i++) {
+      warn(`tsc reported ${result.count} (> baseline ${TS_ERROR_BASELINE}); re-running to rule out a resolution flap${result.junk ? ` (${result.junk} junk resolution errors)` : ''}`);
+      result = runTsc();
+      samples.push(result.count);
+    }
   }
-  const count = out.split(/\r?\n/).filter((l) => /error TS\d+/.test(l)).length;
+  const count = Math.min(...samples);
   if (count > TS_ERROR_BASELINE) {
     fail(`${count} tsc errors (baseline ${TS_ERROR_BASELINE}, +${count - TS_ERROR_BASELINE}) — do not grow the error count`);
   } else if (count === 0) {
     ok('tsc --noEmit: 0 errors');
   } else {
+    if (samples.length > 1 && new Set(samples).size > 1) {
+      warn(`tsc count fluctuated across runs: ${samples.join(' / ')} — judged by the minimum`);
+    }
     ok(`${count} tsc errors (baseline ${TS_ERROR_BASELINE}${count < TS_ERROR_BASELINE ? `, ${TS_ERROR_BASELINE - count} cleared — lower the baseline` : ''})`);
   }
 }

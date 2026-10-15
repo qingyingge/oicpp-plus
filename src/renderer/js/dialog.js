@@ -8,6 +8,7 @@ class DialogManager {
     constructor() {
         this.currentDialog = null;
         this._keydownHandler = null;
+        this._overlayKeydown = null;
         this.createDialogContainer();
     }
     createDialogContainer() {
@@ -15,7 +16,7 @@ class DialogManager {
         overlay.className = 'dialog-overlay';
         overlay.id = 'dialog-overlay';
         overlay.style.display = 'none';
-        overlay.dataset.closeOnBackdrop = '0';
+        overlay.dataset['closeOnBackdrop'] = '0';
         const dialog = document.createElement('div');
         dialog.className = 'dialog-container';
         dialog.id = 'dialog-container';
@@ -25,7 +26,7 @@ class DialogManager {
             try {
                 if (e.target !== overlay)
                     return;
-                if (overlay.dataset.closeOnBackdrop !== '1')
+                if (overlay.dataset['closeOnBackdrop'] !== '1')
                     return;
                 this.hideDialog();
             }
@@ -37,7 +38,7 @@ class DialogManager {
         const overlay = (document.getElementById('dialog-overlay'));
         const container = (document.getElementById('dialog-container'));
         if (overlay) {
-            overlay.dataset.closeOnBackdrop = '0';
+            overlay.dataset['closeOnBackdrop'] = '0';
         }
         if (container) {
             container.classList.remove('newyear-container');
@@ -87,8 +88,8 @@ class DialogManager {
             setTimeout(() => {
                 if (input instanceof HTMLInputElement) {
                     input.focus();
-                    const start = Number.isFinite(options.selectStart) ? options.selectStart : null;
-                    const end = Number.isFinite(options.selectEnd) ? options.selectEnd : null;
+                    const start = typeof options.selectStart === 'number' && Number.isFinite(options.selectStart) ? options.selectStart : null;
+                    const end = typeof options.selectEnd === 'number' && Number.isFinite(options.selectEnd) ? options.selectEnd : null;
                     if (start !== null && end !== null && end >= start) {
                         input.setSelectionRange(start, end);
                     }
@@ -143,7 +144,7 @@ class DialogManager {
             `;
             overlay.style.display = 'flex';
             this.currentDialog = {
-                resolve: resolve,
+                resolve: (value) => resolve(value),
                 reject: reject
             };
         });
@@ -173,7 +174,7 @@ class DialogManager {
             `;
             overlay.style.display = 'flex';
             this.currentDialog = {
-                resolve: resolve,
+                resolve: (value) => resolve(value),
                 reject: reject
             };
         });
@@ -189,7 +190,7 @@ class DialogManager {
             }
             const isTestDate = (now instanceof Date) && (now.getMonth() === 11) && (now.getDate() === 21);
             const displayYear = isTestDate ? (now.getFullYear() + 1) : now.getFullYear();
-            overlay.dataset.closeOnBackdrop = '1';
+            overlay.dataset['closeOnBackdrop'] = '1';
             container.classList.add('newyear-container');
             const safeYear = this.escapeHtml(String(displayYear));
             container.innerHTML = `
@@ -220,7 +221,7 @@ class DialogManager {
             overlay.style.display = 'flex';
             this.attachEscapeToClose();
             this.currentDialog = {
-                resolve: resolve,
+                resolve: (value) => resolve(value),
                 reject: () => { }
             };
         });
@@ -236,7 +237,7 @@ class DialogManager {
             }
             const displayYear = (now instanceof Date) ? now.getFullYear() : new Date().getFullYear();
             const safeYear = this.escapeHtml(String(displayYear));
-            overlay.dataset.closeOnBackdrop = '1';
+            overlay.dataset['closeOnBackdrop'] = '1';
             container.classList.add('newyear-container');
             container.innerHTML = `
                 <div class="dialog-header newyear-header">
@@ -266,7 +267,7 @@ class DialogManager {
             overlay.style.display = 'flex';
             this.attachEscapeToClose();
             this.currentDialog = {
-                resolve: resolve,
+                resolve: (value) => resolve(value),
                 reject: () => { }
             };
         });
