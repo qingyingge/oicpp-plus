@@ -5416,42 +5416,55 @@ class MonacoEditorManager {
         editor.__breakpointDecos = [];
         editor.__execDeco = null;
 
-        const toggleAt = (line) => {
+        const hasDecoAt = (model, line) => editor.__breakpointDecos.findIndex(id => {
+            const r = model.getDecorationRange(id);
+            return r && r.startLineNumber === line;
+        });
+        const addDeco = (line) => {
+            const [newId] = editor.deltaDecorations([], [{
+                range: new monaco.Range(line, 1, line, 1),
+                options: {
+                    isWholeLine: true,
+                    glyphMarginClassName: 'breakpoint-glyph',
+                    glyphMargin: true
+                }
+            }]);
+            editor.__breakpointDecos.push(newId);
+        };
+        const removeDeco = (idx) => {
+            const removeId = editor.__breakpointDecos[idx];
+            editor.__breakpointDecos.splice(idx, 1);
+            editor.deltaDecorations([removeId], []);
+        };
+
+        const toggleAt = async (line) => {
             try {
                 if (!Number.isFinite(line) || line <= 0) return;
                 const model = editor.getModel();
                 if (!model) return;
-                const idx = editor.__breakpointDecos.findIndex(id => {
-                    const r = model.getDecorationRange(id);
-                    return r && r.startLineNumber === line;
-                });
+                const idx = hasDecoAt(model, line);
                 const file = editor.filePath || this.currentFilePath || editor.fileName;
-                const sendIPC = (channel, payload) => {
-                    try {
-                        if (typeof require !== 'undefined' && window.app?.isDebugging) {
-                            const { ipcRenderer } = require('electron');
-                            ipcRenderer.send(channel, payload);
-                        }
-                    } catch (_) {}
-                };
-                if (idx >= 0) {
-                    const removeId = editor.__breakpointDecos[idx];
-                    editor.__breakpointDecos.splice(idx, 1);
-                    editor.deltaDecorations([removeId], []);
-                    sendIPC('debug-remove-breakpoint', { file, line });
-                } else {
-                    const [newId] = editor.deltaDecorations([], [{
-                        range: new monaco.Range(line, 1, line, 1),
-                        options: {
-                            isWholeLine: true,
-                            glyphMarginClassName: 'breakpoint-glyph',
-                            glyphMargin: true
-                        }
-                    }]);
-                    editor.__breakpointDecos.push(newId);
-                    sendIPC('debug-add-breakpoint', { file, line });
+
+                // 不在调试会话里就不打扰主进程：红点只是用户的编辑意图，
+                // 真正下发给 GDB 的时机由 startDebugSession 统一负责。
+                if (!window.oicppApp?.isDebugging) {
+                    if (idx >= 0) removeDeco(idx); else addDeco(line);
+                    return;
                 }
-            } catch (e) { logWarn('切换断点失败:', e); }
+
+                const { ipcRenderer } = require('electron');
+                if (idx >= 0) {
+                    const result = await ipcRenderer.invoke('debug-remove-breakpoint', { file, line });
+                    // 只有主进程确认 GDB 端真的删了才动 UI，否则红点会留着
+                    // 让用户以为断点还在，实际却已经拦不住程序。
+                    if (result && result.success) removeDeco(idx);
+                } else {
+                    const result = await ipcRenderer.invoke('debug-set-breakpoint', { file, line });
+                    if (result && result.success) addDeco(line);
+                }
+            } catch (e) {
+                logWarn('切换断点失败:', e);
+            }
         };
 
         editor.onMouseDown((e) => {

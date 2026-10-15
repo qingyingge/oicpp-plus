@@ -588,13 +588,15 @@ class GDBDebugger extends EventEmitter {
         if (content.trim()) this.emit('target-output', content);
     }
 
+    // 归一化必须全平台都做。旧实现非 win32 直接原样返回，于是 GDB 回的
+    // file 和渲染层传来的 file 在 Linux 上可能一个是相对/带 ./ 一个是绝对，
+    // 后续按路径匹配断点就会漏。realpath 解析不了时退化成 resolve+normalize。
     _normalizePath(filePath) {
         if (!filePath) return '';
-        if (process.platform !== 'win32') return filePath;
         try {
             return fs.realpathSync.native ? fs.realpathSync.native(filePath) : fs.realpathSync(filePath);
         } catch (_) {
-            return path.normalize(filePath);
+            return path.resolve(filePath);
         }
     }
 

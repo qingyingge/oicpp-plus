@@ -36,6 +36,7 @@ const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
+const { samePath } = require('./utils/path-identity');
 
 const APP_VERSION = '1.5.4';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
@@ -4248,48 +4249,40 @@ function setupIPC() {
         });
     });
 
-    ipcMain.on('debug-add-breakpoint', (event, breakpoint) => {
+    // 断点走 invoke/handle：渲染层要拿到回执才能确认红点状态，
+    // send/on 的火后不顾无法区分「GDB 真的删了」和「消息根本没到」。
+    ipcMain.handle('debug-set-breakpoint', async (event, breakpoint) => {
         logInfo('[主进程] 收到添加断点请求:', breakpoint);
-        addBreakpoint(breakpoint).then(result => {
-            logInfo('[主进程] 断点添加成功:', result);
-            event.reply('debug-output', { message: t('main.debugBreakpointSet', { file: breakpoint.file, line: breakpoint.line }), type: 'info' });
-            event.reply('debug-breakpoint-set', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: true
-            });
-        }).catch(error => {
+        try {
+            const result = await addBreakpoint(breakpoint);
+            if (event.sender) {
+                event.sender.send('debug-output', { message: t('main.debugBreakpointSet', { file: result.file, line: result.line }), type: 'info' });
+            }
+            return result;
+        } catch (error) {
             logError('[主进程] 断点添加失败:', error);
-            event.reply('debug-error', error.message);
-            event.reply('debug-breakpoint-set', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: false,
-                error: error.message
-            });
-        });
+            if (event.sender) {
+                event.sender.send('debug-error', error.message);
+            }
+            return { success: false, file: breakpoint?.file, line: breakpoint?.line, error: error.message };
+        }
     });
 
-    ipcMain.on('debug-remove-breakpoint', (event, breakpoint) => {
+    ipcMain.handle('debug-remove-breakpoint', async (event, breakpoint) => {
         logInfo('[主进程] 收到移除断点请求:', breakpoint);
-        removeBreakpoint(breakpoint).then(result => {
-            logInfo('[主进程] 断点移除成功:', result);
-            event.reply('debug-output', { message: t('main.debugBreakpointRemoved', { file: breakpoint.file, line: breakpoint.line }), type: 'info' });
-            event.reply('debug-breakpoint-removed', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: true
-            });
-        }).catch(error => {
+        try {
+            const result = await removeBreakpoint(breakpoint);
+            if (event.sender) {
+                event.sender.send('debug-output', { message: t('main.debugBreakpointRemoved', { file: result.file, line: result.line }), type: 'info' });
+            }
+            return result;
+        } catch (error) {
             logError('[主进程] 断点移除失败:', error);
-            event.reply('debug-error', error.message);
-            event.reply('debug-breakpoint-removed', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: false,
-                error: error.message
-            });
-        });
+            if (event.sender) {
+                event.sender.send('debug-error', error.message);
+            }
+            return { success: false, file: breakpoint?.file, line: breakpoint?.line, error: error.message };
+        }
     });
 
     ipcMain.on('debug-request-variables', (event) => {
@@ -10988,17 +10981,16 @@ async function startDebugSession(filePath, options = {}) {
         let hasBreakpoints = false;
         if (options.breakpoints && options.breakpoints.length > 0) {
             logInfo('[主进程] 设置断点:', options.breakpoints);
+            // 走 addBreakpoint 同一套记账，否则启动时设的断点不进 breakpoints Map，
+            // 调试中途取消它们会走到「未找到断点」分支。
             for (const breakpoint of options.breakpoints) {
                 try {
-                    if (typeof breakpoint === 'object' && breakpoint.line) {
-                        await gdbDebugger.setBreakpoint(filePath, breakpoint.line);
-                        logInfo(`[主进程] 断点设置成功: ${filePath}:${breakpoint.line}`);
-                        hasBreakpoints = true;
-                    } else if (typeof breakpoint === 'number') {
-                        await gdbDebugger.setBreakpoint(filePath, breakpoint);
-                        logInfo(`[主进程] 断点设置成功: ${filePath}:${breakpoint}`);
-                        hasBreakpoints = true;
-                    }
+                    const target = (typeof breakpoint === 'object' && breakpoint)
+                        ? { file: breakpoint.file || filePath, line: breakpoint.line }
+                        : { file: filePath, line: breakpoint };
+                    if (!target.line) continue;
+                    await addBreakpoint(target);
+                    hasBreakpoints = true;
                 } catch (error) {
                     logWarn('[主进程] 设置断点失败:', error.message);
                 }
@@ -11148,6 +11140,7 @@ async function stopDebugSession() {
         debugSessionRootDir = null;
         lastDebugCommand = null;
         autoSkipInternalCounter = 0;
+        breakpoints.clear();
         broadcastPendingWatchSnapshot();
 
         logInfo('调试会话已停止');
@@ -11161,6 +11154,7 @@ async function stopDebugSession() {
         debugSessionRootDir = null;
         lastDebugCommand = null;
         autoSkipInternalCounter = 0;
+        breakpoints.clear();
         throw error;
     }
 }
@@ -11382,6 +11376,7 @@ function setupDebuggerEvents() {
         debugSessionRootDir = null;
         lastDebugCommand = null;
         autoSkipInternalCounter = 0;
+        breakpoints.clear();
         try {
             if (gdbDebugger && typeof gdbDebugger.getVariables === 'function') {
                 const vars = gdbDebugger.getVariables() || {};
@@ -11547,6 +11542,20 @@ async function sendDebugInput(input) {
     }
 }
 
+// 断点身份判定：GDB 侧 file 经 _normalizePath 处理过，与渲染层传来的原始路径
+// 在分隔符/大小写/8.3 短名上常不一致，所以一律走 samePath 而不是字符串相等。
+// 行号允许 ±1：-break-insert 可能把断点吸附到最近的真实语句。
+function findBreakpointEntry(file, line) {
+    const target = Number(line);
+    for (const [key, entry] of breakpoints) {
+        if (!samePath(entry.file, file)) continue;
+        if (entry.line === target || Math.abs(entry.line - target) <= 1) {
+            return { key, entry };
+        }
+    }
+    return null;
+}
+
 async function addBreakpoint(breakpoint) {
     logInfo('[主进程] 添加断点:', breakpoint);
 
@@ -11559,17 +11568,21 @@ async function addBreakpoint(breakpoint) {
             throw new Error(t('error.breakpointArgsIncomplete'));
         }
 
-        await gdbDebugger.setBreakpoint(breakpoint.file, breakpoint.line);
+        // GDB 返回的 bp 带权威 number/file/line（file 已 normalize）。
+        // 丢掉它就得在删除时靠 file+line 反查，那正是匹配失败的老路。
+        const bp = await gdbDebugger.setBreakpoint(breakpoint.file, breakpoint.line);
 
-        const breakpointKey = `${breakpoint.file}:${breakpoint.line}`;
+        const breakpointKey = `${bp.file}:${bp.line}`;
         breakpoints.set(breakpointKey, {
-            file: breakpoint.file,
-            line: breakpoint.line,
+            file: bp.file,
+            line: bp.line,
+            number: bp.number,
+            pending: !!bp.pending,
             enabled: true
         });
 
-        logInfo('[主进程] 断点添加成功:', breakpointKey);
-        return { success: true, file: breakpoint.file, line: breakpoint.line };
+        logInfo('[主进程] 断点添加成功:', breakpointKey, '#' + bp.number);
+        return { success: true, file: bp.file, line: bp.line, number: bp.number, pending: !!bp.pending };
 
     } catch (error) {
         logError('[主进程] 添加断点失败:', error);
@@ -11589,29 +11602,35 @@ async function removeBreakpoint(breakpoint) {
             throw new Error(t('error.breakpointArgsIncomplete'));
         }
 
-        const breakpointKey = `${breakpoint.file}:${breakpoint.line}`;
-
-        const gdbBreakpoints = gdbDebugger.getBreakpoints();
-        let breakpointNumber = null;
-
-        for (const bp of gdbBreakpoints) {
-            if (bp.file === breakpoint.file && bp.line === breakpoint.line) {
-                breakpointNumber = bp.number;
-                break;
-            }
+        const found = findBreakpointEntry(breakpoint.file, breakpoint.line);
+        if (!found) {
+            // 找不到就不删 Map、不报 success：上一版在这里静默返回 true，
+            // 渲染层据此认为取消成功，GDB 端断点其实还在。
+            throw new Error(t('error.breakpointNotFound', {
+                file: breakpoint.file,
+                line: breakpoint.line
+            }));
         }
 
-        if (breakpointNumber) {
-            await gdbDebugger.removeBreakpoint(breakpointNumber);
-            logInfo(`[主进程] 移除断点 #${breakpointNumber}: ${breakpointKey}`);
-        } else {
-            logWarn(`[主进程] 未找到断点: ${breakpointKey}`);
+        const { key, entry } = found;
+        let breakpointNumber = entry.number;
+        if (!breakpointNumber) {
+            const fallback = gdbDebugger.getBreakpoints().find(bp => samePath(bp.file, entry.file) && bp.line === entry.line);
+            breakpointNumber = fallback ? fallback.number : null;
         }
 
-        breakpoints.delete(breakpointKey);
+        if (!breakpointNumber) {
+            throw new Error(t('error.breakpointNotFound', {
+                file: entry.file,
+                line: entry.line
+            }));
+        }
 
-        logInfo('[主进程] 断点移除成功:', breakpointKey);
-        return { success: true, file: breakpoint.file, line: breakpoint.line };
+        await gdbDebugger.removeBreakpoint(breakpointNumber);
+        breakpoints.delete(key);
+
+        logInfo(`[主进程] 移除断点 #${breakpointNumber}: ${key}`);
+        return { success: true, file: entry.file, line: entry.line, number: breakpointNumber };
 
     } catch (error) {
         logError('[主进程] 移除断点失败:', error);

@@ -94,11 +94,12 @@ class CompileOutputManager {
 
     triggerEditorResize() {
         setTimeout(() => {
-            if (window.app && window.app.editorManager) {
-                const currentEditor = window.app.editorManager.getCurrentEditor();
-                if (currentEditor && typeof currentEditor.layout === 'function') {
-                    currentEditor.layout();
-                }
+            // window.app 从未赋值（全局是 window.oicppApp），旧写法让这个
+            // resize 永远不执行，编译面板展开后 Monaco 不重排。
+            const editorManager = window.editorManager || window.oicppApp?.editorManager;
+            const currentEditor = editorManager?.getCurrentEditor?.();
+            if (currentEditor && typeof currentEditor.layout === 'function') {
+                currentEditor.layout();
             }
         }, 350); // 等待动画完成
     }

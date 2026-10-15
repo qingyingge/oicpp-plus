@@ -532,6 +532,7 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     // 调试会话
     'debug-started', 'debug-stopped', 'debug-running', 'debug-program-exited',
     'debug-ready-waiting', 'debug-breakpoint-hit', 'debug-error',
+    'debug-breakpoint-set', 'debug-breakpoint-removed',
     'debug-variables-updated', 'debug-callstack-updated', 'debug-terminal-output',
     'debug-variable-expanded', 'goto-source-location',
     // 设置与主题

@@ -1644,6 +1644,7 @@
     "debuggerNotRunning": "The debugger is not running",
     "programEnded": "The program has ended",
     "unknownDebugCommand": "Unknown debug command: {command}",
-    "breakpointArgsIncomplete": "Incomplete breakpoint parameters"
+    "breakpointArgsIncomplete": "Incomplete breakpoint parameters",
+    "breakpointNotFound": "Breakpoint not found: {file}:{line}"
   }
 }

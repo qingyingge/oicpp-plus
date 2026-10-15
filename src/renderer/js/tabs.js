@@ -1509,13 +1509,6 @@ class TabManager {
             return true;
         }
 
-        if (window.app && window.app.editorManager) {
-            this.monacoEditorManager = window.app.editorManager;
-            logInfo('TabManager: 从app获取到编辑器管理器引用');
-            this.registerGroupsWithEditorManager();
-            return true;
-        }
-
         return false;
     }
 
@@ -1776,9 +1769,6 @@ class TabManager {
             }
             if (!fileExplorer && sidebar?.panels?.files) {
                 fileExplorer = sidebar.panels.files;
-            }
-            if (!fileExplorer && window.app?.fileExplorer) {
-                fileExplorer = window.app.fileExplorer;
             }
             if (!fileExplorer && window.fileExplorer) {
                 fileExplorer = window.fileExplorer;
