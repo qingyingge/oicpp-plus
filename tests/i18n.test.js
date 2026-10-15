@@ -234,6 +234,90 @@ if (packs['zh-cn'] && packs.en) {
     check('every local "const t =" alias wraps window.i18n.t', badAlias.length === 0, badAlias.slice(0, 4).join(' | '));
 }
 
+// --- 死兜底：`t(...) || '文案'` 不得回流 ---------------------------------------
+// 缺键时 t() 返回 key 本身（非空 truthy），所以 `|| 兜底` 永远不会触发。
+// 这些兜底全是英文，而项目默认语言是 zh-cn —— 它们不仅没用，坏掉时还会把
+// 中文用户误导到英文界面上，且让人误以为「这里有可用兜底」。
+// 唯一允许的是别名定义里的 `|| key`（AGENTS.md 许可的形态，同时兜住
+// window.i18n 整个缺失的情况）。
+{
+    const getAllJs3 = (dir, out = []) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name === 'node_modules' || entry.name === '.git') continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) getAllJs3(full, out);
+            else if (entry.name.endsWith('.js')) out.push(full);
+        }
+        return out;
+    };
+
+    // 从 t( 的左括号起配对，模拟运行时才知道右括号在哪，再用它判断后面是不是 ||
+    const strEnd = (src, i) => {
+        const q = src[i];
+        let j = i + 1;
+        while (j < src.length) {
+            if (src[j] === '\\') { j += 2; continue; }
+            if (src[j] === q) return j + 1;
+            j++;
+        }
+        return -1;
+    };
+    const tplEnd = (src, i) => {
+        let j = i + 1;
+        while (j < src.length) {
+            if (src[j] === '\\') { j += 2; continue; }
+            if (src[j] === '`') return j + 1;
+            if (src[j] === '$' && src[j + 1] === '{') {
+                let d = 1; j += 2;
+                while (j < src.length && d) {
+                    if (src[j] === '`') { j = tplEnd(src, j); continue; }
+                    if (src[j] === '{') { d++; j++; continue; }
+                    if (src[j] === '}') { d--; j++; continue; }
+                    if (src[j] === "'" || src[j] === '"') { j = strEnd(src, j); continue; }
+                    j++;
+                }
+                continue;
+            }
+            j++;
+        }
+        return -1;
+    };
+
+    const callRe = /window\.i18n\??\.t\??\.\s*\(/g;
+    const deadFallback = [];
+    for (const f of getAllJs3(path.join(root, 'src'))) {
+        if (f.startsWith(langDir)) continue;
+        const src = fs.readFileSync(f, 'utf8');
+        const lines = src.split('\n');
+        callRe.lastIndex = 0;
+        let m;
+        while ((m = callRe.exec(src)) !== null) {
+            const lp = src.indexOf('(', m.index + m[0].length - 1);
+            let d = 0, j = lp, s = null;
+            for (; j < src.length; j++) {
+                const c = src[j];
+                if (s) { if (c === '\\') { j++; continue; } if (c === s) s = null; continue; }
+                if (c === '"' || c === "'") { s = c; continue; }
+                if (c === '`') { j = tplEnd(src, j) - 1; continue; }
+                if (c === '(') d++;
+                else if (c === ')') { d--; if (!d) { j++; break; } }
+            }
+            const tail = src.slice(j);
+            const om = /^\s*\|\|\s*/.exec(tail);
+            if (!om) continue;
+            const line = src.slice(0, m.index).split('\n').length;
+            const lineText = lines[line - 1];
+            // 别名定义豁免：const _t = (k) => ... || k / const t = (key, params) => ... || key
+            const isAlias = /^\s*(?:const|let|var)\s+\w+\s*=\s*\(/.test(lineText) || /\b_t\s*=/.test(lineText);
+            const q = tail[om[0].length];
+            if (isAlias && (q === 'k' || /^key\b/.test(tail.slice(om[0].length)))) continue;
+            deadFallback.push(`${path.relative(root, f)}:${line} -> ${tail.slice(om[0].length, om[0].length + 30).trim()}`);
+        }
+    }
+    check('no dead `t(...) || <literal>` fallback remains', deadFallback.length === 0,
+        deadFallback.slice(0, 5).join(' | '));
+}
+
 // --- 孤儿键 ratchet ------------------------------------------------------------
 // 语言包里有、源码里查不到任何引用的键。只锁死不许增长，存量暂留（人工清理时
 // 每清掉一批就把 ci-check 里的 I18N_ORPHAN_KEY_BASELINE 调低一档）。
