@@ -1,3 +1,4 @@
+"use strict";
 const MAX_COMPARE_COUNT = 100000;
 const ccInput = (id) => {
     const el = document.getElementById(id);
@@ -8,7 +9,6 @@ const ccButton = (id) => {
     return el instanceof HTMLButtonElement ? el : null;
 };
 const ccEvt = (e) => (e.target instanceof HTMLInputElement ? e.target : null);
-
 class CodeComparer {
     constructor() {
         this.activeTaskKey = null;
@@ -22,54 +22,54 @@ class CodeComparer {
         this.maxParallelThreads = 1;
         this.tasks = new Map();
         this.eventsbound = false;
-
         this.setupEventListeners();
         this.setupActiveFileListener();
     }
-
     normalizeTaskKey(taskKey) {
-        if (!taskKey || typeof taskKey !== 'string') return '';
+        if (!taskKey || typeof taskKey !== 'string')
+            return '';
         const isWin = typeof window !== 'undefined' && window.process?.platform === 'win32';
         const normalized = String(taskKey).trim();
-        if (!isWin) return normalized;
+        if (!isWin)
+            return normalized;
         return normalized.replace(/\//g, '\\').toLowerCase();
     }
-
     setupActiveFileListener() {
         try {
             window.addEventListener('oicpp:active-file-changed', (e) => {
                 const filePath = e instanceof CustomEvent ? e.detail?.filePath : undefined;
-                if (!filePath || typeof filePath !== 'string') return;
-                if (!this.isSupportedCodeFile(filePath)) return;
+                if (!filePath || typeof filePath !== 'string')
+                    return;
+                if (!this.isSupportedCodeFile(filePath))
+                    return;
                 this.setActiveTaskKey(filePath, { syncTestCodePath: true });
             });
-        } catch (error) {
+        }
+        catch (error) {
             logWarn('[对拍器] 注册活动文件监听失败:', error);
         }
     }
-
     isSupportedCodeFile(filePath) {
         const lower = String(filePath || '').toLowerCase();
         return lower.endsWith('.cpp') || lower.endsWith('.cc') || lower.endsWith('.cxx') || lower.endsWith('.c');
     }
-
     isPythonGenerator(filePath) {
         const lower = String(filePath || '').trim().toLowerCase();
         return lower.endsWith('.py');
     }
-
     async promptMissingPythonInterpreter(task) {
         this.showTaskCompileError(task, 'settings', window.i18n.t('compare.setPythonFirst'));
         try {
             await window.electronAPI?.openCompilerSettings?.();
-        } catch (error) {
+        }
+        catch (error) {
             logWarn('打开编译器设置失败:', error);
         }
     }
-
     getOrCreateTask(taskKey) {
         const normalizedKey = this.normalizeTaskKey(taskKey);
-        if (!normalizedKey) return null;
+        if (!normalizedKey)
+            return null;
         let task = this.tasks.get(normalizedKey);
         if (!task) {
             task = {
@@ -105,35 +105,33 @@ class CodeComparer {
         }
         return task;
     }
-
     getActiveTask() {
         const key = this.activeTaskKey || this.testCodePath || null;
-        if (!key) return null;
+        if (!key)
+            return null;
         return this.getOrCreateTask(key);
     }
-
     setActiveTaskKey(taskKey, options = {}) {
-        if (!taskKey || typeof taskKey !== 'string') return;
+        if (!taskKey || typeof taskKey !== 'string')
+            return;
         const normalizedKey = this.normalizeTaskKey(taskKey);
-        if (!normalizedKey) return;
-
+        if (!normalizedKey)
+            return;
         const task = this.getOrCreateTask(taskKey);
-        if (!task) return;
-
+        if (!task)
+            return;
         this.activeTaskKey = normalizedKey;
-
         if (options.syncTestCodePath) {
             task.config.testCodePath = taskKey;
             this.testCodePath = task.config.testCodePath;
         }
-
         this.applyTaskConfigToInstance(task);
         this.renderTask(task);
     }
-
     applyTaskConfigToInstance(task) {
         const cfg = task?.config;
-        if (!cfg) return;
+        if (!cfg)
+            return;
         this.standardCodePath = cfg.standardCodePath || '';
         this.testCodePath = cfg.testCodePath || '';
         this.generatorPath = cfg.generatorPath || '';
@@ -142,9 +140,9 @@ class CodeComparer {
         this.freopenInputFile = cfg.freopenInputFile || '';
         this.freopenOutputFile = cfg.freopenOutputFile || '';
     }
-
     syncInstanceConfigToTask(task) {
-        if (!task?.config) return;
+        if (!task?.config)
+            return;
         task.config.standardCodePath = this.standardCodePath || '';
         task.config.testCodePath = this.testCodePath || task.config.testCodePath || '';
         task.config.generatorPath = this.generatorPath || '';
@@ -154,7 +152,6 @@ class CodeComparer {
         const freopenOutputEl = ccInput('compare-freopen-output-file');
         task.config.freopenInputFile = this.normalizeFreopenFileName(freopenInputEl?.value || this.freopenInputFile || '');
         task.config.freopenOutputFile = this.normalizeFreopenFileName(freopenOutputEl?.value || this.freopenOutputFile || '');
-
         const compareCountEl = ccInput('compare-count');
         const timeLimitEl = ccInput('time-limit');
         const threadCountEl = ccInput('compare-threads');
@@ -164,100 +161,105 @@ class CodeComparer {
         if (Number.isFinite(compareCount)) {
             const cappedCount = Math.max(1, Math.min(compareCount, MAX_COMPARE_COUNT));
             task.config.compareCount = cappedCount;
-            if (compareCountEl && cappedCount !== compareCount) compareCountEl.value = String(cappedCount);
+            if (compareCountEl && cappedCount !== compareCount)
+                compareCountEl.value = String(cappedCount);
         }
-        if (Number.isFinite(timeLimit)) task.config.timeLimit = timeLimit;
+        if (Number.isFinite(timeLimit))
+            task.config.timeLimit = timeLimit;
         if (Number.isFinite(threadCount)) {
             const capped = Math.max(1, Math.min(threadCount, this.maxParallelThreads || threadCount));
             task.config.threadCount = capped;
-            if (threadCountEl && capped !== threadCount) threadCountEl.value = String(capped);
+            if (threadCountEl && capped !== threadCount)
+                threadCountEl.value = String(capped);
         }
     }
-
     mergeTaskConfigIfEmpty(targetTask, sourceConfig) {
-        if (!targetTask?.config || !sourceConfig) return;
-
+        if (!targetTask?.config || !sourceConfig)
+            return;
         const targetCfg = targetTask.config;
         const s = sourceConfig;
-        if (!targetCfg.standardCodePath && s.standardCodePath) targetCfg.standardCodePath = s.standardCodePath;
-        if (!targetCfg.generatorPath && s.generatorPath) targetCfg.generatorPath = s.generatorPath;
-        if (!targetCfg.spjPath && s.spjPath) targetCfg.spjPath = s.spjPath;
-        if (!targetCfg.freopenInputFile && s.freopenInputFile) targetCfg.freopenInputFile = s.freopenInputFile;
-        if (!targetCfg.freopenOutputFile && s.freopenOutputFile) targetCfg.freopenOutputFile = s.freopenOutputFile;
-
-        if (!targetCfg.useTestlib && s.useTestlib) targetCfg.useTestlib = !!s.useTestlib;
-
-        if (!Number.isFinite(targetCfg.compareCount) && Number.isFinite(s.compareCount)) targetCfg.compareCount = s.compareCount;
-        if (!Number.isFinite(targetCfg.timeLimit) && Number.isFinite(s.timeLimit)) targetCfg.timeLimit = s.timeLimit;
-        if (!Number.isFinite(targetCfg.threadCount) && Number.isFinite(s.threadCount)) targetCfg.threadCount = s.threadCount;
-
-        if (!targetCfg.testCodePath && s.testCodePath) targetCfg.testCodePath = s.testCodePath;
+        if (!targetCfg.standardCodePath && s.standardCodePath)
+            targetCfg.standardCodePath = s.standardCodePath;
+        if (!targetCfg.generatorPath && s.generatorPath)
+            targetCfg.generatorPath = s.generatorPath;
+        if (!targetCfg.spjPath && s.spjPath)
+            targetCfg.spjPath = s.spjPath;
+        if (!targetCfg.freopenInputFile && s.freopenInputFile)
+            targetCfg.freopenInputFile = s.freopenInputFile;
+        if (!targetCfg.freopenOutputFile && s.freopenOutputFile)
+            targetCfg.freopenOutputFile = s.freopenOutputFile;
+        if (!targetCfg.useTestlib && s.useTestlib)
+            targetCfg.useTestlib = !!s.useTestlib;
+        if (!Number.isFinite(targetCfg.compareCount) && Number.isFinite(s.compareCount))
+            targetCfg.compareCount = s.compareCount;
+        if (!Number.isFinite(targetCfg.timeLimit) && Number.isFinite(s.timeLimit))
+            targetCfg.timeLimit = s.timeLimit;
+        if (!Number.isFinite(targetCfg.threadCount) && Number.isFinite(s.threadCount))
+            targetCfg.threadCount = s.threadCount;
+        if (!targetCfg.testCodePath && s.testCodePath)
+            targetCfg.testCodePath = s.testCodePath;
     }
-
     activate() {
         logInfo('激活代码对拍器面板');
         setTimeout(() => {
             this.checkCompilerAndUpdate();
         }, 100);
-
         try {
             const currentEditor = window.editorManager?.getCurrentEditor?.();
             const filePath = currentEditor?.filePath || (currentEditor?.getFilePath && currentEditor.getFilePath());
             if (filePath && this.isSupportedCodeFile(filePath)) {
                 this.setActiveTaskKey(filePath, { syncTestCodePath: true });
-            } else {
-                const task = this.getActiveTask();
-                if (task) this.renderTask(task);
             }
-        } catch (_) { }
+            else {
+                const task = this.getActiveTask();
+                if (task)
+                    this.renderTask(task);
+            }
+        }
+        catch (_) { }
     }
-
     async checkCompilerAndUpdate() {
         try {
             if (window.electronAPI && window.electronAPI.getAllSettings) {
                 const settings = await window.electronAPI.getAllSettings();
                 const hasCompiler = settings && settings.compilerPath;
-
                 const noCompilerMessage = (document.getElementById('no-compiler-message'));
                 const compareFileSection = (document.getElementById('compare-file-section'));
-
                 if (hasCompiler) {
                     noCompilerMessage.style.display = 'none';
                     compareFileSection.style.display = 'block';
-                } else {
+                }
+                else {
                     noCompilerMessage.style.display = 'flex';
                     compareFileSection.style.display = 'none';
                 }
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('检查编译器设置失败:', error);
         }
     }
-
     setupEventListeners() {
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => {
                 this.bindEvents();
             });
-        } else {
+        }
+        else {
             setTimeout(() => this.bindEvents(), 100);
         }
     }
-
     bindEvents() {
         if (this.eventsbound) {
             return;
         }
         this.eventsbound = true;
-
         this.ensureThreadLimitUI();
         // 初始态也走一次，避免进度标签在首次对拍前残留 HTML 里的英文字面量
         setTimeout(() => this.updateProgress(0, 0), 0);
-
         const stdCodeBrowse = (document.getElementById('std-code-browse'));
         const testCodeBrowse = (document.getElementById('test-code-browse'));
         const generatorBrowse = (document.getElementById('generator-browse'));
-
         if (stdCodeBrowse) {
             stdCodeBrowse.addEventListener('click', () => this.browseStandardCode());
         }
@@ -267,7 +269,6 @@ class CodeComparer {
         if (generatorBrowse) {
             generatorBrowse.addEventListener('click', () => this.browseGenerator());
         }
-
         const startBtn = ccButton('compare-start-btn');
         const stopBtn = ccButton('compare-stop-btn');
         const resetBtn = ccButton('compare-reset-btn');
@@ -275,7 +276,6 @@ class CodeComparer {
         const inputExpandBtn = (document.getElementById('input-expand-btn'));
         const stdOutputExpandBtn = (document.getElementById('std-output-expand-btn'));
         const testOutputExpandBtn = (document.getElementById('test-output-expand-btn'));
-
         if (startBtn) {
             startBtn.addEventListener('click', () => this.startComparison());
         }
@@ -297,7 +297,6 @@ class CodeComparer {
         if (testOutputExpandBtn) {
             testOutputExpandBtn.addEventListener('click', () => this.toggleErrorOutputExpand('test'));
         }
-
         const useTestlibCheckbox = ccInput('compare-use-testlib');
         const spjBrowseBtn = (document.getElementById('compare-spj-browse'));
         const compareCountInput = ccInput('compare-count');
@@ -305,7 +304,6 @@ class CodeComparer {
         const timeLimitInput = ccInput('time-limit');
         const freopenInputInput = ccInput('compare-freopen-input-file');
         const freopenOutputInput = ccInput('compare-freopen-output-file');
-
         if (useTestlibCheckbox) {
             useTestlibCheckbox.addEventListener('change', (e) => {
                 this.useTestlib = ccEvt(e)?.checked ?? false;
@@ -316,58 +314,60 @@ class CodeComparer {
                 }
             });
         }
-
         if (spjBrowseBtn) {
             spjBrowseBtn.addEventListener('click', () => this.browseSpjFile());
         }
-
         if (compareCountInput) {
             compareCountInput.addEventListener('change', () => {
                 const task = this.getActiveTask();
-                if (!task) return;
+                if (!task)
+                    return;
                 this.syncInstanceConfigToTask(task);
             });
         }
         if (threadCountInput) {
             threadCountInput.addEventListener('change', () => {
                 const task = this.getActiveTask();
-                if (!task) return;
+                if (!task)
+                    return;
                 this.syncInstanceConfigToTask(task);
             });
         }
         if (timeLimitInput) {
             timeLimitInput.addEventListener('change', () => {
                 const task = this.getActiveTask();
-                if (!task) return;
+                if (!task)
+                    return;
                 this.syncInstanceConfigToTask(task);
             });
         }
-
         if (freopenInputInput) {
             freopenInputInput.addEventListener('change', (e) => {
                 const target = ccEvt(e);
                 const normalized = this.normalizeFreopenFileName(target?.value ?? '');
-                if (target) target.value = normalized;
+                if (target)
+                    target.value = normalized;
                 this.freopenInputFile = normalized;
                 const task = this.getActiveTask();
-                if (!task) return;
+                if (!task)
+                    return;
                 task.config.freopenInputFile = normalized;
             });
         }
-
         if (freopenOutputInput) {
             freopenOutputInput.addEventListener('change', (e) => {
                 const target = ccEvt(e);
                 const normalized = this.normalizeFreopenFileName(target?.value ?? '');
-                if (target) target.value = normalized;
+                if (target)
+                    target.value = normalized;
                 this.freopenOutputFile = normalized;
                 const task = this.getActiveTask();
-                if (!task) return;
+                if (!task)
+                    return;
                 task.config.freopenOutputFile = normalized;
             });
         }
     }
-
     async browseStandardCode() {
         try {
             const result = await window.electronAPI.showOpenDialog({
@@ -378,28 +378,25 @@ class CodeComparer {
                 ],
                 properties: ['openFile']
             });
-
             if (!result.canceled && result.filePaths.length > 0) {
                 this.standardCodePath = result.filePaths[0];
                 this.updateFilePath('std-code-path', this.standardCodePath);
-
                 const task = this.getActiveTask();
                 if (task) {
                     task.config.standardCodePath = this.standardCodePath;
                 }
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('选择标准代码文件失败:', error);
         }
     }
-
     async browseTestCode() {
         try {
             const prevTask = this.getActiveTask();
             if (prevTask) {
                 this.syncInstanceConfigToTask(prevTask);
             }
-
             const result = await window.electronAPI.showOpenDialog({
                 title: window.i18n.t('compare.selectTestCode'),
                 filters: [
@@ -408,11 +405,9 @@ class CodeComparer {
                 ],
                 properties: ['openFile']
             });
-
             if (!result.canceled && result.filePaths.length > 0) {
                 this.testCodePath = result.filePaths[0];
                 this.updateFilePath('test-code-path', this.testCodePath);
-
                 const prevConfig = prevTask?.config ? { ...prevTask.config } : {
                     standardCodePath: this.standardCodePath,
                     generatorPath: this.generatorPath,
@@ -423,21 +418,19 @@ class CodeComparer {
                     compareCount: parseInt(ccInput('compare-count')?.value ?? '') || 100,
                     timeLimit: parseInt(ccInput('time-limit')?.value ?? '') || 1000
                 };
-
                 this.setActiveTaskKey(this.testCodePath, { syncTestCodePath: true });
                 const newTask = this.getActiveTask();
                 this.mergeTaskConfigIfEmpty(newTask, prevConfig);
-
                 if (newTask) {
                     this.applyTaskConfigToInstance(newTask);
                     this.renderTask(newTask);
                 }
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('选择测试代码文件失败:', error);
         }
     }
-
     async browseGenerator() {
         try {
             const result = await window.electronAPI.showOpenDialog({
@@ -448,21 +441,19 @@ class CodeComparer {
                 ],
                 properties: ['openFile']
             });
-
             if (!result.canceled && result.filePaths.length > 0) {
                 this.generatorPath = result.filePaths[0];
                 this.updateFilePath('generator-path', this.generatorPath);
-
                 const task = this.getActiveTask();
                 if (task) {
                     task.config.generatorPath = this.generatorPath;
                 }
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('选择数据生成器文件失败:', error);
         }
     }
-
     async browseSpjFile() {
         try {
             const result = await window.electronAPI.showOpenDialog({
@@ -473,24 +464,22 @@ class CodeComparer {
                 ],
                 properties: ['openFile']
             });
-
             if (!result.canceled && result.filePaths.length > 0) {
                 this.spjPath = result.filePaths[0];
                 const spjPathInput = ccInput('compare-spj-path');
                 if (spjPathInput) {
                     spjPathInput.value = this.spjPath;
                 }
-
                 const task = this.getActiveTask();
                 if (task) {
                     task.config.spjPath = this.spjPath;
                 }
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('选择SPJ文件失败:', error);
         }
     }
-
     updateFilePath(elementId, filePath) {
         const element = (document.getElementById(elementId));
         if (element) {
@@ -498,19 +487,18 @@ class CodeComparer {
             element.textContent = value;
             if (value === 'No file selected' || value === window.i18n.t('compare.noFileSelected')) {
                 element.classList.remove('selected');
-            } else {
+            }
+            else {
                 element.classList.add('selected');
             }
         }
     }
-
     renderTask(task) {
-        if (!task) return;
-
+        if (!task)
+            return;
         this.updateFilePath('std-code-path', task.config.standardCodePath || '');
         this.updateFilePath('test-code-path', task.config.testCodePath || '');
         this.updateFilePath('generator-path', task.config.generatorPath || '');
-
         const compareCountInput = ccInput('compare-count');
         if (compareCountInput && Number.isFinite(task.config.compareCount)) {
             compareCountInput.value = String(task.config.compareCount);
@@ -539,53 +527,47 @@ class CodeComparer {
         if (freopenOutputInput) {
             freopenOutputInput.value = task.config.freopenOutputFile || '';
         }
-
         this.updateUIForTask(task);
-
         if (task.state.mode === 'running' || task.state.mode === 'stopping') {
             this.showStatus();
             this.updateStatusText(task.state.statusText || (window.i18n.t('compare.running')));
             this.updateProgress(task.state.currentTest, task.state.totalTests);
-        } else if (task.state.mode === 'error') {
+        }
+        else if (task.state.mode === 'error') {
             this.showError(task.state.errorResult);
-        } else if (task.state.mode === 'complete' || task.state.mode === 'stopped') {
+        }
+        else if (task.state.mode === 'complete' || task.state.mode === 'stopped') {
             this.showComplete(this.getCompletedCount(task), task.state.warningMessage);
-        } else {
+        }
+        else {
             this.hideStatus();
             this.hideError();
             this.hideComplete();
         }
     }
-
     async startComparison() {
         await this.autoSaveCurrentFile();
-
         if (!this.testCodePath) {
             const task = this.getActiveTask();
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.selectTestCodeFirst'));
             return;
         }
-
         const task = this.getOrCreateTask(this.testCodePath);
-        if (!task) return;
-
+        if (!task)
+            return;
         this.syncInstanceConfigToTask(task);
-
         if (!task.config.standardCodePath || !task.config.testCodePath || !task.config.generatorPath) {
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.selectAllFilesFirst'));
             return;
         }
-
         if (task.state.isRunning) {
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.taskRunning'));
             return;
         }
-
         logInfo('对拍器文件检查:');
         logInfo('标准代码:', task.config.standardCodePath);
         logInfo('测试代码:', task.config.testCodePath);
         logInfo('数据生成器:', task.config.generatorPath);
-
         try {
             const settings = await window.electronAPI.getAllSettings();
             if (!settings || !settings.compilerPath) {
@@ -596,12 +578,12 @@ class CodeComparer {
                 await this.promptMissingPythonInterpreter(task);
                 return;
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('获取编译器设置失败:', error);
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.noCompilerSettings'));
             return;
         }
-
         const compareCountEl = ccInput('compare-count');
         let compareCount = parseInt(compareCountEl?.value) || task.config.compareCount || 100;
         compareCount = Math.max(1, Math.min(compareCount, MAX_COMPARE_COUNT));
@@ -614,11 +596,9 @@ class CodeComparer {
         this.maxParallelThreads = maxParallel;
         const requestedThreadsRaw = parseInt(ccInput('compare-threads')?.value ?? '');
         const requestedThreads = Number.isFinite(requestedThreadsRaw) ? Math.max(1, requestedThreadsRaw) : 1;
-
         task.config.compareCount = compareCount;
         task.config.timeLimit = Number.isFinite(timeLimit) ? timeLimit : task.config.timeLimit;
         task.config.threadCount = requestedThreads;
-
         task.state.totalTests = compareCount;
         task.state.currentTest = 0;
         task.state.completedTests = 0;
@@ -630,39 +610,44 @@ class CodeComparer {
         task.state.warningMessage = null;
         task.state.statusText = (window.i18n.t('compare.ready'));
         task.state.mode = 'running';
-
         this.setActiveTaskKey(task.config.testCodePath, { syncTestCodePath: true });
         this.updateUIForTask(task);
         this.showStatus();
         this.updateStatusText(task.state.statusText);
         this.updateProgress(0, task.state.totalTests);
-
         const workerCount = Math.max(1, Math.min(requestedThreads, maxParallel, task.state.totalTests));
         logInfo('[对拍器] 并行配置', { cpuThreads, maxParallel, requestedThreads, workerCount, totalTests: task.state.totalTests });
-
         this.runTask(task, effectiveTimeLimit, workerCount, maxParallel).catch((error) => {
             logError('对拍过程出错:', error);
             this.showTaskCompileError(task, 'general', (window.i18n.t('compare.compareError')) + (error?.message || String(error)));
         });
     }
-
     async runTask(task, effectiveTimeLimit, workerCount, maxParallel) {
         let cleanupProgress, cleanupError, cleanupComplete, cleanupWarning;
         const cleanupAllListeners = () => {
-            try { cleanupProgress?.(); } catch(_) {}
-            try { cleanupError?.(); } catch(_) {}
-            try { cleanupComplete?.(); } catch(_) {}
-            try { cleanupWarning?.(); } catch(_) {}
+            try {
+                cleanupProgress?.();
+            }
+            catch (_) { }
+            try {
+                cleanupError?.();
+            }
+            catch (_) { }
+            try {
+                cleanupComplete?.();
+            }
+            catch (_) { }
+            try {
+                cleanupWarning?.();
+            }
+            catch (_) { }
         };
-
         try {
             logInfo(`开始对拍！计划执行 ${task.state.totalTests} 组测试，时间限制 ${task.config.timeLimit}ms`);
-
             const compiledPrograms = await this.compilePrograms(task);
             if (!compiledPrograms) {
                 return;
             }
-
             // 新引擎（compare-engine-v2/compare-worker-v6）不实现 useTestlib(SPJ) 与 freopen 文件IO，
             // 检测到这些配置时回退到旧引擎 runComparison（完整支持 prepareFreopenContext/judgeWithSpj/首错即停/错误带 input）
             if (task.config.useTestlib || task.config.freopenInputFile || task.config.freopenOutputFile) {
@@ -671,9 +656,7 @@ class CodeComparer {
                 await this.finishCompareTask(task);
                 return;
             }
-
             logInfo('所有程序编译成功，启动 HPC 对拍引擎');
-
             const config = {
                 stdExe: compiledPrograms.stdExe,
                 testExe: compiledPrograms.testExe,
@@ -689,12 +672,10 @@ class CodeComparer {
                     outputFile: task.config.freopenOutputFile || null
                 }
             };
-
             // 非致命告警（如 fastspawn 回退），只记日志，不打断对拍
             cleanupWarning = window.electronAPI.onCompareWarning((data) => {
                 logWarn('[对拍器][引擎告警]', data?.code || 'warning', data?.message || '');
             });
-
             cleanupProgress = window.electronAPI.onCompareProgress((data) => {
                 const completed = Number(data.current) || 0;
                 task.state.currentTest = completed;
@@ -702,7 +683,6 @@ class CodeComparer {
                 this.updateProgress(completed, data.total);
                 this.updateTaskStatus(task, window.i18n.t('compare.testGroup', { i: data.testIndex }));
             });
-
             cleanupError = window.electronAPI.onCompareError(async (error) => {
                 task.state.errorResult = {
                     testNumber: error.testNumber,
@@ -722,17 +702,16 @@ class CodeComparer {
                 cleanupAllListeners();
                 try {
                     await window.electronAPI.stopCompare();
-                } catch (_) { }
+                }
+                catch (_) { }
                 await this.finishCompareTask(task);
             });
-
             cleanupComplete = window.electronAPI.onCompareComplete((result) => {
                 const completed = Number.isFinite(result.completed) ? result.completed : task.state.completedTests;
                 const failed = Number.isFinite(result.failed) ? result.failed : 0;
                 task.state.completedTests = completed;
                 task.state.currentTest = completed;
                 task.state.failedTests = failed;
-
                 if (result.stopped) {
                     task.state.stopped = true;
                     task.state.mode = 'stopped';
@@ -740,12 +719,14 @@ class CodeComparer {
                         ? window.i18n.t('compare.genFailedWarning', { count: failed })
                         : null;
                     this.updateTaskStatus(task, window.i18n.t('compare.compareStopped', { completed, failed }));
-                } else if (task.state.mode === 'running' || task.state.mode === 'stopping') {
+                }
+                else if (task.state.mode === 'running' || task.state.mode === 'stopping') {
                     task.state.mode = 'complete';
                     task.state.warningMessage = failed > 0
                         ? window.i18n.t('compare.genFailedWarning', { count: failed })
                         : null;
-                } else {
+                }
+                else {
                     logInfo(`对拍已提前结束（状态: ${task.state.mode}），共完成 ${completed} 组测试`);
                 }
                 logInfo(`对拍完成！共执行 ${completed} 组测试`);
@@ -753,16 +734,15 @@ class CodeComparer {
                 cleanupAllListeners();
                 this.finishCompareTask(task);
             });
-
             await window.electronAPI.startCompare(config);
-        } catch (error) {
+        }
+        catch (error) {
             logError('对拍过程出错:', error);
             this.showTaskCompileError(task, 'general', (window.i18n.t('compare.compareError')) + (error?.message || String(error)));
             cleanupAllListeners();
             await this.finishCompareTask(task);
         }
     }
-
     async finishCompareTask(task) {
         task.state.isRunning = false;
         await this.cleanupCompiledExecutables(task);
@@ -770,7 +750,6 @@ class CodeComparer {
             this.updateUIForTask(task);
         }
     }
-
     async compilePrograms(task) {
         const generatedFiles = [];
         const cleanupPartialCompiles = async () => {
@@ -779,26 +758,22 @@ class CodeComparer {
                     if (await window.electronAPI.checkFileExists(filePath)) {
                         await window.electronAPI.deleteFile(filePath);
                     }
-                } catch (_) { }
+                }
+                catch (_) { }
             }
         };
-
         try {
             const settings = await window.electronAPI.getAllSettings();
             const compilerPath = settings.compilerPath;
             let compilerArgs = settings.compilerArgs || '-std=c++14 -O2';
-
             if (task.config.useTestlib) {
                 const compilerDir = await window.electronAPI.pathDirname(compilerPath);
                 const testlibIncludePath = await window.electronAPI.pathJoin(compilerDir, '..', 'include');
                 compilerArgs += ` -I"${testlibIncludePath}"`;
             }
-
             const homeDir = await window.electronAPI.getHomeDir();
             const tempDir = await window.electronAPI.pathJoin(homeDir, '.oicpp-plus', 'compare');
-
             await window.electronAPI.ensureDir(tempDir);
-
             const timestamp = Date.now();
             const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
             const exeSuffix = isWin ? '.exe' : '';
@@ -807,7 +782,6 @@ class CodeComparer {
             let generatorExe = null;
             let generatorRunTarget = null;
             generatedFiles.push(stdExe, testExe);
-
             this.updateTaskStatus(task, window.i18n.t('compare.compileStd'));
             const stdResult = await window.electronAPI.compileFile({
                 inputFile: task.config.standardCodePath,
@@ -816,13 +790,11 @@ class CodeComparer {
                 compilerArgs: compilerArgs,
                 workingDirectory: await window.electronAPI.pathDirname(task.config.standardCodePath)
             });
-
             if (!stdResult.success) {
                 this.showTaskCompileError(task, 'standard', stdResult.stderr || stdResult.stdout || window.i18n.t('compare.compileFail'));
                 await cleanupPartialCompiles();
                 return null;
             }
-
             this.updateTaskStatus(task, window.i18n.t('compare.compileTest'));
             const testResult = await window.electronAPI.compileFile({
                 inputFile: task.config.testCodePath,
@@ -831,13 +803,11 @@ class CodeComparer {
                 compilerArgs: compilerArgs,
                 workingDirectory: await window.electronAPI.pathDirname(task.config.testCodePath)
             });
-
             if (!testResult.success) {
                 this.showTaskCompileError(task, 'test', testResult.stderr || testResult.stdout || window.i18n.t('compare.compileFail'));
                 await cleanupPartialCompiles();
                 return null;
             }
-
             const generatorIsPython = this.isPythonGenerator(task.config.generatorPath);
             if (generatorIsPython) {
                 const interpreterPath = String(settings.pythonInterpreterPath || '').trim();
@@ -851,18 +821,19 @@ class CodeComparer {
                     this.showTaskCompileError(task, 'settings', window.i18n.t('compare.pythonPathInvalid'));
                     try {
                         await window.electronAPI?.openCompilerSettings?.();
-                    } catch (_) { }
+                    }
+                    catch (_) { }
                     await cleanupPartialCompiles();
                     return null;
                 }
-
                 this.updateTaskStatus(task, window.i18n.t('compare.preparePythonGen'));
                 generatorRunTarget = {
                     executablePath: interpreterPath,
                     args: [task.config.generatorPath],
                     workingDirectory: await window.electronAPI.pathDirname(task.config.generatorPath)
                 };
-            } else {
+            }
+            else {
                 generatorExe = await window.electronAPI.pathJoin(tempDir, `generator_${timestamp}${exeSuffix}`);
                 generatedFiles.push(generatorExe);
                 this.updateTaskStatus(task, window.i18n.t('compare.compileGen'));
@@ -873,7 +844,6 @@ class CodeComparer {
                     compilerArgs: compilerArgs,
                     workingDirectory: await window.electronAPI.pathDirname(task.config.generatorPath)
                 });
-
                 if (!generatorResult.success) {
                     this.showTaskCompileError(task, 'generator', generatorResult.stderr || generatorResult.stdout || window.i18n.t('compare.compileFail'));
                     await cleanupPartialCompiles();
@@ -881,29 +851,22 @@ class CodeComparer {
                 }
                 generatorRunTarget = generatorExe;
             }
-
             let spjExe = null;
-
             if (task.config.useTestlib && task.config.spjPath) {
                 this.updateTaskStatus(task, window.i18n.t('compare.compileSpj'));
                 spjExe = await window.electronAPI.pathJoin(tempDir, `spj_${timestamp}${exeSuffix}`);
                 generatedFiles.push(spjExe);
-
                 let spjCompilerArgs = compilerArgs;
-
-
                 if (settings.testlibPath) {
                     const testlibPathInfo = await window.electronAPI.getPathInfo(settings.testlibPath);
                     const testlibIncludePath = testlibPathInfo.dirname;
                     spjCompilerArgs += ` -I"${testlibIncludePath}"`;
-                } else {
+                }
+                else {
                     const pathInfo = await window.electronAPI.getPathInfo(compilerPath);
                     const testlibIncludePath = await window.electronAPI.pathJoin(pathInfo.dirname, '..', 'include');
                     spjCompilerArgs += ` -I"${testlibIncludePath}"`;
                 }
-
-
-
                 const spjResult = await window.electronAPI.compileFile({
                     inputFile: task.config.spjPath,
                     outputFile: spjExe,
@@ -911,21 +874,18 @@ class CodeComparer {
                     compilerArgs: spjCompilerArgs,
                     workingDirectory: await window.electronAPI.pathDirname(task.config.spjPath)
                 });
-
                 if (!spjResult.success) {
                     this.showTaskCompileError(task, 'spj', spjResult.stderr || spjResult.stdout || window.i18n.t('compare.compileFail'));
                     await cleanupPartialCompiles();
                     return null;
                 }
             }
-
             task.compiledExecutables = {
                 stdExe,
                 testExe,
                 generatorExe,
                 spjExe
             };
-
             return {
                 stdExe,
                 testExe,
@@ -933,47 +893,41 @@ class CodeComparer {
                 generatorRunTarget,
                 spjExe
             };
-
-        } catch (error) {
+        }
+        catch (error) {
             logError('编译程序失败:', error);
             this.showTaskCompileError(task, 'general', (window.i18n.t('compare.compileError')) + ': ' + error.message);
             await cleanupPartialCompiles();
             return null;
         }
     }
-
     async runComparison(task, programs, timeLimit, workerCountFromConfig = 1, maxParallelFromStart = 1) {
         const { stdExe, testExe, generatorExe, generatorRunTarget, spjExe } = programs;
         let failedGenerations = 0;
-
         const maxParallel = Math.max(1, maxParallelFromStart || 1);
         const workerCount = Math.max(1, Math.min(workerCountFromConfig || 1, maxParallel, task.state.totalTests));
         const totalTests = task.state.totalTests;
-
         let nextIndex = 1;
         let completed = 0;
         let executed = 0;
         let errorOccurred = false;
-
         // 「已完成 N 组」按实际跑过的组数计（生成失败也算跑过），不再拿计划数充当结果
         const markExecuted = () => {
             executed++;
             task.state.completedTests = executed;
             task.state.currentTest = executed;
         };
-
         const worker = async () => {
             while (true) {
-                if (task.state.shouldStop || errorOccurred) return;
-
+                if (task.state.shouldStop || errorOccurred)
+                    return;
                 const i = nextIndex++;
-                if (i > totalTests) return;
-
+                if (i > totalTests)
+                    return;
                 if (this.activeTaskKey === task.key) {
                     this.updateTaskStatus(task, window.i18n.t('compare.testGroup', { i }));
                     this.updateProgress(this.getCompletedCount(task), totalTests);
                 }
-
                 try {
                     const generation = await this.generateTestData(generatorRunTarget || generatorExe, 0);
                     markExecuted();
@@ -983,8 +937,8 @@ class CodeComparer {
                         const generatorType = generation?.type || 'unknown';
                         try {
                             logError(`第 ${i} 组：数据生成失败 (${generatorType})`, generatorMessage);
-                        } catch (_) { }
-
+                        }
+                        catch (_) { }
                         task.state.errorResult = {
                             testNumber: i,
                             input: generatedOutput ? this.limitOutputLines(generatedOutput, 50) : (window.i18n.t('compare.noGenInput')),
@@ -999,9 +953,7 @@ class CodeComparer {
                         this.renderIfActive(task);
                         return;
                     }
-
                     const inputData = generation.input;
-
                     const stdFreopenContext = await this.prepareFreopenContext(task, 'std', i, inputData);
                     let stdOutput;
                     try {
@@ -1010,7 +962,8 @@ class CodeComparer {
                             : stdExe;
                         stdOutput = await this.runProgram(stdRunOptions, stdFreopenContext.runInput, 0);
                         stdOutput.output = await this.resolveProgramOutput(stdOutput.output, stdFreopenContext);
-                    } finally {
+                    }
+                    finally {
                         await this.cleanupFreopenContext(stdFreopenContext);
                     }
                     if (stdOutput.outputLimitExceeded || stdOutput.timeout || stdOutput.error || stdOutput.exitCode !== 0) {
@@ -1028,12 +981,15 @@ class CodeComparer {
                                     capturedBytes: stdOutput.capturedOutputBytes,
                                     observedBytes: stdOutput.observedOutputBytes
                                 });
-                            } else if (stdOutput.timeout) {
+                            }
+                            else if (stdOutput.timeout) {
                                 logWarn('[对拍器][TLE][STD]', { test: i, durationMs: stdOutput.time, limitMs: 0 });
-                            } else {
+                            }
+                            else {
                                 logWarn('[对拍器][RE][STD]', { test: i, exitCode: stdOutput.exitCode, durationMs: stdOutput.time });
                             }
-                        } catch (_) { }
+                        }
+                        catch (_) { }
                         task.state.errorResult = {
                             testNumber: i,
                             input: inputData,
@@ -1046,7 +1002,6 @@ class CodeComparer {
                         this.renderIfActive(task);
                         return;
                     }
-
                     const testFreopenContext = await this.prepareFreopenContext(task, 'test', i, inputData);
                     let testOutput;
                     try {
@@ -1055,7 +1010,8 @@ class CodeComparer {
                             : testExe;
                         testOutput = await this.runProgram(testRunOptions, testFreopenContext.runInput, timeLimit);
                         testOutput.output = await this.resolveProgramOutput(testOutput.output, testFreopenContext);
-                    } finally {
+                    }
+                    finally {
                         await this.cleanupFreopenContext(testFreopenContext);
                     }
                     if (testOutput.outputLimitExceeded || testOutput.timeout || testOutput.error || testOutput.exitCode !== 0) {
@@ -1073,12 +1029,15 @@ class CodeComparer {
                                     capturedBytes: testOutput.capturedOutputBytes,
                                     observedBytes: testOutput.observedOutputBytes
                                 });
-                            } else if (testOutput.timeout) {
+                            }
+                            else if (testOutput.timeout) {
                                 logWarn('[对拍器][TLE][TEST]', { test: i, durationMs: testOutput.time, limitMs: timeLimit });
-                            } else {
+                            }
+                            else {
                                 logWarn('[对拍器][RE][TEST]', { test: i, exitCode: testOutput.exitCode, durationMs: testOutput.time });
                             }
-                        } catch (_) { }
+                        }
+                        catch (_) { }
                         task.state.errorResult = {
                             testNumber: i,
                             input: inputData,
@@ -1091,7 +1050,6 @@ class CodeComparer {
                         this.renderIfActive(task);
                         return;
                     }
-
                     if (task.config.useTestlib && spjExe) {
                         const spjResult = await this.judgeWithSpj(spjExe, inputData, testOutput.output, stdOutput.output, timeLimit);
                         if (spjResult !== 'AC') {
@@ -1108,14 +1066,16 @@ class CodeComparer {
                             this.renderIfActive(task);
                             return;
                         }
-                    } else {
+                    }
+                    else {
                         const outputsMatch = this.compareOutputs(stdOutput.output, testOutput.output);
                         if (!outputsMatch) {
                             try {
                                 const diff = this.getDifferenceInfo((testOutput.output || '').trimEnd(), (stdOutput.output || '').trimEnd());
                                 const diffText = diff ? `${diff.line}:${diff.char}` : 'none';
                                 logInfo(`[对拍器][WA] test=${i} actualLen=${(testOutput.output || '').length} expectedLen=${(stdOutput.output || '').length} firstDiff=${diffText}`);
-                            } catch (_) { }
+                            }
+                            catch (_) { }
                             task.state.errorResult = {
                                 testNumber: i,
                                 input: inputData,
@@ -1129,11 +1089,10 @@ class CodeComparer {
                             return;
                         }
                     }
-
                     completed++;
                     this.updateTaskProgress(task);
-
-                } catch (error) {
+                }
+                catch (error) {
                     logError(`第 ${i} 组测试出错:`, error);
                     errorOccurred = true;
                     task.state.errorResult = {
@@ -1150,21 +1109,16 @@ class CodeComparer {
                 }
             }
         };
-
         const workers = Array.from({ length: workerCount }, worker);
         await Promise.all(workers);
-
         task.state.currentTest = executed;
         task.state.completedTests = executed;
         this.updateTaskProgress(task);
-
         task.state.failedTests = failedGenerations;
-
         // 出错优先于停止：出错时面板已经是差异/错误视图，不要被「已停止」覆盖
         if (errorOccurred) {
             return;
         }
-
         if (task.state.shouldStop) {
             logInfo(`对拍被手动停止，已执行 ${executed} 组测试，其中有 ${failedGenerations} 组生成失败`);
             task.state.mode = 'stopped';
@@ -1179,32 +1133,30 @@ class CodeComparer {
             this.renderIfActive(task);
             return;
         }
-
         const successfulTests = executed - failedGenerations;
         if (failedGenerations === 0) {
             logInfo(`对拍完成！共执行 ${successfulTests} 组测试，未发现差异`);
             task.state.mode = 'complete';
             task.state.warningMessage = null;
             this.renderIfActive(task);
-        } else {
+        }
+        else {
             logInfo(`对拍完成，但有 ${failedGenerations} 组数据生成失败。共成功执行 ${successfulTests} 组测试，未在成功组中发现差异`);
             task.state.mode = 'complete';
             task.state.warningMessage = window.i18n.t('compare.genFailedWarning', { count: failedGenerations });
             this.renderIfActive(task);
         }
     }
-
     renderIfActive(task) {
-        if (!task) return;
+        if (!task)
+            return;
         if (this.activeTaskKey === task.key) {
             this.renderTask(task);
         }
     }
-
     async generateTestData(generatorProgram, timeLimit) {
         try {
             const result = await this.runProgram(generatorProgram, '', timeLimit);
-
             if (result.outputLimitExceeded) {
                 const limitBytes = result.outputLimitBytes || (256 * 1024 * 1024);
                 const limitMb = Math.max(1, Math.floor(limitBytes / (1024 * 1024)));
@@ -1215,7 +1167,8 @@ class CodeComparer {
                         capturedBytes: result.capturedOutputBytes,
                         observedBytes: result.observedOutputBytes
                     });
-                } catch (_) { }
+                }
+                catch (_) { }
                 return {
                     success: false,
                     type: 'ole',
@@ -1223,9 +1176,11 @@ class CodeComparer {
                     result
                 };
             }
-
             if (result.timeout) {
-                try { logWarn('[对拍器][TLE][GEN]', { durationMs: result.time, limitMs: timeLimit }); } catch (_) { }
+                try {
+                    logWarn('[对拍器][TLE][GEN]', { durationMs: result.time, limitMs: timeLimit });
+                }
+                catch (_) { }
                 return {
                     success: false,
                     type: 'tle',
@@ -1233,11 +1188,11 @@ class CodeComparer {
                     result
                 };
             }
-
             if (result.error || result.exitCode !== 0) {
                 try {
                     logWarn('[对拍器][RE][GEN]', { exitCode: result.exitCode, durationMs: result.time });
-                } catch (_) { }
+                }
+                catch (_) { }
                 return {
                     success: false,
                     type: 're',
@@ -1245,13 +1200,13 @@ class CodeComparer {
                     result
                 };
             }
-
             return {
                 success: true,
                 input: result.output,
                 result
             };
-        } catch (error) {
+        }
+        catch (error) {
             logError('生成测试数据失败:', error);
             return {
                 success: false,
@@ -1261,12 +1216,11 @@ class CodeComparer {
             };
         }
     }
-
     async runProgram(executablePath, input, timeLimit) {
         const execOptions = typeof executablePath === 'object'
             ? { ...executablePath, skipPreKill: true }
             : { executablePath, skipPreKill: true };
-        const result = await window.electronAPI.runProgram(execOptions, input, timeLimit);
+        const result = (await window.electronAPI.runProgram(execOptions, input, timeLimit));
         const trimmedOutput = (result.output || '').trim();
         const outputLimitExceeded = !!result.outputLimitExceeded;
         let errorMessage = '';
@@ -1274,7 +1228,8 @@ class CodeComparer {
             const limitBytes = result.outputLimitBytes || (256 * 1024 * 1024);
             const limitMb = Math.max(1, Math.floor(limitBytes / (1024 * 1024)));
             errorMessage = window.i18n.t('compare.oleLimit', { limit: limitMb });
-        } else if (result.exitCode !== 0) {
+        }
+        else if (result.exitCode !== 0) {
             errorMessage = trimmedOutput || result.stderr || window.i18n.t('compare.exitCode', { code: result.exitCode });
         }
         return {
@@ -1289,22 +1244,19 @@ class CodeComparer {
             observedOutputBytes: result.observedOutputBytes
         };
     }
-
     normalizeFreopenFileName(value) {
         const raw = String(value || '').trim();
-        if (!raw) return '';
+        if (!raw)
+            return '';
         return raw.replace(/[\\/]/g, '').replace(/[<>:"|?*]/g, '').trim();
     }
-
     buildFreopenTaskDirName(taskKey) {
         const normalized = String(taskKey || 'task').replace(/[\\/]/g, '_');
         return normalized.replace(/[<>:"|?*]/g, '_').slice(0, 120);
     }
-
     async prepareFreopenContext(task, role, caseIndex, inputData) {
         const inputFileName = this.normalizeFreopenFileName(task?.config?.freopenInputFile || '');
         const outputFileName = this.normalizeFreopenFileName(task?.config?.freopenOutputFile || '');
-
         if (!inputFileName && !outputFileName) {
             return {
                 runInput: inputData,
@@ -1313,30 +1265,24 @@ class CodeComparer {
                 cleanupFiles: []
             };
         }
-
         const homeDir = await window.electronAPI.getHomeDir();
         const taskDirName = this.buildFreopenTaskDirName(task?.key || 'task');
         const baseDir = await window.electronAPI.pathJoin(homeDir, '.oicpp-plus', 'compare', 'freopen_runs', taskDirName);
         const runDirName = `${role || 'program'}_${caseIndex || 0}`;
         const runDir = await window.electronAPI.pathJoin(baseDir, runDirName);
-
         await window.electronAPI.ensureDir(baseDir);
         await window.electronAPI.ensureDir(runDir);
-
         const cleanupFiles = [];
         let outputFilePath = null;
-
         if (inputFileName) {
             const inputFilePath = await window.electronAPI.pathJoin(runDir, inputFileName);
             await window.electronAPI.writeFile(inputFilePath, inputData || '');
             cleanupFiles.push(inputFilePath);
         }
-
         if (outputFileName) {
             outputFilePath = await window.electronAPI.pathJoin(runDir, outputFileName);
             cleanupFiles.push(outputFilePath);
         }
-
         return {
             runInput: inputFileName ? '' : inputData,
             workingDirectory: runDir,
@@ -1344,24 +1290,23 @@ class CodeComparer {
             cleanupFiles
         };
     }
-
     async cleanupFreopenContext(context) {
-        if (!context || !Array.isArray(context.cleanupFiles)) return;
+        if (!context || !Array.isArray(context.cleanupFiles))
+            return;
         for (const filePath of context.cleanupFiles) {
             try {
                 const exists = await window.electronAPI.checkFileExists(filePath);
                 if (exists) {
                     await window.electronAPI.deleteFile(filePath);
                 }
-            } catch (_) { }
+            }
+            catch (_) { }
         }
     }
-
     async resolveProgramOutput(stdoutOutput, freopenContext) {
         if (!freopenContext?.outputFilePath) {
             return stdoutOutput || '';
         }
-
         try {
             const exists = await window.electronAPI.checkFileExists(freopenContext.outputFilePath);
             if (!exists) {
@@ -1369,32 +1314,28 @@ class CodeComparer {
             }
             const output = await window.electronAPI.readFileContent(freopenContext.outputFilePath);
             return String(output || '').trim();
-        } catch (_) {
+        }
+        catch (_) {
             return stdoutOutput || '';
         }
     }
-
     compareOutputs(output1, output2) {
         const normalize = (str) => {
             return str.split('\n')
-                .map(line => line.trimEnd())
+                .map((line) => line.trimEnd())
                 .join('\n')
                 .replace(/\n+$/, '');
         };
-
         const normalized1 = normalize(output1 || '');
         const normalized2 = normalize(output2 || '');
-
         return normalized1 === normalized2;
     }
-
     async judgeWithSpj(spjExecutablePath, inputData, actualOutput, expectedOutput, timeLimit) {
         try {
             const timestamp = Date.now();
             const inputFile = await window.electronAPI.saveTempFile(`spj_input_${timestamp}.txt`, inputData);
             const actualFile = await window.electronAPI.saveTempFile(`spj_actual_${timestamp}.txt`, actualOutput);
             const expectedFile = await window.electronAPI.saveTempFile(`spj_expected_${timestamp}.txt`, expectedOutput);
-
             try {
                 const workingDir = await window.electronAPI.pathDirname(spjExecutablePath);
                 const spjParams = {
@@ -1404,41 +1345,43 @@ class CodeComparer {
                     workingDirectory: workingDir,
                     skipPreKill: true
                 };
-
                 const spjResult = await window.electronAPI.runProgram(spjParams);
-
                 if (spjResult.outputLimitExceeded) {
                     return 'OLE';
-                } else if (spjResult.timeout) {
+                }
+                else if (spjResult.timeout) {
                     return 'TLE';
-                } else if (spjResult.exitCode === 0) {
+                }
+                else if (spjResult.exitCode === 0) {
                     return 'AC';
-                } else {
+                }
+                else {
                     return 'WA';
                 }
-            } finally {
+            }
+            finally {
                 await window.electronAPI.deleteTempFile(inputFile);
                 await window.electronAPI.deleteTempFile(actualFile);
                 await window.electronAPI.deleteTempFile(expectedFile);
             }
-        } catch (error) {
+        }
+        catch (error) {
             return 'SPJ Error';
         }
     }
-
     async getMaxParallelThreads() {
         const fallbackThreads = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 2;
         let cpuThreads = fallbackThreads;
         try {
-            const remoteCount = /** @type {number} */ (await window.electronAPI?.getCpuThreads?.());
+            const remoteCount = (await window.electronAPI?.getCpuThreads?.());
             if (Number.isFinite(remoteCount) && remoteCount > 0) {
                 cpuThreads = remoteCount;
             }
-        } catch (_) { }
+        }
+        catch (_) { }
         const maxParallel = Math.max(1, Math.floor(cpuThreads / 2));
         return { cpuThreads, maxParallel };
     }
-
     async ensureThreadLimitUI() {
         try {
             const { cpuThreads, maxParallel } = await this.getMaxParallelThreads();
@@ -1450,21 +1393,23 @@ class CodeComparer {
                 const current = parseInt(input.value);
                 if (Number.isFinite(current)) {
                     const capped = Math.max(1, Math.min(current, maxParallel));
-                    if (capped !== current) input.value = String(capped);
+                    if (capped !== current)
+                        input.value = String(capped);
                 }
             }
             if (hint) {
                 hint.textContent = window.i18n.t('compare.threadHint');
             }
             logInfo('[对拍器] 线程上限已更新', { cpuThreads, maxParallel });
-        } catch (error) {
+        }
+        catch (error) {
             logWarn('[对拍器] 获取线程上限失败', error);
         }
     }
-
     stopComparison() {
         const task = this.getActiveTask();
-        if (!task) return;
+        if (!task)
+            return;
         task.state.shouldStop = true;
         task.state.isRunning = false;
         // 保持 stopping 而非 idle：主进程随后才发 compare-complete {stopped:true}，
@@ -1473,12 +1418,12 @@ class CodeComparer {
             task.state.mode = 'stopping';
         }
         this.renderTask(task);
-        window.electronAPI.stopCompare().catch(() => {});
+        window.electronAPI.stopCompare().catch(() => { });
     }
-
     resetComparison() {
         const task = this.getActiveTask();
-        if (!task) return;
+        if (!task)
+            return;
         task.state.shouldStop = true;
         task.state.isRunning = false;
         task.state.currentTest = 0;
@@ -1491,57 +1436,55 @@ class CodeComparer {
         task.state.warningMessage = null;
         task.state.mode = 'idle';
         const progressFill = (document.getElementById('progress-fill'));
-        if (progressFill) progressFill.style.width = '0%';
+        if (progressFill)
+            progressFill.style.width = '0%';
         this.renderTask(task);
     }
-
     updateUIForTask(task) {
         const startBtn = ccButton('compare-start-btn');
         const stopBtn = ccButton('compare-stop-btn');
         const resetBtn = ccButton('compare-reset-btn');
-
         const running = !!task?.state?.isRunning && (task?.state?.mode === 'running' || task?.state?.mode === 'stopping');
-
-        if (startBtn) startBtn.disabled = running;
-        if (stopBtn) stopBtn.disabled = !running;
-        if (resetBtn) resetBtn.disabled = running;
+        if (startBtn)
+            startBtn.disabled = running;
+        if (stopBtn)
+            stopBtn.disabled = !running;
+        if (resetBtn)
+            resetBtn.disabled = running;
     }
-
     updateStatusText(text) {
         const statusText = (document.getElementById('status-text'));
-        if (statusText) statusText.textContent = text;
+        if (statusText)
+            statusText.textContent = text;
     }
-
     updateTaskStatus(task, text) {
-        if (!task) return;
+        if (!task)
+            return;
         task.state.statusText = text;
         if (this.activeTaskKey === task.key) {
             this.updateStatusText(text);
         }
     }
-
     // 只表示「已完成 N 组 / 共 M 组」，不表示当前正在跑第几组，
     // 避免与状态栏的「第 i 组测试」（由 nextIndex 分配）语义混淆、并行时互相矛盾
     updateProgress(completedTests, totalTests) {
         const progressLabel = (document.getElementById('current-test'));
         const progressFill = (document.getElementById('progress-fill'));
-
         if (progressLabel) {
             progressLabel.textContent = window.i18n.t('compare.progressGroup', { current: completedTests, total: totalTests });
         }
-
         if (progressFill && totalTests > 0) {
             const percentage = Math.max(0, Math.min(100, (completedTests / totalTests) * 100));
             progressFill.style.width = `${percentage}%`;
         }
     }
-
     updateTaskProgress(task) {
-        if (!task) return;
-        if (this.activeTaskKey !== task.key) return;
+        if (!task)
+            return;
+        if (this.activeTaskKey !== task.key)
+            return;
         this.updateProgress(task.state.currentTest, task.state.totalTests);
     }
-
     showStatus() {
         const statusSection = (document.getElementById('compare-status'));
         if (statusSection) {
@@ -1550,14 +1493,12 @@ class CodeComparer {
         this.hideError();
         this.hideComplete();
     }
-
     hideStatus() {
         const statusSection = (document.getElementById('compare-status'));
         if (statusSection) {
             statusSection.style.display = 'none';
         }
     }
-
     showError(errorResult) {
         const errorSection = (document.getElementById('compare-result'));
         const errorTitle = (document.getElementById('error-title'));
@@ -1570,14 +1511,11 @@ class CodeComparer {
         const inputExpandBtn = (document.getElementById('input-expand-btn'));
         const stdOutputExpandBtn = (document.getElementById('std-output-expand-btn'));
         const testOutputExpandBtn = (document.getElementById('test-output-expand-btn'));
-
         this.updateErrorOutputExpandButton(inputExpandBtn, errorResult, 'input');
         this.updateErrorOutputExpandButton(stdOutputExpandBtn, errorResult, 'std');
         this.updateErrorOutputExpandButton(testOutputExpandBtn, errorResult, 'test');
-
         if (errorResult && errorSection) {
             errorSection.style.display = 'block';
-
             if (errorTitle) {
                 const errType = errorResult.errorType;
                 if (errType === 'generator_program_error') {
@@ -1585,44 +1523,53 @@ class CodeComparer {
                     let detailLabel = window.i18n.t('compare.errorRuntime');
                     if (generatorType === 'ole') {
                         detailLabel = window.i18n.t('compare.errorOverLimit');
-                    } else if (generatorType === 'tle') {
+                    }
+                    else if (generatorType === 'tle') {
                         detailLabel = window.i18n.t('compare.errorTimeout');
-                    } else if (generatorType === 're') {
+                    }
+                    else if (generatorType === 're') {
                         detailLabel = window.i18n.t('compare.errorRuntime');
                     }
                     errorTitle.textContent = (window.i18n.t('compare.errorDataGeneratorPrefix')) + detailLabel;
-                } else if (errType === 'standard_program_error' || errType === 'test_program_error') {
+                }
+                else if (errType === 'standard_program_error' || errType === 'test_program_error') {
                     errorTitle.textContent = window.i18n.t('compare.errorRunTimeout');
-                } else if (errType === 'compile_error') {
+                }
+                else if (errType === 'compile_error') {
                     const compileTypeMap = {
                         'standard': window.i18n.t('compare.stdCompileFail'),
                         'test': window.i18n.t('compare.testCompileFail'),
                         'generator': window.i18n.t('compare.genCompileFail'),
                         'settings': window.i18n.t('compare.envNotSet'),
-                        'general': window.i18n.t('compare.compileFail')};
+                        'general': window.i18n.t('compare.compileFail')
+                    };
                     errorTitle.textContent = compileTypeMap[errorResult.compileType] || (window.i18n.t('compare.compileFail'));
-                } else if (errType === 'generator') {
+                }
+                else if (errType === 'generator') {
                     errorTitle.textContent = (window.i18n.t('compare.errorDataGeneratorPrefix')) + (window.i18n.t('compare.errorRuntime'));
-                } else if (errType === 'std_tle' || errType === 'test_tle') {
+                }
+                else if (errType === 'std_tle' || errType === 'test_tle') {
                     errorTitle.textContent = window.i18n.t('compare.errorRunTimeout');
-                } else if (errType === 'std_re' || errType === 'test_re') {
+                }
+                else if (errType === 'std_re' || errType === 'test_re') {
                     errorTitle.textContent = window.i18n.t('compare.errorRuntime');
-                } else if (errType === 'output_limit') {
+                }
+                else if (errType === 'output_limit') {
                     errorTitle.textContent = window.i18n.t('compare.errorOutputLimit');
-                } else if (errType === 'worker_crash' || errType === 'engine' || errType === 'exception' || errType === 'fastspawn_fallback' || errType === 'incomplete_run') {
+                }
+                else if (errType === 'worker_crash' || errType === 'engine' || errType === 'exception' || errType === 'fastspawn_fallback' || errType === 'incomplete_run') {
                     errorTitle.textContent = window.i18n.t('compare.engineError');
-                } else {
+                }
+                else {
                     errorTitle.textContent = window.i18n.t('compare.foundDiff');
                 }
             }
-
             if (errorTestNum) {
                 // 编译失败 / 引擎级错误没有具体组号，不渲染「第 0 组」
                 errorTestNum.textContent = Number(errorResult.testNumber) > 0
                     ? window.i18n.t('compare.errorGroup', { number: errorResult.testNumber })
                     : '';
             }
-
             if (inputDiff) {
                 const inputFull = errorResult.input || '';
                 const shown = errorResult.inputExpanded ? inputFull : this.limitOutputLines(inputFull, 100);
@@ -1630,7 +1577,6 @@ class CodeComparer {
                     ? shown + '\n' + window.i18n.t('compare.outputTruncated')
                     : shown;
             }
-
             if (stdOutputDiff) {
                 const errType = errorResult.errorType;
                 if (errType === 'compile_error') {
@@ -1638,54 +1584,61 @@ class CodeComparer {
                     if (stdOutputDiffLabel) {
                         stdOutputDiffLabel.textContent = window.i18n.t('compare.errorStandardOutput');
                     }
-                } else if (errType === 'generator_program_error') {
+                }
+                else if (errType === 'generator_program_error') {
                     const stdFullOutput = errorResult.stdOutput || '';
                     stdOutputDiff.textContent = errorResult.stdOutputExpanded ? stdFullOutput : this.limitOutputLines(stdFullOutput, 100);
                     if (stdOutputDiffLabel) {
                         stdOutputDiffLabel.textContent = window.i18n.t('compare.errorGeneratorOutput');
                     }
-                } else if (errType === 'standard_program_error' || errType === 'test_program_error') {
+                }
+                else if (errType === 'standard_program_error' || errType === 'test_program_error') {
                     const stdFullOutput = errorResult.stdOutput || '';
                     stdOutputDiff.textContent = errorResult.stdOutputExpanded ? stdFullOutput : this.limitOutputLines(stdFullOutput, 100);
                     if (stdOutputDiffLabel) {
                         stdOutputDiffLabel.textContent = window.i18n.t('compare.errorStandardOutput');
                     }
-                } else if (this.isEngineErrorType(errType)) {
+                }
+                else if (this.isEngineErrorType(errType)) {
                     const engineMessage = this.buildEngineErrorText(errorResult);
                     stdOutputDiff.textContent = errorResult.stdOutputExpanded ? engineMessage : this.limitOutputLines(engineMessage, 100);
                     if (stdOutputDiffLabel) {
                         stdOutputDiffLabel.textContent = this.getEngineErrorLabel(errType, 'std');
                     }
-                } else {
+                }
+                else {
                     if (errorResult.usedSpj) {
                         if (stdOutputDiffLabel) {
                             stdOutputDiffLabel.textContent = window.i18n.t('compare.errorStandardOutput');
                         }
                         const stdFullOutput = errorResult.stdOutput || '';
                         stdOutputDiff.textContent = errorResult.stdOutputExpanded ? stdFullOutput : this.limitOutputLines(stdFullOutput, 100);
-                    } else {
+                    }
+                    else {
                         // 输出被引擎截断时算出的行列对真实输出不可信，只提示不可靠
                         const truncated = !!(errorResult.stdOutputTruncated || errorResult.testOutputTruncated);
                         const diffPosition = truncated ? null : this.getDifferenceInfo(errorResult.stdOutput, errorResult.testOutput);
                         if (stdOutputDiffLabel) {
                             if (truncated) {
                                 stdOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorStandardOutput')) + ` <span class="diff-info">(${window.i18n.t('compare.diffPositionUnreliable')})</span>`;
-                            } else if (diffPosition) {
+                            }
+                            else if (diffPosition) {
                                 const diffMsg = window.i18n.t('compare.diffPosition', { line: diffPosition.line, char: diffPosition.char });
                                 stdOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorStandardOutput')) + ` <span class="diff-info">(${diffMsg})</span>`;
-                            } else {
+                            }
+                            else {
                                 stdOutputDiffLabel.textContent = window.i18n.t('compare.errorStandardOutput');
                             }
                         }
                         if (errorResult.stdOutputExpanded) {
                             this.renderExpandedOutput(stdOutputDiff, errorResult.stdOutput);
-                        } else {
+                        }
+                        else {
                             stdOutputDiff.innerHTML = this.formatCompareOutput(errorResult.stdOutput, errorResult.testOutput, 'standard', truncated);
                         }
                     }
                 }
             }
-
             if (testOutputDiff) {
                 const errType = errorResult.errorType;
                 if (errType === 'compile_error') {
@@ -1693,67 +1646,71 @@ class CodeComparer {
                     if (testOutputDiffLabel) {
                         testOutputDiffLabel.textContent = window.i18n.t('compare.errorTestOutput');
                     }
-                } else if (errType === 'generator_program_error') {
+                }
+                else if (errType === 'generator_program_error') {
                     const testFullOutput = errorResult.testOutput || '';
                     testOutputDiff.textContent = errorResult.testOutputExpanded ? testFullOutput : this.limitOutputLines(testFullOutput, 100);
                     if (testOutputDiffLabel) {
                         testOutputDiffLabel.textContent = window.i18n.t('compare.errorStdTestOutput');
                     }
-                } else if (errType === 'standard_program_error' || errType === 'test_program_error') {
+                }
+                else if (errType === 'standard_program_error' || errType === 'test_program_error') {
                     const testFullOutput = errorResult.testOutput || '';
                     testOutputDiff.textContent = errorResult.testOutputExpanded ? testFullOutput : this.limitOutputLines(testFullOutput, 100);
                     if (testOutputDiffLabel) {
                         testOutputDiffLabel.textContent = window.i18n.t('compare.errorTestOutput');
                     }
-                } else if (this.isEngineErrorType(errType)) {
+                }
+                else if (this.isEngineErrorType(errType)) {
                     const engineMessage = this.buildEngineErrorText(errorResult);
                     testOutputDiff.textContent = errorResult.testOutputExpanded ? engineMessage : this.limitOutputLines(engineMessage, 100);
                     if (testOutputDiffLabel) {
                         testOutputDiffLabel.textContent = this.getEngineErrorLabel(errType, 'test');
                     }
-                } else {
+                }
+                else {
                     if (errorResult.usedSpj) {
                         if (testOutputDiffLabel) {
                             testOutputDiffLabel.textContent = window.i18n.t('compare.errorTestOutput');
                         }
                         const testFullOutput = errorResult.testOutput || '';
                         testOutputDiff.textContent = errorResult.testOutputExpanded ? testFullOutput : this.limitOutputLines(testFullOutput, 100);
-                    } else {
+                    }
+                    else {
                         const truncated = !!(errorResult.stdOutputTruncated || errorResult.testOutputTruncated);
                         const diffPosition = truncated ? null : this.getDifferenceInfo(errorResult.testOutput, errorResult.stdOutput);
                         if (testOutputDiffLabel) {
                             if (truncated) {
                                 testOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorTestOutput')) + ` <span class="diff-info">(${window.i18n.t('compare.diffPositionUnreliable')})</span>`;
-                            } else if (diffPosition) {
+                            }
+                            else if (diffPosition) {
                                 const diffMsg = window.i18n.t('compare.diffPosition', { line: diffPosition.line, char: diffPosition.char });
                                 testOutputDiffLabel.innerHTML = (window.i18n.t('compare.errorTestOutput')) + ` <span class="diff-info">(${diffMsg})</span>`;
-                            } else {
+                            }
+                            else {
                                 testOutputDiffLabel.textContent = window.i18n.t('compare.errorTestOutput');
                             }
                         }
                         if (errorResult.testOutputExpanded) {
                             this.renderExpandedOutput(testOutputDiff, errorResult.testOutput);
-                        } else {
+                        }
+                        else {
                             testOutputDiff.innerHTML = this.formatCompareOutput(errorResult.testOutput, errorResult.stdOutput, 'test', truncated);
                         }
                     }
                 }
             }
-
             this.updateErrorOutputExpandButton(inputExpandBtn, errorResult, 'input');
             this.updateErrorOutputExpandButton(stdOutputExpandBtn, errorResult, 'std');
             this.updateErrorOutputExpandButton(testOutputExpandBtn, errorResult, 'test');
         }
-
         this.hideStatus();
         this.hideComplete();
     }
-
     // 'output_limit' 之前不在列表里，会掉进 else 分支被当成 WA 渲染
     isEngineErrorType(errType) {
         return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'output_limit', 'worker_crash', 'engine', 'exception', 'fastspawn_fallback', 'incomplete_run'].includes(errType);
     }
-
     getEngineErrorLabel(errType, panel) {
         const isStd = panel === 'std';
         if (errType === 'generator') {
@@ -1770,15 +1727,14 @@ class CodeComparer {
         }
         return window.i18n.t('compare.engineError');
     }
-
     // 本地化文案在前，原始技术细节（含可能的英文）折叠在后，仅供排查
     buildEngineErrorText(errorResult) {
         const localized = errorResult.errorMessage || '';
         const raw = (errorResult.rawErrorMessage || '').trim();
-        if (!raw || raw === localized) return localized;
+        if (!raw || raw === localized)
+            return localized;
         return localized ? `${localized}\n[${raw}]` : `[${raw}]`;
     }
-
     // 引擎/worker 只给稳定的 code，具体文案由渲染层查 i18n，避免英文直入中文界面
     getEngineErrorMessage(error) {
         const code = error?.code || '';
@@ -1803,7 +1759,8 @@ class CodeComparer {
             incomplete_run: 'compare.incompleteRun'
         };
         const key = map[code];
-        if (!key) return window.i18n.t('compare.engineError');
+        if (!key)
+            return window.i18n.t('compare.engineError');
         if (code.endsWith('_exit') && Number.isFinite(exitCode)) {
             return window.i18n.t(key, { code: exitCode, error: error?.message || '' });
         }
@@ -1812,54 +1769,47 @@ class CodeComparer {
         }
         return window.i18n.t(key);
     }
-
     hideError() {
         const errorSection = (document.getElementById('compare-result'));
         if (errorSection) {
             errorSection.style.display = 'none';
         }
     }
-
     // 实际完成数（成功比对 + 生成失败均计入已执行），不再回退到计划数
     getCompletedCount(task) {
         const completed = task?.state?.completedTests;
-        if (Number.isFinite(completed)) return completed;
+        if (Number.isFinite(completed))
+            return completed;
         const total = task?.state?.totalTests;
         return Number.isFinite(total) ? total : 0;
     }
-
     showComplete(completedCount, warningMessage = null, stopped = false) {
         const completeSection = (document.getElementById('compare-complete'));
         const completedTests = (document.getElementById('completed-tests'));
         const completeInfo = completeSection?.querySelector('.complete-info span');
-
         if (completeSection) {
             completeSection.style.display = 'flex';
         }
-
         if (completedTests) {
             completedTests.textContent = completedCount;
         }
-
         if (warningMessage && completeInfo) {
             completeInfo.innerHTML = (window.i18n.t('compare.completedWithWarning', { count: completedCount, warning: warningMessage }));
-        } else if (completeInfo) {
+        }
+        else if (completeInfo) {
             completeInfo.innerHTML = stopped
                 ? (window.i18n.t('compare.stoppedText', { count: completedCount }))
                 : (window.i18n.t('compare.completedText', { count: completedCount }));
         }
-
         this.hideStatus();
         this.hideError();
     }
-
     hideComplete() {
         const completeSection = (document.getElementById('compare-complete'));
         if (completeSection) {
             completeSection.style.display = 'none';
         }
     }
-
     showTaskCompileError(task, errorType, errorMessage) {
         if (!task) {
             this.showError({
@@ -1875,7 +1825,6 @@ class CodeComparer {
             this.hideComplete();
             return;
         }
-
         task.state.errorResult = {
             errorType: 'compile_error',
             compileType: errorType,
@@ -1888,11 +1837,9 @@ class CodeComparer {
         task.state.mode = 'error';
         task.state.isRunning = false;
         task.state.shouldStop = true;
-
         if (this.activeTaskKey === task.key) {
             this.renderTask(task);
         }
-
         try {
             logError('[CompareCompileError]', {
                 type: errorType,
@@ -1907,7 +1854,8 @@ class CodeComparer {
                     freopenOutputFile: task.config.freopenOutputFile
                 }
             });
-        } catch (_) { }
+        }
+        catch (_) { }
         try {
             const text = String(errorMessage || '');
             const lines = text.split(/\r?\n/).filter(l => l.trim());
@@ -1929,49 +1877,46 @@ class CodeComparer {
             if (diags.length && window.editorManager && window.editorManager.applyDiagnostics) {
                 window.editorManager.applyDiagnostics(diags);
             }
-        } catch { }
+        }
+        catch { }
     }
-
     // 完成面板的数字现在是真实的完成组数，不能再被拿来当任意提示文案展示
     showSuccessMessage(message) {
         logInfo(String(message || ''));
     }
-
     renderExpandedOutput(element, output) {
         if (!element) {
             return;
         }
         element.textContent = output == null ? '' : String(output);
     }
-
     getOutputSizeBytes(output) {
         const safeOutput = output == null ? '' : String(output);
         try {
             return new TextEncoder().encode(safeOutput).length;
-        } catch (_) {
+        }
+        catch (_) {
             return safeOutput.length;
         }
     }
-
     // 自适应 B/KB/MB：小输出不再显示成「0.00 MB」
     getOutputSizeText(output) {
         const bytes = this.getOutputSizeBytes(output);
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        if (bytes < 1024)
+            return `${bytes} B`;
+        if (bytes < 1024 * 1024)
+            return `${(bytes / 1024).toFixed(1)} KB`;
         return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
     }
-
-        isLineLimitedOutputTruncated(output, maxLines = 100) {
+    isLineLimitedOutputTruncated(output, maxLines = 100) {
         const safeOutput = output == null ? '' : String(output);
         return safeOutput.split('\n').length > maxLines;
     }
-
     isCompareOutputTruncated(currentOutput, otherOutput) {
         const currentLines = (currentOutput || '').split('\n');
         const otherLines = (otherOutput || '').split('\n');
         const maxLines = 100;
         const contextLines = 10;
-
         let firstDiffLine = -1;
         const maxCompareLines = Math.max(currentLines.length, otherLines.length);
         for (let i = 0; i < maxCompareLines; i++) {
@@ -1982,52 +1927,43 @@ class CodeComparer {
                 break;
             }
         }
-
         if (firstDiffLine === -1) {
             return currentLines.length > maxLines;
         }
-
         const startLine = Math.max(0, firstDiffLine - contextLines);
         const endLine = Math.min(currentLines.length, firstDiffLine + contextLines + 1);
         const displayLines = Math.min(maxLines, endLine - startLine);
         const actualEndLine = startLine + displayLines;
-
         return startLine > 0 || actualEndLine < currentLines.length;
     }
-
     isErrorOutputTruncated(errorResult, outputType) {
-        if (!errorResult) return false;
-
+        if (!errorResult)
+            return false;
         if (outputType === 'input') {
             return this.isLineLimitedOutputTruncated(errorResult.input || '', 100);
         }
-
         const output = outputType === 'std'
             ? (errorResult.stdOutput || '')
             : (errorResult.testOutput || '');
         const errType = errorResult.errorType;
         const isEngineErr = this.isEngineErrorType(errType);
-
         if (errType === 'compile_error') {
             return false;
         }
-
         if (isEngineErr) {
             return this.isLineLimitedOutputTruncated(errorResult.errorMessage || '', 100);
         }
-
         if (errType === 'generator_program_error' || errType === 'standard_program_error' || errType === 'test_program_error' || errorResult.usedSpj) {
             return this.isLineLimitedOutputTruncated(output, 100);
         }
-
         const otherOutput = outputType === 'std'
             ? (errorResult.testOutput || '')
             : (errorResult.stdOutput || '');
         return this.isCompareOutputTruncated(output, otherOutput);
     }
-
     updateErrorOutputExpandButton(button, errorResult, outputType) {
-        if (!button) return;
+        if (!button)
+            return;
         const truncated = this.isErrorOutputTruncated(errorResult, outputType);
         if (!truncated) {
             button.style.display = 'none';
@@ -2036,42 +1972,39 @@ class CodeComparer {
         let expanded = false;
         if (outputType === 'input') {
             expanded = !!errorResult?.inputExpanded;
-        } else if (outputType === 'std') {
+        }
+        else if (outputType === 'std') {
             expanded = !!errorResult?.stdOutputExpanded;
-        } else {
+        }
+        else {
             expanded = !!errorResult?.testOutputExpanded;
         }
         button.style.display = 'inline-flex';
         button.textContent = expanded ? (window.i18n.t('compare.collapse')) : (window.i18n.t('compare.expand'));
         button.title = expanded ? window.i18n.t('compare.collapse') : window.i18n.t('compare.expand');
     }
-
     async toggleErrorOutputExpand(outputType) {
         const task = this.getActiveTask();
         const errorResult = task?.state?.errorResult;
         if (!task || !errorResult) {
             return;
         }
-
         const key = outputType === 'input'
             ? 'inputExpanded'
             : (outputType === 'std' ? 'stdOutputExpanded' : 'testOutputExpanded');
         if (!this.isErrorOutputTruncated(errorResult, outputType)) {
             return;
         }
-
         if (errorResult[key]) {
             errorResult[key] = false;
             this.renderIfActive(task);
             return;
         }
-
         const output = outputType === 'input'
             ? (errorResult.input || '')
             : (outputType === 'std' ? (errorResult.stdOutput || '') : (errorResult.testOutput || ''));
         const sizeText = this.getOutputSizeText(output);
         const message = window.i18n.t('compare.expandConfirmMsg', { size: sizeText });
-
         let shouldExpand = false;
         try {
             if (window.dialogManager?.showActionDialog) {
@@ -2080,24 +2013,24 @@ class CodeComparer {
                     { id: 'expand', label: window.i18n.t('compare.expandAnyway'), className: 'dialog-btn-confirm' }
                 ]);
                 shouldExpand = action === 'expand';
-            } else if (window.dialogManager?.showConfirmDialog) {
+            }
+            else if (window.dialogManager?.showConfirmDialog) {
                 shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('compare.expandConfirmTitle'), window.i18n.t('compare.expandConfirmMsgText', { size: sizeText }));
-            } else {
+            }
+            else {
                 shouldExpand = window.confirm(window.i18n.t('compare.expandConfirmMsgText', { size: sizeText }));
             }
-        } catch (error) {
+        }
+        catch (error) {
             logWarn('展开输出确认失败，已取消展开:', error);
             shouldExpand = false;
         }
-
         if (!shouldExpand) {
             return;
         }
-
         errorResult[key] = true;
         this.renderIfActive(task);
     }
-
     // 截断提示由调用方通过显式标记传递，不再拿译文反推（AGENTS.md M57 同类反模式）
     limitOutputLines(output, maxLines) {
         const safeOutput = output == null ? '' : String(output);
@@ -2107,19 +2040,15 @@ class CodeComparer {
         }
         return safeOutput;
     }
-
     getTruncationText() {
         return window.i18n?.t?.('compare.outputTruncated') || '[truncated]';
     }
-
     formatCompareOutput(currentOutput, otherOutput, outputType, upstreamTruncated = false) {
         const currentLines = currentOutput.split('\n');
         const otherLines = otherOutput.split('\n');
         const maxLines = 100;
-
         let firstDiffLine = -1;
         const maxCompareLines = Math.max(currentLines.length, otherLines.length);
-
         for (let i = 0; i < maxCompareLines; i++) {
             const currentLine = currentLines[i] || '';
             const otherLine = otherLines[i] || '';
@@ -2128,75 +2057,64 @@ class CodeComparer {
                 break;
             }
         }
-
         if (firstDiffLine === -1) {
             const allLines = currentOutput.split('\n');
             const lineLimited = allLines.length > maxLines;
             const visible = lineLimited ? allLines.slice(0, maxLines) : allLines;
             return this.addLineNumbers(visible.join('\n'), lineLimited || upstreamTruncated);
         }
-
         const contextLines = 10;
         const startLine = Math.max(0, firstDiffLine - contextLines);
         const endLine = Math.min(currentLines.length, firstDiffLine + contextLines + 1);
-
         const displayLines = Math.min(maxLines, endLine - startLine);
         const actualEndLine = startLine + displayLines;
-
         let result = '';
-
         for (let i = startLine; i < actualEndLine && i < currentLines.length; i++) {
             const lineNum = i + 1;
             const line = currentLines[i] || '';
             const isDiffLine = i === firstDiffLine;
-
             if (isDiffLine && outputType === 'test') {
                 const otherLine = otherLines[i] || '';
                 const highlightedLine = this.highlightCharacterDifferences(line, otherLine);
                 result += `<div class="diff-line"><span class="line-number">${lineNum.toString().padStart(4)} </span>${highlightedLine}</div>`;
-            } else {
+            }
+            else {
                 result += `<div class="diff-line"><span class="line-number">${lineNum.toString().padStart(4)} </span>${this.escapeHtml(line)}</div>`;
             }
         }
-
         if (actualEndLine < currentLines.length || upstreamTruncated) {
             result += `<div class="diff-truncated">${this.getTruncationText()}</div>`;
         }
-
         return result;
     }
-
     // truncated 只表示「尾部还有内容被省略」，标记行由本函数自己追加，
-// 不再逐行比对译文判断哪一行是截断标记
+    // 不再逐行比对译文判断哪一行是截断标记
     addLineNumbers(output, truncated = false) {
         const lines = output.split('\n');
         let result = '';
-
         for (let i = 0; i < lines.length; i++) {
             const lineNum = i + 1;
             const line = lines[i];
             result += `<div class="diff-line"><span class="line-number">${lineNum.toString().padStart(4)} </span>${this.escapeHtml(line)}</div>`;
         }
-
         if (truncated) {
             result += `<div class="diff-truncated">${this.getTruncationText()}</div>`;
         }
-
         return result;
     }
-
     highlightCharacterDifferences(text1, text2) {
-        if (!text1 && !text2) return '';
-        if (!text1) return `<span class="diff-highlight">${this.escapeHtml(text2)}</span>`;
-        if (!text2) return this.escapeHtml(text1);
-
+        if (!text1 && !text2)
+            return '';
+        if (!text1)
+            return `<span class="diff-highlight">${this.escapeHtml(text2)}</span>`;
+        if (!text2)
+            return this.escapeHtml(text1);
         const t1 = this.normalizeForCompare(text1);
         const t2 = this.normalizeForCompare(text2);
-
         let diffIndex = 0;
         const minLength = Math.min(t1.length, t2.length);
-        while (diffIndex < minLength && t1[diffIndex] === t2[diffIndex]) diffIndex++;
-
+        while (diffIndex < minLength && t1[diffIndex] === t2[diffIndex])
+            diffIndex++;
         if (diffIndex < t1.length) {
             const beforeDiff = this.escapeHtml(t1.substring(0, diffIndex));
             const diffChar = this.escapeHtml(t1.substring(diffIndex, diffIndex + 1));
@@ -2210,20 +2128,16 @@ class CodeComparer {
         }
         return result;
     }
-
     getDifferenceInfo(actual, expected) {
         const normActual = this.normalizeForCompare(actual);
         const normExpected = this.normalizeForCompare(expected);
-
-        if (normActual === normExpected) return null;
-
+        if (normActual === normExpected)
+            return null;
         const actualLines = normActual.split('\n');
         const expectedLines = normExpected.split('\n');
-
         for (let i = 0; i < Math.max(actualLines.length, expectedLines.length); i++) {
             const actualLine = actualLines[i] || '';
             const expectedLine = expectedLines[i] || '';
-
             if (actualLine !== expectedLine) {
                 for (let j = 0; j < Math.max(actualLine.length, expectedLine.length); j++) {
                     if (actualLine[j] !== expectedLine[j]) {
@@ -2239,14 +2153,13 @@ class CodeComparer {
                 };
             }
         }
-
         return null;
     }
-
     // 与 compareOutputs 保持同一口径：逐行去行尾空白 + 去尾部空行，
     // 否则「仅行尾空格不同」会被这里判成差异并报出错误的行列
     normalizeForCompare(text) {
-        if (text == null) return '';
+        if (text == null)
+            return '';
         return String(text)
             .replace(/^\uFEFF/, '')
             .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
@@ -2256,17 +2169,14 @@ class CodeComparer {
             .join('\n')
             .replace(/\n+$/, '');
     }
-
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
-
     highlightDifferences(text1, text2) {
         return this.highlightCharacterDifferences(text1, text2);
     }
-
     async exportResults() {
         const task = this.getActiveTask();
         const errorResult = task?.state?.errorResult;
@@ -2274,23 +2184,18 @@ class CodeComparer {
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.noExportResults'));
             return;
         }
-
         try {
             const result = await window.electronAPI.showOpenDialog({
                 title: window.i18n.t('compare.selectExportDir'),
                 defaultPath: 'test_data',
                 properties: ['openDirectory', 'createDirectory']
             });
-
             if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
                 const exportDir = result.filePaths[0];
-
                 await window.electronAPI.ensureDir(exportDir);
-
                 const inputFile = await window.electronAPI.pathJoin(exportDir, 'input.in');
                 const stdOutputFile = await window.electronAPI.pathJoin(exportDir, 'std_or_force_output.out');
                 const testOutputFile = await window.electronAPI.pathJoin(exportDir, 'code_output.out');
-
                 // 被引擎截断过的数据必须显式标注，否则用户会拿不完整的数据去本地复现
                 const withNotice = (text, truncated) => {
                     const body = text == null ? '' : String(text);
@@ -2299,35 +2204,31 @@ class CodeComparer {
                 await window.electronAPI.createFile(inputFile, withNotice(errorResult.input, errorResult.inputTruncated));
                 await window.electronAPI.createFile(stdOutputFile, withNotice(errorResult.stdOutput, errorResult.stdOutputTruncated));
                 await window.electronAPI.createFile(testOutputFile, withNotice(errorResult.testOutput, errorResult.testOutputTruncated));
-
                 this.showSuccessMessage(window.i18n.t('compare.exportedTo', { dir: exportDir }));
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('导出失败:', error);
-            this.showTaskCompileError('general', window.i18n.t('compare.exportFailed', { error: error.message }));
+            this.showTaskCompileError(null, 'general', window.i18n.t('compare.exportFailed', { error: error.message }));
         }
     }
-
     async cleanupCompiledExecutables(task) {
         if (!task?.compiledExecutables) {
             return;
         }
-
         const { stdExe, testExe, generatorExe, spjExe } = task.compiledExecutables;
         const executables = [stdExe, testExe, generatorExe, spjExe].filter(Boolean);
-
         for (const exe of executables) {
             try {
                 await window.electronAPI.deleteTempFile(exe);
                 logInfo('[对拍器] 已清理编译产物:', exe);
-            } catch (error) {
+            }
+            catch (error) {
                 logWarn('[对拍器] 清理编译产物失败:', exe, error);
             }
         }
-
         task.compiledExecutables = null;
     }
-
     async autoSaveCurrentFile() {
         try {
             const currentEditor = window.editorManager?.getCurrentEditor();
@@ -2335,19 +2236,16 @@ class CodeComparer {
                 logInfo('[对拍器-自动保存] 没有当前编辑器');
                 return;
             }
-
             const filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
             if (!filePath || filePath.startsWith('untitled')) {
                 logInfo('[对拍器-自动保存] 文件未保存或为临时文件，跳过自动保存');
                 return;
             }
-
             const content = currentEditor.getValue();
             if (content === null || content === undefined) {
                 logInfo('[对拍器-自动保存] 无法获取文件内容');
                 return;
             }
-
             if (window.tabManager) {
                 const fileName = filePath.split(/[\\/]/).pop();
                 const tab = window.tabManager.getTabByFileName && window.tabManager.getTabByFileName(fileName);
@@ -2356,13 +2254,10 @@ class CodeComparer {
                     return;
                 }
             }
-
             logInfo('[对拍器-自动保存] 开始保存文件:', filePath);
-
             if (window.electronAPI && window.electronAPI.saveFile) {
                 await window.electronAPI.saveFile(filePath, content);
                 logInfo('[对拍器-自动保存] 文件保存成功');
-
                 if (window.tabManager) {
                     const fileName = filePath.split(/[\\/]/).pop();
                     if (window.tabManager.markTabAsSaved) {
@@ -2372,15 +2267,16 @@ class CodeComparer {
                         window.tabManager.markTabAsSavedByUniqueKey(filePath);
                     }
                 }
-            } else {
+            }
+            else {
                 logWarn('[对拍器-自动保存] electronAPI 不可用');
             }
-        } catch (error) {
+        }
+        catch (error) {
             logError('[对拍器-自动保存] 保存文件失败:', error);
         }
     }
 }
-
 if (typeof window !== 'undefined') {
     window.CodeComparer = CodeComparer;
 }

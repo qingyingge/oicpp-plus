@@ -142,7 +142,7 @@ check('every engine code maps to an existing key in both locales',
 // ---- 输入框 clamp 必须回写 ----
 
 check('compare count clamp is written back to the input',
-    /cappedCount !== compareCount\) compareCountEl\.value = String\(cappedCount\)/.test(comparerSource));
+    /cappedCount !== compareCount\)\s*compareCountEl\.value = String\(cappedCount\)/.test(comparerSource));
 check('start-time compare count clamp is also written back',
     /compareCountEl && Number\(compareCountEl\.value\) !== compareCount/.test(comparerSource));
 check('compare count cap is a named constant shared by both clamps',
