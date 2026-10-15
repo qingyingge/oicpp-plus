@@ -1,5 +1,19 @@
 export {};
 
+type FileOperationOptions = {
+    overwrite?: boolean;
+    ignoreIfExists?: boolean;
+    recursive?: boolean;
+    ignoreIfNotExists?: boolean;
+};
+
+type DocumentChangeOptions = {
+    overwrite?: boolean;
+    ignoreIfExists?: boolean;
+    recursive?: boolean;
+    ignoreIfNotExists?: boolean;
+};
+
 interface MonacoRange {
     startLineNumber: number;
     startColumn: number;
@@ -40,7 +54,7 @@ interface FileOperationEdit {
     resource: unknown;
     oldResource?: unknown;
     newResource?: unknown;
-    options?: Record<string, unknown>;
+    options?: FileOperationOptions;
 }
 
 interface TextEditEdit {
@@ -97,7 +111,7 @@ interface DocumentChange {
     newUri?: string;
     textDocument?: { uri: string; version: number };
     edits?: Array<{ range: LspRange; newText: string }>;
-    options?: Record<string, unknown>;
+    options?: DocumentChangeOptions;
 }
 
 function toMonacoWorkspaceEdit(workspaceEdit: LspWorkspaceEdit | undefined, monaco: Monaco | undefined): { edits: WorkspaceEdit[] } | undefined {

@@ -141,7 +141,7 @@ interface Window {
   MonacoEditorManager: typeof MonacoEditorManager;
   CompilerManager: typeof CompilerManager;
   IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
-  OicppLspUtils?: typeof import('../js/lsp-utils.js');
+  OicppLspUtils: typeof import('../js/lsp-utils.js');
   // 从未赋值，仅死守卫读（window.sidebar / window.fileExplorer / window.app.* 无赋值位点）
   sidebar?: InstanceType<typeof import('../js/sidebar.js')>;
   fileExplorer?: unknown;

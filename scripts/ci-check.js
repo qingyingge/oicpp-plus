@@ -1330,7 +1330,9 @@ function runFastspawnSyntaxCheck() {
 //  暴露出 10 条真实的参数不匹配——这是收窄带来的信号，不是退化）。
 // 装上 @types 或换 tsc 版本后必须重跑基线脚本，并同步更新这里。
 // 4664 → 4034：src/renderer/settings/compiler.ts 迁移到 .ts 并收窄到 0 error。
-const TS_ERROR_BASELINE = 3281;
+// 3281 → 3274：lsp-utils 的 FileOperation/DocumentChange options 从 Record<string, unknown>
+// 收成精确接口，并把 global.d.ts 的 window.OicppLspUtils 由可选改成必选。
+const TS_ERROR_BASELINE = 3274;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
