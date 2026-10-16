@@ -1368,7 +1368,7 @@ function runFastspawnSyntaxCheck() {
 //  _setVariable 形参收 unknown 自行收窄，_variables 三个 scope 的 value 类型换成
 //  WatchEntry，expandVariable 的 root/path/children 链条随之闭合。顺手清掉最后一处
 //  any：_ttyProcess: ChildProcess | null。
-const TS_ERROR_BASELINE = 2830; // 2913 → 2830：debugPanel 清零（payload 形状 interface + 方括号访问；顺手去掉 3 处 root! 非空断言）
+const TS_ERROR_BASELINE = 2717; // 2830 → 2717：cloudSync 清零（CloudRef/CloudPayload/ContextMenu 可辨联合 + csRecord 系列收窄）
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

@@ -19,6 +19,66 @@ interface CloudItem {
     updatedAt?: string | null;
 }
 
+// 交互事件从 data-* 组装出的节点引用；CloudItem 同样满足该形状
+interface CloudRef {
+    path: string;
+    type: string;
+    name: string;
+    extension?: string;
+}
+
+// request() 交给消费方的业务数据体，字段一律用守卫（typeof/Array.isArray）消费
+interface CloudPayload {
+    items?: unknown;
+    remainingFiles?: number;
+    content?: string;
+}
+
+// IPC/JSON.parse 返回的未知对象，只允许方括号取值后再收窄
+interface UnknownRecord {
+    [key: string]: unknown;
+}
+
+// 右键菜单项：动作项必有 label，分隔项只有 separator
+interface ContextMenuActionItem {
+    label: string;
+    action?: () => void | Promise<unknown>;
+    separator?: false;
+}
+
+interface ContextMenuSeparatorItem {
+    separator: true;
+}
+
+type ContextMenuItem = ContextMenuActionItem | ContextMenuSeparatorItem;
+
+// 文件名校验结果：valid 为 false 时 error 必为文案，为 true 时必为 null
+type FileNameCheck = { valid: true; error: null } | { valid: false; error: string };
+
+// 收窄为对象记录，便于按方括号读取未知字段
+function csRecord(value: unknown): UnknownRecord | null {
+    return (typeof value === 'object' && value !== null) ? value as UnknownRecord : null;
+}
+
+// 未知字段取字符串，非字符串返回空串
+function csStr(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
+
+// 未知字段取数字，非数字返回 0
+function csNum(value: unknown): number {
+    return typeof value === 'number' ? value : 0;
+}
+
+// catch 到的未知错误取正文：Error 优先，其次带 message 字段的对象，都没有则空串
+function csErrMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    const message = csRecord(error)?.['message'];
+    if (typeof message === 'string') return message;
+    if (typeof message === 'number') return String(message);
+    return '';
+}
+
 export class CloudSyncPanel {
     rootPath: string;
     currentPath: string;
@@ -31,13 +91,13 @@ export class CloudSyncPanel {
     isLoading: boolean;
     _lastLoggedIn: boolean;
     _contextMenu: HTMLElement | null;
-    treeEl: HTMLElement | null;
-    summaryEl: HTMLElement | null;
-    remainingEl: HTMLElement | null;
-    quotaHelpBtn: HTMLElement | null;
-    uploadProgressEl: HTMLElement | null;
-    uploadProgressTextEl: HTMLElement | null;
-    uploadProgressFillEl: HTMLElement | null;
+    treeEl: HTMLElement | null | undefined;
+    summaryEl: HTMLElement | null | undefined;
+    remainingEl: HTMLElement | null | undefined;
+    quotaHelpBtn: HTMLElement | null | undefined;
+    uploadProgressEl: HTMLElement | null | undefined;
+    uploadProgressTextEl: HTMLElement | null | undefined;
+    uploadProgressFillEl: HTMLElement | null | undefined;
 
     constructor() {
         this.rootPath = '/';
@@ -90,7 +150,7 @@ export class CloudSyncPanel {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (!(btn instanceof HTMLElement)) return;
-                const action = btn.dataset.action;
+                const action = btn.dataset['action'];
                 switch (action) {
                     case 'cloud-new-file':
                         this.createNewFile();
@@ -117,10 +177,10 @@ export class CloudSyncPanel {
         this.treeEl.addEventListener('click', (e) => {
             const item = csTreeItem(e);
             if (!item) return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
-            const file = { path, type, name, extension: this.getExtension(name) };
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
+            const file: CloudRef = { path, type, name, extension: this.getExtension(name) };
             this.selectItem(file, { toggle: e.ctrlKey || e.metaKey });
             if (type === 'folder') {
                 this.toggleFolder(item, file);
@@ -132,10 +192,10 @@ export class CloudSyncPanel {
         this.treeEl.addEventListener('dblclick', (e) => {
             const item = csTreeItem(e);
             if (!item) return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
-            const file = { path, type, name, extension: this.getExtension(name) };
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
+            const file: CloudRef = { path, type, name, extension: this.getExtension(name) };
             this.selectItem(file);
             if (type === 'folder') {
                 this.toggleFolder(item, file);
@@ -153,10 +213,10 @@ export class CloudSyncPanel {
                 this.showEmptyAreaContextMenu(e);
                 return;
             }
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
-            const file = { path, type, name, extension: this.getExtension(name) };
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
+            const file: CloudRef = { path, type, name, extension: this.getExtension(name) };
             if (!this.selectedItems.has(path)) {
                 this.selectItem(file);
             }
@@ -180,12 +240,15 @@ export class CloudSyncPanel {
             }
         };
 
-        this.treeEl.addEventListener('dragstart', (e) => {
+        const tree = this.treeEl;
+        if (!tree) return;
+
+        tree.addEventListener('dragstart', (e) => {
             const item = csTreeItem(e);
             if (!item) return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
+            const path = item.dataset['path'];
+            const type = item.dataset['kind'];
+            const name = item.dataset['name'];
             if (!path || !type) return;
             const payload = JSON.stringify({ path, type, name });
             e.dataTransfer?.setData('text/plain', payload);
@@ -193,39 +256,43 @@ export class CloudSyncPanel {
             item.classList.add('dragging');
         });
 
-        this.treeEl.addEventListener('dragend', (e) => {
+        tree.addEventListener('dragend', (e) => {
             const item = csTreeItem(e);
             if (item) item.classList.remove('dragging');
             clearDragState();
         });
 
-        this.treeEl.addEventListener('dragover', (e) => {
+        tree.addEventListener('dragover', (e) => {
             e.preventDefault();
             clearDragState();
             const item = csTreeItem(e);
             if (!item) {
-                this.treeEl.classList.add('drag-over-root');
+                tree.classList.add('drag-over-root');
                 return;
             }
-            const type = item.dataset.kind;
+            const type = item.dataset['kind'];
             if (type === 'folder') {
                 item.classList.add('drag-over');
             }
         });
 
-        this.treeEl.addEventListener('drop', async (e) => {
+        tree.addEventListener('drop', async (e) => {
             e.preventDefault();
             clearDragState();
             const data = e.dataTransfer?.getData('text/plain');
             if (!data) return;
-            let payload;
-            try { payload = JSON.parse(data); } catch (_) { return; }
-            if (!payload?.path || !payload?.type) return;
+            let parsed: unknown;
+            try { parsed = JSON.parse(data); } catch (_) { return; }
+            const record = csRecord(parsed);
+            const path = csStr(record?.['path']);
+            const type = csStr(record?.['type']);
+            if (!path || !type) return;
+            const payload: CloudRef = { path, type, name: csStr(record?.['name']) };
 
             const item = csTreeItem(e);
             let targetFolder = '/';
-            if (item && item.dataset.kind === 'folder') {
-                targetFolder = item.dataset.path;
+            if (item && item.dataset['kind'] === 'folder') {
+                targetFolder = item.dataset['path'] ?? '/';
             }
 
             await this.moveItem(payload, targetFolder);
@@ -255,7 +322,7 @@ export class CloudSyncPanel {
         }, true);
     }
 
-    setLoggedInState(loggedIn) {
+    setLoggedInState(loggedIn: boolean) {
         this._lastLoggedIn = !!loggedIn;
         if (!loggedIn) {
             this.itemsCache.clear();
@@ -294,23 +361,28 @@ export class CloudSyncPanel {
             await this.loadDirectory('/');
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.refreshFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.refreshFail')), 'error');
         } finally {
             this.isLoading = false;
         }
     }
 
-    async loadDirectory(dirPath) {
+    async loadDirectory(dirPath: string) {
         const data = await this.request('GET', '/cloudSync/list', { path: dirPath });
         if (!data) return;
-        const items = Array.isArray(data.items) ? data.items : [];
-        const normalized = items.map(item => ({
-            name: item.name,
-            type: item.type,
-            path: this.normalizePath(item.path || this.joinPath(dirPath, item.name)),
-            size: item.size || 0,
-            updatedAt: item.updated_at || item.updatedAt || null
-        }));
+        const rawItems = data.items;
+        const items: unknown[] = Array.isArray(rawItems) ? rawItems : [];
+        const normalized: CloudItem[] = items.map(raw => {
+            const item: UnknownRecord = csRecord(raw) ?? {};
+            const name = csStr(item['name']);
+            return {
+                name,
+                type: csStr(item['type']),
+                path: this.normalizePath(csStr(item['path']) || this.joinPath(dirPath, name)),
+                size: csNum(item['size']),
+                updatedAt: csStr(item['updated_at']) || csStr(item['updatedAt']) || null
+            };
+        });
         const filtered = normalized.filter(item => !this.isHiddenSettingsBackupName(item.name));
         this.itemsCache.set(this.normalizePath(dirPath), filtered);
         if (typeof data.remainingFiles === 'number') {
@@ -331,7 +403,7 @@ export class CloudSyncPanel {
         this.treeEl.appendChild(fragment);
     }
 
-    renderItemsRecursive(dirPath, level, container) {
+    renderItemsRecursive(dirPath: string, level: number, container: DocumentFragment | Element) {
         const items = this.itemsCache.get(this.normalizePath(dirPath)) || [];
         const sorted = [...items].sort((a, b) => {
             if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
@@ -347,18 +419,18 @@ export class CloudSyncPanel {
         }
     }
 
-    createTreeItem(item, level) {
+    createTreeItem(item: CloudRef, level: number) {
         const node = document.createElement('div');
         node.className = 'tree-item';
-        node.dataset.path = item.path;
-        node.dataset.kind = item.type;
+        node.dataset['path'] = item.path;
+        node.dataset['kind'] = item.type;
         if (item.type === 'folder') {
-            node.dataset.type = 'folder';
+            node.dataset['type'] = 'folder';
         } else {
             const ext = this.getExtension(item.name);
-            node.dataset.type = ext ? ext.replace(/^\./, '') : 'file';
+            node.dataset['type'] = ext ? ext.replace(/^\./, '') : 'file';
         }
-        node.dataset.name = item.name;
+        node.dataset['name'] = item.name;
         node.style.paddingLeft = `${level * 16 + 8}px`;
         node.setAttribute('draggable', 'true');
 
@@ -393,7 +465,7 @@ export class CloudSyncPanel {
         return node;
     }
 
-    async moveItem(payload, targetFolder) {
+    async moveItem(payload: CloudRef, targetFolder: string) {
         const sourcePath = this.normalizePath(payload.path);
         const sourceType = payload.type;
         const name = payload.name || this.getBaseName(sourcePath);
@@ -433,7 +505,7 @@ export class CloudSyncPanel {
                 if (this.itemsCache.has(sourcePath)) {
                     const cached = this.itemsCache.get(sourcePath);
                     this.itemsCache.delete(sourcePath);
-                    this.itemsCache.set(targetPath, cached);
+                    if (cached) this.itemsCache.set(targetPath, cached);
                 }
                 if (this.expandedFolders.has(sourcePath)) {
                     this.expandedFolders.delete(sourcePath);
@@ -443,18 +515,21 @@ export class CloudSyncPanel {
             this.renderTree();
             this.showMessage(window.i18n.t('cloud.moveSuccess'), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.moveFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.moveFail')), 'error');
         }
     }
 
-    async copyFolderRecursive(sourcePath, targetPath) {
+    async copyFolderRecursive(sourcePath: string, targetPath: string) {
         await this.request('POST', '/cloudSync/createFolder', { path: targetPath });
         const data = await this.request('GET', '/cloudSync/list', { path: sourcePath });
-        const items = Array.isArray(data?.items) ? data.items : [];
-        for (const item of items) {
-            const itemPath = this.normalizePath(item.path || this.joinPath(sourcePath, item.name));
-            const destPath = this.joinPath(targetPath, item.name);
-            if (item.type === 'folder') {
+        const rawItems = data?.items;
+        const items: unknown[] = Array.isArray(rawItems) ? rawItems : [];
+        for (const raw of items) {
+            const item: UnknownRecord = csRecord(raw) ?? {};
+            const name = csStr(item['name']);
+            const itemPath = this.normalizePath(csStr(item['path']) || this.joinPath(sourcePath, name));
+            const destPath = this.joinPath(targetPath, name);
+            if (csStr(item['type']) === 'folder') {
                 await this.copyFolderRecursive(itemPath, destPath);
                 await this.request('POST', '/cloudSync/delete', { path: itemPath });
             } else {
@@ -468,19 +543,19 @@ export class CloudSyncPanel {
         }
     }
 
-    isDescendantPath(target, source) {
+    isDescendantPath(target: string, source: string) {
         const src = this.normalizePath(source);
         const tgt = this.normalizePath(target);
         return tgt.startsWith(src + '/');
     }
 
-    getBaseName(p) {
+    getBaseName(p: string | undefined) {
         const norm = this.normalizePath(p);
         const parts = norm.split('/').filter(Boolean);
-        return parts.length ? parts[parts.length - 1] : '';
+        return parts.length ? (parts[parts.length - 1] ?? '') : '';
     }
 
-    getFileIcon(item) {
+    getFileIcon(item: CloudRef) {
         if (item.type === 'folder') return 'folder';
         const ext = this.getExtension(item.name);
         switch (ext) {
@@ -501,13 +576,13 @@ export class CloudSyncPanel {
         }
     }
 
-    isHiddenSettingsBackupName(name) {
+    isHiddenSettingsBackupName(name: string) {
         const raw = String(name || '').trim();
         const base = raw.split('/').filter(Boolean).pop() || raw;
         return /^OICPP_user_\d{8}_\d{6}_.+_settings\.cpp$/i.test(base);
     }
 
-    toggleFolder(node, folder) {
+    toggleFolder(node: HTMLElement, folder: CloudRef) {
         if (folder.type !== 'folder') return;
         const path = folder.path;
         if (this.expandedFolders.has(path)) {
@@ -526,7 +601,7 @@ export class CloudSyncPanel {
         }
     }
 
-    selectItem(item, options: { toggle?: boolean } = {}) {
+    selectItem(item: CloudRef, options: { toggle?: boolean } = {}) {
         const toggle = !!options.toggle;
         if (!toggle) {
             this.selectedItems.clear();
@@ -552,7 +627,7 @@ export class CloudSyncPanel {
         return null;
     }
 
-    async openCloudFile(file) {
+    async openCloudFile(file: CloudRef) {
         try {
             const data = await this.request('GET', '/cloudSync/download', { path: file.path });
             const content = typeof data?.content === 'string' ? data.content : '';
@@ -564,11 +639,11 @@ export class CloudSyncPanel {
                 }
             }
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.openFileFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.openFileFail')), 'error');
         }
     }
 
-    async saveCloudFile(cloudPath, content) {
+    async saveCloudFile(cloudPath: string, content: string) {
         if (!this._lastLoggedIn) {
             this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return false;
@@ -592,7 +667,7 @@ export class CloudSyncPanel {
             this.renderTree();
             return true;
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.saveFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.saveFail')), 'error');
             return false;
         }
     }
@@ -603,7 +678,7 @@ export class CloudSyncPanel {
             return;
         }
         const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFileName'), window.i18n.t('cloud.untitled'), window.i18n.t('cloud.namePlaceholder'));
-        if (!name) return;
+        if (!name || typeof name !== 'string') return;
         const check = this.validateFileName(name);
         if (!check.valid) {
             this.showMessage(check.error, 'error');
@@ -628,7 +703,7 @@ export class CloudSyncPanel {
             this.renderTree();
             this.openCloudFile({ path: fullPath, name, type: 'file' });
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.newFileFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.newFileFail')), 'error');
         }
     }
 
@@ -638,7 +713,7 @@ export class CloudSyncPanel {
             return;
         }
         const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFolderName'), window.i18n.t('cloud.defaultFolder'), window.i18n.t('cloud.folderPlaceholder'));
-        if (!name) return;
+        if (!name || typeof name !== 'string') return;
         const check = this.validateFileName(name);
         if (!check.valid) {
             this.showMessage(check.error, 'error');
@@ -657,7 +732,7 @@ export class CloudSyncPanel {
             await this.loadDirectory(targetDir);
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.newFolderFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.newFolderFail')), 'error');
         }
     }
 
@@ -700,7 +775,7 @@ export class CloudSyncPanel {
             const content = await window.electronAPI.readFileContent(filePath);
             if (!this.checkRemainingCapacity()) return;
             const targetDir = this.getActionTargetFolder();
-            const fileName = info?.basename || filePath.split(/[\\/]/).pop();
+            const fileName = info?.basename || filePath.split(/[\\/]/).pop() || '';
             const conflictAction = await this.resolveUploadConflict(targetDir, fileName, 'file');
             if (conflictAction === 'cancel' || conflictAction === 'skip') {
                 return;
@@ -711,7 +786,7 @@ export class CloudSyncPanel {
             this.renderTree();
             this.showMessage((window.i18n.t('cloud.uploadSuccessSimple')), 'success');
         } catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.uploadFailSimple')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
 
@@ -754,7 +829,7 @@ export class CloudSyncPanel {
             }
 
             const rootNorm = this.normalizeLocalPath(folderPath);
-            const entries = [];
+            const entries: Array<{ path: string; rel: string }> = [];
             for (const file of rawFiles) {
                 const ext = (file.ext || this.getExtension(file.name)).toLowerCase();
                 if (!this.allowedExtensions.has(ext)) {
@@ -839,11 +914,11 @@ export class CloudSyncPanel {
             this.showMessage(message, uploaded > 0 ? 'success' : 'warning');
         } catch (error) {
             this.hideUploadProgress();
-            this.showMessage(error?.message || (window.i18n.t('cloud.uploadFailSimple')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
 
-    async downloadFile(file) {
+    async downloadFile(file: CloudRef) {
         if (!window.electronAPI?.showSaveDialog) {
             this.showMessage(window.i18n.t('cloud.downloadUnavailable'), 'error');
             return;
@@ -863,17 +938,18 @@ export class CloudSyncPanel {
             }
             this.showMessage(window.i18n.t('cloud.saveSuccess'), 'success');
         } catch (error) {
-            this.showMessage(error?.message || window.i18n.t('cloud.downloadFail'), 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.downloadFail'), 'error');
         }
     }
 
-    async renameItem(file) {
+    async renameItem(file: CloudRef) {
         if (!this._lastLoggedIn) {
             this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
         }
         const newName = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.rename'), file.name, window.i18n.t('cloud.renamePlaceholder'));
-        if (!newName || newName === file.name) return;
+        if (!newName || typeof newName !== 'string') return;
+        if (newName === file.name) return;
         const check = this.validateFileName(newName);
         if (!check.valid) {
             this.showMessage(check.error, 'error');
@@ -909,11 +985,11 @@ export class CloudSyncPanel {
             }
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || window.i18n.t('cloud.renameFail'), 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.renameFail'), 'error');
         }
     }
 
-    updateOpenedCloudTabsForFolderRename(oldFolderPath, newFolderPath) {
+    updateOpenedCloudTabsForFolderRename(oldFolderPath: string, newFolderPath: string) {
         const tabManager = window.tabManager;
         if (!tabManager || !tabManager.tabs || typeof tabManager.tabs.entries !== 'function') {
             return;
@@ -921,7 +997,7 @@ export class CloudSyncPanel {
 
         const oldPrefix = `cloud://${this.normalizePath(oldFolderPath)}`;
         const newPrefix = `cloud://${this.normalizePath(newFolderPath)}`;
-        const updates = [];
+        const updates: Array<{ oldKey: string; newKey: string; newName: string }> = [];
 
         for (const [uniqueKey, tabData] of tabManager.tabs.entries()) {
             const key = typeof uniqueKey === 'string' ? uniqueKey : '';
@@ -937,7 +1013,7 @@ export class CloudSyncPanel {
         });
     }
 
-    async deleteItem(file) {
+    async deleteItem(file: CloudRef) {
         if (!this._lastLoggedIn) {
             this.showMessage(window.i18n.t('cloud.loginRequired'), 'warning');
             return;
@@ -950,12 +1026,12 @@ export class CloudSyncPanel {
             await this.loadDirectory(parent);
             this.renderTree();
         } catch (error) {
-            this.showMessage(error?.message || window.i18n.t('cloud.deleteFail'), 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.deleteFail'), 'error');
         }
     }
 
-    showItemContextMenu(e, file) {
-        const items = [];
+    showItemContextMenu(e: MouseEvent, file: CloudRef) {
+        const items: ContextMenuItem[] = [];
         if (file.type === 'file') {
             items.push({ label: window.i18n.t('cloud.open'), action: () => this.openCloudFile(file) });
             items.push({ label: window.i18n.t('cloud.download'), action: () => this.downloadFile(file) });
@@ -971,8 +1047,8 @@ export class CloudSyncPanel {
         this.showContextMenu(items, e.clientX, e.clientY);
     }
 
-    showEmptyAreaContextMenu(e) {
-        const items = [
+    showEmptyAreaContextMenu(e: MouseEvent) {
+        const items: ContextMenuItem[] = [
             { label: window.i18n.t('cloud.newFile'), action: () => this.createNewFile() },
             { label: window.i18n.t('cloud.newFolder'), action: () => this.createNewFolder() },
             { label: window.i18n.t('cloud.uploadFile'), action: () => this.uploadLocalFile() },
@@ -983,7 +1059,7 @@ export class CloudSyncPanel {
         this.showContextMenu(items, e.clientX, e.clientY);
     }
 
-    showContextMenu(items, x, y) {
+    showContextMenu(items: ContextMenuItem[], x: number, y: number) {
         this.clearContextMenu();
         const menu = document.createElement('div');
         menu.className = 'context-menu';
@@ -993,7 +1069,7 @@ export class CloudSyncPanel {
             if (item.separator) {
                 const sep = document.createElement('div');
                 sep.className = 'context-menu-item';
-                sep.dataset.separator = 'true';
+                sep.dataset['separator'] = 'true';
                 menu.appendChild(sep);
                 return;
             }
@@ -1044,7 +1120,7 @@ export class CloudSyncPanel {
         }
     }
 
-    renderEmptyState(message) {
+    renderEmptyState(message: string) {
         if (!this.treeEl) return;
         this.treeEl.innerHTML = `
             <div class="empty-state">
@@ -1058,7 +1134,7 @@ export class CloudSyncPanel {
         }
     }
 
-    updateRemaining(value) {
+    updateRemaining(value: number | null) {
         this.remainingFiles = typeof value === 'number' ? value : null;
         if (this.remainingEl) {
             this.remainingEl.textContent = typeof value === 'number'
@@ -1067,13 +1143,13 @@ export class CloudSyncPanel {
         }
     }
 
-    showUploadProgress(current, total, text) {
+    showUploadProgress(current: number, total: number, text: string) {
         if (!this.uploadProgressEl) return;
         this.uploadProgressEl.style.display = 'block';
         this.updateUploadProgress(current, total, true, text);
     }
 
-    updateUploadProgress(current, total, force = false, text?: string) {
+    updateUploadProgress(current: number, total: number, force: boolean = false, text?: string) {
         if (!this.uploadProgressEl || !this.uploadProgressFillEl) return;
         if (!force && current > 0 && current < total && current % 3 !== 0) return;
         const safeTotal = total > 0 ? total : 1;
@@ -1114,7 +1190,7 @@ export class CloudSyncPanel {
         return this.getParentPath(primary.path);
     }
 
-    async ensureDirectoryLoaded(dirPath) {
+    async ensureDirectoryLoaded(dirPath: string) {
         const norm = this.normalizePath(dirPath);
         if (this.itemsCache.has(norm)) return;
         try {
@@ -1123,19 +1199,19 @@ export class CloudSyncPanel {
         }
     }
 
-    hasNameInDirectory(dirPath, name) {
+    hasNameInDirectory(dirPath: string, name: string) {
         const norm = this.normalizePath(dirPath);
         const items = this.itemsCache.get(norm) || [];
         return items.some(item => item.name === name);
     }
 
-    getItemInDirectory(dirPath, name) {
+    getItemInDirectory(dirPath: string, name: string) {
         const norm = this.normalizePath(dirPath);
         const items = this.itemsCache.get(norm) || [];
         return items.find(item => item.name === name) || null;
     }
 
-    async resolveUploadConflict(dirPath, name, targetKind) {
+    async resolveUploadConflict(dirPath: string, name: string, targetKind: 'file' | 'folder') {
         await this.ensureDirectoryLoaded(dirPath);
         const existing = this.getItemInDirectory(dirPath, name);
         if (!existing) return 'none';
@@ -1177,7 +1253,7 @@ export class CloudSyncPanel {
         return action || 'cancel';
     }
 
-    validateFileName(name) {
+    validateFileName(name: unknown): FileNameCheck {
         if (!name || typeof name !== 'string') {
             return { valid: false, error: window.i18n.t('cloud.nameEmpty') };
         }
@@ -1192,13 +1268,13 @@ export class CloudSyncPanel {
         return { valid: true, error: null };
     }
 
-    getExtension(name) {
+    getExtension(name: string | undefined) {
         if (!name) return '';
         const idx = name.lastIndexOf('.');
         return idx >= 0 ? name.slice(idx).toLowerCase() : '';
     }
 
-    normalizePath(p) {
+    normalizePath(p: string | undefined) {
         if (!p) return '/';
         let out = String(p).replace(/\\/g, '/');
         if (!out.startsWith('/')) out = '/' + out;
@@ -1206,12 +1282,12 @@ export class CloudSyncPanel {
         return out;
     }
 
-    normalizeLocalPath(p) {
+    normalizeLocalPath(p: string | undefined) {
         if (!p) return '';
         return String(p).replace(/\\/g, '/').replace(/\/+$/g, '');
     }
 
-    getRelativeLocalPath(filePath, rootPath) {
+    getRelativeLocalPath(filePath: string, rootPath: string) {
         const fileNorm = this.normalizeLocalPath(filePath);
         const rootNorm = this.normalizeLocalPath(rootPath);
         if (!fileNorm.startsWith(rootNorm)) return '';
@@ -1220,7 +1296,7 @@ export class CloudSyncPanel {
         return rel;
     }
 
-    getRelativeDir(relPath) {
+    getRelativeDir(relPath: string) {
         if (!relPath) return '';
         const parts = relPath.split('/').filter(Boolean);
         if (parts.length <= 1) return '';
@@ -1228,13 +1304,13 @@ export class CloudSyncPanel {
         return parts.join('/');
     }
 
-    joinPath(parent, name) {
+    joinPath(parent: string, name: string) {
         const base = this.normalizePath(parent);
         if (base === '/') return `/${name}`;
         return `${base}/${name}`;
     }
 
-    getParentPath(p) {
+    getParentPath(p: string) {
         const norm = this.normalizePath(p);
         if (norm === '/') return '/';
         const parts = norm.split('/').filter(Boolean);
@@ -1242,17 +1318,17 @@ export class CloudSyncPanel {
         return '/' + parts.join('/');
     }
 
-    async tryCreateCloudFolder(path) {
+    async tryCreateCloudFolder(path: string) {
         try {
             await this.request('POST', '/cloudSync/createFolder', { path });
         } catch (error) {
-            const msg = error?.message || '';
+            const msg = csErrMessage(error) || '';
             if (/已存在|exists/i.test(msg)) return;
             throw error;
         }
     }
 
-    showMessage(message, type = 'info') {
+    showMessage(message: string, type: string = 'info') {
         if (window.oicppApp?.showMessage) {
             window.oicppApp.showMessage(message, type);
         } else {
@@ -1262,7 +1338,7 @@ export class CloudSyncPanel {
         }
     }
 
-    async request(method, path, params) {
+    async request(method: string, path: string, params?: Record<string, unknown>) {
         if (!window.electronAPI?.cloudSyncRequest) {
             throw new Error(window.i18n.t('cloud.apiUnavailable'));
         }
@@ -1288,7 +1364,7 @@ export class CloudSyncPanel {
         }
         // request 返回 HTTP body 的 data ?? body 本身；消费方访问 items/remainingFiles/content，
         // 用守卫（Array.isArray/typeof）消费，cast 给出守卫所需形状
-        return (data?.data ?? data) as { items?: unknown; remainingFiles?: number; content?: string };
+        return (data?.data ?? data) as CloudPayload;
     }
 }
 

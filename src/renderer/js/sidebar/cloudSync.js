@@ -12,6 +12,29 @@ function csTreeItem(e) {
     const el = e.target.closest('.tree-item');
     return el instanceof HTMLElement ? el : null;
 }
+// 收窄为对象记录，便于按方括号读取未知字段
+function csRecord(value) {
+    return (typeof value === 'object' && value !== null) ? value : null;
+}
+// 未知字段取字符串，非字符串返回空串
+function csStr(value) {
+    return typeof value === 'string' ? value : '';
+}
+// 未知字段取数字，非数字返回 0
+function csNum(value) {
+    return typeof value === 'number' ? value : 0;
+}
+// catch 到的未知错误取正文：Error 优先，其次带 message 字段的对象，都没有则空串
+function csErrMessage(error) {
+    if (error instanceof Error)
+        return error.message;
+    const message = csRecord(error)?.['message'];
+    if (typeof message === 'string')
+        return message;
+    if (typeof message === 'number')
+        return String(message);
+    return '';
+}
 class CloudSyncPanel {
     rootPath;
     currentPath;
@@ -86,7 +109,7 @@ class CloudSyncPanel {
                 e.stopPropagation();
                 if (!(btn instanceof HTMLElement))
                     return;
-                const action = btn.dataset.action;
+                const action = btn.dataset['action'];
                 switch (action) {
                     case 'cloud-new-file':
                         this.createNewFile();
@@ -114,9 +137,9 @@ class CloudSyncPanel {
             const item = csTreeItem(e);
             if (!item)
                 return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
             const file = { path, type, name, extension: this.getExtension(name) };
             this.selectItem(file, { toggle: e.ctrlKey || e.metaKey });
             if (type === 'folder') {
@@ -130,9 +153,9 @@ class CloudSyncPanel {
             const item = csTreeItem(e);
             if (!item)
                 return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
             const file = { path, type, name, extension: this.getExtension(name) };
             this.selectItem(file);
             if (type === 'folder') {
@@ -151,9 +174,9 @@ class CloudSyncPanel {
                 this.showEmptyAreaContextMenu(e);
                 return;
             }
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
+            const path = item.dataset['path'] ?? '';
+            const type = item.dataset['kind'] ?? '';
+            const name = item.dataset['name'] ?? '';
             const file = { path, type, name, extension: this.getExtension(name) };
             if (!this.selectedItems.has(path)) {
                 this.selectItem(file);
@@ -174,13 +197,16 @@ class CloudSyncPanel {
                 this.treeEl.classList.remove('drag-over-root');
             }
         };
-        this.treeEl.addEventListener('dragstart', (e) => {
+        const tree = this.treeEl;
+        if (!tree)
+            return;
+        tree.addEventListener('dragstart', (e) => {
             const item = csTreeItem(e);
             if (!item)
                 return;
-            const path = item.dataset.path;
-            const type = item.dataset.kind;
-            const name = item.dataset.name;
+            const path = item.dataset['path'];
+            const type = item.dataset['kind'];
+            const name = item.dataset['name'];
             if (!path || !type)
                 return;
             const payload = JSON.stringify({ path, type, name });
@@ -189,44 +215,48 @@ class CloudSyncPanel {
                 e.dataTransfer.effectAllowed = 'move';
             item.classList.add('dragging');
         });
-        this.treeEl.addEventListener('dragend', (e) => {
+        tree.addEventListener('dragend', (e) => {
             const item = csTreeItem(e);
             if (item)
                 item.classList.remove('dragging');
             clearDragState();
         });
-        this.treeEl.addEventListener('dragover', (e) => {
+        tree.addEventListener('dragover', (e) => {
             e.preventDefault();
             clearDragState();
             const item = csTreeItem(e);
             if (!item) {
-                this.treeEl.classList.add('drag-over-root');
+                tree.classList.add('drag-over-root');
                 return;
             }
-            const type = item.dataset.kind;
+            const type = item.dataset['kind'];
             if (type === 'folder') {
                 item.classList.add('drag-over');
             }
         });
-        this.treeEl.addEventListener('drop', async (e) => {
+        tree.addEventListener('drop', async (e) => {
             e.preventDefault();
             clearDragState();
             const data = e.dataTransfer?.getData('text/plain');
             if (!data)
                 return;
-            let payload;
+            let parsed;
             try {
-                payload = JSON.parse(data);
+                parsed = JSON.parse(data);
             }
             catch (_) {
                 return;
             }
-            if (!payload?.path || !payload?.type)
+            const record = csRecord(parsed);
+            const path = csStr(record?.['path']);
+            const type = csStr(record?.['type']);
+            if (!path || !type)
                 return;
+            const payload = { path, type, name: csStr(record?.['name']) };
             const item = csTreeItem(e);
             let targetFolder = '/';
-            if (item && item.dataset.kind === 'folder') {
-                targetFolder = item.dataset.path;
+            if (item && item.dataset['kind'] === 'folder') {
+                targetFolder = item.dataset['path'] ?? '/';
             }
             await this.moveItem(payload, targetFolder);
         });
@@ -293,7 +323,7 @@ class CloudSyncPanel {
             this.renderTree();
         }
         catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.refreshFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.refreshFail')), 'error');
         }
         finally {
             this.isLoading = false;
@@ -303,14 +333,19 @@ class CloudSyncPanel {
         const data = await this.request('GET', '/cloudSync/list', { path: dirPath });
         if (!data)
             return;
-        const items = Array.isArray(data.items) ? data.items : [];
-        const normalized = items.map(item => ({
-            name: item.name,
-            type: item.type,
-            path: this.normalizePath(item.path || this.joinPath(dirPath, item.name)),
-            size: item.size || 0,
-            updatedAt: item.updated_at || item.updatedAt || null
-        }));
+        const rawItems = data.items;
+        const items = Array.isArray(rawItems) ? rawItems : [];
+        const normalized = items.map(raw => {
+            const item = csRecord(raw) ?? {};
+            const name = csStr(item['name']);
+            return {
+                name,
+                type: csStr(item['type']),
+                path: this.normalizePath(csStr(item['path']) || this.joinPath(dirPath, name)),
+                size: csNum(item['size']),
+                updatedAt: csStr(item['updated_at']) || csStr(item['updatedAt']) || null
+            };
+        });
         const filtered = normalized.filter(item => !this.isHiddenSettingsBackupName(item.name));
         this.itemsCache.set(this.normalizePath(dirPath), filtered);
         if (typeof data.remainingFiles === 'number') {
@@ -348,16 +383,16 @@ class CloudSyncPanel {
     createTreeItem(item, level) {
         const node = document.createElement('div');
         node.className = 'tree-item';
-        node.dataset.path = item.path;
-        node.dataset.kind = item.type;
+        node.dataset['path'] = item.path;
+        node.dataset['kind'] = item.type;
         if (item.type === 'folder') {
-            node.dataset.type = 'folder';
+            node.dataset['type'] = 'folder';
         }
         else {
             const ext = this.getExtension(item.name);
-            node.dataset.type = ext ? ext.replace(/^\./, '') : 'file';
+            node.dataset['type'] = ext ? ext.replace(/^\./, '') : 'file';
         }
-        node.dataset.name = item.name;
+        node.dataset['name'] = item.name;
         node.style.paddingLeft = `${level * 16 + 8}px`;
         node.setAttribute('draggable', 'true');
         const content = document.createElement('div');
@@ -425,7 +460,8 @@ class CloudSyncPanel {
                 if (this.itemsCache.has(sourcePath)) {
                     const cached = this.itemsCache.get(sourcePath);
                     this.itemsCache.delete(sourcePath);
-                    this.itemsCache.set(targetPath, cached);
+                    if (cached)
+                        this.itemsCache.set(targetPath, cached);
                 }
                 if (this.expandedFolders.has(sourcePath)) {
                     this.expandedFolders.delete(sourcePath);
@@ -436,17 +472,20 @@ class CloudSyncPanel {
             this.showMessage(window.i18n.t('cloud.moveSuccess'), 'success');
         }
         catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.moveFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.moveFail')), 'error');
         }
     }
     async copyFolderRecursive(sourcePath, targetPath) {
         await this.request('POST', '/cloudSync/createFolder', { path: targetPath });
         const data = await this.request('GET', '/cloudSync/list', { path: sourcePath });
-        const items = Array.isArray(data?.items) ? data.items : [];
-        for (const item of items) {
-            const itemPath = this.normalizePath(item.path || this.joinPath(sourcePath, item.name));
-            const destPath = this.joinPath(targetPath, item.name);
-            if (item.type === 'folder') {
+        const rawItems = data?.items;
+        const items = Array.isArray(rawItems) ? rawItems : [];
+        for (const raw of items) {
+            const item = csRecord(raw) ?? {};
+            const name = csStr(item['name']);
+            const itemPath = this.normalizePath(csStr(item['path']) || this.joinPath(sourcePath, name));
+            const destPath = this.joinPath(targetPath, name);
+            if (csStr(item['type']) === 'folder') {
                 await this.copyFolderRecursive(itemPath, destPath);
                 await this.request('POST', '/cloudSync/delete', { path: itemPath });
             }
@@ -468,7 +507,7 @@ class CloudSyncPanel {
     getBaseName(p) {
         const norm = this.normalizePath(p);
         const parts = norm.split('/').filter(Boolean);
-        return parts.length ? parts[parts.length - 1] : '';
+        return parts.length ? (parts[parts.length - 1] ?? '') : '';
     }
     getFileIcon(item) {
         if (item.type === 'folder')
@@ -554,7 +593,7 @@ class CloudSyncPanel {
             }
         }
         catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.openFileFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.openFileFail')), 'error');
         }
     }
     async saveCloudFile(cloudPath, content) {
@@ -582,7 +621,7 @@ class CloudSyncPanel {
             return true;
         }
         catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.saveFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.saveFail')), 'error');
             return false;
         }
     }
@@ -592,7 +631,7 @@ class CloudSyncPanel {
             return;
         }
         const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFileName'), window.i18n.t('cloud.untitled'), window.i18n.t('cloud.namePlaceholder'));
-        if (!name)
+        if (!name || typeof name !== 'string')
             return;
         const check = this.validateFileName(name);
         if (!check.valid) {
@@ -620,7 +659,7 @@ class CloudSyncPanel {
             this.openCloudFile({ path: fullPath, name, type: 'file' });
         }
         catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.newFileFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.newFileFail')), 'error');
         }
     }
     async createNewFolder() {
@@ -629,7 +668,7 @@ class CloudSyncPanel {
             return;
         }
         const name = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.newFolderName'), window.i18n.t('cloud.defaultFolder'), window.i18n.t('cloud.folderPlaceholder'));
-        if (!name)
+        if (!name || typeof name !== 'string')
             return;
         const check = this.validateFileName(name);
         if (!check.valid) {
@@ -651,7 +690,7 @@ class CloudSyncPanel {
             this.renderTree();
         }
         catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.newFolderFail')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.newFolderFail')), 'error');
         }
     }
     async uploadLocalFile() {
@@ -695,7 +734,7 @@ class CloudSyncPanel {
             if (!this.checkRemainingCapacity())
                 return;
             const targetDir = this.getActionTargetFolder();
-            const fileName = info?.basename || filePath.split(/[\\/]/).pop();
+            const fileName = info?.basename || filePath.split(/[\\/]/).pop() || '';
             const conflictAction = await this.resolveUploadConflict(targetDir, fileName, 'file');
             if (conflictAction === 'cancel' || conflictAction === 'skip') {
                 return;
@@ -707,7 +746,7 @@ class CloudSyncPanel {
             this.showMessage((window.i18n.t('cloud.uploadSuccessSimple')), 'success');
         }
         catch (error) {
-            this.showMessage(error?.message || (window.i18n.t('cloud.uploadFailSimple')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
     async uploadLocalFolder() {
@@ -829,7 +868,7 @@ class CloudSyncPanel {
         }
         catch (error) {
             this.hideUploadProgress();
-            this.showMessage(error?.message || (window.i18n.t('cloud.uploadFailSimple')), 'error');
+            this.showMessage(csErrMessage(error) || (window.i18n.t('cloud.uploadFailSimple')), 'error');
         }
     }
     async downloadFile(file) {
@@ -854,7 +893,7 @@ class CloudSyncPanel {
             this.showMessage(window.i18n.t('cloud.saveSuccess'), 'success');
         }
         catch (error) {
-            this.showMessage(error?.message || window.i18n.t('cloud.downloadFail'), 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.downloadFail'), 'error');
         }
     }
     async renameItem(file) {
@@ -863,7 +902,9 @@ class CloudSyncPanel {
             return;
         }
         const newName = await window.dialogManager?.showInputDialog(window.i18n.t('cloud.rename'), file.name, window.i18n.t('cloud.renamePlaceholder'));
-        if (!newName || newName === file.name)
+        if (!newName || typeof newName !== 'string')
+            return;
+        if (newName === file.name)
             return;
         const check = this.validateFileName(newName);
         if (!check.valid) {
@@ -900,7 +941,7 @@ class CloudSyncPanel {
             this.renderTree();
         }
         catch (error) {
-            this.showMessage(error?.message || window.i18n.t('cloud.renameFail'), 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.renameFail'), 'error');
         }
     }
     updateOpenedCloudTabsForFolderRename(oldFolderPath, newFolderPath) {
@@ -939,7 +980,7 @@ class CloudSyncPanel {
             this.renderTree();
         }
         catch (error) {
-            this.showMessage(error?.message || window.i18n.t('cloud.deleteFail'), 'error');
+            this.showMessage(csErrMessage(error) || window.i18n.t('cloud.deleteFail'), 'error');
         }
     }
     showItemContextMenu(e, file) {
@@ -979,7 +1020,7 @@ class CloudSyncPanel {
             if (item.separator) {
                 const sep = document.createElement('div');
                 sep.className = 'context-menu-item';
-                sep.dataset.separator = 'true';
+                sep.dataset['separator'] = 'true';
                 menu.appendChild(sep);
                 return;
             }
@@ -1219,7 +1260,7 @@ class CloudSyncPanel {
             await this.request('POST', '/cloudSync/createFolder', { path });
         }
         catch (error) {
-            const msg = error?.message || '';
+            const msg = csErrMessage(error) || '';
             if (/已存在|exists/i.test(msg))
                 return;
             throw error;
