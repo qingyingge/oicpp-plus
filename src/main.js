@@ -6397,10 +6397,22 @@ function setupIPC() {
             return { success: false, error: '缺少必要的下载参数' };
         }
 
+        const versionNameCheck = validateFileName(version);
+        if (!versionNameCheck.valid) {
+            logError('[编译器下载] 版本名非法:', { version, error: versionNameCheck.error });
+            return { success: false, error: versionNameCheck.error };
+        }
+
         return new Promise(async (resolve) => {
             const userHome = os.homedir();
             const compilersDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers');
             const versionDir = path.join(compilersDir, version);
+
+            if (!isPathInsideDir(versionDir, compilersDir) || path.resolve(versionDir) === path.resolve(compilersDir)) {
+                logError('[编译器下载] 版本路径越界:', { version, versionDir });
+                resolve({ success: false, error: t('error.invalidPath') });
+                return;
+            }
 
             logInfo('[编译器下载] 目录路径:', { compilersDir, versionDir });
 
@@ -6628,7 +6640,7 @@ function setupIPC() {
                     const urlParts = url.split('.');
                     fileExtension = urlParts[urlParts.length - 1].toLowerCase();
                 }
-                if (!fileExtension) throw new Error(t('error.unknownDownloadFileType'));
+                if (!/^[a-z0-9]+$/.test(fileExtension)) throw new Error(t('error.unknownDownloadFileType'));
                 const tempFile = path.join(compilersDir, `${version}.${fileExtension}`);
 
                 downloader = new MultiThreadDownloader({
@@ -6801,10 +6813,22 @@ function setupIPC() {
             return { success: false, error: '缺少必要的下载参数' };
         }
 
+        const versionNameCheck = validateFileName(version);
+        if (!versionNameCheck.valid) {
+            logError('[testlib下载] 版本名非法:', { version, error: versionNameCheck.error });
+            return { success: false, error: versionNameCheck.error };
+        }
+
         return new Promise(async (resolve) => {
             const userHome = os.homedir();
             const testlibsDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs');
             const versionDir = path.join(testlibsDir, version);
+
+            if (!isPathInsideDir(versionDir, testlibsDir) || path.resolve(versionDir) === path.resolve(testlibsDir)) {
+                logError('[testlib下载] 版本路径越界:', { version, versionDir });
+                resolve({ success: false, error: t('error.invalidPath') });
+                return;
+            }
 
             logInfo('[testlib下载] 目录路径:', { testlibsDir, versionDir });
 
@@ -7032,7 +7056,7 @@ function setupIPC() {
                     const urlParts = url.split('.');
                     fileExtension = urlParts[urlParts.length - 1].toLowerCase();
                 }
-                if (!fileExtension) throw new Error(t('error.unknownDownloadFileType'));
+                if (!/^[a-z0-9]+$/.test(fileExtension)) throw new Error(t('error.unknownDownloadFileType'));
                 const tempFile = path.join(testlibsDir, `${version}.${fileExtension}`);
 
                 downloader = new MultiThreadDownloader({
