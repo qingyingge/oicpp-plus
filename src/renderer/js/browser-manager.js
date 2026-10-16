@@ -215,7 +215,7 @@ class BrowserManager {
         const urlInput = document.createElement('input');
         urlInput.type = 'text';
         urlInput.className = 'browser-url-input';
-        urlInput.setAttribute('placeholder', ('browser.urlPlaceholder'));
+        urlInput.setAttribute('placeholder', window.i18n.t('browser.urlPlaceholder'));
         urlInput.value = initialUrl?.startsWith('data:text/html') ? '' : (initialUrl || '');
         urlInput.setAttribute('spellcheck', 'false');
         urlInput.setAttribute('autocomplete', 'off');
