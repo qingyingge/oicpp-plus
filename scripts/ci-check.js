@@ -1346,7 +1346,11 @@ function runFastspawnSyntaxCheck() {
 //  定义处或入口读一次并收窄成局部量，后续分支不再触发 TS4111/TS2345/TS18048。
 //  preload.ts 是 CommonJS 脚本（require 而非 import），不能 declare global，
 //  __oicppPreloadInitialized 改在 src/types/preload.d.ts 里作全局 var 声明。
-const TS_ERROR_BASELINE = 3139;
+// 3139 → 3107：terminal-manager 清零，并去掉 Session.pty / Session.process / ptyProcess
+//  三处 any（node-pty 无类型声明，改为按实际用到的成员建模 PtyProcess）。
+//  连带使 process-supervisor 的 terminateProcessTree(signal) 从 string 收成 NodeJS.Signals
+//  —— 原签名让真实 ChildProcess 反而不可赋值，是 any 掩盖下的契约错误。
+const TS_ERROR_BASELINE = 3107;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

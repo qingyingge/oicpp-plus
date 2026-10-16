@@ -3,10 +3,10 @@ import { spawnSync } from 'child_process';
 
 export interface ChildProcessLike {
     pid?: number;
-    kill?: (signal?: string) => void;
+    kill?: (signal?: NodeJS.Signals | number) => void;
 }
 
-export function terminateProcessTree(child: ChildProcessLike | null | undefined, signal: string = 'SIGKILL'): void {
+export function terminateProcessTree(child: ChildProcessLike | null | undefined, signal: NodeJS.Signals = 'SIGKILL'): void {
     if (!child || !child.pid) return;
     if (process.platform === 'win32') {
         const result = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {

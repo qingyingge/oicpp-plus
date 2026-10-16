@@ -76,6 +76,16 @@ if (!pty) {
 // 终端输出聚合窗口：足够小以保持跟手感，又能把高频 chunk 合并成少量 IPC
 const TERMINAL_DATA_FLUSH_MS = 8;
 
+// node-pty 未随包提供类型声明，这里按实际用到的成员显式建模
+interface PtyProcess {
+    pid?: number;
+    write(data: string): void;
+    resize(cols: number, rows: number): void;
+    kill(): void;
+    onData(cb: (data: string) => void): void;
+    onExit(cb: (event?: { exitCode?: number; signal?: string }) => void): void;
+}
+
 interface Session {
     id: string;
     shell: string;
@@ -84,8 +94,8 @@ interface Session {
     rows: number;
     createdAt: number;
     backend: 'pty' | 'process';
-    pty?: any;
-    process?: any;
+    pty?: PtyProcess;
+    process?: import('node:child_process').ChildProcess;
     wrappedWithScript?: boolean;
     name: string;
     disposed?: boolean;
@@ -217,12 +227,12 @@ class IntegratedTerminalManager {
 
     _resolveDefaultShell(): string {
         if (process.platform === 'win32') {
-            return process.env.POWERSHELL_EXE || 'powershell.exe';
+            return process.env['POWERSHELL_EXE'] || 'powershell.exe';
         }
         if (process.platform === 'darwin') {
-            return process.env.SHELL || '/bin/zsh';
+            return process.env['SHELL'] || '/bin/zsh';
         }
-        return process.env.SHELL || '/bin/bash';
+        return process.env['SHELL'] || '/bin/bash';
     }
 
     _extractExecutablePath(shellValue: string): string {
@@ -248,10 +258,13 @@ class IntegratedTerminalManager {
 
     _buildShellCandidates(preferredShell: string): string[] {
         const preferred = this._extractExecutablePath(preferredShell);
-        const envShell = this._extractExecutablePath(process.env.SHELL);
+        const envShell = this._extractExecutablePath(process.env['SHELL'] ?? '');
         const candidates: string[] = [];
 
-        const pushCandidate = (value: string) => {
+        const pushCandidate = (value: string | undefined) => {
+            if (!value) {
+                return;
+            }
             const next = this._extractExecutablePath(value);
             if (!next) {
                 return;
@@ -273,7 +286,7 @@ class IntegratedTerminalManager {
 
         if (process.platform === 'win32') {
             pushCandidate(envShell);
-            pushCandidate(process.env.POWERSHELL_EXE);
+            pushCandidate(process.env['POWERSHELL_EXE']);
             pushCandidate('powershell.exe');
             pushCandidate('pwsh.exe');
             pushCandidate('cmd.exe');
@@ -385,26 +398,26 @@ class IntegratedTerminalManager {
 
         if (process.platform === 'darwin') {
             // Avoid inheriting parent Terminal.app/iTerm session identity into embedded shells.
-            delete nextEnv.TERM_SESSION_ID;
-            delete nextEnv.SECURITYSESSIONID;
-            delete nextEnv.ITERM_SESSION_ID;
-            nextEnv.TERM_PROGRAM = 'oicpp';
-            nextEnv.TERM_PROGRAM_VERSION = 'embedded';
+            delete nextEnv['TERM_SESSION_ID'];
+            delete nextEnv['SECURITYSESSIONID'];
+            delete nextEnv['ITERM_SESSION_ID'];
+            nextEnv['TERM_PROGRAM'] = 'oicpp';
+            nextEnv['TERM_PROGRAM_VERSION'] = 'embedded';
         }
 
         if (process.platform === 'win32') {
-            if (!nextEnv.LANG) {
-                nextEnv.LANG = 'zh_CN.UTF-8';
+            if (!nextEnv['LANG']) {
+                nextEnv['LANG'] = 'zh_CN.UTF-8';
             }
-            if (!nextEnv.LC_ALL) {
-                nextEnv.LC_ALL = 'C.UTF-8';
+            if (!nextEnv['LC_ALL']) {
+                nextEnv['LC_ALL'] = 'C.UTF-8';
             }
-            if (!nextEnv.PYTHONIOENCODING) {
-                nextEnv.PYTHONIOENCODING = 'utf-8';
+            if (!nextEnv['PYTHONIOENCODING']) {
+                nextEnv['PYTHONIOENCODING'] = 'utf-8';
             }
         }
 
-        nextEnv.TERM = 'xterm-256color';
+        nextEnv['TERM'] = 'xterm-256color';
         return nextEnv;
     }
 
@@ -521,7 +534,7 @@ class IntegratedTerminalManager {
         } catch (error) {
             return {
                 ok: false,
-                detail: error?.message || String(error)
+                detail: error instanceof Error ? error.message : String(error)
             };
         }
     }
@@ -534,7 +547,7 @@ class IntegratedTerminalManager {
         cols: number;
         rows: number;
         name?: string;
-    }): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number; backend: string } {
+    }): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number | undefined; backend: string } {
         const args = this._resolveProcessFallbackArgs(shellPath, requestedArgs);
         const preflight = this._runShellPreflight(shellPath, [], cwd, env);
         if (!preflight.ok) {
@@ -610,7 +623,7 @@ class IntegratedTerminalManager {
         };
     }
 
-    createSession(options: { shell?: string; args?: string[]; cwd?: string; cols?: number; rows?: number; name?: string } = {}): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number; backend: string } {
+    createSession(options: { shell?: string; args?: string[]; cwd?: string; cols?: number; rows?: number; name?: string } = {}): { terminalId: string; shell: string; cwd: string; name: string; cols: number; rows: number; pid: number | undefined; backend: string } {
         if (!this.isAvailable()) {
             const status = this.getStatus();
             const err = errorWithCode(`${status.reason}: ${status.detail}`, 'TERMINAL_UNAVAILABLE');
@@ -654,7 +667,7 @@ class IntegratedTerminalManager {
                         name: options.name
                     });
                 } catch (fallbackError) {
-                    fallbackErrors.push(`${fallbackShell} -> ${fallbackError?.message || String(fallbackError)}`);
+                    fallbackErrors.push(`${fallbackShell} -> ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
                 }
             }
 
@@ -663,14 +676,14 @@ class IntegratedTerminalManager {
             throw err;
         }
 
-        let ptyProcess: any = null;
-        let activeShell = shellCandidates[0];
+        let ptyProcess: PtyProcess | null = null;
+        let activeShell = shellCandidates[0] ?? '';
         let activeArgs = requestedArgs || this._resolveDefaultArgs(activeShell);
         let lastSpawnError: Error | null = null;
         const spawnErrors: string[] = [];
 
         for (let index = 0; index < shellCandidates.length; index += 1) {
-            const candidateShell = shellCandidates[index];
+            const candidateShell = shellCandidates[index] ?? '';
             const candidateArgs = (requestedArgs && index === 0)
                 ? requestedArgs
                 : this._resolveDefaultArgs(candidateShell);
@@ -695,7 +708,7 @@ class IntegratedTerminalManager {
                     break;
                 } catch (error) {
                     lastSpawnError = error as Error;
-                    const errMsg = error?.message || String(error);
+                    const errMsg = error instanceof Error ? error.message : String(error);
                     spawnErrors.push(`${candidateShell} ${JSON.stringify(argsAttempt)} -> ${errMsg}`);
                 }
             }
@@ -719,7 +732,7 @@ class IntegratedTerminalManager {
                         name: options.name
                     });
                 } catch (fallbackError) {
-                    fallbackErrors.push(`${candidateShell} -> ${fallbackError?.message || String(fallbackError)}`);
+                    fallbackErrors.push(`${candidateShell} -> ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
                 }
             }
 
@@ -872,7 +885,7 @@ class IntegratedTerminalManager {
             cwd: session.cwd,
             cols: session.cols,
             rows: session.rows,
-            pid: session.backend === 'process' ? session.process?.pid : session.pty?.pid,
+            pid: (session.backend === 'process' ? session.process?.pid : session.pty?.pid) ?? null,
             backend: session.backend || 'pty',
             name: session.name,
             createdAt: session.createdAt
@@ -887,7 +900,7 @@ class IntegratedTerminalManager {
         const pid = session.backend === 'process'
             ? session.process?.pid
             : session.pty?.pid;
-        return Number.isInteger(pid) && pid > 0 ? pid : null;
+        return typeof pid === 'number' && Number.isInteger(pid) && pid > 0 ? pid : null;
     }
 
     _readProcessStartToken(pid: number): string | null {
