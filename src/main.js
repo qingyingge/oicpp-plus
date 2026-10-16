@@ -454,12 +454,78 @@ async function ensureClangdUserBundle() {
  * @param {string[]} extraArgs - 额外的编译参数（如 -std=c++14）
  * @returns {Promise<{includePaths: string[], target: string}>}
  */
-function queryCompilerInfo(compilerPath, extraArgs = []) {
-    return new Promise((resolve) => {
-        const result = { includePaths: [], target: '' };
+const COMPILER_INFO_CACHE_VERSION = 2;
+
+function getCompilerInfoCacheFile() {
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP', 'compiler-info-cache.json');
+}
+
+/**
+ * queryCompilerInfo 的持久化缓存。
+ * 探测要 fork 一个 g++ 并读它的 stderr，冷启动实测 0.2s~1.9s（波动来自磁盘
+ * I/O 冷热），而 include 路径 / target 只跟「编译器可执行文件 + -std/-m 参数」
+ * 有关，几周内不会变。落盘缓存避免每次启动都付这份成本，也避免在首屏关键
+ * 路径上和 clangd 抢 CPU 与磁盘。
+ * 失效判据：schema 版本、编译器 mtime/size、参数串任一变化就重新探测。
+ */
+function readPersistedCompilerInfo(compilerPath, extraArgs) {
+    try {
+        const stat = fs.statSync(compilerPath);
+        const store = JSON.parse(fs.readFileSync(getCompilerInfoCacheFile(), 'utf8'));
+        if (!store || store.version !== COMPILER_INFO_CACHE_VERSION) return null;
+        const entry = store.entries && store.entries[path.resolve(compilerPath)];
+        if (!entry) return null;
+        if (entry.compilerMtimeMs !== stat.mtimeMs || entry.compilerSize !== stat.size) return null;
+        if (entry.argsKey !== extraArgs.join(' ')) return null;
+        if (!entry.target || !Array.isArray(entry.includePaths) || entry.includePaths.length === 0) return null;
+        return { includePaths: entry.includePaths, target: entry.target };
+    } catch (_) {
+        return null;
+    }
+}
+
+function writePersistedCompilerInfo(compilerPath, extraArgs, info) {
+    // 只在拿到有效结果时才落盘：一次瞬时失败不该被固化成长期缓存。
+    if (!info || !info.target || !Array.isArray(info.includePaths) || info.includePaths.length === 0) return;
+    try {
+        const stat = fs.statSync(compilerPath);
+        const file = getCompilerInfoCacheFile();
+        let store = { version: COMPILER_INFO_CACHE_VERSION, entries: {} };
+        try {
+            const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (parsed && parsed.version === COMPILER_INFO_CACHE_VERSION && parsed.entries) {
+                store = parsed;
+            }
+        } catch (_) {}
+        store.entries[path.resolve(compilerPath)] = {
+            compilerMtimeMs: stat.mtimeMs,
+            compilerSize: stat.size,
+            argsKey: extraArgs.join(' '),
+            target: info.target,
+            includePaths: info.includePaths
+        };
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(store, null, 2), 'utf8');
+    } catch (err) {
+        logWarn('[LSP] 写入编译器信息缓存失败:', err?.message || err);
+    }
+}
+
+async function queryCompilerInfo(compilerPath, extraArgs = []) {
+    if (compilerPath && fs.existsSync(compilerPath)) {
+        const persisted = readPersistedCompilerInfo(compilerPath, extraArgs);
+        if (persisted) {
+            logInfo('[LSP] 复用编译器信息缓存:', persisted.target,
+                '(' + persisted.includePaths.length + ' 个 include)');
+            return persisted;
+        }
+    }
+
+    const result = await new Promise((resolve) => {
+        const probe = { includePaths: [], target: '' };
 
         if (!compilerPath || !fs.existsSync(compilerPath)) {
-            resolve(result);
+            resolve(probe);
             return;
         }
 
@@ -507,7 +573,7 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
             clearTimeout(timer);
             if (timedOut) {
                 logWarn('[LSP] 查询编译器信息超时');
-                resolve(result);
+                resolve(probe);
                 return;
             }
 
@@ -515,8 +581,8 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
 
             const targetMatch = output.match(/^Target:\s*(\S+)/m);
             if (targetMatch) {
-                result.target = targetMatch[1];
-                logInfo('[LSP] 从编译器获取 target:', result.target);
+                probe.target = targetMatch[1];
+                logInfo('[LSP] 从编译器获取 target:', probe.target);
             }
 
             const lines = output.split(/\r?\n/);
@@ -536,9 +602,9 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
                         const cleanPath = trimmed.replace(/\s+$/, '');
                         const normalized = path.resolve(cleanPath);
                         if (fs.existsSync(normalized)) {
-                            result.includePaths.push(normalized);
+                            probe.includePaths.push(normalized);
                         } else if (fs.existsSync(cleanPath)) {
-                            result.includePaths.push(cleanPath);
+                            probe.includePaths.push(cleanPath);
                         }
                     }
                 }
@@ -549,27 +615,30 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
             // clang provides its own equivalents via -resource-dir; keeping GCC's private headers only causes false diagnostics.
             // Important: we must NOT filter out libstdc++ paths like .../include/c++ or .../include/c++/<triple>
             // which are needed for bits/stdc++.h etc.
-            result.includePaths = filterGccPrivateIncludes(result.includePaths);
+            probe.includePaths = filterGccPrivateIncludes(probe.includePaths);
 
-            if (result.includePaths.length > 0) {
-                logInfo('[LSP] 从编译器获取到 ' + result.includePaths.length + ' 个 include 路径');
+            if (probe.includePaths.length > 0) {
+                logInfo('[LSP] 从编译器获取到 ' + probe.includePaths.length + ' 个 include 路径');
             } else {
                 logWarn('[LSP] 未能从编译器提取 include 路径 (code=' + code + ')');
             }
 
-            resolve(result);
+            resolve(probe);
         });
 
         proc.on('error', (err) => {
             clearTimeout(timer);
             logWarn('[LSP] 查询编译器信息失败:', err?.message || err);
-            resolve(result);
+            resolve(probe);
         });
 
         if (proc.stdin) {
             proc.stdin.end();
         }
     });
+
+    writePersistedCompilerInfo(compilerPath, extraArgs, result);
+    return result;
 }
 
 class ClangdLspManager {
