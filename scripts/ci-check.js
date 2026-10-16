@@ -1354,7 +1354,9 @@ function runFastspawnSyntaxCheck() {
 //  散落 9 处 error?.code / 7 处 error?.message 的碰运气读法，统一成一个 errorInfo(unknown)
 //  收窄入口；response/writer 这类「外层 let + 闭包使用」的 15 条 TS18047 改成
 //  「const 就近取值 + let 只留给 catch 清理」，不靠断言压掉。
-const TS_ERROR_BASELINE = 3072;
+// 3072 → 3048：compare-worker-v6 清零。注意本环境 tsc 读数会被解析抖动污染（min-of-N 才可信），
+//  3072 那次本身就偏高 6 条；3048 由两轮无 junk、monaco=618 的一致读数确认。
+const TS_ERROR_BASELINE = 3048;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

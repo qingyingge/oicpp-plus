@@ -103,8 +103,8 @@ function spawnProcess(exePath: string, args: string[] = [], cwd?: string): Promi
             target.push(buffer);
             outputBytes += buffer.length;
         };
-        proc.stdout.on('data', (data) => append(stdout, data));
-        proc.stderr.on('data', (data) => append(stderr, data));
+        proc.stdout?.on('data', (data) => append(stdout, data));
+        proc.stderr?.on('data', (data) => append(stderr, data));
         proc._collect = () => Buffer.concat(stdout);
         proc._stderr = () => Buffer.concat(stderr).toString('utf8');
         proc._outputTruncated = () => outputTruncated;
@@ -162,13 +162,15 @@ function killProc(proc: WorkerProc): void { terminateProcessTree(proc); }
 
 function writeInput(proc: WorkerProc, input: string): Promise<boolean> {
     return new Promise((resolve) => {
+        const stdin = proc.stdin;
+        if (!stdin) { resolve(false); return; }
         try {
-            proc.stdin.on('error', () => { resolve(false); });
+            stdin.on('error', () => { resolve(false); });
         } catch (_) { }
         try {
-            if (proc.stdin.destroyed || proc.stdin.writableEnded) { resolve(false); return; }
-            proc.stdin.write(input);
-            proc.stdin.end();
+            if (stdin.destroyed || stdin.writableEnded) { resolve(false); return; }
+            stdin.write(input);
+            stdin.end();
             resolve(true);
         } catch (_) { resolve(false); }
     });
@@ -194,12 +196,12 @@ async function runJs(exePath: string, input: string | null, timeout: number, arg
 
 function runFast(exePath: string, input: string, timeout: number): RunResult {
     if (!fast) {
-        return { code: -1, output: null, timeout: false, error: 'fastspawn module not loaded', ms: 0 };
+        return { code: -1, output: null, outputTruncated: false, timeout: false, error: 'fastspawn module not loaded', ms: 0 };
     }
     const t0 = Date.now();
     const r = fast.run(exePath, input, timeout);
     return {
-        code: r.code, output: r.output,
+        code: r.code, output: r.output === null ? null : Buffer.from(r.output, 'utf8'),
         outputTruncated: !!r.truncated,
         timeout: r.code === -3,
         error: r.code === -3 ? 'TLE' : null,
@@ -241,35 +243,39 @@ async function runGenerator(gen: string | { executablePath?: string; path?: stri
         args = gen.args || [];
         cwd = gen.workingDirectory || gen.cwd;
     }
-    if (!exe) return { code: -2, error: 'missing generator executable', output: null, ms: 0 };
+    if (!exe) return { code: -2, error: 'missing generator executable', output: null, outputTruncated: false, timeout: false, ms: 0 };
     return await runJs(exe, null, timeout, args, cwd);
 }
 
 let running = false;
 
 if (parentPort) {
-    parentPort.on('message', async (msg: { type: string; startIdx?: number; count?: number; gen?: string | object; stdPath?: string; testPath?: string; timeout?: number; generatorTimeout?: number }) => {
+    const port = parentPort;
+    port.on('message', async (msg: { type: string; startIdx?: number; count?: number; gen?: string | object; stdPath?: string; testPath?: string; timeout?: number; generatorTimeout?: number }) => {
         if (msg.type === 'run-tests') {
             running = true;
             const { startIdx, count, gen, stdPath, testPath, timeout, generatorTimeout } = msg;
             const useFast = !!fast;
-            const genTimeout = (Number.isFinite(generatorTimeout) && generatorTimeout > 0) ? generatorTimeout : 0;
+            const genTimeout = (typeof generatorTimeout === 'number' && Number.isFinite(generatorTimeout) && generatorTimeout > 0) ? generatorTimeout : 0;
             let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;
 
             const fail = (i: number, kind: string, code: string, detail: string, extra: Record<string, unknown> = {}) => {
-                const input = captureText((extra.rawInput as string) ?? '', MAX_CAPTURED_INPUT_BYTES);
-                const std = (extra.rawStd as string) !== undefined ? captureText(extra.rawStd as string, MAX_CAPTURED_OUTPUT_BYTES) : null;
-                const test = (extra.rawTest as string) !== undefined ? captureText(extra.rawTest as string, MAX_CAPTURED_OUTPUT_BYTES) : null;
-                parentPort.postMessage({
+                const text = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+                const rawStd = text(extra['rawStd']);
+                const rawTest = text(extra['rawTest']);
+                const input = captureText(text(extra['rawInput']) ?? '', MAX_CAPTURED_INPUT_BYTES);
+                const std = rawStd !== undefined ? captureText(rawStd, MAX_CAPTURED_OUTPUT_BYTES) : null;
+                const test = rawTest !== undefined ? captureText(rawTest, MAX_CAPTURED_OUTPUT_BYTES) : null;
+                port.postMessage({
                     type: 'error',
                     testIndex: i,
                     kind,
                     code,
-                    exitCode: extra.exitCode,
+                    exitCode: extra['exitCode'],
                     message: String(detail || ''),
                     genMs: lastGenMs,
-                    stdMs: extra.includeStdMs ? lastStdMs : undefined,
-                    testMs: extra.includeTestMs ? lastTestMs : undefined,
+                    stdMs: extra['includeStdMs'] ? lastStdMs : undefined,
+                    testMs: extra['includeTestMs'] ? lastTestMs : undefined,
                     input: input.text,
                     inputTruncated: input.truncated,
                     stdOutput: std ? std.text : undefined,
@@ -314,7 +320,7 @@ if (parentPort) {
                             fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...pairExtra, rawStd: stdOut, rawTest: testOut });
                             continue;
                         }
-                        parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output?.length ?? 0 });
+                        port.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output?.length ?? 0 });
                     } else {
                         const stdR = await runJs(stdPath ?? '', genOut.output?.toString() ?? '', timeout ?? 0);
                         if (!running) break;
@@ -334,13 +340,13 @@ if (parentPort) {
                             fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...spawnExtra, rawStd: stdR.output, rawTest: testR.output });
                             continue;
                         }
-                        parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output?.length ?? 0 });
+                        port.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output?.length ?? 0 });
                     }
                 } catch (e) {
                     fail(i, 'exception', 'exception', e && (e as Error).message ? (e as Error).message : String(e), { rawInput: rawInput() });
                 }
             }
-            parentPort.postMessage({ type: 'done' });
+            port.postMessage({ type: 'done' });
         } else if (msg.type === 'stop') {
             running = false;
             for (const proc of activeProcesses) killProc(proc);
