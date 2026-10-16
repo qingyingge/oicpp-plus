@@ -3506,11 +3506,22 @@ function normalizeCompetitiveCompanionPayload(data) {
         timeLimitMs = data.timeLimit <= 50 ? Math.round(data.timeLimit * 1000) : Math.round(data.timeLimit);
     }
 
+    // 空间限制（MB）。Competitive Companion 约定单位为 MB（TaskBuilder.setMemoryLimit 已统一取整，
+    // 其 140+ 个 OJ parser 见到 KB/kB 都显式换算、见到 GB 都乘 1024），实测不会出现字节量级。
+    // 上限仅作兜底：超出视为脏数据丢弃（解析失败序列化成 null、显式 0、字节量级等），
+    // 由渲染端回退到样例测试器的全局默认内存限制，避免把离谱值写进样例文件。
+    let memoryLimitMb;
+    if (typeof data.memoryLimit === 'number' && Number.isFinite(data.memoryLimit)
+        && data.memoryLimit > 0 && data.memoryLimit <= 65536) {
+        memoryLimitMb = Math.round(data.memoryLimit * 100) / 100;
+    }
+
     const samples = data.tests.map((t, idx) => ({
         id: idx + 1,
         input: typeof t?.input === 'string' ? t.input : '',
         output: typeof t?.output === 'string' ? t.output : '',
-        timeLimit: timeLimitMs
+        timeLimit: timeLimitMs,
+        memoryLimit: memoryLimitMb
     }));
 
     const payload = {
@@ -3660,6 +3671,7 @@ function validateSampleTesterPayload(data) {
         if (typeof s.output !== 'string') return { valid: false, message: 'output must be string', invalidField: 'output' };
         if (s.output.length > 1024 * 1024) return { valid: false, message: 'output is too large', invalidField: 'output' };
         if (s.timeLimit !== undefined && (!Number.isInteger(s.timeLimit) || s.timeLimit <= 0)) return { valid: false, message: 'timeLimit must be positive integer', invalidField: 'timeLimit' };
+        if (s.memoryLimit !== undefined && (!Number.isFinite(s.memoryLimit) || s.memoryLimit < 0)) return { valid: false, message: 'memoryLimit must be non-negative number', invalidField: 'memoryLimit' };
     }
     return { valid: true };
 }

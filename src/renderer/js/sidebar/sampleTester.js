@@ -100,7 +100,12 @@ class SampleTester {
                                     input: s.input || '',
                                     output: s.output || '',
                                     timeLimit: s.timeLimit && Number.isInteger(s.timeLimit) ? s.timeLimit : 1000,
-                                    memoryLimit: this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0),
+                                    memoryLimit: this.sanitizeMemoryLimit(
+                                        (typeof s.memoryLimit === 'number' && Number.isFinite(s.memoryLimit) && s.memoryLimit > 0)
+                                            ? s.memoryLimit
+                                            : this.globalSettings.defaultMemoryLimit,
+                                        0
+                                    ),
                                     showInput: true,
                                     showOutput: true,
                                     inputType: 'userinput',
