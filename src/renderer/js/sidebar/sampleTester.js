@@ -1001,7 +1001,7 @@ class SampleTester {
 
         let statusBadge = '';
         if (sample.result && sample.result.status) {
-            statusBadge = `<span class="status-badge status-${sample.result.status.toLowerCase()}">${sample.result.status}</span>`;
+            statusBadge = `<span class="status-badge status-${this.escapeHtml(sample.result.status.toLowerCase())}">${this.escapeHtml(sample.result.status)}</span>`;
             if (sample.result.time !== undefined) {
                 statusBadge += `<span style="color: #858585; font-size: 11px;">${sample.result.time}ms</span>`;
             }
@@ -1078,16 +1078,16 @@ class SampleTester {
                             </div>
                         </div>
             <div class="program-output-container" id="output-container-${sample.id}">
-                            <textarea class="program-output" readonly spellcheck="false" data-i18n-placeholder="tester.outputPlaceholder" placeholder="运行程序后显示输出..." id="output-${sample.id}">${processedProgramOutput}</textarea>
+                            <textarea class="program-output" readonly spellcheck="false" data-i18n-placeholder="tester.outputPlaceholder" placeholder="运行程序后显示输出..." id="output-${sample.id}">${this.escapeHtml(processedProgramOutput)}</textarea>
                         </div>
                     </div>
                     <div class="program-output-group stderr-output-group" style="display: ${sample.result?.stderr ? '' : 'none'};">
                         <div class="sample-io-header"><span class="sample-io-label">${window.i18n.t('tester.stderrLabel')}</span></div>
-                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.stderrPlaceholder')}" id="stderr-${sample.id}">${sample.result?.stderr || ''}</textarea></div>
+                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.stderrPlaceholder')}" id="stderr-${sample.id}">${this.escapeHtml(sample.result?.stderr || '')}</textarea></div>
                     </div>
                     <div class="program-output-group spj-output-group" style="display: ${sample.result?.spjOutput ? '' : 'none'};">
                         <div class="sample-io-header"><span class="sample-io-label">${window.i18n.t('tester.spjOutputLabel')}</span></div>
-                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.spjOutputPlaceholder')}" id="spj-output-${sample.id}">${sample.result?.spjOutput || ''}</textarea></div>
+                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.spjOutputPlaceholder')}" id="spj-output-${sample.id}">${this.escapeHtml(sample.result?.spjOutput || '')}</textarea></div>
                     </div>
                 </div>
                 <div class="sample-settings">
@@ -1107,13 +1107,13 @@ class SampleTester {
                     </div>
                     <div class="setting-group">
                         <span class="setting-label"><span data-i18n="tester.inputFile">输入文件:</span></span>
-                        <input type="text" class="setting-input setting-input-wide" value="${sample.freopenInputFile || ''}"
+                        <input type="text" class="setting-input setting-input-wide" value="${this.escapeHtml(sample.freopenInputFile || '')}"
                                data-i18n-placeholder="tester.freopenInputPlaceholder" placeholder="如 sample.in"
                                onchange="sampleTester.updateSampleSetting(${sample.id}, 'freopenInputFile', this.value)">
                     </div>
                     <div class="setting-group">
                         <span class="setting-label"><span data-i18n="tester.outputFile">输出文件:</span></span>
-                        <input type="text" class="setting-input setting-input-wide" value="${sample.freopenOutputFile || ''}"
+                        <input type="text" class="setting-input setting-input-wide" value="${this.escapeHtml(sample.freopenOutputFile || '')}"
                                data-i18n-placeholder="tester.freopenOutputPlaceholder" placeholder="如 sample.out"
                                onchange="sampleTester.updateSampleSetting(${sample.id}, 'freopenOutputFile', this.value)">
                     </div>
@@ -1155,7 +1155,7 @@ class SampleTester {
             const filePath = type === 'input' ? sample.input : sample.output;
             const abbreviatedPath = this.abbreviateFilePath(filePath);
             const icon = (window.uiIcons && typeof window.uiIcons.svg === 'function') ? window.uiIcons.svg('folder') : '';
-            return `<div class="file-reference" title="${filePath}"><span class="file-reference-icon" aria-hidden="true">${icon}</span><span>file: ${abbreviatedPath}</span></div>`;
+            return `<div class="file-reference" title="${this.escapeHtml(filePath)}"><span class="file-reference-icon" aria-hidden="true">${icon}</span><span>file: ${this.escapeHtml(abbreviatedPath)}</span></div>`;
         } else {
             const content = type === 'input' ? sample.input : sample.output;
             const lines = (content || '').split('\n').length;
@@ -1167,7 +1167,7 @@ class SampleTester {
            onfocus="sampleTester.expandTextarea(this)"
            onblur="sampleTester.collapseTextarea(this)"
            oninput="sampleTester.autoResizeTextarea(this); sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)"
-           onchange="sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)">${content || ''}</textarea>`;
+           onchange="sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)">${this.escapeHtml(content || '')}</textarea>`;
         }
     }
 
@@ -3035,7 +3035,9 @@ class SampleTester {
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     createHighlightedOutput(actual, expected) {
@@ -3100,7 +3102,7 @@ class SampleTester {
         if (!element) return;
 
         const statusContainer = element.querySelector('.sample-status');
-        let statusBadge = `<span class="status-badge status-${result.status.toLowerCase()}">${result.status}</span>`;
+        let statusBadge = `<span class="status-badge status-${this.escapeHtml(result.status.toLowerCase())}">${this.escapeHtml(result.status)}</span>`;
 
         if (result.time !== undefined) {
             statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${result.time}ms</span>`;
