@@ -137,6 +137,25 @@ function waitForResult(proc, timeout) {
 
 function killProc(proc) { terminateProcessTree(proc); }
 
+// 不限时（0）时给 native 同步调用兜一个墙钟上限：fastspawn 会把 0 当成
+// NO_DEADLINE(=INT64_MAX)，此时死循环的程序永远不返回，worker 线程被占死，
+// postMessage('stop') 与 worker.terminate() 都打不断，整轮对拍就此挂死。
+// 60s 远大于任何正常测试点，又足以把死循环判成 TLE。
+const UNLIMITED_RUN_FALLBACK_MS = 60 * 1000;
+
+function effectiveRunTimeout(timeout) {
+    return (Number.isFinite(timeout) && timeout > 0) ? timeout : UNLIMITED_RUN_FALLBACK_MS;
+}
+
+// worker 被 terminate 时不会执行 stop 消息，Windows 回退路径下的子进程
+// 会变成孤儿继续跑；进程退出钩子是唯一能兜住它们的时机
+process.on('exit', () => {
+    for (const proc of activeProcesses) {
+        try { killProc(proc); } catch (_) {}
+    }
+    activeProcesses.clear();
+});
+
 function writeInput(proc, input) {
     return new Promise((resolve) => {
         // 子进程可能在读完输入前就退出（编译失败、std 先崩），此时 write 触发
@@ -169,7 +188,7 @@ function runFast(exePath, input, timeout) {
         return { code: -1, output: null, timeout: false, error: 'fastspawn module not loaded', ms: 0 };
     }
     const t0 = Date.now();
-    const r = fast.run(exePath, input, timeout);
+    const r = fast.run(exePath, input, effectiveRunTimeout(timeout));
     // 截断标志由 native 侧回报。原先靠 output.length >= MAX_WORKER_OUTPUT_BYTES 猜，
     // 而 native 的 MAX_OUTPUT(64MB) 与 JS 的 MAX_WORKER_OUTPUT_BYTES(32MB) 不等，
     // 落在两者之间的截断完全察觉不到，会拿残缺输出判等。
@@ -187,7 +206,7 @@ function runFastPair(stdPath, testPath, input, timeout) {
         return { code1: -1, code2: -1, out1: null, out2: null, ms: 0, error: 'fastspawn module not loaded' };
     }
     const t0 = Date.now();
-    const r = fast.runPair(stdPath, testPath, input, timeout);
+    const r = fast.runPair(stdPath, testPath, input, effectiveRunTimeout(timeout));
     const ms = Date.now() - t0;
     return {
         code1: r.code1, code2: r.code2,

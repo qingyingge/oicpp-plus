@@ -7359,16 +7359,16 @@ function setupIPC() {
         });
         engine.on('stopped', (data) => {
             try { mainWindow?.webContents.send('compare-complete', { ...data, stopped: true }); } catch(_) {}
-            activeEngine = null;
+            if (activeEngine === engine) activeEngine = null;
         });
         engine.on('complete', (data) => {
             try { mainWindow?.webContents.send('compare-complete', data); } catch(_) {}
-            activeEngine = null;
+            if (activeEngine === engine) activeEngine = null;
         });
 
         engine.start(config).catch((err) => {
             try { mainWindow?.webContents.send('compare-error', { testNumber: 0, type: 'engine', message: err.message }); } catch(_) {}
-            activeEngine = null;
+            if (activeEngine === engine) activeEngine = null;
         });
 
         return { started: true };
