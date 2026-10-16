@@ -30,8 +30,6 @@ const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
-// 业务错误：Error 之上携带 code/errno/syscall/path（Node 风格）或 lspCode（LSP 风格）
-/** @typedef {NodeJS.ErrnoException & { lspCode?: string }} OicppError */
 const APP_VERSION = '1.5.4';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
@@ -350,9 +348,6 @@ function ensureClangdUserBundle() {
 /**
  * 运行编译器获取其内置 include 路径 和 target triple
  * 执行 g++ -E -x c++ - -v 并解析输出
- * @param {string} compilerPath - 编译器完整路径
- * @param {string[]} extraArgs - 额外的编译参数（如 -std=c++14）
- * @returns {Promise<{includePaths: string[], target: string}>}
  */
 function queryCompilerInfo(compilerPath, extraArgs = []) {
     return new Promise((resolve) => {
@@ -373,7 +368,7 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
             ...process.env
         };
         if (runtimeBinPaths.length > 0) {
-            compilerEnv.PATH = [...runtimeBinPaths, process.env['PATH'] || ''].join(path.delimiter);
+            compilerEnv['PATH'] = [...runtimeBinPaths, process.env['PATH'] || ''].join(path.delimiter);
         }
         let stdout = '';
         let stderr = '';
@@ -406,7 +401,7 @@ function queryCompilerInfo(compilerPath, extraArgs = []) {
             const output = [stderr, stdout].filter(Boolean).join('\n');
             const targetMatch = output.match(/^Target:\s*(\S+)/m);
             if (targetMatch) {
-                result.target = targetMatch[1];
+                result.target = targetMatch[1] ?? '';
                 logInfo('[LSP] 从编译器获取 target:', result.target);
             }
             const lines = output.split(/\r?\n/);
@@ -486,7 +481,8 @@ class ClangdLspManager {
     }
     _queueDiagnostics(uri, params) {
         const key = uri || '';
-        const count = Array.isArray(params?.diagnostics) ? params.diagnostics.length : 0;
+        const queuedDiagnostics = params?.diagnostics;
+        const count = Array.isArray(queuedDiagnostics) ? queuedDiagnostics.length : 0;
         // 空诊断且上一份下发的也是空：状态没变，不必再走一趟 IPC
         if (count === 0 && this.lastSentDiagnostics.get(key) === 0) {
             this.pendingDiagnostics.delete(key);
@@ -501,7 +497,8 @@ class ClangdLspManager {
             this.pendingDiagnostics.delete(key);
             if (!latest)
                 return;
-            this.lastSentDiagnostics.set(key, Array.isArray(latest.diagnostics) ? latest.diagnostics.length : 0);
+            const latestDiagnostics = latest.diagnostics;
+            this.lastSentDiagnostics.set(key, Array.isArray(latestDiagnostics) ? latestDiagnostics.length : 0);
             this._sendLspNotification('textDocument/publishDiagnostics', latest);
         }, LSP_DIAGNOSTICS_THROTTLE_MS);
         if (typeof timer.unref === 'function')
@@ -513,7 +510,8 @@ class ClangdLspManager {
             clearTimeout(timer);
         this.diagnosticTimers.clear();
         for (const [key, params] of this.pendingDiagnostics) {
-            this.lastSentDiagnostics.set(key, Array.isArray(params?.diagnostics) ? params.diagnostics.length : 0);
+            const flushedDiagnostics = params?.diagnostics;
+            this.lastSentDiagnostics.set(key, Array.isArray(flushedDiagnostics) ? flushedDiagnostics.length : 0);
             this._sendLspNotification('textDocument/publishDiagnostics', params);
         }
         this.pendingDiagnostics.clear();
@@ -764,7 +762,7 @@ class ClangdLspManager {
             catch (_) { }
         });
         this.pendingApplyEdits.clear();
-        await /** @type {Promise<void>} */ (new Promise((resolve) => {
+        await (new Promise((resolve) => {
             let settled = false;
             const finish = () => {
                 if (settled)
@@ -823,7 +821,7 @@ class ClangdLspManager {
                     method: '$/cancelRequest',
                     params: { id }
                 });
-                /** @type {OicppError} */ const error = new Error(`LSP request timed out: ${method}`);
+                const error = new Error(`LSP request timed out: ${method}`);
                 error.code = 'ETIMEDOUT';
                 reject(error);
             }, LSP_REQUEST_TIMEOUT_MS);
@@ -859,7 +857,7 @@ class ClangdLspManager {
                 const oldest = this.canceledIds.values().next().value;
                 this.canceledIds.delete(oldest);
             }
-            /** @type {OicppError} */ const error = new Error(`LSP request cancelled: ${entry.method || requestId}`);
+            const error = new Error(`LSP request cancelled: ${entry.method || requestId}`);
             error.code = 'ECANCELED';
             entry.reject(error);
         }
@@ -930,7 +928,7 @@ class ClangdLspManager {
         if (!this._hasFraming()) {
             return;
         }
-        this.buffer = this.bufferChunks.length === 1 ? this.bufferChunks[0] : Buffer.concat(this.bufferChunks, this.bufferedBytes);
+        this.buffer = this.bufferChunks.length === 1 ? (this.bufferChunks[0] ?? Buffer.alloc(0)) : Buffer.concat(this.bufferChunks, this.bufferedBytes);
         this.bufferChunks = [];
         this.bufferedBytes = 0;
         while (true) {
@@ -943,7 +941,7 @@ class ClangdLspManager {
                 this.buffer = this.buffer.slice(headerEnd + 4);
                 continue;
             }
-            const length = parseInt(lengthMatch[1], 10);
+            const length = parseInt(lengthMatch[1] ?? '', 10);
             if (!Number.isFinite(length) || length < 0 || length > LSP_MAX_MESSAGE_BYTES) {
                 logWarn('[LSP] 收到非法的 Content-Length:', lengthMatch[1]);
                 this._resetBuffer();
@@ -1030,10 +1028,10 @@ class ClangdLspManager {
         if (!entry)
             return false;
         entry.resolve({
-            applied: result?.applied === true,
-            skipped: Number.isInteger(result?.skipped) ? result.skipped : 0,
-            conflicts: Number.isInteger(result?.conflicts) ? result.conflicts : 0,
-            failureReason: result?.failureReason || undefined
+            applied: result?.['applied'] === true,
+            skipped: Number.isInteger(result?.['skipped']) ? result['skipped'] : 0,
+            conflicts: Number.isInteger(result?.['conflicts']) ? result['conflicts'] : 0,
+            failureReason: result?.['failureReason'] || undefined
         });
         return true;
     }
@@ -1041,7 +1039,8 @@ class ClangdLspManager {
         const id = message.id;
         const method = message.method;
         if (method === 'workspace/configuration') {
-            const items = Array.isArray(message.params?.items) ? message.params.items : [];
+            const configItems = message.params?.items;
+            const items = Array.isArray(configItems) ? configItems : [];
             this._sendResult(id, items.map(() => ({})));
             return;
         }
@@ -1067,10 +1066,11 @@ class ClangdLspManager {
         if (!message)
             return;
         if (Object.prototype.hasOwnProperty.call(message, 'id')) {
-            const entry = this.pending.get(message.id);
+            const pendingId = message.id;
+            const entry = this.pending.get(pendingId);
             if (!entry) {
-                if (this.canceledIds.has(message.id)) {
-                    this.canceledIds.delete(message.id);
+                if (this.canceledIds.has(pendingId)) {
+                    this.canceledIds.delete(pendingId);
                     return;
                 }
                 if (typeof message.method === 'string') {
@@ -1079,7 +1079,7 @@ class ClangdLspManager {
                 return;
             }
             clearTimeout(entry.timer);
-            this.pending.delete(message.id);
+            this.pending.delete(pendingId);
             if (message.error) {
                 const errorText = message.error?.message || JSON.stringify(message.error);
                 // 取消属于预期结果（文档被修改 / 客户端主动 cancel），降到 INFO 避免刷屏
@@ -1090,7 +1090,7 @@ class ClangdLspManager {
                     logInfo(logLine);
                 else
                     logWarn(logLine);
-                /** @type {OicppError} */ const error = new Error(errorText || 'clangd error');
+                const error = new Error(errorText || 'clangd error');
                 error.lspCode = message.error?.code;
                 entry.reject(error);
             }
@@ -1896,14 +1896,14 @@ function isSensitiveIoPath(targetPath) {
             cmp = resolved.toLowerCase();
         const { dirPrefixes, exactPaths } = getSensitivePathPrefixes();
         for (let i = 0; i < exactPaths.length; i++) {
-            let e = exactPaths[i];
+            let e = exactPaths[i] ?? '';
             if (process.platform === 'win32')
                 e = e.toLowerCase();
             if (cmp === e)
                 return true;
         }
         for (let i = 0; i < dirPrefixes.length; i++) {
-            let d = dirPrefixes[i];
+            let d = dirPrefixes[i] ?? '';
             if (process.platform === 'win32')
                 d = d.toLowerCase();
             if (cmp === d || cmp.startsWith(d + path.sep))
@@ -1923,9 +1923,10 @@ function assertSafeIoPath(targetPath) {
 }
 function sanitizeDialogPathOptions(options) {
     try {
-        if (options && typeof options === 'object' && options.defaultPath && isSensitiveIoPath(options.defaultPath)) {
+        const defaultPath = options['defaultPath'];
+        if (options && typeof options === 'object' && defaultPath && isSensitiveIoPath(defaultPath)) {
             const cleaned = Object.assign({}, options);
-            delete cleaned.defaultPath;
+            delete cleaned['defaultPath'];
             return cleaned;
         }
     }
@@ -2076,7 +2077,7 @@ function normalizeClangFormatStyle(raw = null) {
         return normalized;
     }
     const toInt = (value, fallback) => {
-        const parsed = parseInt(value, 10);
+        const parsed = parseInt(String(value), 10);
         return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     };
     const toBool = (value, fallback) => {
@@ -2127,10 +2128,11 @@ function normalizeSettingsRuntimeShape(nextSettings) {
     if (!nextSettings || typeof nextSettings !== 'object') {
         return nextSettings;
     }
-    const style = normalizeClangFormatStyle(nextSettings.clangFormatStyle || nextSettings.clangFormat || null);
-    nextSettings.clangFormatStyle = style;
-    if (typeof nextSettings.clangFormatRaw !== 'string' || !nextSettings.clangFormatRaw.trim()) {
-        nextSettings.clangFormatRaw = [
+    const settingsBag = nextSettings;
+    const style = normalizeClangFormatStyle((settingsBag['clangFormatStyle'] || settingsBag['clangFormat'] || null));
+    settingsBag.clangFormatStyle = style;
+    if (typeof settingsBag.clangFormatRaw !== 'string' || !settingsBag.clangFormatRaw.trim()) {
+        settingsBag.clangFormatRaw = [
             `BasedOnStyle: ${style.BasedOnStyle}`,
             `IndentWidth: ${style.IndentWidth}`,
             `TabWidth: ${style.TabWidth}`,
@@ -2147,8 +2149,8 @@ function normalizeSettingsRuntimeShape(nextSettings) {
             `AlignConsecutiveDeclarations: ${style.AlignConsecutiveDeclarations ? 'true' : 'false'}`
         ].join('\n');
     }
-    if (!nextSettings.formatterIndentStyle) {
-        nextSettings.formatterIndentStyle = style.UseTab === 'Always' ? 'tabs' : 'editor';
+    if (!settingsBag['formatterIndentStyle']) {
+        settingsBag['formatterIndentStyle'] = style.UseTab === 'Always' ? 'tabs' : 'editor';
     }
     return nextSettings;
 }
@@ -2673,12 +2675,12 @@ function walkDir(dir) {
                     }
                 }
                 catch (error) {
-                    logInfo('[查找编译器] 跳过无法访问的文件:', fullPath, error.message);
+                    logInfo('[查找编译器] 跳过无法访问的文件:', fullPath, error?.message);
                 }
             }
         }
         catch (error) {
-            logInfo('[查找编译器] 无法读取目录:', currentDir, error.message);
+            logInfo('[查找编译器] 无法读取目录:', currentDir, error?.message);
         }
     }
     walk(dir);
@@ -3087,12 +3089,11 @@ function createMenuBar() {
     const debugAccelerator = resolveRunMenuAccelerator('toggleDebug', 'F5');
     const compileAccelerator = resolveRunMenuAccelerator('compileCode', 'F9');
     const runAccelerator = resolveRunMenuAccelerator('runCode', 'F10');
-    const compileRunAccelerator = resolveRunMenuAccelerator('compileAndRun', defaultKeybindings.compileAndRun || 'F11');
+    const compileRunAccelerator = resolveRunMenuAccelerator('compileAndRun', defaultKeybindings['compileAndRun'] || 'F11');
     const openTerminalAccelerator = normalizeAcceleratorForMenu(resolveRunMenuAccelerator('openTerminal', 'Ctrl+`'), 'CmdOrCtrl+`');
     // 移除与带修饰符快捷键冲突的裸 Fn 菜单加速器，
     // 避免 Electron 同时触发两个动作（如 Ctrl+F11 触发 F11）
     const compileRunAcceleratorFinal = hasConflictingModifiedKey(compileRunAccelerator) ? undefined : compileRunAccelerator;
-    /** @type {import('electron').MenuItemConstructorOptions[]} */
     const menuTemplate = [
         {
             label: t('menu.file'),
@@ -3431,7 +3432,7 @@ function createCompetitiveCompanionServer(port, tagLabel) {
         }
         catch (_) { }
     });
-    server.on('error', /** @param {OicppError} err */ (err) => {
+    server.on('error', (err) => {
         if (err && err.code === 'EADDRINUSE') {
             try {
                 logWarn(`[${label}] 端口 ${port} 被占用，可能被其他工具占用（如 cph）。可在 Competitive Companion 中添加 http://127.0.0.1:${port}/ 作为自定义端口。`);
@@ -3798,15 +3799,15 @@ function setupIPC() {
         try {
             const incomingSettings = { ...(newSettings || {}) };
             if (Object.prototype.hasOwnProperty.call(incomingSettings, 'runMode')) {
-                incomingSettings.runMode = normalizeRunModeForPlatform(incomingSettings.runMode);
+                incomingSettings['runMode'] = normalizeRunModeForPlatform(incomingSettings['runMode']);
             }
             if (Object.prototype.hasOwnProperty.call(incomingSettings, 'compilerArgs')) {
-                incomingSettings.compilerArgs = normalizeCompilerArgsForPlatform(incomingSettings.compilerArgs);
+                incomingSettings['compilerArgs'] = normalizeCompilerArgsForPlatform(incomingSettings['compilerArgs']);
             }
             settings = { ...settings, ...incomingSettings };
             if (mainWindow && !mainWindow.isDestroyed()) {
-                if (typeof incomingSettings.windowOpacity === 'number') {
-                    mainWindow.setOpacity(incomingSettings.windowOpacity);
+                if (typeof incomingSettings['windowOpacity'] === 'number') {
+                    mainWindow.setOpacity(incomingSettings['windowOpacity']);
                 }
             }
             await saveSettings(); // 确保保存完成
@@ -3821,7 +3822,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('保存设置失败:', error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.handle('get-settings', (event, settingsType) => {
@@ -3988,7 +3989,7 @@ function setupIPC() {
     // include），诊断因此全部失效。这里先等主进程自己解析出启动工作区再补齐。
     async function resolveLspStartOptions(options) {
         const opts = options && typeof options === 'object' ? options : {};
-        if (opts.workspaceRoot)
+        if (opts['workspaceRoot'])
             return opts;
         if (!startupWorkspaceSettled) {
             await waitForStartupWorkspace(LSP_START_WORKSPACE_WAIT_MS);
@@ -3997,7 +3998,7 @@ function setupIPC() {
         if (typeof fallback !== 'string' || !fallback.trim())
             return opts;
         logInfo('[LSP] 渲染进程未提供工作区，回退到已解析的启动工作区:', fallback);
-        return { ...opts, workspaceRoot: fallback, rootUri: opts.rootUri || pathToFileURL(fallback).href };
+        return { ...opts, workspaceRoot: fallback, rootUri: opts['rootUri'] || pathToFileURL(fallback).href };
     }
     ipcMain.handle('lsp-start', async (_event, options = {}) => {
         logInfo('[LSP] 渲染进程请求启动 LSP, options:', JSON.stringify(options));
@@ -4183,7 +4184,7 @@ function setupIPC() {
         }
         catch (e) {
             logError('show-open-dialog 失败:', e);
-            return { canceled: true, filePaths: [], error: e.message };
+            return { canceled: true, filePaths: [], error: e?.message };
         }
     });
     ipcMain.handle('show-save-dialog', async (event, options) => {
@@ -4193,7 +4194,7 @@ function setupIPC() {
         }
         catch (e) {
             logError('show-save-dialog 失败:', e);
-            return { canceled: true, filePath: undefined, error: e.message };
+            return { canceled: true, filePath: undefined, error: e?.message };
         }
     });
     ipcMain.handle('show-message-box', async (event, options) => {
@@ -4203,7 +4204,7 @@ function setupIPC() {
         }
         catch (e) {
             logError('show-message-box 失败:', e);
-            return { response: -1, checkboxChecked: false, error: e.message };
+            return { response: -1, checkboxChecked: false, error: e?.message };
         }
     });
     ipcMain.handle('open-path', async (_event, targetPath, options = {}) => {
@@ -4220,7 +4221,7 @@ function setupIPC() {
             catch (_) {
                 stat = null;
             }
-            if (stat && stat.isFile() && (options?.reveal || options?.highlight)) {
+            if (stat && stat.isFile() && (options?.['reveal'] || options?.['highlight'])) {
                 shell.showItemInFolder(normalized);
                 return { success: true, action: 'reveal' };
             }
@@ -4243,35 +4244,35 @@ function setupIPC() {
         startDebugSession(filePath, options).then(result => {
             event.reply('debug-started', result);
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('stop-debug', (event) => {
         stopDebugSession().then(result => {
             event.reply('debug-stopped', result);
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-step-over', (event) => {
         sendDebugCommand('step').then(result => {
             event.reply('debug-output', { message: t('main.debugStepOver'), type: 'debug' });
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-step-into', (event) => {
         sendDebugCommand('stepi').then(result => {
             event.reply('debug-output', { message: t('main.debugStepInto'), type: 'debug' });
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-step-out', (event) => {
         sendDebugCommand('finish').then(result => {
             event.reply('debug-output', { message: t('main.debugStepOut'), type: 'debug' });
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-continue', (event) => {
@@ -4281,7 +4282,7 @@ function setupIPC() {
             event.reply('debug-output', { message: t('main.debugContinue'), type: 'debug' });
         }).catch(error => {
             logError('[主进程] 继续执行命令失败:', error);
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-run', (event) => {
@@ -4295,7 +4296,7 @@ function setupIPC() {
                 }
             }).catch((error) => {
                 logError('[主进程] 手动启动程序失败:', error);
-                event.reply('debug-error', error.message);
+                event.reply('debug-error', error?.message);
             });
         }
         else {
@@ -4306,7 +4307,7 @@ function setupIPC() {
         sendDebugInput(input).then(result => {
             void result;
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-add-breakpoint', (event, breakpoint) => {
@@ -4321,12 +4322,12 @@ function setupIPC() {
             });
         }).catch(error => {
             logError('[主进程] 断点添加失败:', error);
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
             event.reply('debug-breakpoint-set', {
                 file: breakpoint.file,
                 line: breakpoint.line,
                 success: false,
-                error: error.message
+                error: error?.message
             });
         });
     });
@@ -4342,12 +4343,12 @@ function setupIPC() {
             });
         }).catch(error => {
             logError('[主进程] 断点移除失败:', error);
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
             event.reply('debug-breakpoint-removed', {
                 file: breakpoint.file,
                 line: breakpoint.line,
                 success: false,
-                error: error.message
+                error: error?.message
             });
         });
     });
@@ -4355,14 +4356,14 @@ function setupIPC() {
         getDebugVariables().then(variables => {
             event.reply('debug-variables-updated', variables);
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-request-callstack', (event) => {
         getDebugCallStack().then(callStack => {
             event.reply('debug-callstack-updated', callStack);
         }).catch(error => {
-            event.reply('debug-error', error.message);
+            event.reply('debug-error', error?.message);
         });
     });
     ipcMain.on('debug-goto-frame', (event, frame) => {
@@ -4381,17 +4382,19 @@ function setupIPC() {
         }
         catch (_) { }
         if (gdbDebugger && gdbDebugger.isRunning) {
-            gdbDebugger.addWatchVariable(expr).then(() => {
+            // gdbDebugger 是模块级 let，闭包里读它会丢失上面的判空收窄，先固定到局部 const
+            const dbg = gdbDebugger;
+            dbg.addWatchVariable(expr).then(() => {
                 event.reply('debug-output', { message: t('main.debugWatchAdded', { expr: expr }), type: 'info' });
                 try {
-                    const isInferiorRunning = !!gdbDebugger._inferiorRunning;
+                    const isInferiorRunning = !!dbg._inferiorRunning;
                     if (isInferiorRunning) {
                         broadcastPendingWatchSnapshot(event, '(运行中，等待暂停)');
                         return;
                     }
                     // addWatchVariable 内部已经抓过一次变量，这里直接取结果推送，
                     // 不再重复发一轮 -stack-list-variables
-                    const vars = gdbDebugger.getVariables();
+                    const vars = dbg.getVariables();
                     const payload = {
                         local: vars.local || {},
                         global: vars.global || {},
@@ -4410,7 +4413,7 @@ function setupIPC() {
                     pendingWatchExprs.delete(expr);
                 }
                 catch (_) { }
-                event.reply('debug-error', error.message);
+                event.reply('debug-error', error?.message);
             });
         }
         else {
@@ -4427,12 +4430,13 @@ function setupIPC() {
         }
         catch (_) { } };
         if (gdbDebugger && gdbDebugger.isRunning) {
-            gdbDebugger.removeWatchVariable(expr).then(() => {
+            const dbg = gdbDebugger;
+            dbg.removeWatchVariable(expr).then(() => {
                 removeFromCache();
                 event.reply('debug-output', { message: t('main.debugWatchRemoved', { expr: expr }), type: 'info' });
                 try {
-                    gdbDebugger.updateVariables().then(() => {
-                        const vars = gdbDebugger.getVariables();
+                    dbg.updateVariables().then(() => {
+                        const vars = dbg.getVariables();
                         if (mainWindow && !mainWindow.isDestroyed()) {
                             mainWindow.webContents.send('debug-variables-updated', {
                                 local: vars.local || {},
@@ -4451,7 +4455,7 @@ function setupIPC() {
                 }
                 catch (_) { }
             }).catch((error) => {
-                event.reply('debug-error', error.message);
+                event.reply('debug-error', error?.message);
             });
         }
         else {
@@ -4462,8 +4466,9 @@ function setupIPC() {
     });
     ipcMain.on('debug-refresh-variables', (event) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
-            gdbDebugger.updateVariables().then((result) => {
-                const variables = gdbDebugger.getVariables();
+            const dbg = gdbDebugger;
+            dbg.updateVariables().then(() => {
+                const variables = dbg.getVariables();
                 const payload = {
                     local: variables.local || {},
                     global: variables.global || {},
@@ -4474,7 +4479,7 @@ function setupIPC() {
                     mainWindow.webContents.send('debug-variables-updated', payload);
                 }
             }).catch((error) => {
-                event.reply('debug-error', error.message);
+                event.reply('debug-error', error?.message);
             });
         }
         else {
@@ -4483,16 +4488,17 @@ function setupIPC() {
     });
     ipcMain.on('debug-expand-variable', (event, variableName, options = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
-            gdbDebugger.expandVariable(variableName, options).then((result) => {
+            const dbg = gdbDebugger;
+            dbg.expandVariable(variableName, options).then((result) => {
                 event.reply('debug-output', { message: t('main.debugVarExpanded', { name: variableName }), type: 'info' });
                 broadcastCurrentVariablesSnapshot(event);
                 const payload = {
                     name: variableName,
-                    scope: result?.scope || (gdbDebugger.getVariables()?.watches?.[variableName] ? 'watch' : 'local'),
-                    path: Array.isArray(result?.path) ? result.path : (Array.isArray(options.path) ? options.path : []),
-                    cacheKey: result?.cacheKey || options.cacheKey || null,
+                    scope: result?.['scope'] || (dbg.getVariables()?.watches?.[variableName] ? 'watch' : 'local'),
+                    path: Array.isArray(result?.['path']) ? result['path'] : (Array.isArray(options['path']) ? options['path'] : []),
+                    cacheKey: result?.['cacheKey'] || options['cacheKey'] || null,
                     options,
-                    data: result?.data || null
+                    data: result?.['data'] || null
                 };
                 try {
                     event.reply('debug-variable-expanded', payload);
@@ -4505,7 +4511,7 @@ function setupIPC() {
                     catch (_) { }
                 }
             }).catch((error) => {
-                event.reply('debug-error', error.message);
+                event.reply('debug-error', error?.message);
             });
         }
         else {
@@ -4514,18 +4520,19 @@ function setupIPC() {
     });
     ipcMain.on('debug-load-more-variable', (event, variableName, options = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
+            const dbg = gdbDebugger;
             const nextOptions = { ...options, append: true };
-            gdbDebugger.expandVariable(variableName, nextOptions).then((result) => {
+            dbg.expandVariable(variableName, nextOptions).then((result) => {
                 event.reply('debug-output', { message: t('main.debugVarMoreLoaded', { name: variableName }), type: 'info' });
                 broadcastCurrentVariablesSnapshot(event);
                 const payload = {
                     name: variableName,
-                    scope: result?.scope || (gdbDebugger.getVariables()?.watches?.[variableName] ? 'watch' : 'local'),
-                    path: Array.isArray(result?.path) ? result.path : (Array.isArray(nextOptions.path) ? nextOptions.path : []),
-                    cacheKey: result?.cacheKey || nextOptions.cacheKey || null,
+                    scope: result?.['scope'] || (dbg.getVariables()?.watches?.[variableName] ? 'watch' : 'local'),
+                    path: Array.isArray(result?.['path']) ? result['path'] : (Array.isArray(nextOptions['path']) ? nextOptions['path'] : []),
+                    cacheKey: result?.['cacheKey'] || nextOptions['cacheKey'] || null,
                     options: nextOptions,
                     append: true,
-                    data: result?.data || null
+                    data: result?.['data'] || null
                 };
                 try {
                     event.reply('debug-variable-expanded', payload);
@@ -4538,7 +4545,7 @@ function setupIPC() {
                     catch (_) { }
                 }
             }).catch((error) => {
-                event.reply('debug-error', error.message);
+                event.reply('debug-error', error?.message);
             });
         }
         else {
@@ -4547,11 +4554,12 @@ function setupIPC() {
     });
     ipcMain.on('debug-collapse-variable', (event, variableName, options = {}) => {
         if (gdbDebugger && gdbDebugger.isRunning) {
-            gdbDebugger.collapseVariable(variableName, options).then((result) => {
+            const dbg = gdbDebugger;
+            dbg.collapseVariable(variableName, options).then((result) => {
                 event.reply('debug-output', { message: t('main.debugVarCollapsed', { name: variableName }), type: 'info' });
                 broadcastCurrentVariablesSnapshot(event);
             }).catch((error) => {
-                event.reply('debug-error', error.message);
+                event.reply('debug-error', error?.message);
             });
         }
         else {
@@ -4923,7 +4931,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('读取压缩包样例失败:', error);
-            return { success: false, error: error.message || '读取压缩包失败' };
+            return { success: false, error: error?.message || '读取压缩包失败' };
         }
         finally {
             if (zip) {
@@ -5052,7 +5060,7 @@ function setupIPC() {
         }
     });
     ipcMain.handle('walk-directory', async (event, dirPath, options = {}) => {
-        const { includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py'], excludeGlobs = ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode', '.dsym'], maxFiles = 5000 } = options || {};
+        const { includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py'], excludeGlobs = ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode', '.dsym'], maxFiles = 5000 } = (options || {});
         const results = [];
         try {
             assertSafeIoPath(dirPath);
@@ -5100,7 +5108,7 @@ function setupIPC() {
                 logError('[walk-directory] 失败:', error);
             }
             catch (_) { }
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.on('rename-file', async (event, oldPath, newName) => {
@@ -5125,7 +5133,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('重命名文件失败:', error);
-            event.reply('file-renamed', oldPath, null, error.message);
+            event.reply('file-renamed', oldPath, null, error?.message);
         }
     });
     ipcMain.on('delete-file', async (event, filePath) => {
@@ -5150,7 +5158,7 @@ function setupIPC() {
         catch (error) {
             restoreFileWatchStates(previousWatchStates);
             logError('删除文件失败:', error);
-            event.reply('file-deleted', filePath, error.message);
+            event.reply('file-deleted', filePath, error?.message);
         }
     });
     ipcMain.handle('rename-file-invoke', async (_event, oldPath, newName, options = {}) => {
@@ -5191,7 +5199,7 @@ function setupIPC() {
         catch (error) {
             try {
                 if (mainWindow && !mainWindow.isDestroyed())
-                    mainWindow.webContents.send('file-renamed', oldPath, null, error.message);
+                    mainWindow.webContents.send('file-renamed', oldPath, null, error?.message);
             }
             catch (_) { }
             return { success: false, error: error.message };
@@ -5227,7 +5235,7 @@ function setupIPC() {
             restoreFileWatchStates(previousWatchStates);
             try {
                 if (mainWindow && !mainWindow.isDestroyed())
-                    mainWindow.webContents.send('file-deleted', filePath, error.message);
+                    mainWindow.webContents.send('file-deleted', filePath, error?.message);
             }
             catch (_) { }
             return { success: false, error: error.message };
@@ -5259,7 +5267,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('创建文件失败:', error);
-            event.reply('file-created', filePath, error.message);
+            event.reply('file-created', filePath, error?.message);
         }
     });
     ipcMain.handle('create-file', async (_event, filePath, content = '') => {
@@ -5292,7 +5300,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('创建文件失败(invoke):', error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.on('create-folder', async (event, folderPath) => {
@@ -5316,7 +5324,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('创建文件夹失败:', error);
-            event.reply('folder-created', folderPath, error.message);
+            event.reply('folder-created', folderPath, error?.message);
         }
     });
     ipcMain.on('paste-file', async (event, sourcePath, targetDir, operation) => {
@@ -5345,7 +5353,7 @@ function setupIPC() {
         }
         catch (error) {
             logError(`${operation === 'copy' ? '复制' : '移动'}文件失败:`, error);
-            event.reply('file-pasted', sourcePath, null, operation, error.message);
+            event.reply('file-pasted', sourcePath, null, operation, error?.message);
         }
     });
     ipcMain.on('move-file', async (event, sourcePath, targetPath) => {
@@ -5365,7 +5373,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('移动文件失败:', error);
-            event.reply('file-move-error', sourcePath, error.message);
+            event.reply('file-move-error', sourcePath, error?.message);
         }
     });
     ipcMain.handle('export-settings', async () => {
@@ -5386,7 +5394,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('导出设置失败:', error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.handle('import-settings', async () => {
@@ -5420,7 +5428,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('导入设置失败:', error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.handle('relaunch-app', () => {
@@ -5487,7 +5495,7 @@ function setupIPC() {
             mingwBinPaths = mingwBinPaths.filter(p => fs.existsSync(p));
             if (mingwBinPaths.length > 0) {
                 const envPath = [...mingwBinPaths, process.env['PATH']].join(path.delimiter);
-                runtimeEnv.PATH = envPath;
+                runtimeEnv['PATH'] = envPath;
                 logInfo('[运行时环境] 已添加编译器路径到PATH，路径数量:', mingwBinPaths.length);
             }
         }
@@ -5640,7 +5648,7 @@ function setupIPC() {
                     }
                 }
                 catch (e) {
-                    logError('[主进程-程序调试] 尝试终止进程时出错:', e.message);
+                    logError('[主进程-程序调试] 尝试终止进程时出错:', e?.message);
                 }
             }, Math.floor(effectiveTimeLimit * 1.1)) : null; // 110%时杀进程
             const handleOutputLimit = (streamName) => {
@@ -5823,12 +5831,12 @@ function setupIPC() {
                 memoryTimer = null;
                 terminateProcessTree(childProcess);
                 const errorResult = {
-                    output: error.message,
+                    output: error?.message,
                     time: 0,
                     timeout: false,
                     exitCode: -1,
                     stdout: '',
-                    stderr: error.message,
+                    stderr: error?.message,
                     outputLimitExceeded: false,
                     memoryLimitExceeded: false,
                     memoryLimitBytes,
@@ -5871,7 +5879,7 @@ function setupIPC() {
                 path.join(compilerRoot, 'mingw32', 'bin')
             ].filter(p => fs.existsSync(p));
             if (compilerPaths.length > 0) {
-                runtimeEnv.PATH = [...compilerPaths, process.env['PATH']].join(path.delimiter);
+                runtimeEnv['PATH'] = [...compilerPaths, process.env['PATH']].join(path.delimiter);
             }
         }
         let hardMemoryLimitApplied = false;
@@ -6144,7 +6152,7 @@ function setupIPC() {
             // （Windows 上含 <>:"|?* 的路径很常见）同样被 existsSync 吞成 false，
             // 渲染层据此提示「请先编译」，而 exe 其实在。
             if (error?.code !== 'ENOENT') {
-                logWarn(`[主进程] 检查文件存在性失败（非不存在）: ${filePath}, 错误: ${error.message}`);
+                logWarn(`[主进程] 检查文件存在性失败（非不存在）: ${filePath}, 错误: ${error?.message}`);
                 return true;
             }
             logInfo(`[主进程] 文件不存在: ${filePath}`);
@@ -6174,7 +6182,7 @@ function setupIPC() {
         }
         catch (error) {
             logError(`[主进程] 写入文件失败: ${filePath}`, error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     // 删除操作限定在当前工作区之内：被攻陷的渲染进程可对任意路径调 unlink。
@@ -6205,7 +6213,7 @@ function setupIPC() {
         catch (error) {
             restoreFileWatchStates(previousWatchStates);
             logError(`[主进程] 删除文件失败: ${filePath}`, error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     // 清空指定目录下的所有文件和子目录（保留该目录本身）。
@@ -6235,7 +6243,7 @@ function setupIPC() {
                 assertDeletableInWorkspace(resolved);
             }
             catch (e) {
-                return { success: false, error: e.message };
+                return { success: false, error: e?.message };
             }
             previousWatchStates = markLocalDeletion(resolved);
             const entries = fs.readdirSync(resolved);
@@ -6247,7 +6255,7 @@ function setupIPC() {
         catch (error) {
             restoreFileWatchStates(previousWatchStates);
             logError(`[主进程] 清空目录失败: ${dirPath}`, error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.handle('ensure-directory', async (event, dirPath) => {
@@ -6513,7 +6521,7 @@ function setupIPC() {
                             }
                         }
                         catch (error) {
-                            logInfo('[编译器下载] 清理临时文件失败:', error.message);
+                            logInfo('[编译器下载] 清理临时文件失败:', error?.message);
                         }
                     }
                 });
@@ -6579,7 +6587,7 @@ function setupIPC() {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
                         throw new Error(t('error.sevenZipUnavailable'));
                     }
-                    await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
+                    await (new Promise((resolve, reject) => {
                         const { spawn } = require('child_process');
                         const args = ['x', '-y', `-o${versionDir}`, tempFile];
                         const proc = spawn(sevenBinPath, args, { windowsHide: true });
@@ -6622,10 +6630,10 @@ function setupIPC() {
             catch (error) {
                 downloadCompleted = true;
                 const isCancelled = isDownloadCancelled(error);
-                const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
-                logError('[编译器下载] 下载过程出错:', error.message);
+                const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error?.message });
+                logError('[编译器下载] 下载过程出错:', error?.message);
                 if (backgroundDownload && !isCancelled) {
-                    notifyUser(t('compiler.downloadFailedTitle'), t('compiler.downloadFailedMessage', { name, version, message: error.message }), 'error');
+                    notifyUser(t('compiler.downloadFailedTitle'), t('compiler.downloadFailedMessage', { name, version, message: error?.message }), 'error');
                 }
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
                     updateProgress(errorMessage);
@@ -6661,7 +6669,7 @@ function setupIPC() {
             return { success: true, compilerPath };
         }
         catch (error) {
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.handle('get-downloaded-testlibs', async (event) => {
@@ -6875,7 +6883,7 @@ function setupIPC() {
                             }
                         }
                         catch (error) {
-                            logInfo('[testlib下载] 清理临时文件失败:', error.message);
+                            logInfo('[testlib下载] 清理临时文件失败:', error?.message);
                         }
                     }
                 });
@@ -6936,7 +6944,7 @@ function setupIPC() {
                     if (!sevenBinPath || !fs.existsSync(sevenBinPath)) {
                         throw new Error(t('error.sevenZipUnavailable'));
                     }
-                    await /** @type {Promise<void>} */ (new Promise((resolve, reject) => {
+                    await (new Promise((resolve, reject) => {
                         const { spawn } = require('child_process');
                         const args = ['x', '-y', `-o${versionDir}`, tempFile];
                         const proc = spawn(sevenBinPath, args, { windowsHide: true });
@@ -6978,10 +6986,10 @@ function setupIPC() {
             catch (error) {
                 downloadCompleted = true;
                 const isCancelled = isDownloadCancelled(error);
-                const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
-                logError('[testlib下载] 下载过程出错:', error.message);
+                const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error?.message });
+                logError('[testlib下载] 下载过程出错:', error?.message);
                 if (backgroundDownload && !isCancelled) {
-                    notifyUser(t('compiler.testlibDownloadFailedTitle'), t('compiler.downloadFailedMessage', { name, version, message: error.message }), 'error');
+                    notifyUser(t('compiler.testlibDownloadFailedTitle'), t('compiler.downloadFailedMessage', { name, version, message: error?.message }), 'error');
                 }
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
                     updateProgress(errorMessage);
@@ -7023,7 +7031,7 @@ function setupIPC() {
         }
         catch (error) {
             logError('[选择testlib] 发生错误:', error);
-            return { success: false, error: error.message };
+            return { success: false, error: error?.message };
         }
     });
     ipcMain.handle('test-compiler', async (event, compilerPath) => {
@@ -7065,7 +7073,7 @@ function setupIPC() {
                     mingwBinPaths = mingwBinPaths.filter(p => fs.existsSync(p));
                     if (mingwBinPaths.length > 0) {
                         const envPath = [process.env['PATH'], ...mingwBinPaths].join(path.delimiter);
-                        testEnv.PATH = envPath;
+                        testEnv['PATH'] = envPath;
                     }
                 }
                 const proc = spawn(testExeFile, [], {
@@ -7089,7 +7097,7 @@ function setupIPC() {
                     }
                 });
                 proc.on('error', (error) => {
-                    let errorMessage = `运行测试程序失败: ${error.message}`;
+                    let errorMessage = `运行测试程序失败: ${error?.message}`;
                     resolve({ success: false, message: errorMessage });
                 });
             });
@@ -7105,7 +7113,7 @@ function setupIPC() {
             return runResult;
         }
         catch (error) {
-            return { success: false, message: error.message };
+            return { success: false, message: error?.message };
         }
     });
     ipcMain.handle('test-testlib', async (event, testlibPath) => {
@@ -7124,7 +7132,7 @@ function setupIPC() {
             return { success: true, message: t('main.testlibTestOk') };
         }
         catch (error) {
-            return { success: false, message: t('main.testlibTestUnknownError'), details: error.message };
+            return { success: false, message: t('main.testlibTestUnknownError'), details: error?.message };
         }
     });
     function findTestlibFile(baseDir) {
@@ -7142,7 +7150,6 @@ function setupIPC() {
             return null;
         }
     }
-    // ─── HPC Compare Engine ───────────────────────────────
     let activeEngine = null;
     ipcMain.handle('compare-start', async (event, config) => {
         if (activeEngine) {
@@ -7189,7 +7196,7 @@ function setupIPC() {
         });
         engine.start(config).catch((err) => {
             try {
-                mainWindow?.webContents.send('compare-error', { testNumber: 0, type: 'engine', message: err.message });
+                mainWindow?.webContents.send('compare-error', { testNumber: 0, type: 'engine', message: err?.message });
             }
             catch (_) { }
             activeEngine = null;
@@ -7221,7 +7228,7 @@ function ensureLegacyDataMigration() {
         logInfo('[Migration] 已从 ~/.oicpp 迁移 settings.json 到 ~/.oicpp-plus');
     }
     catch (e) {
-        logWarn('[Migration] 迁移旧版设置失败:', e.message || e);
+        logWarn('[Migration] 迁移旧版设置失败:', e?.message || e);
     }
 }
 function normalizeDroppedPath(filePath) {
@@ -7315,24 +7322,24 @@ function detectEncoding(buffer) {
     }
     let isValidUTF8 = true;
     for (let i = 0; i < buffer.length; i++) {
-        const byte = buffer[i];
+        const byte = buffer[i] ?? 0;
         if (byte > 127) {
             if ((byte & 0xE0) === 0xC0) {
-                if (i + 1 >= buffer.length || (buffer[i + 1] & 0xC0) !== 0x80) {
+                if (i + 1 >= buffer.length || ((buffer[i + 1] ?? 0) & 0xC0) !== 0x80) {
                     isValidUTF8 = false;
                     break;
                 }
                 i++;
             }
             else if ((byte & 0xF0) === 0xE0) {
-                if (i + 2 >= buffer.length || (buffer[i + 1] & 0xC0) !== 0x80 || (buffer[i + 2] & 0xC0) !== 0x80) {
+                if (i + 2 >= buffer.length || ((buffer[i + 1] ?? 0) & 0xC0) !== 0x80 || ((buffer[i + 2] ?? 0) & 0xC0) !== 0x80) {
                     isValidUTF8 = false;
                     break;
                 }
                 i += 2;
             }
             else if ((byte & 0xF8) === 0xF0) {
-                if (i + 3 >= buffer.length || (buffer[i + 1] & 0xC0) !== 0x80 || (buffer[i + 2] & 0xC0) !== 0x80 || (buffer[i + 3] & 0xC0) !== 0x80) {
+                if (i + 3 >= buffer.length || ((buffer[i + 1] ?? 0) & 0xC0) !== 0x80 || ((buffer[i + 2] ?? 0) & 0xC0) !== 0x80 || ((buffer[i + 3] ?? 0) & 0xC0) !== 0x80) {
                     isValidUTF8 = false;
                     break;
                 }
@@ -7468,7 +7475,7 @@ async function openFile() {
         }
         catch (error) {
             logError('打开文件失败:', error);
-            dialog.showErrorBox(t('error.title'), t('error.openFileFailed', { message: error.message }));
+            dialog.showErrorBox(t('error.title'), t('error.openFileFailed', { message: error?.message }));
         }
     }
     else {
@@ -7493,7 +7500,7 @@ function updateRecentFiles(filePath) {
         }
     }
     catch (e) {
-        logWarn('[最近列表] 检测/转换路径失败，原样使用:', filePath, e.message);
+        logWarn('[最近列表] 检测/转换路径失败，原样使用:', filePath, e?.message);
     }
     settings.recentFiles = settings.recentFiles.filter(item => item.path !== filePath);
     settings.recentFiles.unshift({
@@ -7520,7 +7527,7 @@ async function openFolder() {
                 }
             }
             catch (e) {
-                logWarn('[打开工作区] 读取选中路径信息失败，将直接尝试作为目录:', e.message);
+                logWarn('[打开工作区] 读取选中路径信息失败，将直接尝试作为目录:', e?.message);
             }
             settings.lastOpen = selectedPath;
             updateRecentFiles(selectedPath);
@@ -7753,7 +7760,7 @@ async function cleanupOldInstallers(keepFile = null) {
         }
     }
     catch (error) {
-        logWarn('[更新] 清理旧安装包时出错:', error.message);
+        logWarn('[更新] 清理旧安装包时出错:', error?.message);
     }
 }
 function promptLinuxManualInstall(pendingUpdate) {
@@ -7869,7 +7876,7 @@ function runInstaller(installerPath) {
     }
     catch (error) {
         logError('运行安装程序失败:', error);
-        let errorDetail = `错误信息: ${error.message}\n\n安装程序位置: ${installerPath}\n\n您可以手动运行安装程序来完成更新。`;
+        let errorDetail = `错误信息: ${error?.message}\n\n安装程序位置: ${installerPath}\n\n您可以手动运行安装程序来完成更新。`;
         dialog.showMessageBox(mainWindow, {
             type: 'error',
             title: t('main.installerLaunchFailedTitle'),
@@ -7912,7 +7919,7 @@ function restoreSettingsBackupLinux() {
         catch (_) { }
     }
     catch (e) {
-        logWarn('[启动] 恢复 Linux 设置备份失败(可忽略):', e.message);
+        logWarn('[启动] 恢复 Linux 设置备份失败(可忽略):', e?.message);
     }
 }
 function ensureUserIconForLinux() {
@@ -7932,7 +7939,7 @@ function ensureUserIconForLinux() {
         }
     }
     catch (e) {
-        logWarn('[启动] 复制 Linux 图标失败(可忽略):', e.message);
+        logWarn('[启动] 复制 Linux 图标失败(可忽略):', e?.message);
     }
 }
 function checkPendingUpdate() {
@@ -8036,7 +8043,7 @@ function loadSettings() {
                     saveSettings();
             }
             catch (e) {
-                logWarn('[设置] 检测系统编译器失败:', e.message);
+                logWarn('[设置] 检测系统编译器失败:', e?.message);
             }
         }
         const isIntegratedOnlyPlatform = process.platform === 'darwin' || process.platform === 'linux';
@@ -8049,16 +8056,16 @@ function loadSettings() {
             const existingKeybindings = settings.keybindings && typeof settings.keybindings === 'object'
                 ? settings.keybindings
                 : {};
-            const existingCompileAndRun = typeof existingKeybindings.compileAndRun === 'string'
-                ? existingKeybindings.compileAndRun.trim()
+            const existingCompileAndRun = typeof existingKeybindings['compileAndRun'] === 'string'
+                ? existingKeybindings['compileAndRun'].trim()
                 : '';
             const shouldMigrateCompileAndRun = process.platform === 'darwin'
                 && (!existingCompileAndRun || existingCompileAndRun.toUpperCase() === 'F11');
             if (shouldMigrateCompileAndRun) {
-                settings.keybindings = /** @type {typeof settings.keybindings} */ ({
+                settings.keybindings = {
                     ...existingKeybindings,
                     compileAndRun: normalizedCompileAndRunShortcut
-                });
+                };
             }
             if (settings.runMode !== normalizedRunMode || settings.compilerArgs !== normalizedCompilerArgs || shouldMigrateCompileAndRun) {
                 settings.runMode = normalizedRunMode;
@@ -8077,6 +8084,8 @@ function loadSettings() {
 }
 function mergeSettings(defaultSettings, userSettings) {
     const result = JSON.parse(JSON.stringify(defaultSettings));
+    const base = defaultSettings;
+    const user = userSettings;
     const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'];
     const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
     const deepMerge = (target, source) => {
@@ -8092,16 +8101,16 @@ function mergeSettings(defaultSettings, userSettings) {
     for (const key of validKeys) {
         if (key === 'account')
             continue;
-        if (userSettings[key] !== undefined) {
-            if (isPlainObject(userSettings[key]) && isPlainObject(result[key])) {
-                deepMerge(result[key], userSettings[key]);
+        if (user[key] !== undefined) {
+            if (isPlainObject(user[key]) && isPlainObject(result[key])) {
+                deepMerge(result[key], user[key]);
             }
             else {
-                result[key] = userSettings[key];
+                result[key] = user[key];
             }
         }
         else {
-            result[key] = defaultSettings[key];
+            result[key] = base[key];
         }
     }
     return result;
@@ -8117,6 +8126,7 @@ function saveSettings() {
 }
 function updateSettings(settingsType, newSettings) {
     try {
+        const patch = newSettings;
         const validKeys = [
             'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme',
             'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'fontLigaturesEnabled', 'cppTemplate', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'autoSave', 'autoSaveInterval',
@@ -8124,14 +8134,14 @@ function updateSettings(settingsType, newSettings) {
             'fileHistory', 'lastOpenTabs', 'autoOpenLastWorkspace', 'language', 'autoBackupSettings', 'receiveBetaUpdates',
             'runAllSamples'
         ];
-        for (const key in newSettings) {
+        for (const key in patch) {
             if (validKeys.includes(key)) {
-                let normalizedValue = newSettings[key];
+                let normalizedValue = patch[key];
                 if (key === 'runMode') {
-                    normalizedValue = normalizeRunModeForPlatform(newSettings[key]);
+                    normalizedValue = normalizeRunModeForPlatform(patch[key]);
                 }
                 else if (key === 'compilerArgs') {
-                    normalizedValue = normalizeCompilerArgsForPlatform(newSettings[key]);
+                    normalizedValue = normalizeCompilerArgsForPlatform(patch[key]);
                 }
                 logInfo(`更新设置键: ${key} = ${normalizedValue}`);
                 settings[key] = normalizedValue;
@@ -8143,45 +8153,45 @@ function updateSettings(settingsType, newSettings) {
         normalizeSettingsRuntimeShape(settings);
         saveSettings();
         scheduleAutoSettingsBackup('update-top-level-settings');
-        if (newSettings && Object.prototype.hasOwnProperty.call(newSettings, 'keybindings')) {
+        if (Object.prototype.hasOwnProperty.call(patch, 'keybindings')) {
             createMenuBar();
         }
-        if (newSettings && typeof newSettings.language === 'string') {
-            setLanguage(newSettings.language);
+        if (typeof patch['language'] === 'string') {
+            setLanguage(patch['language']);
             createMenuBar();
         }
         if (mainWindow) {
             mainWindow.webContents.send('settings-changed', null, settings);
         }
-        if (newSettings.theme) {
+        if (patch['theme']) {
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.setBackgroundColor(getThemeBackgroundColor(newSettings.theme));
+                mainWindow.setBackgroundColor(getThemeBackgroundColor(String(patch['theme'])));
             }
             if (compilerSettingsWindow) {
-                compilerSettingsWindow.webContents.send('theme-changed', newSettings.theme);
+                compilerSettingsWindow.webContents.send('theme-changed', patch['theme']);
             }
             if (editorSettingsWindow) {
-                editorSettingsWindow.webContents.send('theme-changed', newSettings.theme);
+                editorSettingsWindow.webContents.send('theme-changed', patch['theme']);
             }
             if (codeTemplatesWindow) {
-                codeTemplatesWindow.webContents.send('theme-changed', newSettings.theme);
+                codeTemplatesWindow.webContents.send('theme-changed', patch['theme']);
             }
             if (backupSettingsWindow) {
-                backupSettingsWindow.webContents.send('theme-changed', newSettings.theme);
+                backupSettingsWindow.webContents.send('theme-changed', patch['theme']);
             }
         }
-        if (newSettings.language) {
+        if (patch['language']) {
             if (editorSettingsWindow) {
-                editorSettingsWindow.webContents.send('language-changed', newSettings.language);
+                editorSettingsWindow.webContents.send('language-changed', patch['language']);
             }
             if (compilerSettingsWindow) {
-                compilerSettingsWindow.webContents.send('language-changed', newSettings.language);
+                compilerSettingsWindow.webContents.send('language-changed', patch['language']);
             }
             if (codeTemplatesWindow) {
-                codeTemplatesWindow.webContents.send('language-changed', newSettings.language);
+                codeTemplatesWindow.webContents.send('language-changed', patch['language']);
             }
             if (backupSettingsWindow) {
-                backupSettingsWindow.webContents.send('language-changed', newSettings.language);
+                backupSettingsWindow.webContents.send('language-changed', patch['language']);
             }
         }
         logInfo('设置已更新:', settings);
@@ -8189,7 +8199,7 @@ function updateSettings(settingsType, newSettings) {
     }
     catch (error) {
         logError('更新设置失败:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error?.message };
     }
 }
 function getResettableSettingsKeys() {
@@ -8220,7 +8230,7 @@ function resetSettings(settingsType = null) {
     }
     catch (error) {
         logError('重置设置失败:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error?.message };
     }
 }
 function exportSettings(filePath) {
@@ -8236,7 +8246,7 @@ function exportSettings(filePath) {
     }
     catch (error) {
         logError('导出设置失败:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error?.message };
     }
 }
 function importSettings(filePath) {
@@ -8250,9 +8260,10 @@ function importSettings(filePath) {
         }
         const validKeys = ['compilerPath', 'compilerArgs', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'runAllSamples'];
         const defaultSettings = getDefaultSettings();
+        const imported = importData.settings;
         for (const key of validKeys) {
-            if (importData.settings[key] !== undefined) {
-                settings[key] = importData.settings[key];
+            if (imported[key] !== undefined) {
+                settings[key] = imported[key];
             }
             else {
                 settings[key] = defaultSettings[key];
@@ -8268,7 +8279,7 @@ function importSettings(filePath) {
     }
     catch (error) {
         logError('导入设置失败:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error?.message };
     }
 }
 let compilerSystemPathCache = {
@@ -8334,7 +8345,7 @@ async function compileFile(options) {
         let inQuotes = false;
         let quoteChar = null; // ' or "
         for (let i = 0; i < argString.length; i++) {
-            const ch = argString[i];
+            const ch = argString[i] ?? '';
             if ((ch === '"' || ch === "'") && (!inQuotes || ch === quoteChar)) {
                 if (!inQuotes) {
                     inQuotes = true;
@@ -8537,7 +8548,7 @@ async function compileFile(options) {
                 logInfo('[编译] 路径无法被当前 ANSI 代码页表示，已创建临时文件:', tempInputFile);
             }
             catch (copyErr) {
-                logWarn('[编译] 无法创建临时文件，使用原始路径（可能编译失败）:', copyErr.message);
+                logWarn('[编译] 无法创建临时文件，使用原始路径（可能编译失败）:', copyErr?.message);
                 tempInputFile = null;
                 actualInputFile = inputFile;
             }
@@ -8612,28 +8623,27 @@ async function compileFile(options) {
             path.join(compilerRoot, 'lib64')
         ]);
         const libraryEnvValue = mergeEnvPathValue(libraryCandidates, process.env['LIBRARY_PATH']);
-        /** @type {{ [key: string]: string | undefined, PATH?: string, MINGW_PREFIX?: string }} */
         const compilerEnv = {
             ...process.env,
             PATH: envPath,
             MINGW_PREFIX: compilerRoot
         };
         if (includeEnvValue) {
-            compilerEnv.C_INCLUDE_PATH = includeEnvValue;
+            compilerEnv['C_INCLUDE_PATH'] = includeEnvValue;
         }
         if (cplusIncludeEnvValue) {
-            compilerEnv.CPLUS_INCLUDE_PATH = cplusIncludeEnvValue;
+            compilerEnv['CPLUS_INCLUDE_PATH'] = cplusIncludeEnvValue;
         }
         if (cpathEnvValue) {
-            compilerEnv.CPATH = cpathEnvValue;
+            compilerEnv['CPATH'] = cpathEnvValue;
         }
         if (libraryEnvValue) {
-            compilerEnv.LIBRARY_PATH = libraryEnvValue;
+            compilerEnv['LIBRARY_PATH'] = libraryEnvValue;
         }
         logInfo('[编译环境] PATH路径数量:', mingwBinPaths.length);
-        logInfo('[编译环境] C_INCLUDE_PATH:', compilerEnv.C_INCLUDE_PATH);
-        logInfo('[编译环境] CPLUS_INCLUDE_PATH:', compilerEnv.CPLUS_INCLUDE_PATH);
-        logInfo('[编译环境] LIBRARY_PATH:', compilerEnv.LIBRARY_PATH);
+        logInfo('[编译环境] C_INCLUDE_PATH:', compilerEnv['C_INCLUDE_PATH']);
+        logInfo('[编译环境] CPLUS_INCLUDE_PATH:', compilerEnv['CPLUS_INCLUDE_PATH']);
+        logInfo('[编译环境] LIBRARY_PATH:', compilerEnv['LIBRARY_PATH']);
         const compiler = spawn(compilerPath, args, {
             cwd: workingDirectory,
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -8772,7 +8782,7 @@ async function compileFile(options) {
                                 }
                             }
                             catch (chmodErr) {
-                                logWarn('[编译后] chmod 尝试失败:', chmodErr.message);
+                                logWarn('[编译后] chmod 尝试失败:', chmodErr?.message);
                             }
                         }
                         else {
@@ -8786,7 +8796,7 @@ async function compileFile(options) {
                     }
                 }
                 catch (permErr) {
-                    logWarn('[编译后] 权限处理异常:', permErr.message);
+                    logWarn('[编译后] 权限处理异常:', permErr?.message);
                 }
             }
             if (result.success && outputExists && compileCacheRecord && cacheMetadataPath && cacheExePath) {
@@ -8815,14 +8825,14 @@ async function compileFile(options) {
                 resolve(result); // 不要reject，让前端处理编译错误
             }
         });
-        compiler.on('error', /** @param {OicppError} error */ (error) => {
+        compiler.on('error', (error) => {
             clearTimeout(compilationTimeout);
             logError('编译进程启动失败:', error);
             logError('错误代码:', error.code);
             logError('错误路径:', error.path);
             logError('系统错误号:', error.errno);
             logError('系统调用:', error.syscall);
-            let errorMessage = `编译器启动失败: ${error.message}`;
+            let errorMessage = `编译器启动失败: ${error?.message}`;
             if (error.code === 'ENOENT') {
                 errorMessage += ' (编译器文件不存在或路径错误)';
             }
@@ -8904,12 +8914,12 @@ async function runExecutable(options) {
                         logInfo('[运行前] 已补授执行权限 ->', after.toString(8));
                     }
                     catch (chmodErr) {
-                        logWarn('[运行前] 自动 chmod 失败:', chmodErr.message);
+                        logWarn('[运行前] 自动 chmod 失败:', chmodErr?.message);
                     }
                 }
             }
             catch (preErr) {
-                logWarn('[运行前] 权限诊断失败:', preErr.message);
+                logWarn('[运行前] 权限诊断失败:', preErr?.message);
             }
         }
         let command, args, spawnOptions;
@@ -8943,7 +8953,7 @@ async function runExecutable(options) {
                     path.join(compilerRoot, 'mingw32', 'bin')
                 ].filter(p => require('fs').existsSync(p));
                 if (mingwBinPaths.length > 0) {
-                    runEnv.PATH = [...mingwBinPaths, process.env['PATH']].join(path.delimiter);
+                    runEnv['PATH'] = [...mingwBinPaths, process.env['PATH']].join(path.delimiter);
                 }
             }
             spawnOptions = {
@@ -9020,9 +9030,9 @@ async function runExecutable(options) {
             });
             child.once('error', () => detachedRunProcesses.delete(child));
             child.unref(); // 允许父进程退出而不等待子进程
-            child.on('error', /** @param {OicppError} error */ (error) => {
+            child.on('error', (error) => {
                 try {
-                    let diag = { message: error.message, code: error.code, errno: error.errno, syscall: error.syscall };
+                    const diag = { message: error?.message, code: error.code, errno: error.errno, syscall: error.syscall };
                     try {
                         if (fs.existsSync(executablePath)) {
                             const st = fs.statSync(executablePath);
@@ -9040,7 +9050,7 @@ async function runExecutable(options) {
                     logError('[运行][spawn-error]', diag);
                 }
                 catch (_) { }
-                reject(new Error(t('error.launchFailed', { message: error.message })));
+                reject(new Error(t('error.launchFailed', { message: error?.message })));
             });
             child.on('spawn', () => {
                 logInfo('程序启动成功！');
@@ -9054,8 +9064,8 @@ async function runExecutable(options) {
             }, 1000);
         }
         catch (error) {
-            logInfo('创建子进程失败:', error.message);
-            reject(new Error(t('error.spawnFailed', { message: error.message })));
+            logInfo('创建子进程失败:', error?.message);
+            reject(new Error(t('error.spawnFailed', { message: error?.message })));
         }
     });
 }
@@ -9732,8 +9742,8 @@ async function listCloudSyncDir(dirPath) {
         logWarn('[设置备份] 列表请求失败:', { path: dirPath, status, error });
         return { success: false, error };
     }
-    const payload = normalized.data || {};
-    const items = Array.isArray(payload.items) ? payload.items : [];
+    const payload = (normalized.data || {});
+    const items = Array.isArray(payload['items']) ? payload['items'] : [];
     return { success: true, items };
 }
 async function listSettingsBackupFiles() {
@@ -9874,15 +9884,15 @@ function normalizeCloudSyncResponse(response) {
     if (!response?.ok) {
         const error = status === 401
             ? 'NOT_LOGGED_IN'
-            : (response?.error || payload?.msg || payload?.error || 'REQUEST_FAILED');
+            : (response?.error || payload?.['msg'] || payload?.['error'] || 'REQUEST_FAILED');
         return { ok: false, status, error, data: payload };
     }
-    const code = payload?.code;
+    const code = payload?.['code'];
     if (code && code !== 200) {
-        const error = payload?.msg || payload?.error || `CODE_${code}`;
+        const error = payload?.['msg'] || payload?.['error'] || `CODE_${code}`;
         return { ok: false, status, error, data: payload };
     }
-    return { ok: true, status, data: payload?.data ?? payload };
+    return { ok: true, status, data: payload?.['data'] ?? payload };
 }
 function broadcastSettingsRefresh() {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -9919,8 +9929,8 @@ async function syncSettingsFromCloud() {
     if (!normalized.ok) {
         return { success: false, error: normalized.error || 'DOWNLOAD_FAILED' };
     }
-    const payload = normalized.data || {};
-    const content = typeof payload.content === 'string' ? payload.content : '';
+    const payload = (normalized.data || {});
+    const content = typeof payload['content'] === 'string' ? payload['content'] : '';
     if (!content) {
         return { success: false, error: 'EMPTY_BACKUP' };
     }
@@ -9954,9 +9964,6 @@ async function syncSettingsFromCloud() {
     }
     return { success: true, info };
 }
-/**
- * @param {string} [_reason]
- */
 function scheduleAutoSettingsBackup(_reason) {
     return;
 }
@@ -10090,10 +10097,6 @@ function listClientLogFiles() {
         return { success: false, logs: [], message: error?.message || t('main.logListFailed') };
     }
 }
-/**
- * @param {string} [_phase]
- * @param {string} [_username]
- */
 async function sendHeartbeat(_phase, _username) {
     return null;
 }
@@ -10172,7 +10175,7 @@ ipcMain.handle('get-recent-files', () => {
         return settings.recentFiles;
     }
     catch (e) {
-        logWarn('[获取最近文件] 处理失败:', e.message);
+        logWarn('[获取最近文件] 处理失败:', e?.message);
         return settings.recentFiles || [];
     }
 });
@@ -10190,7 +10193,7 @@ ipcMain.handle('open-recent-file', async (event, filePath) => {
             }
         }
         catch (e) {
-            logWarn('[打开最近] stat 失败，直接尝试作为目录:', e.message);
+            logWarn('[打开最近] stat 失败，直接尝试作为目录:', e?.message);
         }
         updateRecentFiles(targetPath);
         saveSettings();
@@ -10384,7 +10387,7 @@ ipcMain.handle('clipboard-write-text', async (event, text) => {
     }
     catch (error) {
         logError('主进程剪贴板写入失败:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error?.message };
     }
 });
 // 直接返回纯文本。历史上这里返回 { success, text } 包装对象，渲染进程侧收到的是
@@ -10421,7 +10424,7 @@ ipcMain.handle('save-setting', async (event, key, value) => {
     }
     catch (error) {
         logError('保存设置失败:', error);
-        return { success: false, error: error.message };
+        return { success: false, error: error?.message };
     }
 });
 function runCommandVersionProbe(command, args = [], options = {}) {
@@ -10439,7 +10442,7 @@ function runCommandVersionProbe(command, args = [], options = {}) {
             return {
                 ok: false,
                 output: '',
-                message: result.error.message || String(result.error)
+                message: result.error?.message || String(result.error)
             };
         }
         const output = `${result.stdout || ''}${result.stderr || ''}`.trim();
@@ -10499,7 +10502,7 @@ async function checkGDBAvailability() {
             ].filter(p => fs.existsSync(p));
             if (mingwBinPaths.length > 0) {
                 const envPath = [...mingwBinPaths, process.env['PATH']].join(path.delimiter);
-                gdbEnv.PATH = envPath;
+                gdbEnv['PATH'] = envPath;
                 logInfo('[主进程] GDB检查已添加环境变量，PATH:', envPath);
             }
         }
@@ -10534,10 +10537,10 @@ async function checkGDBAvailability() {
             }
         });
         testProcess.on('error', (error) => {
-            logInfo('[主进程] GDB检查出错:', error.message);
+            logInfo('[主进程] GDB检查出错:', error?.message);
             resolve({
                 available: false,
-                message: t('main.gdbUnavailable', { error: error.message })
+                message: t('main.gdbUnavailable', { error: error?.message })
             });
         });
         setTimeout(() => {
@@ -10597,7 +10600,7 @@ async function killImageWindows(imageName) {
         return;
     try {
         const { spawn } = require('child_process');
-        await /** @type {Promise<void>} */ (new Promise((resolve) => {
+        await (new Promise((resolve) => {
             const p = spawn('taskkill', ['/F', '/IM', imageName], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 1500);
             p.on('close', () => { clearTimeout(to); resolve(); });
@@ -10620,7 +10623,7 @@ async function killByExePathWindows(exePath) {
         }
         const escaped = sanitized.replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq '${escaped}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
-        await /** @type {Promise<void>} */ (new Promise((resolve) => {
+        await (new Promise((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 2000);
             p.on('close', () => { clearTimeout(to); resolve(); });
@@ -10643,7 +10646,7 @@ async function killConsolePauserForTargetWindows(targetExePath) {
         }
         const escaped = sanitized.replace(/`/g, '``').replace(/'/g, "''");
         const ps = `Try { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -match 'consolepauser\\.exe$' -and $_.CommandLine -like '*${escaped}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } } Catch {}`;
-        await /** @type {Promise<void>} */ (new Promise((resolve) => {
+        await (new Promise((resolve) => {
             const p = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', ps], { stdio: 'ignore', windowsHide: true });
             const to = setTimeout(resolve, 2000);
             p.on('close', () => { clearTimeout(to); resolve(); });
@@ -10746,7 +10749,7 @@ async function startDebugSession(filePath, options = {}) {
                     ].filter(p => fs.existsSync(p));
                     if (mingwBinPaths.length > 0) {
                         const envPath = [process.env['PATH'], ...mingwBinPaths].join(path.delimiter);
-                        debugEnv.PATH = envPath;
+                        debugEnv['PATH'] = envPath;
                     }
                 }
                 const objdumpProcess = spawn('objdump', ['-h', executablePath], {
@@ -10760,7 +10763,7 @@ async function startDebugSession(filePath, options = {}) {
                         hasDebugInfo = true;
                     }
                 });
-                await /** @type {Promise<void>} */ (new Promise((resolve) => {
+                await (new Promise((resolve) => {
                     let settled = false;
                     const done = () => {
                         if (settled)
@@ -10773,7 +10776,7 @@ async function startDebugSession(filePath, options = {}) {
                     // uncaughtException，且只能等 2 秒兜底超时才继续
                     objdumpProcess.on('error', (err) => {
                         objdumpAvailable = false;
-                        logInfo('[主进程] 未找到 objdump，跳过调试信息检查:', err.message);
+                        logInfo('[主进程] 未找到 objdump，跳过调试信息检查:', err?.message);
                         done();
                     });
                     setTimeout(done, 2000); // 2秒超时
@@ -10784,7 +10787,7 @@ async function startDebugSession(filePath, options = {}) {
             }
         }
         catch (error) {
-            logWarn('[主进程] 无法检查调试信息:', error.message);
+            logWarn('[主进程] 无法检查调试信息:', error?.message);
         }
         const debuggerConfig = resolveDebuggerLaunchConfig();
         logInfo('[主进程] 使用 GDB 调试器');
@@ -10805,7 +10808,7 @@ async function startDebugSession(filePath, options = {}) {
                 ].filter(p => fs.existsSync(p));
                 if (mingwBinPaths.length > 0) {
                     const envPath = [...mingwBinPaths, process.env['PATH']].join(path.delimiter);
-                    gdbEnv.PATH = envPath;
+                    gdbEnv['PATH'] = envPath;
                     logInfo('[主进程] 调试启动已注入 PATH，包含编译器目录数量:', mingwBinPaths.length);
                 }
             }
@@ -10847,7 +10850,7 @@ async function startDebugSession(filePath, options = {}) {
                     }
                 }
                 catch (error) {
-                    logWarn('[主进程] 设置断点失败:', error.message);
+                    logWarn('[主进程] 设置断点失败:', error?.message);
                 }
             }
         }
@@ -10891,7 +10894,7 @@ async function startDebugSession(filePath, options = {}) {
         lastDebugCommand = null;
         autoSkipInternalCounter = 0;
         if (mainWindow) {
-            mainWindow.webContents.send('debug-error', error.message);
+            mainWindow.webContents.send('debug-error', error?.message);
         }
         throw error;
     }
@@ -10920,7 +10923,7 @@ function _resolvePidsOnTTY(ttyPath) {
         if (output) {
             const match = output.match(/:\s*([0-9\s]+)$/m);
             if (match) {
-                for (const token of match[1].trim().split(/\s+/)) {
+                for (const token of match[1]?.trim().split(/\s+/) ?? []) {
                     const pid = parseInt(token, 10);
                     if (pid > 0)
                         pids.add(pid);
@@ -11260,16 +11263,17 @@ function setupDebuggerEvents() {
     gdbDebugger.on('breakpoint-hit', (data) => {
         logInfo('[主进程] 断点命中:', data);
         if (mainWindow) {
-            mainWindow.webContents.send('debug-breakpoint-hit', data);
+            const hitWindow = mainWindow;
+            hitWindow.webContents.send('debug-breakpoint-hit', data);
             try {
-                if (!mainWindow.isDestroyed()) {
-                    mainWindow.setAlwaysOnTop(true, 'screen-saver');
-                    mainWindow.show();
-                    mainWindow.focus();
+                if (!hitWindow.isDestroyed()) {
+                    hitWindow.setAlwaysOnTop(true, 'screen-saver');
+                    hitWindow.show();
+                    hitWindow.focus();
                     setTimeout(() => {
                         try {
-                            if (!mainWindow.isDestroyed())
-                                mainWindow.setAlwaysOnTop(false);
+                            if (!hitWindow.isDestroyed())
+                                hitWindow.setAlwaysOnTop(false);
                         }
                         catch (_) { }
                     }, 600);
@@ -11298,9 +11302,10 @@ function setupDebuggerEvents() {
     gdbDebugger.on('program-exited', (data) => {
         logInfo('[主进程] 程序退出事件:', data);
         if (mainWindow) {
-            mainWindow.webContents.send('debug-program-exited', data);
+            const exitedWindow = mainWindow;
+            exitedWindow.webContents.send('debug-program-exited', data);
             setTimeout(() => {
-                mainWindow.webContents.send('debug-stopped', {
+                exitedWindow.webContents.send('debug-stopped', {
                     reason: 'program-exited',
                     exitCode: data.exitCode
                 });

@@ -1379,7 +1379,19 @@ function runFastspawnSyntaxCheck() {
 //  CompileResult / PathInfoResult / RunResult 在调用处 `as` 断言，callee 契约不动。
 //  另外删掉 getDifferenceInfo 的第一份定义：类里后一份同名方法必然覆盖前一份，前一份是死代码，
 //  删它不改运行结果，顺带去掉了两条存量 @ts-ignore TS2393。
-const TS_ERROR_BASELINE = 1973;
+// 1973 → 435：src/main.ts 清零（73）。这一档全是「在调用点补断言」，没有新增判空分支：
+//  deviceInfo / callCloudSyncApi / startDebugSession / runCommandVersionProbe 的 `options = {}`
+//  统一换成模块级 interface（CloudSyncApiOptions、DebugSessionOptions 复用文件里已有的那份，
+//  不要新起同名 interface —— main.ts 有 `export {}`，重名会触发 TS2717 声明合并）；
+//  normalized.data 从 unknown 收窄成 `as Record<string, unknown>` 后走方括号读键（TS4111），
+//  env.PATH / compilerEnv.CPATH 这批 NodeJS.ProcessEnv 同理。
+//  progressWindow / gdbDebugger / mainWindow 的 TS18047 一律用 `as` 或 `new X() as T` 断言：
+//  `require()` 回来的构造器是 any，赋值不产生非空收窄，所以在构造处断言一次即可清掉整条链，
+//  闭包里的（setupDebuggerEvents 的 async IIFE）再各自断言。
+//  两处 emit 里的语义可疑点已回退：updateSettings 的 `patch` 从「typeof 判类型 + 退化成 {}」
+//  改回纯别名 `const patch = newSettings;`（原写法会把 for..in 遍历字符串索引的行为改掉），
+//  canceledIds 的 `if (oldest !== undefined)` 改回 `delete(oldest as number)`。
+const TS_ERROR_BASELINE = 435;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
