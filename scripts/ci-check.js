@@ -1350,7 +1350,11 @@ function runFastspawnSyntaxCheck() {
 //  三处 any（node-pty 无类型声明，改为按实际用到的成员建模 PtyProcess）。
 //  连带使 process-supervisor 的 terminateProcessTree(signal) 从 string 收成 NodeJS.Signals
 //  —— 原签名让真实 ChildProcess 反而不可赋值，是 any 掩盖下的契约错误。
-const TS_ERROR_BASELINE = 3107;
+// 3107 → 3072：multi-thread-downloader 清零。该文件里 error 全是 catch 的 unknown，
+//  散落 9 处 error?.code / 7 处 error?.message 的碰运气读法，统一成一个 errorInfo(unknown)
+//  收窄入口；response/writer 这类「外层 let + 闭包使用」的 15 条 TS18047 改成
+//  「const 就近取值 + let 只留给 catch 清理」，不靠断言压掉。
+const TS_ERROR_BASELINE = 3072;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

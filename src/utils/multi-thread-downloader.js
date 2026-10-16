@@ -54,6 +54,15 @@ class DownloadError extends Error {
 }
 const cancelledError = () => new DownloadError(t('downloader.cancelled'), CANCELLED_CODE);
 const isCancelledError = (error) => error?.code === CANCELLED_CODE;
+// 网络错误体形状不一（DownloadError / Node errno Error / 任意 throw 值），
+// 集中收窄一次，避免每处 error?.code / error?.message 在 unknown 上碰运气
+const errorInfo = (error) => {
+    const shape = error;
+    return {
+        message: typeof shape?.message === 'string' ? shape.message : String(error),
+        code: typeof shape?.code === 'string' ? shape.code : ''
+    };
+};
 function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
@@ -68,9 +77,10 @@ function makeRequest(url, options = {}) {
             timeout: options.timeout || 30000
         };
         const req = client.request(requestOptions, (res) => {
+            const status = res.statusCode ?? 0;
             resolve({
-                ok: res.statusCode >= 200 && res.statusCode < 300,
-                status: res.statusCode,
+                ok: status >= 200 && status < 300,
+                status: status,
                 statusText: res.statusMessage,
                 headers: {
                     get: (name) => res.headers[name.toLowerCase()]
@@ -136,7 +146,7 @@ class MultiThreadDownloader {
             return isSupported;
         }
         catch (error) {
-            logWarn('[多线程下载] 检查范围请求支持失败:', error.message);
+            logWarn('[多线程下载] 检查范围请求支持失败:', errorInfo(error).message);
             return false;
         }
     }
@@ -151,7 +161,7 @@ class MultiThreadDownloader {
             return contentLength ? parseInt(contentLength, 10) : null;
         }
         catch (error) {
-            logWarn('[多线程下载] 获取文件大小失败:', error.message);
+            logWarn('[多线程下载] 获取文件大小失败:', errorInfo(error).message);
             return null;
         }
     }
@@ -236,19 +246,20 @@ class MultiThreadDownloader {
             }
             catch (error) {
                 // 取消不属于可重试错误：立即上抛，保持 CANCELLED_CODE 不被洗成普通失败
+                const info = errorInfo(error);
                 if (isCancelledError(error) || this.isCancelled) {
-                    throw error?.code === CANCELLED_CODE ? error : cancelledError();
+                    throw info.code === CANCELLED_CODE ? error : cancelledError();
                 }
                 retries++;
-                const errorMessage = String(error?.message || '');
-                const isNetworkError = error?.code === 'ECONNRESET' ||
-                    error?.code === 'ENOTFOUND' ||
-                    error?.code === 'ETIMEDOUT' ||
-                    error?.code === 'ECONNREFUSED' ||
+                const errorMessage = info.message;
+                const isNetworkError = info.code === 'ECONNRESET' ||
+                    info.code === 'ENOTFOUND' ||
+                    info.code === 'ETIMEDOUT' ||
+                    info.code === 'ECONNREFUSED' ||
                     errorMessage.includes('aborted') ||
                     errorMessage.includes('timeout');
                 if (isNetworkError) {
-                    logWarn(`[多线程下载] 分片 ${chunkIndex} 网络错误 (尝试 ${retries}/${this.retryCount}):`, error?.code || errorMessage);
+                    logWarn(`[多线程下载] 分片 ${chunkIndex} 网络错误 (尝试 ${retries}/${this.retryCount}):`, info.code || errorMessage);
                 }
                 else {
                     logWarn(`[多线程下载] 分片 ${chunkIndex} 下载失败 (尝试 ${retries}/${this.retryCount}):`, errorMessage);
@@ -387,15 +398,17 @@ class MultiThreadDownloader {
             let inactivityTimer = null;
             let finished = false;
             try {
-                response = await makeRequest(url, {
+                const res = await makeRequest(url, {
                     timeout: this.timeout * 3
                 });
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                response = res; // 外层 let 仅供 catch 清理用
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
                 }
-                const totalSize = parseInt(response.headers.get('content-length') || '0');
+                const totalSize = parseInt(res.headers.get('content-length') || '0');
                 // 写临时文件，validateOutputSize 也针对它
-                writer = fs.createWriteStream(partialFile);
+                const wr = fs.createWriteStream(partialFile);
+                writer = wr; // 同上：闭包里 TS 不收窄外层 let
                 let downloadedBytes = 0;
                 const startTime = Date.now();
                 let lastProgressTime = startTime;
@@ -404,7 +417,7 @@ class MultiThreadDownloader {
                         clearTimeout(inactivityTimer);
                     inactivityTimer = setTimeout(() => {
                         try {
-                            response.body.destroy(new Error(t('downloader.stalled')));
+                            res.body.destroy(new Error(t('downloader.stalled')));
                         }
                         catch (_) { }
                     }, this.timeout);
@@ -419,26 +432,26 @@ class MultiThreadDownloader {
                     }
                 };
                 await new Promise((resolve, reject) => {
-                    response.body.on('data', (chunk) => {
+                    res.body.on('data', (chunk) => {
                         if (this.isCancelled) {
                             try {
-                                writer.end(() => { if (fs.existsSync(partialFile))
+                                wr.end(() => { if (fs.existsSync(partialFile))
                                     fs.unlinkSync(partialFile); });
                             }
                             catch (_) { }
                             try {
-                                response.body.destroy();
+                                res.body.destroy();
                             }
                             catch (_) { }
                             return reject(this.cancelError || cancelledError());
                         }
                         resetInactivityTimer();
-                        const canContinue = writer.write(chunk);
+                        const canContinue = wr.write(chunk);
                         if (!canContinue) {
-                            response.body.pause();
-                            writer.once('drain', () => {
+                            res.body.pause();
+                            wr.once('drain', () => {
                                 try {
-                                    response.body.resume();
+                                    res.body.resume();
                                 }
                                 catch (_) { }
                             });
@@ -462,7 +475,7 @@ class MultiThreadDownloader {
                             lastProgressTime = now;
                         }
                     });
-                    response.body.on('end', () => {
+                    res.body.on('end', () => {
                         if (finished)
                             return;
                         finished = true;
@@ -479,7 +492,7 @@ class MultiThreadDownloader {
                             });
                         }
                         // 等待文件流真正关闭后再校验大小，避免异步 flush 未完成导致误判
-                        writer.end((error) => {
+                        wr.end((error) => {
                             if (error) {
                                 reject(error);
                                 return;
@@ -495,35 +508,35 @@ class MultiThreadDownloader {
                             }
                         });
                     });
-                    response.body.on('close', () => {
+                    res.body.on('close', () => {
                         if (!finished) {
                             return reject(new Error(t('downloader.closedIncomplete')));
                         }
                     });
-                    response.body.on('error', (error) => {
+                    res.body.on('error', (error) => {
                         if (this.isCancelled) {
                             return reject(this.cancelError);
                         }
                         try {
-                            if (writer && !writer.destroyed)
-                                writer.destroy();
+                            if (writer && !wr.destroyed)
+                                wr.destroy();
                         }
                         catch (_) { }
                         reject(error);
                     });
-                    writer.on('error', (error) => {
+                    wr.on('error', (error) => {
                         if (this.isCancelled) {
                             return reject(this.cancelError);
                         }
                         reject(error);
                     });
-                    writer.on('finish', () => {
+                    wr.on('finish', () => {
                     });
                 });
                 return;
             }
             catch (error) {
-                lastError = error;
+                lastError = error instanceof Error ? error : new Error(String(error));
                 logWarn(`[单线程下载] 失败(尝试 ${attempt}/${maxAttempts}):`, error?.message || String(error));
                 try {
                     if (writer && !writer.destroyed)
@@ -678,6 +691,8 @@ class MultiThreadDownloader {
                             if (idx >= parts.length)
                                 break;
                             const myTask = parts[idx];
+                            if (!myTask)
+                                break;
                             activeCount++;
                             try {
                                 const r = await this.downloadChunk(url, myTask.start, myTask.end, myTask.index, tempDir);
@@ -716,7 +731,7 @@ class MultiThreadDownloader {
                     fs.rmSync(tempDir, { recursive: true, force: true });
                 }
                 catch (error) {
-                    logWarn('[多线程下载] 清理临时目录失败:', error.message);
+                    logWarn('[多线程下载] 清理临时目录失败:', errorInfo(error).message);
                 }
             }
             catch (error) {
@@ -726,11 +741,11 @@ class MultiThreadDownloader {
                     }
                 }
                 catch (cleanupError) {
-                    logWarn('[多线程下载] 清理临时目录失败:', cleanupError.message);
+                    logWarn('[多线程下载] 清理临时目录失败:', errorInfo(cleanupError).message);
                 }
                 // 探测阶段说支持 Range、实际分片时又不支持（CDN 常见）：
                 // 降级到单线程重下，而不是让整次下载失败
-                if (error?.code === RANGE_UNSUPPORTED_CODE && !this.isCancelled) {
+                if (errorInfo(error).code === RANGE_UNSUPPORTED_CODE && !this.isCancelled) {
                     logWarn('[多线程下载] 服务器实际不支持范围请求，降级为单线程下载');
                     await this.downloadSingleThread(url, outputFile);
                     return;
@@ -772,7 +787,7 @@ class MultiThreadDownloader {
                 const rs = fs.createReadStream(filePath);
                 rs.on('data', (piece) => hash.update(piece));
                 rs.on('error', (error) => {
-                    logError('[多线程下载] 文件验证失败:', error.message);
+                    logError('[多线程下载] 文件验证失败:', errorInfo(error).message);
                     resolve(false);
                 });
                 rs.on('end', () => resolve(hash.digest('hex') === expectedMd5));
