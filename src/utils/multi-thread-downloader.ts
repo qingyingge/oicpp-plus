@@ -300,13 +300,16 @@ class MultiThreadDownloader {
                     try {
                         fs.unlinkSync(chunkFile);
                     } catch (cleanupError) {
-                        logWarn(`[多线程下载] 清理失败分片文件出错:`, cleanupError.message);
+                        logWarn(`[多线程下载] 清理失败分片文件出错:`, errorInfo(cleanupError).message);
                     }
                 }
 
                 if (retries >= this.retryCount) {
                     // 保留原始 error（含 code），仅在 message 上补充上下文
-                    error.message = t('downloader.chunkFailed', { index: chunkIndex, message: errorMessage });
+                    // 非 Error 的 throw 值没有可写的 message，原样上抛比赋值失败更安全
+                    if (error instanceof Error) {
+                        error.message = t('downloader.chunkFailed', { index: chunkIndex, message: errorMessage });
+                    }
                     throw error;
                 }
 
@@ -322,6 +325,9 @@ class MultiThreadDownloader {
                 await new Promise<void>(resolve => setTimeout(resolve, delay));
             }
         }
+        // 循环条件本身退出时（retries 追平 retryCount）此前隐式返回 undefined；写明白，
+        // noImplicitReturns 才不会靠猜
+        return undefined;
     }
 
 
@@ -386,7 +392,7 @@ class MultiThreadDownloader {
                         try {
                             fs.unlinkSync(chunk.file);
                         } catch (error) {
-                            logWarn(`[多线程下载] 删除临时文件失败:`, error.message);
+                            logWarn(`[多线程下载] 删除临时文件失败:`, errorInfo(error).message);
                         }
                     }
                 })();
@@ -571,7 +577,7 @@ class MultiThreadDownloader {
                 return;
             } catch (error) {
                 lastError = error instanceof Error ? error : new Error(String(error));
-                logWarn(`[单线程下载] 失败(尝试 ${attempt}/${maxAttempts}):`, error?.message || String(error));
+                logWarn(`[单线程下载] 失败(尝试 ${attempt}/${maxAttempts}):`, errorInfo(error).message);
                 try { if (writer && !writer.destroyed) writer.destroy(); } catch (_) { }
                 // 只清自己的临时文件，不动 outputFile —— 后者是磁盘上原有的文件
                 try { if (fs.existsSync(partialFile)) fs.unlinkSync(partialFile); } catch (_) { }
@@ -828,7 +834,7 @@ class MultiThreadDownloader {
                 });
                 rs.on('end', () => resolve(hash.digest('hex') === expectedMd5));
             } catch (error) {
-                logError('[多线程下载] 文件验证失败:', error.message);
+                logError('[多线程下载] 文件验证失败:', errorInfo(error).message);
                 resolve(false);
             }
         });

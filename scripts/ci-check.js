@@ -1356,7 +1356,10 @@ function runFastspawnSyntaxCheck() {
 //  「const 就近取值 + let 只留给 catch 清理」，不靠断言压掉。
 // 3072 → 3048：compare-worker-v6 清零。注意本环境 tsc 读数会被解析抖动污染（min-of-N 才可信），
 //  3072 那次本身就偏高 6 条；3048 由两轮无 junk、monaco=618 的一致读数确认。
-const TS_ERROR_BASELINE = 3048;
+// 3048 → 3042：multi-thread-downloader 补完（上一个 commit 声称清零是误判：当时那次校验
+//  恰好落在一个 total=1 的失败样本上，grep 无输出被当成了 0。教训已写进 T3 的复跑逻辑口径：
+//  判「清零」必须用无 junk 且两轮一致的读数，不能用单次的空输出。）
+const TS_ERROR_BASELINE = 3042;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
