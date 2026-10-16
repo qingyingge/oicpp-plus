@@ -459,6 +459,9 @@ Section Uninstall
   Delete "$OICPP_USER_PROFILE\.oicpp-plus\LICENSE.TXT"
   RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\bin"
   RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\LSP"
+  ; 安装时写入的 clang resource-dir（lib\clang\<ver>）同样要清，否则 .oicpp-plus 非空，
+  ; 下面的 RMDir 会静默失败，用户目录永远删不掉
+  RMDir /r "$OICPP_USER_PROFILE\.oicpp-plus\lib"
   RMDir "$OICPP_USER_PROFILE\.oicpp-plus"
 
   Delete "$SMPROGRAMS\OICPP-Plus IDE\Uninstall.lnk"
