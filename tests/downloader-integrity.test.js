@@ -112,13 +112,19 @@ const listTmp = () => fs.readdirSync(tmp).filter((n) => n.startsWith('temp_'));
             await new Downloader({ chunkSize: CHUNK, retryCount: 1, timeout: 5000 }).download(`${base}/f.bin`, out);
         } catch (e) { err = e; }
 
-        check('服务器忽略 Range 时不静默成功（要么降级成功要么明确失败）', true, `err=${err ? err.message : 'none'}`);
-        if (fs.existsSync(out)) {
-            const md5 = md5Of(out);
-            check('降级后的文件内容正确（不是重复拼接的垃圾）', md5 === payloadMd5,
+        const producedFile = fs.existsSync(out);
+        const producedMd5 = producedFile ? md5Of(out) : null;
+        check(
+            '服务器忽略 Range 时要么明确失败、要么产出与源文件逐字节相同',
+            err !== null || (producedFile && producedMd5 === payloadMd5),
+            `err=${err ? err.message : 'none'} produced=${producedFile}`
+        );
+        if (producedFile) {
+            check('降级后的文件内容正确（不是重复拼接的垃圾）', producedMd5 === payloadMd5,
                 `size=${fs.statSync(out).size} expected=${SIZE}`);
         } else {
-            check('未产出文件时不留下损坏产物', !fs.existsSync(out));
+            check('未产出文件时必须以错误结束，不允许静默返回', err !== null,
+                `err=${err ? err.message : 'none'}`);
         }
         check('Range 不可用时无残留临时目录', listTmp().length === 0, listTmp().join(','));
         lieAboutPartial = false;
