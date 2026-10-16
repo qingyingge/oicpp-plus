@@ -292,7 +292,7 @@ class CompilerManager {
                 logInfo('编译器路径为空，显示设置提示');
                 this.showMessage(window.i18n?.t?.('message.setCompilerFirst', null), 'error');
                 this.openCompilerSettings();
-                return;
+                return false;
             }
 
             logInfo('使用编译器路径:', this.settings.compilerPath);
@@ -300,7 +300,7 @@ class CompilerManager {
             const currentEditor = window.editorManager?.getCurrentEditor();
             if (!currentEditor) {
                 this.showMessage(window.i18n?.t?.('message.noOpenFile', null), 'error');
-                return;
+                return false;
             }
 
             let filePath = currentEditor.filePath || (currentEditor.getFilePath && currentEditor.getFilePath());
@@ -314,7 +314,7 @@ class CompilerManager {
             if (!filePath || filePath === 'null' || filePath === 'undefined' || filePath.toString().startsWith('untitled')) {
                 logInfo('[编译管理器] 文件路径无效，提示保存文件');
                 this.showMessage(window.i18n?.t?.('message.saveFileFirst', null), 'error');
-                return;
+                return false;
             }
 
             if (filePath && typeof filePath === 'string') {
