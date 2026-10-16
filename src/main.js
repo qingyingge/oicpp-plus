@@ -5445,10 +5445,7 @@ function setupIPC() {
                     delete importedSettings.account;
                 }
 
-                const previousAccount = settings.account;
-                const defaultSettings = getDefaultSettings();
-                settings = mergeSettings(defaultSettings, importedSettings);
-                settings.account = previousAccount;
+                settings = mergeSettingsPreservingLocal(importedSettings);
 
                 saveSettings();
 
@@ -8340,6 +8337,23 @@ function mergeSettings(defaultSettings, userSettings) {
     return result;
 }
 
+// 只属于本机、不该被「导入设置 / 云端恢复」覆盖的键：它们不在 SETTINGS_MERGE_KEYS 里，
+// merge 后会回落成默认值。pendingUpdate 尤其关键——已下载待静默安装的更新会被永久遗忘。
+const LOCAL_ONLY_SETTINGS_KEYS = ['pendingUpdate', 'postInstallNotice', 'lastOpen', 'recentFiles', 'lastUpdateCheck'];
+
+function mergeSettingsPreservingLocal(importedSettings) {
+    const previous = settings;
+    const merged = mergeSettings(getDefaultSettings(), importedSettings);
+    // 登录凭据只属于当前设备（导入文件/云备份里的 account 一律忽略）
+    merged.account = previous?.account || null;
+    for (const key of LOCAL_ONLY_SETTINGS_KEYS) {
+        if (previous && previous[key] !== undefined) {
+            merged[key] = previous[key];
+        }
+    }
+    return merged;
+}
+
 function saveSettings() {
     try {
         const settingsPath = getSettingsPath();
@@ -10339,11 +10353,7 @@ async function syncSettingsFromCloud() {
     const prevSuppress = suppressAutoBackup;
     suppressAutoBackup = true;
     try {
-        const defaults = getDefaultSettings();
-        const currentAccount = settings?.account || null;
-        settings = mergeSettings(defaults, parsed);
-        // 云端备份可能没有 account，或包含其他设备的旧凭据；始终保留本机登录态。
-        settings.account = currentAccount;
+        settings = mergeSettingsPreservingLocal(parsed);
         normalizeSettingsRuntimeShape(settings);
         saveSettings();
         if (mainWindow && !mainWindow.isDestroyed() && typeof settings.windowOpacity === 'number') {
