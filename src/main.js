@@ -8271,7 +8271,17 @@ function loadSettings() {
 
     } catch (error) {
         logError('加载设置失败:', error);
-        settings = getDefaultSettings();
+        preserveCorruptSettingsFile();
+        const recovered = recoverSettingsFromBackup();
+        if (recovered) {
+            try {
+                settings = JSON.parse(fs.readFileSync(getSettingsPath(), 'utf8'));
+            } catch (_) {
+                settings = getDefaultSettings();
+            }
+        } else {
+            settings = getDefaultSettings();
+        }
         normalizeSettingsRuntimeShape(settings);
         saveSettings();
     }
@@ -8311,9 +8321,53 @@ function mergeSettings(defaultSettings, userSettings) {
 function saveSettings() {
     try {
         const settingsPath = getSettingsPath();
-        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+        const payload = JSON.stringify(settings, null, 2);
+        const tmpPath = settingsPath + '.tmp';
+        const backupPath = settingsPath + '.bak';
+        fs.writeFileSync(tmpPath, payload, 'utf8');
+        try {
+            if (fs.existsSync(settingsPath)) {
+                const previous = fs.readFileSync(settingsPath, 'utf8');
+                JSON.parse(previous);
+                fs.writeFileSync(backupPath, previous, 'utf8');
+            }
+        } catch (_) { }
+        fs.renameSync(tmpPath, settingsPath);
     } catch (error) {
         logError('保存设置失败:', error);
+    }
+}
+
+function preserveCorruptSettingsFile() {
+    try {
+        const settingsPath = getSettingsPath();
+        if (!fs.existsSync(settingsPath)) return;
+        const corruptPath = settingsPath + '.corrupt-' + Date.now();
+        fs.copyFileSync(settingsPath, corruptPath);
+        logWarn('[启动] settings.json 解析失败，已备份到', corruptPath);
+        const kept = fs.readdirSync(path.dirname(settingsPath))
+            .filter(name => name.startsWith('settings.json.corrupt-'))
+            .sort()
+            .reverse();
+        for (const stale of kept.slice(3)) {
+            try { fs.unlinkSync(path.join(path.dirname(settingsPath), stale)); } catch (_) { }
+        }
+    } catch (_) { }
+}
+
+function recoverSettingsFromBackup() {
+    try {
+        const settingsPath = getSettingsPath();
+        const backupPath = settingsPath + '.bak';
+        if (!fs.existsSync(backupPath)) return false;
+        const candidate = JSON.parse(fs.readFileSync(backupPath, 'utf8'));
+        if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return false;
+        fs.writeFileSync(settingsPath, JSON.stringify(candidate, null, 2), 'utf8');
+        logWarn('[启动] 已从 settings.json.bak 恢复设置');
+        return true;
+    } catch (error) {
+        logWarn('[启动] 从 settings.json.bak 恢复失败(可忽略):', error.message);
+        return false;
     }
 }
 
