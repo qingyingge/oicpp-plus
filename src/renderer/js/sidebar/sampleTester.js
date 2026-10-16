@@ -2027,24 +2027,41 @@ class SampleTester {
         const button = document.getElementById(`run-btn-${id}`);
         if (!button || button.disabled) return;
 
-        await this.autoSaveCurrentFile();
+        // 面板在运行期间可能整体重渲染（renderSamples 清空 innerHTML、updateSampleDisplay
+        // replaceChild），旧按钮节点会脱离文档，写回它等于没写，界面上的按钮会永久卡在禁用态。
+        // 因此所有按钮操作都现取元素，并在途状态改用 id 判定。
+        if (!this._runningSampleIds) this._runningSampleIds = new Set();
+        if (this._runningSampleIds.has(id)) return;
+        this._runningSampleIds.add(id);
 
-        button.disabled = true;
-        button.classList.add('running');
+        const getButton = () => document.getElementById(`run-btn-${id}`);
+        const setButtonText = (text) => {
+            const el = getButton();
+            if (el) el.textContent = text;
+        };
+        const setButtonRunning = (running) => {
+            const el = getButton();
+            if (!el) return;
+            el.disabled = running;
+            el.classList.toggle('running', running);
+        };
 
         try {
-            button.textContent = window.i18n.t('tester.compileStatus');
+            setButtonRunning(true);
+            await this.autoSaveCurrentFile();
+
+            setButtonText(window.i18n.t('tester.compileStatus'));
             const result = await this.executeSample(sample, (status) => {
                 if (status === 'compiling') {
-                    button.textContent = window.i18n.t('tester.compileStatus');
+                    setButtonText(window.i18n.t('tester.compileStatus'));
                 } else if (status === 'cached-main') {
-                    button.textContent = window.i18n.t('tester.reuseCompile');
+                    setButtonText(window.i18n.t('tester.reuseCompile'));
                 } else if (status === 'cached-spj') {
-                    button.textContent = window.i18n.t('tester.reuseSpj');
+                    setButtonText(window.i18n.t('tester.reuseSpj'));
                 } else if (status === 'cached-grader') {
-                    button.textContent = window.i18n.t('tester.reuseGrader');
+                    setButtonText(window.i18n.t('tester.reuseGrader'));
                 } else if (status === 'running') {
-                    button.textContent = window.i18n.t('tester.running');
+                    setButtonText(window.i18n.t('tester.running'));
                 }
             });
             sample.result = result;
@@ -2064,9 +2081,9 @@ class SampleTester {
                 this.updateSampleResult(id, sample.result);
             }
         } finally {
-            button.disabled = false;
-            button.textContent = window.i18n.t('tester.run');
-            button.classList.remove('running');
+            this._runningSampleIds.delete(id);
+            setButtonRunning(false);
+            setButtonText(window.i18n.t('tester.run'));
         }
     }
 
