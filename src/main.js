@@ -5261,13 +5261,13 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('create-file', async (event, filePath, content = '') => {
+    ipcMain.on('create-file', async (event, filePath, content = '', requestId = null) => {
         try {
             // Validate the file name
             const fileName = path.basename(filePath);
             const validation = validateFileName(fileName);
             if (!validation.valid) {
-                event.reply('file-created', filePath, validation.error);
+                event.reply('file-created', filePath, validation.error, requestId);
                 logWarn('文件创建失败 - 非法名称:', fileName, '-', validation.error);
                 return;
             }
@@ -5285,11 +5285,11 @@ function setupIPC() {
 
             markLocalSave(filePath);
             fs.writeFileSync(filePath, content, 'utf8');
-            event.reply('file-created', filePath, null);
+            event.reply('file-created', filePath, null, requestId);
             logInfo('文件创建成功:', filePath);
         } catch (error) {
             logError('创建文件失败:', error);
-            event.reply('file-created', filePath, error.message);
+            event.reply('file-created', filePath, error.message, requestId);
         }
     });
 
