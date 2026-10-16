@@ -96,6 +96,8 @@ class SidebarManager {
         let startX = 0;
         let startWidth = 0;
 
+        const self = this;
+
         this.resizer = resizer;
         this.sidebar = sidebar;
         this.sidebarPanel = sidebarPanel;
@@ -127,17 +129,17 @@ class SidebarManager {
             const minWidth = 200;
 
             if (newWidth < hideThreshold) {
-                this.collapseSidebar();
+                self.collapseSidebar();
             } else {
-                if (this.isCollapsed) {
-                    this.expandSidebar();
+                if (self.isCollapsed) {
+                    self.expandSidebar();
                 }
 
                 const clampedWidth = Math.max(minWidth, newWidth);
                 sidebar.style.width = clampedWidth + 'px';
             }
 
-            this.scheduleEditorResize();
+            self.scheduleEditorResize();
         }
 
         function onResizeUp() {
@@ -155,9 +157,9 @@ class SidebarManager {
             const width = sidebar.offsetWidth;
             localStorage.setItem('sidebar-width', width);
 
-            this.scheduleEditorResize(true);
+            self.scheduleEditorResize(true);
             setTimeout(() => {
-                this.scheduleEditorResize(true);
+                self.scheduleEditorResize(true);
             }, 100);
         }
 
