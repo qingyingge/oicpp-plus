@@ -1373,7 +1373,13 @@ function runFastspawnSyntaxCheck() {
 //  typeof 收窄，callee 契约不动）与 debounce/openFile 包装的隐式 any；MonacoMarker 类型别名
 //  让 getModelMarkers 的三元结果不再退化成 IMarker[] | never[]，一处消掉 map 回调的 8 条。
 //  注：本档只按「本次提交的两个文件」下压，四个并行 agent 尚未提交的减量留给他们各自落地时降。
-const TS_ERROR_BASELINE = 2366;
+// 2366 → 1973：sampleTester 清零（393）。大头是 DOM 取值收窄 —— elInput/elButton/htmlOf/toTextArea
+//  这批 HEAD 里已有的 helper 在 strict 下返回 T | null，一律在调用点补 `as`，不新增判空分支：
+//  新增分支会把「元素缺失时抛错」悄悄改成「静默跳过」，属于语义漂移。IPC 结果同理，用
+//  CompileResult / PathInfoResult / RunResult 在调用处 `as` 断言，callee 契约不动。
+//  另外删掉 getDifferenceInfo 的第一份定义：类里后一份同名方法必然覆盖前一份，前一份是死代码，
+//  删它不改运行结果，顺带去掉了两条存量 @ts-ignore TS2393。
+const TS_ERROR_BASELINE = 1973;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

@@ -2,31 +2,31 @@ const MAX_PERSISTED_OUTPUT_BYTES = 1024 * 1024;
 const MAX_RUNTIME_OUTPUT_CHARS = 64 * 1024;
 
 const resizeBoundResizers = new WeakSet();
-const elButton = (id) => {
+const elButton = (id: string) => {
     const el = document.getElementById(id);
     return el instanceof HTMLButtonElement ? el : null;
 };
-const elInput = (id) => {
+const elInput = (id: string) => {
     const el = document.getElementById(id);
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return el;
     return null;
 };
-const stCheckbox = (id) => {
+const stCheckbox = (id: string) => {
     const el = document.getElementById(id);
     return el instanceof HTMLInputElement && el.type === 'checkbox' ? el : null;
 };
-const htmlOf = (el) => (el instanceof HTMLElement ? el : null);
-const toTextArea = (el) => (el instanceof HTMLTextAreaElement ? el : null);
-const stEvtValue = (e) => {
+const htmlOf = (el: unknown) => (el instanceof HTMLElement ? el : null);
+const toTextArea = (el: unknown) => (el instanceof HTMLTextAreaElement ? el : null);
+const stEvtValue = (e: Event) => {
     const target = e && e.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return target.value;
     return '';
 };
-const setEvtValue = (e, v) => {
+const setEvtValue = (e: Event, v: string | number) => {
     const target = e && e.target;
-    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) target.value = v;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) target.value = v as string;
 };
-const evtChecked = (e) => {
+const evtChecked = (e: Event) => {
     const target = e && e.target;
     return target instanceof HTMLInputElement ? target.checked : false;
 };
@@ -35,30 +35,190 @@ declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
 
+interface PathInfoResult {
+    dirname: string;
+    basename: string;
+    basenameWithoutExt: string;
+    filePath: string;
+    extname?: string;
+    exists?: boolean;
+    isFile?: boolean;
+    isDirectory?: boolean;
+}
+
+interface SaveDialogResult {
+    canceled: boolean;
+    filePath: string;
+}
+
+interface CompileResult {
+    success?: boolean;
+    cached?: boolean;
+    executablePath?: string;
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+    diagnostics?: unknown;
+    warnings?: unknown[];
+    errors?: unknown[];
+    error?: unknown;
+}
+
+interface RunResult {
+    success?: boolean;
+    stdout?: string;
+    stderr?: string;
+    output?: string;
+    exitCode?: number;
+    contestantExitCode?: number | null;
+    graderExitCode?: number | null;
+    timeout?: boolean;
+    outputLimitExceeded?: boolean;
+    memoryLimitExceeded?: boolean;
+    outputLimitBytes?: number;
+    memoryLimitBytes?: number;
+    capturedOutputBytes?: number;
+    observedOutputBytes?: number;
+    time?: number;
+    memoryBytes?: number;
+    error?: unknown;
+}
+
+interface RunProgramOptions {
+    executablePath?: string | null;
+    workingDirectory?: string | null;
+    memoryLimit?: number | null;
+    [key: string]: unknown;
+}
+
+interface SampleResult {
+    status?: string;
+    output?: string | null;
+    rawOutput?: string | null;
+    stderr?: string | null;
+    expectedOutput?: string;
+    spjOutput?: string;
+    usedSpj?: boolean;
+    interactive?: boolean;
+    contestantExitCode?: number | null;
+    graderExitCode?: number | null;
+    time?: number;
+    memoryBytes?: number;
+    outputSizeBytes?: number;
+    outputExpanded?: boolean;
+    outputTruncated?: boolean;
+}
+
 interface SampleEntry {
     id: number;
     name?: string;
+    title?: string;
     type?: string;
     input?: string | null;
     output?: string | null;
     inputType?: string;
     outputType?: string;
+    showInput?: boolean;
+    showOutput?: boolean;
     timeLimit?: number | null;
     memoryLimit?: number | null;
     useTestlib?: boolean;
     spjPath?: string | null;
     freopenInputFile?: string | null;
     freopenOutputFile?: string | null;
-    result?: {
-        status?: string;
-        output?: string | null;
-        rawOutput?: string | null;
-        time?: number | null;
-        memoryBytes?: number | null;
-        outputSizeBytes?: number | null;
-        outputExpanded?: boolean;
-    } | null;
+    result?: SampleResult | null;
+    [key: string]: unknown;
 }
+
+interface GlobalSettings {
+    defaultTimeLimit: number;
+    defaultMemoryLimit: number;
+    useTestlib: boolean;
+    useInteractive: boolean;
+    spjPath: string;
+    graderPath: string;
+    freopenInputFile: string;
+    freopenOutputFile: string;
+    [key: string]: unknown;
+}
+
+interface FreopenImportOptions {
+    canceled: boolean;
+    freopenInputFile?: string;
+    freopenOutputFile?: string;
+}
+
+interface SamplesFilePayload {
+    samples?: SampleEntry[];
+    globalSettings?: Partial<GlobalSettings> | null;
+}
+
+interface PendingSampleSave {
+    samples: SampleEntry[];
+    globalSettings: GlobalSettings;
+}
+
+interface ExternalSample {
+    input?: string;
+    output?: string;
+    timeLimit?: number;
+}
+
+interface ZipFileEntry {
+    path?: string;
+    content?: string;
+    sizeBytes?: number;
+}
+
+interface ZipSamplePair {
+    input: ZipFileEntry;
+    output: ZipFileEntry;
+}
+
+interface DragState {
+    startY: number;
+    startHeight: number;
+}
+
+interface MainCompileCacheKey {
+    content: string;
+    currentFile: string | null;
+    compilerPath: string;
+    compilerArgs: string;
+    useTestlib: boolean;
+    testlibIncludePath: string;
+}
+
+interface SpjCompileCacheKey {
+    spjPath: string;
+    spjContent: string;
+    compilerPath: string;
+    compilerArgs: string;
+    testlibIncludePath: string;
+}
+
+interface GraderCompileCacheKey {
+    graderPath: string;
+    graderContent: string;
+    compilerPath: string;
+    compilerArgs: string;
+    testlibIncludePath: string;
+}
+
+type StatusCounts = {
+    AC: number;
+    WA: number;
+    TLE: number;
+    RE: number;
+    CE: number;
+    MLE: number;
+    OLE: number;
+    PENDING: number;
+};
+
+type VerdictStatus = keyof StatusCounts;
+
+type ExecPath = string | null | undefined;
 
 class SampleTester {
     samples: SampleEntry[];
@@ -75,11 +235,11 @@ class SampleTester {
     isOperating: boolean;
     editorChangeInterval: ReturnType<typeof setInterval> | null;
     samplesDirCache: Map<string, string>;
-    pendingSampleSaves: Map<string, { samples?: unknown; globalSettings?: unknown }>;
+    pendingSampleSaves: Map<string, PendingSampleSave>;
     sampleSaveInFlight: Promise<void> | null;
     statusFilter: string | null;
-    globalSettings: { defaultTimeLimit?: number; defaultMemoryLimit?: number; useTestlib?: boolean; graderPath?: string; spjPath?: string; freopenInputFile?: string; freopenOutputFile?: string; [key: string]: unknown };
-    globalSettingsPanelHeight: number;
+    globalSettings: GlobalSettings;
+    globalSettingsPanelHeight: number | null;
 
     constructor() {
         this.samples = [];
@@ -165,7 +325,7 @@ class SampleTester {
                                 await waitEditor();
                                 this.currentFile = targetPath;
                                 await this.updateSamplesFilePath();
-                                let existing = [];
+                                let existing: SampleEntry[] = [];
                                 if (this.samplesFilePath && await window.electronAPI.checkFileExists(this.samplesFilePath)) {
                                     try {
                                         const oldData = JSON.parse(await window.electronAPI.readFileContent(this.samplesFilePath));
@@ -173,7 +333,7 @@ class SampleTester {
                                     } catch (_) { }
                                 }
                                 const baseId = existing.length;
-                                const newSamples = data.samples.map((s, idx) => ({
+                                const newSamples = (data.samples as ExternalSample[]).map((s, idx) => ({
                                     id: baseId + idx + 1,
                                     title: window.i18n.t('tester.sampleTitle', { id: baseId + idx + 1 }),
                                     input: s.input || '',
@@ -205,7 +365,7 @@ class SampleTester {
         } catch (e) { logWarn('[样例测试器] 注册外部 API 监听失败', e); }
     }
 
-    buildProblemFileName(nameRaw, ojRaw) {
+    buildProblemFileName(nameRaw: string, ojRaw?: string) {
         const normalizedName = this.normalizeProblemFileName(nameRaw);
         if (normalizedName) {
             return normalizedName;
@@ -215,7 +375,7 @@ class SampleTester {
         return `${ojPart}_${idPart}.cpp`;
     }
 
-    normalizeProblemFileName(nameRaw) {
+    normalizeProblemFileName(nameRaw: unknown) {
         if (!nameRaw || typeof nameRaw !== 'string') {
             return '';
         }
@@ -244,7 +404,7 @@ class SampleTester {
         return cleaned;
     }
 
-    extractProblemIdToken(nameRaw) {
+    extractProblemIdToken(nameRaw: unknown) {
         const raw = typeof nameRaw === 'string' ? nameRaw.trim() : '';
         let firstTokenMatch = raw.match(/[A-Za-z0-9_\-]+/);
         let idPart = firstTokenMatch ? firstTokenMatch[0] : raw.replace(/[^A-Za-z0-9_\-]/g, '_');
@@ -285,8 +445,8 @@ class SampleTester {
             logInfo('[样例测试器] 清理旧的编辑器变化监听定时器');
         }
 
-        let lastFilePath = null;
-        let lastEditor = null;
+        let lastFilePath: unknown = null;
+        let lastEditor: unknown = null;
 
         const checkEditorChange = async () => {
             if (this.isOperating) {
@@ -345,7 +505,7 @@ class SampleTester {
         const addBtn = (document.getElementById('add-sample-btn'));
         if (addBtn) {
             const newAddBtn = addBtn.cloneNode(true);
-            addBtn.parentNode.replaceChild(newAddBtn, addBtn);
+            (addBtn.parentNode as Node).replaceChild(newAddBtn, addBtn);
 
             newAddBtn.addEventListener('click', () => {
                 logInfo('[样例测试器] 添加按钮被点击');
@@ -356,7 +516,7 @@ class SampleTester {
         const importZipBtn = (document.getElementById('import-samples-zip-btn'));
         if (importZipBtn) {
             const newImportZipBtn = importZipBtn.cloneNode(true);
-            importZipBtn.parentNode.replaceChild(newImportZipBtn, importZipBtn);
+            (importZipBtn.parentNode as Node).replaceChild(newImportZipBtn, importZipBtn);
 
             newImportZipBtn.addEventListener('click', () => {
                 logInfo('[样例测试器] 压缩包导入按钮被点击');
@@ -367,7 +527,7 @@ class SampleTester {
         const runAllBtn = (document.getElementById('run-all-samples-btn'));
         if (runAllBtn) {
             const newRunAllBtn = runAllBtn.cloneNode(true);
-            runAllBtn.parentNode.replaceChild(newRunAllBtn, runAllBtn);
+            (runAllBtn.parentNode as Node).replaceChild(newRunAllBtn, runAllBtn);
 
             newRunAllBtn.addEventListener('click', () => {
                 logInfo('[样例测试器] 运行所有样例按钮被点击');
@@ -492,7 +652,7 @@ class SampleTester {
         }
     }
 
-    saveGlobalSettingsPanelHeight(height) {
+    saveGlobalSettingsPanelHeight(height: number) {
         try {
             window.localStorage?.setItem('oicpp.sampleTester.globalSettingsHeight', String(Math.round(height)));
         } catch (_) {}
@@ -511,7 +671,7 @@ class SampleTester {
         return { minHeight, maxHeight };
     }
 
-    applyGlobalSettingsPanelHeight(height) {
+    applyGlobalSettingsPanelHeight(height: number) {
         const settings = (document.getElementById('global-settings'));
         const bounds = this.getGlobalSettingsHeightBounds();
         if (!settings || !bounds || !Number.isFinite(height)) return;
@@ -526,10 +686,10 @@ class SampleTester {
         if (!resizer || !settings || resizeBoundResizers.has(resizer)) return;
         resizeBoundResizers.add(resizer);
 
-        let dragState = null;
+        let dragState: DragState | null = null;
         const finishDrag = () => {
             if (!dragState) return;
-            this.saveGlobalSettingsPanelHeight(this.globalSettingsPanelHeight);
+            this.saveGlobalSettingsPanelHeight(this.globalSettingsPanelHeight as number);
             dragState = null;
             resizer.classList.remove('is-dragging');
             document.body.style.removeProperty('cursor');
@@ -600,7 +760,7 @@ class SampleTester {
 
     // 样例配置目录每个工作区只需建一次，重命名/删除等操作反复调用时不再重复
     // 走 ensureDirectory 往返（P4）
-    async ensureSampleTesterDir(workspaceRoot) {
+    async ensureSampleTesterDir(workspaceRoot: string) {
         if (!workspaceRoot) return null;
         const cached = this.samplesDirCache.get(workspaceRoot);
         if (cached) return cached;
@@ -654,7 +814,7 @@ class SampleTester {
         }
     }
 
-    async computeSamplesFilePathForFile(filePath) {
+    async computeSamplesFilePathForFile(filePath: string) {
         if (!filePath) return null;
         const fileExplorer = window.sidebarManager?.panels?.files;
         if (!fileExplorer || !fileExplorer.workspacePath) {
@@ -679,7 +839,7 @@ class SampleTester {
         return await window.electronAPI.pathJoin(sampleTesterDir, `${safeRelativePath as string}.json`);
     }
 
-    async handleFileRenamed(oldPath, newPath) {
+    async handleFileRenamed(oldPath: string, newPath: string) {
         try {
             if (!oldPath || !newPath) return;
             const oldSamplesPath = await this.computeSamplesFilePathForFile(oldPath);
@@ -691,7 +851,7 @@ class SampleTester {
                 const sep = newSamplesPath.includes('\\') ? '\\' : '/';
                 const newFileName = newSamplesPath.substring(newSamplesPath.lastIndexOf(sep) + 1);
                 await new Promise((resolve) => {
-                    const handleRenameResult = (event, renamedOldPath, renamedNewPath, error) => {
+                    const handleRenameResult = (event: Event, renamedOldPath: string, renamedNewPath: string, error: unknown) => {
                         if (renamedOldPath === oldSamplesPath) {
                             window.electronIPC.ipcRenderer.removeListener('file-renamed', handleRenameResult);
                             resolve({ renamedNewPath, error });
@@ -712,7 +872,7 @@ class SampleTester {
         }
     }
 
-    async handleFileDeleted(filePath) {
+    async handleFileDeleted(filePath: string) {
         try {
             if (!filePath) return;
             const samplesPath = await this.computeSamplesFilePathForFile(filePath);
@@ -754,7 +914,7 @@ class SampleTester {
             if (fileExists) {
                 logInfo('[样例测试器] 从文件加载样例:', this.samplesFilePath);
                 const data = await window.electronAPI.readFileContent(this.samplesFilePath);
-                const parsed = JSON.parse(data);
+                const parsed = JSON.parse(data) as SamplesFilePayload;
                 this.samples = parsed.samples || [];
 
                 this.loadGlobalSettings(parsed);
@@ -798,7 +958,7 @@ class SampleTester {
                         if (typeof sample.result.outputExpanded !== 'boolean') {
                             sample.result.outputExpanded = false;
                         }
-                        if (!Number.isFinite(sample.result.outputSizeBytes) || sample.result.outputSizeBytes <= 0) {
+                        if (!Number.isFinite(sample.result.outputSizeBytes) || (sample.result.outputSizeBytes as number) <= 0) {
                             sample.result.outputSizeBytes = this.getOutputSizeBytes(sample.result.rawOutput ?? sample.result.output ?? '');
                         }
                     }
@@ -815,13 +975,13 @@ class SampleTester {
         }
     }
 
-    serializeSamplesForSave(samples) {
+    serializeSamplesForSave(samples: readonly SampleEntry[]) {
         return (Array.isArray(samples) ? samples : []).map(sample => {
             const s = { ...sample };
             if (s.result) {
                 const fullOutput = String(s.result.rawOutput ?? s.result.output ?? '');
-                const outputSizeBytes = Number.isFinite(s.result.outputSizeBytes) && s.result.outputSizeBytes > 0
-                    ? s.result.outputSizeBytes
+                const outputSizeBytes: number = Number.isFinite(s.result.outputSizeBytes) && (s.result.outputSizeBytes as number) > 0
+                    ? (s.result.outputSizeBytes as number)
                     : this.getOutputSizeBytes(fullOutput);
                 const persistedOutput = outputSizeBytes > MAX_PERSISTED_OUTPUT_BYTES
                     ? fullOutput.slice(0, MAX_PERSISTED_OUTPUT_BYTES)
@@ -842,14 +1002,14 @@ class SampleTester {
         });
     }
 
-    isCurrentSamplesContext(samplesFilePath, currentFile) {
+    isCurrentSamplesContext(samplesFilePath: string | null, currentFile: string | null) {
         return this.samplesFilePath === samplesFilePath && this.currentFile === currentFile;
     }
 
     // P5: 同一路径的整份落盘合并。样例测试的多个分支和快速编辑会连续触发写回，
     // 每次都是 6~16ms 的 save-file 往返；写进行中到达的请求只保留最新一份，
     // 写完补一次即可，既不会并发写同一文件，也不会丢掉最后状态。
-    async saveSamplesToPath(samplesFilePath, samples = this.samples, globalSettings = this.globalSettings) {
+    async saveSamplesToPath(samplesFilePath: string | null, samples: SampleEntry[] = this.samples, globalSettings: GlobalSettings = this.globalSettings) {
         if (!samplesFilePath) return;
         this.pendingSampleSaves.set(samplesFilePath, { samples, globalSettings });
         if (!this.sampleSaveInFlight) {
@@ -861,7 +1021,7 @@ class SampleTester {
 
     async drainSampleSaves() {
         while (this.pendingSampleSaves.size > 0) {
-            const entry = this.pendingSampleSaves.entries().next().value;
+            const entry = this.pendingSampleSaves.entries().next().value as [string, PendingSampleSave];
             const [samplesFilePath, job] = entry;
             this.pendingSampleSaves.delete(samplesFilePath);
             try {
@@ -879,7 +1039,7 @@ class SampleTester {
     }
 
     // 样例运行结果落盘：各分支共用同一份落点，避免重复整份写回
-    async persistRunResults(samplesFilePath, currentFile, runSamples) {
+    async persistRunResults(samplesFilePath: string | null, currentFile: string | null, runSamples: SampleEntry[]) {
         const samplesToPersist = this.isCurrentSamplesContext(samplesFilePath, currentFile) ? this.samples : runSamples;
         await this.saveSamplesToPath(samplesFilePath, samplesToPersist, this.globalSettings);
     }
@@ -889,12 +1049,12 @@ class SampleTester {
     }
 
     updateUI() {
-        const noFileMessage = (document.getElementById('no-file-message'));
-        const noSamplesMessage = (document.getElementById('no-samples-message'));
-        const samplesList = (document.getElementById('samples-list'));
-        const addBtn = elButton('add-sample-btn');
-        const runAllBtn = elButton('run-all-samples-btn');
-        const globalSettings = (document.getElementById('global-settings'));
+        const noFileMessage = (document.getElementById('no-file-message')) as HTMLElement;
+        const noSamplesMessage = (document.getElementById('no-samples-message')) as HTMLElement;
+        const samplesList = (document.getElementById('samples-list')) as HTMLElement;
+        const addBtn = elButton('add-sample-btn') as HTMLButtonElement;
+        const runAllBtn = elButton('run-all-samples-btn') as HTMLButtonElement;
+        const globalSettings = (document.getElementById('global-settings')) as HTMLElement;
         const globalSettingsResizer = (document.getElementById('global-settings-resizer'));
 
         if (!this.currentFile) {
@@ -942,7 +1102,7 @@ class SampleTester {
         }
 
         const total = this.samples.length;
-        const counts = {
+        const counts: StatusCounts = {
             AC: 0,
             WA: 0,
             TLE: 0,
@@ -956,7 +1116,7 @@ class SampleTester {
         this.samples.forEach(sample => {
             const status = sample?.result?.status;
             if (status && counts.hasOwnProperty(status)) {
-                counts[status] += 1;
+                counts[status as VerdictStatus] += 1;
             } else if (status) {
                 counts.PENDING += 1;
             } else {
@@ -971,7 +1131,7 @@ class SampleTester {
                 overallLabel = 'AC';
                 overallClass = 'status-ac';
             } else {
-                const priority = ['CE', 'MLE', 'RE', 'TLE', 'WA', 'OLE', 'AC'];
+                const priority: VerdictStatus[] = ['CE', 'MLE', 'RE', 'TLE', 'WA', 'OLE', 'AC'];
                 const found = priority.find(s => counts[s] > 0);
                 if (found) {
                     overallLabel = found;
@@ -982,7 +1142,7 @@ class SampleTester {
             overallLabel = window.i18n.t('tester.running');
         }
 
-        const badgeOrder = ['AC', 'WA', 'MLE', 'TLE', 'RE', 'CE', 'OLE', 'PENDING'];
+        const badgeOrder: VerdictStatus[] = ['AC', 'WA', 'MLE', 'TLE', 'RE', 'CE', 'OLE', 'PENDING'];
         const badges = badgeOrder
             .filter(status => counts[status] > 0)
             .map(status => {
@@ -1011,7 +1171,7 @@ class SampleTester {
     }
 
     renderSamples() {
-        const samplesList = (document.getElementById('samples-list'));
+        const samplesList = (document.getElementById('samples-list')) as HTMLElement;
         samplesList.innerHTML = '';
 
         const filteredSamples = this.getFilteredSamples();
@@ -1030,22 +1190,22 @@ class SampleTester {
         setTimeout(() => {
             const textareas = samplesList.querySelectorAll('.sample-textarea');
             textareas.forEach(textarea => {
-                this.autoResizeTextarea(textarea);
+                this.autoResizeTextarea(textarea as HTMLTextAreaElement);
             });
 
             const programOutputs = samplesList.querySelectorAll('.program-output');
             programOutputs.forEach(textarea => {
-                this.autoResizeProgramOutput(textarea);
+                this.autoResizeProgramOutput(textarea as HTMLTextAreaElement);
             });
         }, 0);
         this.applyDynamicTranslations();
     }
 
     applyDynamicTranslations() {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key: string, params?: Record<string, unknown> | null, fallback?: string | null) => window.i18n?.t?.(key, params as Record<string, unknown>) || fallback || key;
         document.querySelectorAll('.sample-title').forEach((el) => {
             const group = el.closest('.sample-group');
-            const id = (group instanceof HTMLElement ? group.dataset.sampleId : '') || '';
+            const id = (group instanceof HTMLElement ? group.dataset['sampleId'] : '') || '';
             el.textContent = t('tester.testGroup', { i: id }, `Test ${id}`);
         });
         document.querySelectorAll('.sample-run-btn').forEach((el) => {
@@ -1057,11 +1217,11 @@ class SampleTester {
             if (el instanceof HTMLElement) el.title = t('tester.deleteSample', null, 'Delete Sample');
         });
         document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => {
-            if (el instanceof HTMLElement) el.textContent = t(el.dataset.i18n, null, el.textContent);
+            if (el instanceof HTMLElement) el.textContent = t(el.dataset['i18n'] as string, null, el.textContent);
         });
         document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
             if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-                el.placeholder = t(el.dataset.i18nPlaceholder, null, el.placeholder);
+                el.placeholder = t(el.dataset['i18nPlaceholder'] as string, null, el.placeholder);
             }
         });
         document.querySelectorAll('.sample-io-group .file-btn').forEach((el) => {
@@ -1079,10 +1239,10 @@ class SampleTester {
         });
     }
 
-    createSampleElement(sample) {
+    createSampleElement(sample: SampleEntry) {
         const div = document.createElement('div');
         div.className = 'sample-group';
-        div.dataset.sampleId = sample.id;
+        div.dataset['sampleId'] = sample.id as unknown as string;
 
         let statusBadge = '';
         if (sample.result && sample.result.status) {
@@ -1091,7 +1251,7 @@ class SampleTester {
                 statusBadge += `<span style="color: #858585; font-size: 11px;">${sample.result.time}ms</span>`;
             }
             if (Number.isFinite(sample.result.memoryBytes)) {
-                statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${(sample.result.memoryBytes / (1024 * 1024)).toFixed(1)}MB</span>`;
+                statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${((sample.result.memoryBytes as number) / (1024 * 1024)).toFixed(1)}MB</span>`;
             }
         }
 
@@ -1209,7 +1369,7 @@ class SampleTester {
         return div;
     }
 
-    getSampleStatusKey(sample) {
+    getSampleStatusKey(sample: SampleEntry) {
         const status = sample?.result?.status;
         const knownStatuses = ['AC', 'WA', 'MLE', 'TLE', 'RE', 'CE', 'OLE'];
         if (status && knownStatuses.includes(status)) {
@@ -1225,14 +1385,14 @@ class SampleTester {
         return this.samples.filter(sample => this.getSampleStatusKey(sample) === this.statusFilter);
     }
 
-    toggleStatusFilter(status) {
+    toggleStatusFilter(status: string | null) {
         if (!status) return;
         this.statusFilter = this.statusFilter === status ? null : status;
         this.renderSamples();
         this.updateSummary();
     }
 
-    getDisplayContent(sample, type) {
+    getDisplayContent(sample: SampleEntry, type: string) {
         const typeField = type === 'input' ? 'inputType' : 'outputType';
         const isFromFile = sample[typeField] === 'file';
 
@@ -1257,12 +1417,12 @@ class SampleTester {
         }
     }
 
-    abbreviateFilePath(filePath, maxLength = 10) {
+    abbreviateFilePath(filePath: string | null | undefined, maxLength: number = 10) {
         if (!filePath || filePath.length <= maxLength) {
             return filePath;
         }
 
-        const fileName = filePath.split(/[\\/]/).pop();
+        const fileName = filePath.split(/[\\/]/).pop() as string;
 
         if (fileName.length > maxLength - 3) {
             return '...' + fileName.slice(-(maxLength - 3));
@@ -1284,7 +1444,7 @@ class SampleTester {
         return truncatedPath + '...' + fileName;
     }
 
-    detectSampleFileRole(filePath) {
+    detectSampleFileRole(filePath: string | null | undefined) {
         const normalizedPath = String(filePath || '').replace(/\\/g, '/');
         const fileName = normalizedPath.split('/').pop() || '';
         const dot = fileName.lastIndexOf('.');
@@ -1310,7 +1470,7 @@ class SampleTester {
         return null;
     }
 
-    buildSamplePairKey(filePath, role) {
+    buildSamplePairKey(filePath: string, role: string) {
         const normalizedPath = String(filePath || '').replace(/\\/g, '/');
         const lastSlash = normalizedPath.lastIndexOf('/');
         const dirPart = lastSlash >= 0 ? normalizedPath.substring(0, lastSlash).toLowerCase() : '';
@@ -1335,8 +1495,8 @@ class SampleTester {
         return `${dirPart}::${stem}`;
     }
 
-    pairSamplesFromZipFiles(files) {
-        const grouped = new Map();
+    pairSamplesFromZipFiles(files: ZipFileEntry[] | null | undefined) {
+        const grouped = new Map<string, { inputs: ZipFileEntry[]; outputs: ZipFileEntry[] }>();
         let recognizedCount = 0;
 
         for (const file of files || []) {
@@ -1349,7 +1509,7 @@ class SampleTester {
             if (!grouped.has(key)) {
                 grouped.set(key, { inputs: [], outputs: [] });
             }
-            const group = grouped.get(key);
+            const group = grouped.get(key) as { inputs: ZipFileEntry[]; outputs: ZipFileEntry[] };
             if (role === 'input') {
                 group.inputs.push(file);
             } else {
@@ -1357,14 +1517,14 @@ class SampleTester {
             }
         }
 
-        const pairs = [];
+        const pairs: ZipSamplePair[] = [];
         for (const group of grouped.values()) {
             if (!group.inputs.length || !group.outputs.length) continue;
-            group.inputs.sort((a, b) => String(a.path).localeCompare(String(b.path)));
-            group.outputs.sort((a, b) => String(a.path).localeCompare(String(b.path)));
+            group.inputs.sort((a: ZipFileEntry, b: ZipFileEntry) => String(a.path).localeCompare(String(b.path)));
+            group.outputs.sort((a: ZipFileEntry, b: ZipFileEntry) => String(a.path).localeCompare(String(b.path)));
             const pairCount = Math.min(group.inputs.length, group.outputs.length);
             for (let i = 0; i < pairCount; i++) {
-                pairs.push({ input: group.inputs[i], output: group.outputs[i] });
+                pairs.push({ input: group.inputs[i] as ZipFileEntry, output: group.outputs[i] as ZipFileEntry });
             }
         }
 
@@ -1376,7 +1536,7 @@ class SampleTester {
         };
     }
 
-    async askFreopenOptionsForZipImport() {
+    async askFreopenOptionsForZipImport(): Promise<FreopenImportOptions> {
         let enableFreopen = false;
         try {
             if (window.dialogManager?.showActionDialog) {
@@ -1443,7 +1603,7 @@ class SampleTester {
         return 10 * 1024;
     }
 
-    getZipEntrySizeBytes(entry) {
+    getZipEntrySizeBytes(entry: ZipFileEntry | null | undefined) {
         const sizeBytes = Number(entry?.sizeBytes);
         if (Number.isFinite(sizeBytes) && sizeBytes >= 0) {
             return Math.floor(sizeBytes);
@@ -1451,7 +1611,7 @@ class SampleTester {
         return String(entry?.content || '').length;
     }
 
-    sanitizeZipImportFileName(fileName, fallback = 'sample.txt') {
+    sanitizeZipImportFileName(fileName: string | null | undefined, fallback: string = 'sample.txt') {
         const raw = String(fileName || '').trim();
         let safe = raw
             .replace(/[\x00-\x1F]/g, '')
@@ -1471,14 +1631,14 @@ class SampleTester {
 
         if (!/\.[A-Za-z0-9]+$/.test(safe)) {
             const fallbackMatch = String(fallback || '').match(/\.[A-Za-z0-9]+$/);
-            const fallbackExt = fallbackMatch ? fallbackMatch[0] : '.txt';
+            const fallbackExt = fallbackMatch ? fallbackMatch[0] as string : '.txt';
             safe += fallbackExt;
         }
 
         return safe;
     }
 
-    async prepareZipLargeSampleImportDir(zipPath) {
+    async prepareZipLargeSampleImportDir(zipPath: string) {
         const workspacePath = window.sidebarManager?.panels?.files?.workspacePath;
         if (!workspacePath) {
             throw new Error((window.i18n.t('tester.noWorkspaceForSample')));
@@ -1501,7 +1661,7 @@ class SampleTester {
         return targetDir;
     }
 
-    async writeZipEntryToWorkspace(entry, targetDir, fallbackName) {
+    async writeZipEntryToWorkspace(entry: ZipFileEntry | null | undefined, targetDir: string, fallbackName: string) {
         const entryPath = String(entry?.path || '');
         const rawName = entryPath.split(/[\\/]/).pop() || fallbackName;
         const fileName = this.sanitizeZipImportFileName(rawName, fallbackName);
@@ -1528,19 +1688,19 @@ class SampleTester {
                     { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
                 ],
                 properties: ['openFile']
-            });
+            }) as OpenDialogResult;
 
             if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
                 return;
             }
 
-            const zipPath = result.filePaths[0];
+            const zipPath = result.filePaths[0] as string;
             const zipReadResult = await window.electronAPI.readZipTextFiles(zipPath);
             if (!zipReadResult || !zipReadResult.success) {
                 throw new Error(zipReadResult?.error || (window.i18n.t('tester.readZipFail')));
             }
 
-            const importPlan = this.pairSamplesFromZipFiles(zipReadResult.files || []);
+            const importPlan = this.pairSamplesFromZipFiles((zipReadResult.files || []) as ZipFileEntry[]);
             const pairs = importPlan.pairs || [];
             if (pairs.length === 0) {
                 logWarn('[样例测试器] 压缩包中未识别到可配对的样例输入输出文件');
@@ -1573,7 +1733,7 @@ class SampleTester {
                 return;
             }
 
-            let largeSamplesDir = null;
+            let largeSamplesDir: string | null = null;
             let maxId = this.samples.length > 0 ? Math.max(...this.samples.map(s => s.id)) : 0;
             for (const pair of pairs) {
                 maxId += 1;
@@ -1673,7 +1833,7 @@ class SampleTester {
         }
     }
 
-    async deleteSample(id) {
+    async deleteSample(id: number) {
         this.isOperating = true;
 
         try {
@@ -1700,7 +1860,7 @@ class SampleTester {
         }
     }
 
-    toggleSample(id) {
+    toggleSample(id: number) {
         const element = (document.querySelector(`[data-sample-id="${id}"]`));
         if (element) {
             element.classList.toggle('expanded');
@@ -1714,7 +1874,7 @@ class SampleTester {
         });
     }
 
-    updateSampleContent(id, type, value) {
+    updateSampleContent(id: number, type: string, value: string) {
         const sample = this.samples.find(s => s.id === id);
         if (sample) {
             sample[type] = value;
@@ -1722,7 +1882,7 @@ class SampleTester {
         }
     }
 
-    updateSampleSetting(id, setting, value) {
+    updateSampleSetting(id: number, setting: string, value: unknown) {
         const sample = this.samples.find(s => s.id === id);
         if (sample) {
             if (setting === 'timeLimit') {
@@ -1732,7 +1892,7 @@ class SampleTester {
             } else if (setting === 'freopenInputFile' || setting === 'freopenOutputFile') {
                 sample[setting] = this.normalizeFreopenFileName(value);
             } else if (setting === 'useTestlib') {
-                sample[setting] = value;
+                sample[setting] = value as boolean;
             } else {
                 sample[setting] = value;
             }
@@ -1740,16 +1900,16 @@ class SampleTester {
         }
     }
 
-    sanitizeTimeLimit(value, fallback: number | undefined = 1000) {
-        const parsed = parseInt(value, 10);
-        const safeFallback = Number.isFinite(fallback) && fallback > 0 ? Math.floor(fallback) : 1000;
+    sanitizeTimeLimit(value: unknown, fallback: number | undefined = 1000) {
+        const parsed = parseInt(value as string, 10);
+        const safeFallback = Number.isFinite(fallback) && (fallback as number) > 0 ? Math.floor(fallback as number) : 1000;
         if (!Number.isFinite(parsed) || parsed <= 0) {
             return safeFallback;
         }
         return Math.floor(parsed);
     }
 
-    sanitizeMemoryLimit(value, fallback: number | undefined = 0) {
+    sanitizeMemoryLimit(value: unknown, fallback: number | undefined = 0) {
         const parsed = Number(value);
         const safeFallback = Number.isFinite(Number(fallback)) && Number(fallback) >= 0
             ? Math.round(Number(fallback) * 100) / 100
@@ -1817,10 +1977,10 @@ class SampleTester {
 
     getExpandedSampleIds() {
         const expandedElements = document.querySelectorAll('.sample-group.expanded');
-        const ids = [];
+        const ids: number[] = [];
         expandedElements.forEach((element) => {
             if (!(element instanceof HTMLElement)) return;
-            const sampleId = parseInt(element.dataset.sampleId, 10);
+            const sampleId = parseInt(element.dataset['sampleId'] as string, 10);
             if (Number.isFinite(sampleId)) {
                 ids.push(sampleId);
             }
@@ -1828,7 +1988,7 @@ class SampleTester {
         return ids;
     }
 
-    restoreExpandedSampleIds(ids) {
+    restoreExpandedSampleIds(ids: number[] | null) {
         if (!Array.isArray(ids) || ids.length === 0) {
             return;
         }
@@ -1843,14 +2003,14 @@ class SampleTester {
         }, 0);
     }
 
-    normalizeFreopenFileName(value) {
+    normalizeFreopenFileName(value: unknown) {
         const raw = String(value || '').trim();
         if (!raw) return '';
         const normalized = raw.replace(/[\\/]/g, '').replace(/[<>:"|?*]/g, '').trim();
         return normalized;
     }
 
-    async prepareFreopenContext(sample, inputData) {
+    async prepareFreopenContext(sample: SampleEntry | null | undefined, inputData: string): Promise<FreopenContext> {
         const inputFileName = this.normalizeFreopenFileName(sample?.freopenInputFile);
         const outputFileName = this.normalizeFreopenFileName(sample?.freopenOutputFile);
 
@@ -1871,8 +2031,8 @@ class SampleTester {
         await window.electronAPI.ensureDirectory(baseDir);
         await window.electronAPI.ensureDirectory(runDir);
 
-        const cleanupFiles = [];
-        let outputFilePath = null;
+        const cleanupFiles: string[] = [];
+        let outputFilePath: string | null = null;
 
         if (inputFileName) {
             const inputFilePath = await window.electronAPI.pathJoin(runDir, inputFileName);
@@ -1893,7 +2053,7 @@ class SampleTester {
         };
     }
 
-    async cleanupFreopenContext(context) {
+    async cleanupFreopenContext(context: FreopenContext | null | undefined) {
         if (!context || !Array.isArray(context.cleanupFiles)) return;
         for (const filePath of context.cleanupFiles) {
             try {
@@ -1907,9 +2067,9 @@ class SampleTester {
 
     // 「程序输出」只取 stdout：run-program 的 output 字段在非零退出时会用 stderr 顶替 stdout，
     // 直接用它会让 stderr 内容出现在程序输出里、并把已产生的 stdout 整段丢掉。
-    buildProgramOutput(runResult) {
+    buildProgramOutput(runResult: RunResult | null | undefined) {
         let text = typeof runResult?.stdout === 'string' ? runResult.stdout : '';
-        const notices = [];
+        const notices: string[] = [];
         if (runResult?.outputLimitExceeded) {
             const limitMb = Math.max(1, Math.floor((runResult.outputLimitBytes || 0) / (1024 * 1024)));
             notices.push(window.i18n.t('tester.outputLimitNotice', { limit: limitMb }));
@@ -1924,7 +2084,7 @@ class SampleTester {
         return text;
     }
 
-    async resolveProgramOutput(runResult, freopenContext) {
+    async resolveProgramOutput(runResult: RunResult | null | undefined, freopenContext: FreopenContext | null) {
         if (!freopenContext?.outputFilePath) {
             return this.buildProgramOutput(runResult);
         }
@@ -1941,7 +2101,7 @@ class SampleTester {
         }
     }
 
-    updateSampleDisplay(id) {
+    updateSampleDisplay(id: number) {
         const sample = this.samples.find(s => s.id === id);
         if (!sample) return;
 
@@ -1956,32 +2116,32 @@ class SampleTester {
             newElement.classList.add('expanded');
         }
 
-        element.parentNode.replaceChild(newElement, element);
+        (element.parentNode as Node).replaceChild(newElement, element);
 
         setTimeout(() => {
             const textareas = newElement.querySelectorAll('.sample-textarea');
             textareas.forEach(textarea => {
-                this.autoResizeTextarea(textarea);
+                this.autoResizeTextarea(textarea as HTMLTextAreaElement);
             });
 
             const programOutput = newElement.querySelector('.program-output');
             if (programOutput) {
-                this.autoResizeProgramOutput(programOutput);
+                this.autoResizeProgramOutput(programOutput as HTMLTextAreaElement);
             }
         }, 0);
     }
 
-    expandTextarea(textarea) {
+    expandTextarea(textarea: HTMLTextAreaElement) {
         textarea.classList.add('expanded');
         textarea.classList.remove('auto-height');
     }
 
-    collapseTextarea(textarea) {
+    collapseTextarea(textarea: HTMLTextAreaElement) {
         textarea.classList.remove('expanded');
         this.autoResizeTextarea(textarea);
     }
 
-    autoResizeTextarea(textarea) {
+    autoResizeTextarea(textarea: HTMLTextAreaElement) {
         if (textarea.classList.contains('expanded')) return;
 
         const content = textarea.value;
@@ -2000,7 +2160,7 @@ class SampleTester {
         }
     }
 
-    autoResizeProgramOutput(textarea) {
+    autoResizeProgramOutput(textarea: HTMLTextAreaElement) {
         const content = textarea.value;
         const lines = content.split('\n').length;
         const isEmpty = !content.trim();
@@ -2016,7 +2176,7 @@ class SampleTester {
         }
     }
 
-    switchToManualInput(id) {
+    switchToManualInput(id: number) {
         const sample = this.samples.find(s => s.id === id);
         if (sample) {
             sample.inputType = 'userinput';
@@ -2026,7 +2186,7 @@ class SampleTester {
         }
     }
 
-    switchToManualOutput(id) {
+    switchToManualOutput(id: number) {
         const sample = this.samples.find(s => s.id === id);
         if (sample) {
             sample.outputType = 'userinput';
@@ -2036,7 +2196,7 @@ class SampleTester {
         }
     }
 
-    async selectInputFile(id) {
+    async selectInputFile(id: number) {
         const result = await window.electronAPI.showOpenDialog({
             title: window.i18n.t('tester.selectInputFile'),
             filters: [
@@ -2044,13 +2204,13 @@ class SampleTester {
                 { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
             ],
             properties: ['openFile']
-        });
+        }) as OpenDialogResult;
 
         if (!result.canceled && result.filePaths.length > 0) {
             const sample = this.samples.find(s => s.id === id);
             if (sample) {
                 sample.inputType = 'file';
-                sample.input = result.filePaths[0];
+                sample.input = result.filePaths[0] as string;
                 await this.tryAutoMatchOutputFile(sample);
                 this.saveSamples();
                 this.updateSampleDisplay(id);
@@ -2058,7 +2218,7 @@ class SampleTester {
         }
     }
 
-    async selectOutputFile(id) {
+    async selectOutputFile(id: number) {
         const result = await window.electronAPI.showOpenDialog({
             title: window.i18n.t('tester.selectOutputFile'),
             filters: [
@@ -2066,24 +2226,24 @@ class SampleTester {
                 { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
             ],
             properties: ['openFile']
-        });
+        }) as OpenDialogResult;
 
         if (!result.canceled && result.filePaths.length > 0) {
             const sample = this.samples.find(s => s.id === id);
             if (sample) {
                 sample.outputType = 'file';
-                sample.output = result.filePaths[0];
+                sample.output = result.filePaths[0] as string;
                 this.saveSamples();
                 this.updateSampleDisplay(id);
             }
         }
     }
 
-    async tryAutoMatchOutputFile(sample) {
+    async tryAutoMatchOutputFile(sample: SampleEntry) {
         if (!sample || !sample.input) return false;
 
         try {
-            const pathInfo = await window.electronAPI.getPathInfo(sample.input);
+            const pathInfo = await window.electronAPI.getPathInfo(sample.input as string) as PathInfoResult;
             if (!pathInfo || !pathInfo.dirname || !pathInfo.basenameWithoutExt) return false;
 
             const candidates = [`${pathInfo.basenameWithoutExt}.ans`, `${pathInfo.basenameWithoutExt}.out`];
@@ -2104,7 +2264,7 @@ class SampleTester {
 
 
 
-    async runSample(id) {
+    async runSample(id: number) {
         const runSamples = this.samples;
         const runSamplesFilePath = this.samplesFilePath;
         const runCurrentFile = this.currentFile;
@@ -2143,7 +2303,7 @@ class SampleTester {
             logError('运行样例失败:', error);
             sample.result = {
                 status: 'CE',
-                output: error.message,
+                output: (error as Error).message,
                 time: 0
             };
             await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
@@ -2180,9 +2340,9 @@ class SampleTester {
             }
         });
 
-        let executablePath = null;
-        let spjExecutablePath = null;
-        let graderExecutablePath = null;
+        let executablePath: ExecPath = null;
+        let spjExecutablePath: ExecPath = null;
+        let graderExecutablePath: ExecPath = null;
         this.deferSpjTempCleanup = true;
 
         try {
@@ -2198,7 +2358,7 @@ class SampleTester {
                 }
             });
 
-            const compileResult = await this.compileCurrentFile(useTestlib ?? false);
+            const compileResult = await this.compileCurrentFile(useTestlib ?? false) as CompileResult;
             if (!compileResult.success) {
                 for (const sample of runSamples) {
                     sample.result = {
@@ -2242,7 +2402,7 @@ class SampleTester {
                     return;
                 }
 
-                const graderCompileResult = await this.compileGraderFile(graderPath);
+                const graderCompileResult = await this.compileGraderFile(graderPath) as CompileResult;
                 if (!graderCompileResult.success) {
                     for (const sample of runSamples) {
                         sample.result = {
@@ -2269,7 +2429,7 @@ class SampleTester {
                 }
                 graderExecutablePath = graderCompileResult.executablePath;
             } else if (useTestlib && spjPath) {
-                const spjCompileResult = await this.compileSpjFile(spjPath);
+                const spjCompileResult = await this.compileSpjFile(spjPath) as CompileResult;
                 if (!spjCompileResult.success) {
                     for (const sample of runSamples) {
                         sample.result = {
@@ -2316,7 +2476,7 @@ class SampleTester {
                     const index = currentIndex++;
                     if (index >= runSamples.length) return;
 
-                    const sample = runSamples[index];
+                    const sample = runSamples[index] as SampleEntry;
                     try {
                         const result = await this.executeSampleWithCompiledProgram(sample, executablePath, spjExecutablePath, graderExecutablePath);
                         sample.result = result;
@@ -2327,7 +2487,7 @@ class SampleTester {
                         logError(`运行样例 ${sample.id} 失败:`, error);
                         sample.result = {
                             status: 'RE',
-                            output: error.message,
+                            output: (error as Error).message,
                             time: 0
                         };
                         if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
@@ -2364,7 +2524,7 @@ class SampleTester {
         }
     }
 
-    async executeInteractiveSample(sample, executablePath, graderExecutablePath) {
+    async executeInteractiveSample(sample: SampleEntry, executablePath: ExecPath, graderExecutablePath: ExecPath) {
         if (!graderExecutablePath) {
             return {
                 status: 'CE',
@@ -2382,9 +2542,9 @@ class SampleTester {
         let inputData = '';
         if (sample.inputType === 'file') {
             try {
-                inputData = await window.electronAPI.readFileContent(sample.input);
+                inputData = await window.electronAPI.readFileContent(sample.input as string);
             } catch (error) {
-                throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: error.message})));
+                throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: (error as Error).message})));
             }
         } else {
             inputData = sample.input || '';
@@ -2412,9 +2572,9 @@ class SampleTester {
                 timeLimit: sample.timeLimit,
                 memoryLimit: sample.memoryLimit,
                 skipPreKill: true
-            });
+            }) as RunResult;
 
-            let status;
+            let status: string;
             if (runResult.outputLimitExceeded) {
                 status = 'OLE';
             } else if (runResult.memoryLimitExceeded) {
@@ -2455,7 +2615,7 @@ class SampleTester {
         }
     }
 
-    async executeSampleWithCompiledProgram(sample, executablePath, spjExecutablePath = null, graderExecutablePath = null) {
+    async executeSampleWithCompiledProgram(sample: SampleEntry, executablePath: ExecPath, spjExecutablePath: ExecPath = null, graderExecutablePath: ExecPath = null) {
         const useInteractive = !!this.globalSettings.useInteractive;
         if (useInteractive) {
             return await this.executeInteractiveSample(sample, executablePath, graderExecutablePath);
@@ -2468,9 +2628,9 @@ class SampleTester {
             let inputData = '';
             if (sample.inputType === 'file') {
                 try {
-                    inputData = await window.electronAPI.readFileContent(sample.input);
+                    inputData = await window.electronAPI.readFileContent(sample.input as string);
                 } catch (error) {
-                    throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: error.message})));
+                    throw new Error((window.i18n.t('tester.cannotReadInputFile', {msg: (error as Error).message})));
                 }
             } else {
                 inputData = sample.input || '';
@@ -2480,28 +2640,28 @@ class SampleTester {
             let expectedOutput = '';
             if (sample.outputType === 'file') {
                 try {
-                    expectedOutput = await window.electronAPI.readFileContent(sample.output);
+                    expectedOutput = await window.electronAPI.readFileContent(sample.output as string);
                 } catch (error) {
-                    throw new Error((window.i18n.t('tester.cannotReadOutputFile', {msg: error.message})));
+                    throw new Error((window.i18n.t('tester.cannotReadOutputFile', {msg: (error as Error).message})));
                 }
             } else {
                 expectedOutput = sample.output || '';
             }
 
             const freopenContext = await this.prepareFreopenContext(sample, inputData);
-            let runResult;
+            let runResult: RunResult;
             let actualOutput = '';
             try {
                 const runOptions = freopenContext.workingDirectory
                     ? { executablePath, workingDirectory: freopenContext.workingDirectory }
                     : executablePath;
-                runResult = await this.runProgram(runOptions, freopenContext.runInput, sample.timeLimit, sample.memoryLimit);
+                runResult = await this.runProgram(runOptions as string | RunProgramOptions, freopenContext.runInput, sample.timeLimit, sample.memoryLimit);
                 actualOutput = await this.resolveProgramOutput(runResult, freopenContext);
             } finally {
                 await this.cleanupFreopenContext(freopenContext);
             }
 
-            let status;
+            let status: string;
             let spjUsed = false;
             let spjOutput = '';
 
@@ -2571,7 +2731,7 @@ class SampleTester {
         }
     }
 
-    async executeSample(sample, statusCallback = null) {
+    async executeSample(sample: SampleEntry, statusCallback: ((status: string) => void) | null = null) {
         const useInteractive = !!this.globalSettings.useInteractive;
         const useTestlib = sample.useTestlib !== undefined ? sample.useTestlib : this.globalSettings.useTestlib;
 
@@ -2586,7 +2746,7 @@ class SampleTester {
 
         if (statusCallback) statusCallback('compiling');
 
-        const compileResult = await this.compileCurrentFile(useTestlib ?? false);
+        const compileResult = await this.compileCurrentFile(useTestlib ?? false) as CompileResult;
         if (!compileResult.success) {
             return {
                 status: 'CE',
@@ -2613,7 +2773,7 @@ class SampleTester {
                     };
                 }
 
-                const graderCompileResult = await this.compileGraderFile(graderPath);
+                const graderCompileResult = await this.compileGraderFile(graderPath) as CompileResult;
                 if (!graderCompileResult.success) {
                     return {
                         status: 'CE',
@@ -2628,7 +2788,7 @@ class SampleTester {
                 graderExecutablePath = graderCompileResult.executablePath;
             } else if (useTestlib && spjPath) {
                 logInfo('[样例测试器] 开始编译SPJ程序:', spjPath);
-                const spjCompileResult = await this.compileSpjFile(spjPath);
+                const spjCompileResult = await this.compileSpjFile(spjPath) as CompileResult;
 
                 if (!spjCompileResult.success) {
                     return {
@@ -2655,9 +2815,9 @@ class SampleTester {
             let inputData = '';
             if (sample.inputType === 'file') {
                 try {
-                    inputData = await window.electronAPI.readFileContent(sample.input);
+                    inputData = await window.electronAPI.readFileContent(sample.input as string);
                 } catch (error) {
-                    throw new Error(window.i18n.t('tester.cannotReadInputFile', { msg: error.message }));
+                    throw new Error(window.i18n.t('tester.cannotReadInputFile', { msg: (error as Error).message }));
                 }
             } else {
                 inputData = sample.input || '';
@@ -2671,9 +2831,9 @@ class SampleTester {
             let expectedOutput = '';
             if (sample.outputType === 'file') {
                 try {
-                    expectedOutput = await window.electronAPI.readFileContent(sample.output);
+                    expectedOutput = await window.electronAPI.readFileContent(sample.output as string);
                 } catch (error) {
-                    throw new Error(window.i18n.t('tester.cannotReadOutputFile', { msg: error.message }));
+                    throw new Error(window.i18n.t('tester.cannotReadOutputFile', { msg: (error as Error).message }));
                 }
             } else {
                 expectedOutput = sample.output || '';
@@ -2689,7 +2849,7 @@ class SampleTester {
                 const runOptions = freopenContext.workingDirectory
                     ? { executablePath, workingDirectory: freopenContext.workingDirectory }
                     : executablePath;
-                runResult = await this.runProgram(runOptions, freopenContext.runInput, sample.timeLimit, sample.memoryLimit);
+                runResult = await this.runProgram(runOptions as string | RunProgramOptions, freopenContext.runInput, sample.timeLimit, sample.memoryLimit);
                 actualOutput = await this.resolveProgramOutput(runResult, freopenContext);
             } finally {
                 await this.cleanupFreopenContext(freopenContext);
@@ -2770,7 +2930,7 @@ class SampleTester {
         }
     }
 
-    computeStableHash(text) {
+    computeStableHash(text: unknown) {
         const str = String(text || '');
         let hash = 2166136261;
         for (let i = 0; i < str.length; i++) {
@@ -2787,7 +2947,7 @@ class SampleTester {
         compilerArgs,
         useTestlib,
         testlibIncludePath
-    }) {
+    }: MainCompileCacheKey) {
         const payload = [
             currentFile || '',
             compilerPath || '',
@@ -2805,7 +2965,7 @@ class SampleTester {
         compilerPath,
         compilerArgs,
         testlibIncludePath
-    }) {
+    }: SpjCompileCacheKey) {
         const payload = [
             spjPath || '',
             compilerPath || '',
@@ -2822,7 +2982,7 @@ class SampleTester {
         compilerPath,
         compilerArgs,
         testlibIncludePath
-    }) {
+    }: GraderCompileCacheKey) {
         const payload = [
             graderPath || '',
             compilerPath || '',
@@ -2833,7 +2993,7 @@ class SampleTester {
         return this.computeStableHash(payload);
     }
 
-    notifyCompileCacheHit(targetName) {
+    notifyCompileCacheHit(targetName: string) {
         const brief = (window.i18n.t('tester.compileCacheHit', {target: targetName}));
         const msg = `[样例测试器] ${brief}`;
         try { logInfo(msg); } catch (_) { }
@@ -2885,10 +3045,10 @@ class SampleTester {
 
         if (useTestlib) {
             if (settings.testlibPath) {
-                const pathInfo = await window.electronAPI.getPathInfo(settings.testlibPath);
+                const pathInfo = await window.electronAPI.getPathInfo(settings.testlibPath) as PathInfoResult;
                 testlibIncludePath = pathInfo.dirname;
             } else {
-                const pathInfo = await window.electronAPI.getPathInfo(compilerPath);
+                const pathInfo = await window.electronAPI.getPathInfo(compilerPath) as PathInfoResult;
                 testlibIncludePath = await window.electronAPI.pathJoin(pathInfo.dirname, '..', 'include');
             }
             compilerArgs += ` -I"${testlibIncludePath}"`;
@@ -2935,7 +3095,7 @@ class SampleTester {
             compilerPath: compilerPath,
             compilerArgs,
             workingDirectory: currentFilePathInfo?.dirname || tempDir
-        });
+        }) as CompileResult;
 
             if (result.success) {
                 if (
@@ -2972,18 +3132,18 @@ class SampleTester {
         return result;
     }
 
-    async runProgram(executablePath, input, timeLimit, memoryLimit) {
-        const execOptions = typeof executablePath === 'object'
+    async runProgram(executablePath: string | RunProgramOptions, input: string, timeLimit?: number | null, memoryLimit?: number | null): Promise<RunResult> {
+        const execOptions: RunProgramOptions = typeof executablePath === 'object'
             ? { ...executablePath, skipPreKill: true }
             : { executablePath, skipPreKill: true };
         if (memoryLimit !== undefined) {
             execOptions.memoryLimit = memoryLimit;
         }
-        return await window.electronAPI.runProgram(execOptions, input, timeLimit, memoryLimit);
+        return await window.electronAPI.runProgram(execOptions, input, timeLimit as number, memoryLimit as number) as RunResult;
     }
 
-    compareOutput(actual, expected) {
-        const normalize = (str) => {
+    compareOutput(actual: string, expected: string) {
+        const normalize = (str: string) => {
             return String(str || '').replace(/\r\n?/g, '\n').split('\n')
                 .map(line => line.trimEnd())
                 .join('\n')
@@ -2996,7 +3156,7 @@ class SampleTester {
         return normalizedActual === normalizedExpected ? 'AC' : 'WA';
     }
 
-    truncateOutput(output) {
+    truncateOutput(output: string) {
         if (!output) return '';
         if (output.length > 1000) {
             return output.substring(0, 1000) + '\n' + window.i18n.t('tester.outputTruncated');
@@ -3006,13 +3166,13 @@ class SampleTester {
 
     // 运行结果常出现数十 MB 的输出（死循环打印等），完整留在内存会拖垮渲染进程，
     // 故 rawOutput/stderr 只保留前 cap 个字符，超出部分丢弃。
-    truncateForStorage(output, cap = MAX_RUNTIME_OUTPUT_CHARS) {
+    truncateForStorage(output: unknown, cap = MAX_RUNTIME_OUTPUT_CHARS) {
         const str = output == null ? '' : String(output);
         if (str.length <= cap) return str;
         return str.substring(0, cap) + '\n' + window.i18n.t('tester.outputTruncated');
     }
 
-    getOutputSizeBytes(output) {
+    getOutputSizeBytes(output: unknown) {
         const safeOutput = output == null ? '' : String(output);
         // 大输出不再整体编码：TextEncoder().encode() 会分配与字符串等大的数组，
         // 60MB 输出即多占 60MB 峰值，这里改用上界估算。
@@ -3026,15 +3186,15 @@ class SampleTester {
         }
     }
 
-    getOutputSizeMbText(result) {
+    getOutputSizeMbText(result: SampleResult | null | undefined) {
         const fullOutput = result?.rawOutput ?? result?.output ?? '';
-        const bytes = (result && Number.isFinite(result.outputSizeBytes) && result.outputSizeBytes > 0)
-            ? result.outputSizeBytes
+        const bytes = (result && Number.isFinite(result.outputSizeBytes) && (result.outputSizeBytes as number) > 0)
+            ? (result.outputSizeBytes as number)
             : this.getOutputSizeBytes(fullOutput);
         return (bytes / (1024 * 1024)).toFixed(2);
     }
 
-    isOutputTruncated(result) {
+    isOutputTruncated(result: SampleResult | null | undefined) {
         if (!result) return false;
         const compactOutput = result.output || '';
         const fullOutput = result.rawOutput || compactOutput;
@@ -3047,7 +3207,7 @@ class SampleTester {
         return fullOutput.split('\n').length > 100;
     }
 
-    processOutputForDisplay(output, result, sampleId) {
+    processOutputForDisplay(output: string, result: SampleResult | null | undefined, sampleId: number) {
         const fullOutput = result?.rawOutput || output || '';
 
         if (result?.outputExpanded) {
@@ -3067,34 +3227,7 @@ class SampleTester {
         return displayBase;
     }
 
-    // @ts-ignore TS2393: 历史遗留的重复定义，暂不合并
-    getDifferenceInfo(actual, expected) {
-        const actualLines = actual.split('\n');
-        const expectedLines = expected.split('\n');
-
-        const maxCompareLines = Math.max(actualLines.length, expectedLines.length);
-
-        for (let i = 0; i < maxCompareLines; i++) {
-            const actualLine = actualLines[i] || '';
-            const expectedLine = expectedLines[i] || '';
-            if (actualLine.trimEnd() !== expectedLine.trimEnd()) {
-                let diffChar = 0;
-                const minLength = Math.min(actualLine.length, expectedLine.length);
-                while (diffChar < minLength && actualLine[diffChar] === expectedLine[diffChar]) {
-                    diffChar++;
-                }
-                return {
-                    line: i + 1,
-                    char: diffChar + 1
-                };
-            }
-        }
-
-        return null;
-    }
-
-    // @ts-ignore TS2393: 历史遗留的重复定义，运行时以后者为准，暂不合并
-    getDifferenceInfo(actual, expected) {
+    getDifferenceInfo(actual: string, expected: string): { line: number; char: number } | null {
         const actualLines = actual.split('\n');
         const expectedLines = expected.split('\n');
 
@@ -3121,13 +3254,13 @@ class SampleTester {
         return null;
     }
 
-    escapeHtml(text) {
+    escapeHtml(text: string) {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
 
-    createHighlightedOutput(actual, expected) {
+    createHighlightedOutput(actual: string, expected: string) {
         const safeActual = this.truncateOutput(actual || '');
         const actualLines = safeActual.split('\n');
         const expectedLines = expected.split('\n');
@@ -3174,7 +3307,7 @@ class SampleTester {
         return result;
     }
 
-    updateSampleResult(id, result, sample = null) {
+    updateSampleResult(id: number, result: SampleResult, sample: SampleEntry | null = null) {
         const stderrTextarea = toTextArea(document.getElementById(`stderr-${id}`));
         if (stderrTextarea) {
             stderrTextarea.value = result?.stderr || '';
@@ -3190,14 +3323,14 @@ class SampleTester {
         const element = (document.querySelector(`[data-sample-id="${id}"]`));
         if (!element) return;
 
-        const statusContainer = element.querySelector('.sample-status');
-        let statusBadge = `<span class="status-badge status-${result.status.toLowerCase()}">${result.status}</span>`;
+        const statusContainer = element.querySelector('.sample-status') as HTMLElement;
+        let statusBadge = `<span class="status-badge status-${(result.status as string).toLowerCase()}">${result.status}</span>`;
 
         if (result.time !== undefined) {
             statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${result.time}ms</span>`;
         }
         if (Number.isFinite(result.memoryBytes)) {
-            statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${(result.memoryBytes / (1024 * 1024)).toFixed(1)}MB</span>`;
+            statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${((result.memoryBytes as number) / (1024 * 1024)).toFixed(1)}MB</span>`;
         }
 
         statusContainer.innerHTML = statusBadge;
@@ -3222,16 +3355,16 @@ class SampleTester {
 
             if (result.status === 'WA' && !usedSpj && !isExpanded) {
                 if (!sample) {
-                    sample = this.samples.find(s => s.id === id);
+                    sample = this.samples.find(s => s.id === id) as SampleEntry;
                 }
                 if (sample) {
                     // For file-backed samples, sample.output is the file path rather
                     // than the expected text.  Use the exact content read during the
                     // test run so the rendered first-difference location matches the
                     // comparison result.
-                    const expectedOutput = Object.prototype.hasOwnProperty.call(result, 'expectedOutput')
+                    const expectedOutput = (Object.prototype.hasOwnProperty.call(result, 'expectedOutput')
                         ? result.expectedOutput
-                        : (sample.output || '');
+                        : (sample.output || '')) as string;
                     const actualOutput = result.rawOutput || result.output || '';
 
                     const diffPosition = this.getDifferenceInfo(actualOutput, expectedOutput);
@@ -3287,7 +3420,7 @@ class SampleTester {
         this.updateSummary();
     }
 
-    async exportSampleOutput(sampleId) {
+    async exportSampleOutput(sampleId: number) {
         try {
             const sample = this.samples.find(s => s.id === sampleId);
             if (!sample || !sample.result || !sample.result.output) {
@@ -3302,7 +3435,7 @@ class SampleTester {
                     { name: window.i18n.t('tester.textFileFilter'), extensions: ['txt'] },
                     { name: window.i18n.t('dialog.allFilter'), extensions: ['*'] }
                 ]
-            });
+            }) as SaveDialogResult;
 
             if (!result.canceled && result.filePath) {
                 await window.electronAPI.saveFile(result.filePath, sample.result.rawOutput || sample.result.output);
@@ -3321,7 +3454,7 @@ class SampleTester {
         }
     }
 
-    async toggleExpandOutput(sampleId) {
+    async toggleExpandOutput(sampleId: number) {
         const sample = this.samples.find(s => s.id === sampleId);
         if (!sample || !sample.result) {
             return;
@@ -3421,7 +3554,7 @@ class SampleTester {
         }
     }
 
-    async compileSpjFile(spjPath) {
+    async compileSpjFile(spjPath: string) {
         if (!spjPath) {
             throw new Error(window.i18n.t('tester.spjPathEmpty'));
         }
@@ -3430,7 +3563,7 @@ class SampleTester {
         try {
             spjContent = await window.electronAPI.readFileContent(spjPath);
         } catch (error) {
-            throw new Error(window.i18n.t('tester.readSpjFail', { msg: error.message }));
+            throw new Error(window.i18n.t('tester.readSpjFail', { msg: (error as Error).message }));
         }
 
         if (!spjContent.trim()) {
@@ -3447,11 +3580,11 @@ class SampleTester {
         }
 
         if (settings.testlibPath) {
-            const testlibPathInfo = await window.electronAPI.getPathInfo(settings.testlibPath);
+            const testlibPathInfo = await window.electronAPI.getPathInfo(settings.testlibPath) as PathInfoResult;
             testlibIncludePath = testlibPathInfo.dirname;
             compilerArgs += ` -I"${testlibIncludePath}"`;
         } else {
-            const pathInfo = await window.electronAPI.getPathInfo(compilerPath);
+            const pathInfo = await window.electronAPI.getPathInfo(compilerPath) as PathInfoResult;
             testlibIncludePath = await window.electronAPI.pathJoin(pathInfo.dirname, '..', 'include');
             compilerArgs += ` -I"${testlibIncludePath}"`;
         }
@@ -3493,7 +3626,7 @@ class SampleTester {
             compilerPath: compilerPath,
             compilerArgs,
             workingDirectory: spjPathInfo?.dirname || tempDir
-        });
+        }) as CompileResult;
 
             if (result.success) {
                 if (
@@ -3524,7 +3657,7 @@ class SampleTester {
         return result;
     }
 
-    async compileGraderFile(graderPath) {
+    async compileGraderFile(graderPath: string) {
         if (!graderPath) {
             throw new Error(window.i18n.t('tester.graderPathEmpty'));
         }
@@ -3533,7 +3666,7 @@ class SampleTester {
         try {
             graderContent = await window.electronAPI.readFileContent(graderPath);
         } catch (error) {
-            throw new Error(window.i18n.t('tester.readGraderFail', { msg: error.message }));
+            throw new Error(window.i18n.t('tester.readGraderFail', { msg: (error as Error).message }));
         }
 
         if (!graderContent.trim()) {
@@ -3551,10 +3684,10 @@ class SampleTester {
 
         if (this.globalSettings.useTestlib) {
             if (settings.testlibPath) {
-                const testlibPathInfo = await window.electronAPI.getPathInfo(settings.testlibPath);
+                const testlibPathInfo = await window.electronAPI.getPathInfo(settings.testlibPath) as PathInfoResult;
                 testlibIncludePath = testlibPathInfo.dirname;
             } else {
-                const pathInfo = await window.electronAPI.getPathInfo(compilerPath);
+                const pathInfo = await window.electronAPI.getPathInfo(compilerPath) as PathInfoResult;
                 testlibIncludePath = await window.electronAPI.pathJoin(pathInfo.dirname, '..', 'include');
             }
             compilerArgs += ' -I"' + testlibIncludePath + '"';
@@ -3600,7 +3733,7 @@ class SampleTester {
             compilerPath,
             compilerArgs,
             workingDirectory: graderPathInfo?.dirname || tempDir
-        });
+        }) as CompileResult;
 
         if (result.success) {
             if (
@@ -3631,7 +3764,7 @@ class SampleTester {
         return result;
     }
 
-    async judgeWithSpj(spjExecutablePath, inputData, actualOutput, expectedOutput) {
+    async judgeWithSpj(spjExecutablePath: string, inputData: string, actualOutput: string, expectedOutput: string) {
         try {
             const suffix = `${Date.now()}_${++this.spjTempSequence}`;
             const inputFile = await window.electronAPI.saveTempFile(`spj_input_${suffix}.txt`, inputData);
@@ -3650,7 +3783,7 @@ class SampleTester {
                     skipPreKill: true
                 };
 
-                const spjResult = await ((window.electronAPI)).runProgram(spjParams);
+                const spjResult = await ((window.electronAPI)).runProgram(spjParams) as RunResult;
                 const output = [spjResult.stdout, spjResult.stderr].filter(Boolean).join(spjResult.stdout && spjResult.stderr ? '\n' : '');
 
                 if (spjResult.outputLimitExceeded) {
@@ -3669,11 +3802,11 @@ class SampleTester {
             }
         } catch (error) {
             logError('SPJ判题失败:', error);
-            return { status: 'Error', output: error?.message || String(error) };
+            return { status: 'Error', output: (error as Error)?.message || String(error) };
         }
     }
 
-    async cleanupSpjTempFiles(files = null) {
+    async cleanupSpjTempFiles(files: string[] | null = null) {
         const targets = files || Array.from(this.spjTempFiles);
         await Promise.all(targets.map(async (file) => {
             try {
@@ -3683,7 +3816,7 @@ class SampleTester {
         }));
     }
 
-    showCompileOutputForResult(title, result) {
+    showCompileOutputForResult(title: string, result: CompileResult | null) {
         const manager = window.compilerManager;
         if (!manager) return;
         if (typeof manager.showExternalCompileResult === 'function') {
@@ -3754,7 +3887,7 @@ class SampleTester {
         }
     }
 
-    updateGlobalSetting(setting, value) {
+    updateGlobalSetting(setting: string, value: unknown) {
         logInfo('[样例测试器] 更新全局设置:', setting, '=', value);
         if (setting === 'freopenInputFile' || setting === 'freopenOutputFile') {
             this.globalSettings[setting] = this.normalizeFreopenFileName(value);
@@ -3778,12 +3911,12 @@ class SampleTester {
                     { name: 'All Files', extensions: ['*'] }
                 ],
                 properties: ['openFile']
-            });
+            }) as { canceled: boolean; filePaths: string[] };
 
             if (!result.canceled && result.filePaths.length > 0) {
-                const spjPath = result.filePaths[0];
+                const spjPath = result.filePaths[0] as string;
                 this.globalSettings.spjPath = spjPath;
-                elInput('global-spj-path').value = spjPath;
+                (elInput('global-spj-path') as HTMLInputElement).value = spjPath;
                 this.updateSpjFileDisplay(spjPath);
                 this.saveGlobalSettings();
             }
@@ -3794,7 +3927,7 @@ class SampleTester {
 
     clearGlobalSpjFile() {
         this.globalSettings.spjPath = '';
-        elInput('global-spj-path').value = '';
+        (elInput('global-spj-path') as HTMLInputElement).value = '';
         this.updateSpjFileDisplay('');
         this.saveGlobalSettings();
     }
@@ -3808,12 +3941,12 @@ class SampleTester {
                     { name: 'All Files', extensions: ['*'] }
                 ],
                 properties: ['openFile']
-            });
+            }) as { canceled: boolean; filePaths: string[] };
 
             if (!result.canceled && result.filePaths.length > 0) {
-                const graderPath = result.filePaths[0];
+                const graderPath = result.filePaths[0] as string;
                 this.globalSettings.graderPath = graderPath;
-                elInput('global-grader-path').value = graderPath;
+                (elInput('global-grader-path') as HTMLInputElement).value = graderPath;
                 this.updateGraderFileDisplay(graderPath);
                 this.saveGlobalSettings();
             }
@@ -3824,18 +3957,18 @@ class SampleTester {
 
     clearGlobalGraderFile() {
         this.globalSettings.graderPath = '';
-        elInput('global-grader-path').value = '';
+        (elInput('global-grader-path') as HTMLInputElement).value = '';
         this.updateGraderFileDisplay('');
         this.saveGlobalSettings();
     }
 
-    updateGraderFileDisplay(graderPath) {
+    updateGraderFileDisplay(graderPath: string) {
         const display = (document.getElementById('grader-file-display'));
         const fileName = (document.getElementById('grader-file-name'));
 
         if (!display || !fileName) return;
         if (graderPath) {
-            fileName.textContent = graderPath.split(/[\\\\\\/]/).pop();
+            fileName.textContent = graderPath.split(/[\\\\\\/]/).pop() as string;
             fileName.title = graderPath;
             display.style.display = 'flex';
         } else {
@@ -3843,12 +3976,12 @@ class SampleTester {
         }
     }
 
-    updateSpjFileDisplay(spjPath) {
-        const spjFileDisplay = (document.getElementById('spj-file-display'));
-        const spjFileName = (document.getElementById('spj-file-name'));
+    updateSpjFileDisplay(spjPath: string) {
+        const spjFileDisplay = (document.getElementById('spj-file-display') as HTMLElement);
+        const spjFileName = (document.getElementById('spj-file-name') as HTMLElement);
 
         if (spjPath) {
-            const fileName = spjPath.split(/[\\\/]/).pop();
+            const fileName = spjPath.split(/[\\\/]/).pop() as string;
             spjFileName.textContent = fileName;
             spjFileName.title = spjPath;
             spjFileDisplay.style.display = 'flex';
@@ -3863,9 +3996,9 @@ class SampleTester {
         }
     }
 
-    loadGlobalSettings(data) {
+    loadGlobalSettings(data: SamplesFilePayload | null | undefined) {
         if (data && data.globalSettings) {
-            this.globalSettings = { ...this.globalSettings, ...data.globalSettings };
+            this.globalSettings = { ...this.globalSettings, ...data.globalSettings } as GlobalSettings;
         } else {
             this.globalSettings = {
                 useTestlib: false,

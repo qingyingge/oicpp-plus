@@ -974,7 +974,7 @@ class SampleTester {
         const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
         document.querySelectorAll('.sample-title').forEach((el) => {
             const group = el.closest('.sample-group');
-            const id = (group instanceof HTMLElement ? group.dataset.sampleId : '') || '';
+            const id = (group instanceof HTMLElement ? group.dataset['sampleId'] : '') || '';
             el.textContent = t('tester.testGroup', { i: id }, `Test ${id}`);
         });
         document.querySelectorAll('.sample-run-btn').forEach((el) => {
@@ -989,11 +989,11 @@ class SampleTester {
         });
         document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => {
             if (el instanceof HTMLElement)
-                el.textContent = t(el.dataset.i18n, null, el.textContent);
+                el.textContent = t(el.dataset['i18n'], null, el.textContent);
         });
         document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
             if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-                el.placeholder = t(el.dataset.i18nPlaceholder, null, el.placeholder);
+                el.placeholder = t(el.dataset['i18nPlaceholder'], null, el.placeholder);
             }
         });
         document.querySelectorAll('.sample-io-group .file-btn').forEach((el) => {
@@ -1015,7 +1015,7 @@ class SampleTester {
     createSampleElement(sample) {
         const div = document.createElement('div');
         div.className = 'sample-group';
-        div.dataset.sampleId = sample.id;
+        div.dataset['sampleId'] = sample.id;
         let statusBadge = '';
         if (sample.result && sample.result.status) {
             statusBadge = `<span class="status-badge status-${sample.result.status.toLowerCase()}">${sample.result.status}</span>`;
@@ -1416,7 +1416,7 @@ class SampleTester {
             if (!zipReadResult || !zipReadResult.success) {
                 throw new Error(zipReadResult?.error || (window.i18n.t('tester.readZipFail')));
             }
-            const importPlan = this.pairSamplesFromZipFiles(zipReadResult.files || []);
+            const importPlan = this.pairSamplesFromZipFiles((zipReadResult.files || []));
             const pairs = importPlan.pairs || [];
             if (pairs.length === 0) {
                 logWarn('[样例测试器] 压缩包中未识别到可配对的样例输入输出文件');
@@ -1666,7 +1666,7 @@ class SampleTester {
         expandedElements.forEach((element) => {
             if (!(element instanceof HTMLElement))
                 return;
-            const sampleId = parseInt(element.dataset.sampleId, 10);
+            const sampleId = parseInt(element.dataset['sampleId'], 10);
             if (Number.isFinite(sampleId)) {
                 ids.push(sampleId);
             }
@@ -2852,29 +2852,6 @@ class SampleTester {
         }
         return displayBase;
     }
-    // @ts-ignore TS2393: 历史遗留的重复定义，暂不合并
-    getDifferenceInfo(actual, expected) {
-        const actualLines = actual.split('\n');
-        const expectedLines = expected.split('\n');
-        const maxCompareLines = Math.max(actualLines.length, expectedLines.length);
-        for (let i = 0; i < maxCompareLines; i++) {
-            const actualLine = actualLines[i] || '';
-            const expectedLine = expectedLines[i] || '';
-            if (actualLine.trimEnd() !== expectedLine.trimEnd()) {
-                let diffChar = 0;
-                const minLength = Math.min(actualLine.length, expectedLine.length);
-                while (diffChar < minLength && actualLine[diffChar] === expectedLine[diffChar]) {
-                    diffChar++;
-                }
-                return {
-                    line: i + 1,
-                    char: diffChar + 1
-                };
-            }
-        }
-        return null;
-    }
-    // @ts-ignore TS2393: 历史遗留的重复定义，运行时以后者为准，暂不合并
     getDifferenceInfo(actual, expected) {
         const actualLines = actual.split('\n');
         const expectedLines = expected.split('\n');
@@ -2993,9 +2970,9 @@ class SampleTester {
                     // than the expected text.  Use the exact content read during the
                     // test run so the rendered first-difference location matches the
                     // comparison result.
-                    const expectedOutput = Object.prototype.hasOwnProperty.call(result, 'expectedOutput')
+                    const expectedOutput = (Object.prototype.hasOwnProperty.call(result, 'expectedOutput')
                         ? result.expectedOutput
-                        : (sample.output || '');
+                        : (sample.output || ''));
                     const actualOutput = result.rawOutput || result.output || '';
                     const diffPosition = this.getDifferenceInfo(actualOutput, expectedOutput);
                     if (diffPosition && diffInfo) {
@@ -3554,8 +3531,8 @@ class SampleTester {
         }
     }
     updateSpjFileDisplay(spjPath) {
-        const spjFileDisplay = (document.getElementById('spj-file-display'));
-        const spjFileName = (document.getElementById('spj-file-name'));
+        const spjFileDisplay = document.getElementById('spj-file-display');
+        const spjFileName = document.getElementById('spj-file-name');
         if (spjPath) {
             const fileName = spjPath.split(/[\\\/]/).pop();
             spjFileName.textContent = fileName;
