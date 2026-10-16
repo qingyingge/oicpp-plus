@@ -38,6 +38,7 @@
     "compilerPathInvalid": "编译器路径无效或不存在。",
     "compileTestFailed": "编译测试代码失败。",
     "testProgramFailed": "测试程序运行失败 (退出码: {code})",
+    "testProgramTimeout": "测试程序运行超时 (10 秒)。",
     "testlibPathInvalid": "testlib路径无效或不存在。",
     "notTestlibHeader": "所选文件不是testlib.h文件。",
     "notTestlibLib": "所选文件不是有效的testlib库文件。",

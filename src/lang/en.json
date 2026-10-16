@@ -38,6 +38,7 @@
     "compilerPathInvalid": "The compiler path is invalid or does not exist.",
     "compileTestFailed": "Failed to compile the test code.",
     "testProgramFailed": "The test program failed to run (exit code: {code})",
+    "testProgramTimeout": "The test program timed out (10 seconds).",
     "testlibPathInvalid": "The testlib path is invalid or does not exist.",
     "notTestlibHeader": "The selected file is not a testlib.h header.",
     "notTestlibLib": "The selected file is not a valid testlib library.",

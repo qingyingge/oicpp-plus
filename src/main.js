@@ -7201,18 +7201,19 @@ function setupIPC() {
     });
 
     ipcMain.handle('test-compiler', async (event, compilerPath) => {
+        let testDir = null;
+        let testCppFile = null;
+        let testExeFile = null;
         try {
             if (!compilerPath || !fs.existsSync(compilerPath)) {
                 return { success: false, message: t('main.compilerPathInvalid') };
             }
 
-            const testDir = path.join(os.tmpdir(), 'oicpp-test');
-            if (!fs.existsSync(testDir)) {
-                fs.mkdirSync(testDir, { recursive: true });
-            }
+            // 每次调用独立目录：固定共享路径会让并发的「测试」互相覆盖与互删
+            testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oicpp-test-'));
 
-            const testCppFile = path.join(testDir, 'test.cpp');
-            const testExeFile = path.join(testDir, 'test.exe');
+            testCppFile = path.join(testDir, 'test.cpp');
+            testExeFile = path.join(testDir, 'test.exe');
             const cppContent = '#include <iostream>\nint main() { std::cout << "oicpp-test-success"; return 0; }';
 
             fs.writeFileSync(testCppFile, cppContent, 'utf8');
@@ -7255,20 +7256,41 @@ function setupIPC() {
                 }
 
                 const proc = spawn(testExeFile, [], {
-                    env: testEnv,
-                    timeout: 10000  // 10秒超时
+                    env: testEnv
                 });
                 let output = '';
                 let stderr = '';
+                let settled = false;
+
+                const finish = (result) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeoutTimer);
+                    resolve(result);
+                };
+
+                // spawn 不支持 timeout 选项（只有 exec/spawnSync 认），超时必须自己兜底，
+                // 否则进程不退出时这个 invoke 永久挂起
+                const timeoutTimer = setTimeout(() => {
+                    try {
+                        proc.kill();
+                    } catch (killError) {
+                        logWarn('终止超时测试程序失败:', killError);
+                    }
+                    finish({
+                        success: false,
+                        message: t('main.testProgramTimeout')
+                    });
+                }, 10000);
 
                 proc.stdout.on('data', (data) => output += data.toString());
                 proc.stderr.on('data', (data) => stderr += data.toString());
 
                 proc.on('close', (code) => {
                     if (code === 0 && output.includes('oicpp-test-success')) {
-                        resolve({ success: true });
+                        finish({ success: true });
                     } else {
-                        resolve({
+                        finish({
                             success: false,
                             message: t('main.testProgramFailed', { code: code }),
                             details: stderr || output || '程序无输出'
@@ -7278,22 +7300,22 @@ function setupIPC() {
 
                 proc.on('error', (error) => {
                     let errorMessage = `运行测试程序失败: ${error.message}`;
-                    resolve({ success: false, message: errorMessage });
+                    finish({ success: false, message: errorMessage });
                 });
             });
-
-            try {
-                fs.unlinkSync(testCppFile);
-                if (fs.existsSync(testExeFile)) {
-                    fs.unlinkSync(testExeFile);
-                }
-            } catch (cleanupError) {
-                logWarn('清理测试文件失败:', cleanupError);
-            }
 
             return runResult;
         } catch (error) {
             return { success: false, message: error.message };
+        } finally {
+            // 进程退出后再删，否则 Windows 上 exe 仍被占用
+            if (testDir) {
+                try {
+                    fs.rmSync(testDir, { recursive: true, force: true });
+                } catch (cleanupError) {
+                    logWarn('清理测试文件失败:', cleanupError);
+                }
+            }
         }
     });
 
