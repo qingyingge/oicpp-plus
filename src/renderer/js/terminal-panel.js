@@ -387,16 +387,12 @@ class IntegratedTerminalPanel {
         try {
             created = await window.electronAPI.createTerminal(createPayload);
         } catch (error) {
-            terminal.writeln(window.i18n.t('terminal.createFailed', { error: error?.message || String(error) }));
-            tab.classList.remove('pending');
-            this.renderEmptyState();
+            this.handleTerminalCreateFailure(tabId, window.i18n.t('terminal.createFailed', { error: error?.message || String(error) }));
             return;
         }
 
         if (!created?.ok || !created?.terminalId) {
-            terminal.writeln(`\r\n[Error] ${created?.error || window.i18n.t('panel.terminalCreateFailed')}`);
-            tab.classList.remove('pending');
-            this.renderEmptyState();
+            this.handleTerminalCreateFailure(tabId, `\r\n[Error] ${created?.error || window.i18n.t('panel.terminalCreateFailed')}`);
             return;
         }
 
@@ -404,11 +400,6 @@ class IntegratedTerminalPanel {
         provisionalSession.remoteId = remoteId;
         provisionalSession.cwd = created.cwd || null;
         provisionalSession.shell = created.shell || null;
-
-        const labelNode = tab.querySelector('.terminal-tab-label');
-        if (labelNode) {
-            labelNode.textContent = window.i18n.t('terminal.tabLabel', { counter: this.sessions.size });
-        }
 
         tab.classList.remove('pending');
         tab.dataset.terminalId = remoteId;
@@ -1063,6 +1054,21 @@ class IntegratedTerminalPanel {
             : (signal ? window.i18n.t('terminal.exitSignal', { signal }) : window.i18n.t('terminal.exitedNoInfo'));
         session.terminal.writeln(window.i18n.t('terminal.exited', { info: suffix }));
         session.tab.classList.add('exited');
+    }
+
+    // 创建失败时必须把占位会话、标签页和面板一起清掉：只保留它们会让 sessions.size
+    // 一直大于 0（影响 renderEmptyState 与 createIfNone 判断），并让后续终端编号错乱。
+    handleTerminalCreateFailure(tabId, message) {
+        const session = this.sessions.get(tabId);
+        if (session?.terminal) {
+            try {
+                session.terminal.writeln(message);
+            } catch (_) { }
+        }
+        try {
+            logError('[Terminal] 创建失败:', message);
+        } catch (_) { }
+        this.closeTerminal(tabId);
     }
 
     async closeTerminal(terminalId) {
