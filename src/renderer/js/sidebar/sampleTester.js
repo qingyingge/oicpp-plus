@@ -3608,7 +3608,9 @@ class SampleTester {
             }
         } catch (error) {
             logError('SPJ判题失败:', error);
-            return { status: 'Error', output: error?.message || String(error) };
+            // 只能用已定义的状态码：updateSummary 的 counts 里没有 'Error'，
+            // 旧值会被当成 PENDING 累加，导致总览永远显示「运行中」
+            return { status: 'RE', output: error?.message || String(error) };
         }
     }
 
