@@ -1368,7 +1368,12 @@ function runFastspawnSyntaxCheck() {
 //  _setVariable 形参收 unknown 自行收窄，_variables 三个 scope 的 value 类型换成
 //  WatchEntry，expandVariable 的 root/path/children 链条随之闭合。顺手清掉最后一处
 //  any：_ttyProcess: ChildProcess | null。
-const TS_ERROR_BASELINE = 2717; // 2830 → 2717：cloudSync 清零（CloudRef/CloudPayload/ContextMenu 可辨联合 + csRecord 系列收窄）
+// 2717 → 2366：compile-manager（100）+ renderer/js/main（251）同时清零。renderer/js/main 的
+//  大头是 IPC 回调形参（onFileSaved/onFolderOpened 传 unknown 进 string 形参，改成调用点
+//  typeof 收窄，callee 契约不动）与 debounce/openFile 包装的隐式 any；MonacoMarker 类型别名
+//  让 getModelMarkers 的三元结果不再退化成 IMarker[] | never[]，一处消掉 map 回调的 8 条。
+//  注：本档只按「本次提交的两个文件」下压，四个并行 agent 尚未提交的减量留给他们各自落地时降。
+const TS_ERROR_BASELINE = 2366;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
