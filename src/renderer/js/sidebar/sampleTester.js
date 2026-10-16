@@ -3017,6 +3017,8 @@ class SampleTester {
         for (let i = 0; i < maxCompareLines; i++) {
             const actualLine = actualLines[i] || '';
             const expectedLine = expectedLines[i] || '';
+            // 与 createHighlightedOutput 的比较口径保持一致（忽略行尾空白），
+            // 否则会报出「第 N 行第 M 字符有差异」却一个字符都不高亮
             if (actualLine.trimEnd() !== expectedLine.trimEnd()) {
                 let diffChar = 0;
                 const minLength = Math.min(actualLine.length, expectedLine.length);
@@ -3026,33 +3028,6 @@ class SampleTester {
                 return {
                     line: i + 1,
                     char: diffChar + 1
-                };
-            }
-        }
-
-        return null;
-    }
-
-    getDifferenceInfo(actual, expected) {
-        const actualLines = actual.split('\n');
-        const expectedLines = expected.split('\n');
-
-        for (let i = 0; i < Math.max(actualLines.length, expectedLines.length); i++) {
-            const actualLine = actualLines[i] || '';
-            const expectedLine = expectedLines[i] || '';
-
-            if (actualLine !== expectedLine) {
-                for (let j = 0; j < Math.max(actualLine.length, expectedLine.length); j++) {
-                    if (actualLine[j] !== expectedLine[j]) {
-                        return {
-                            line: i + 1,
-                            char: j + 1
-                        };
-                    }
-                }
-                return {
-                    line: i + 1,
-                    char: Math.min(actualLine.length, expectedLine.length) + 1
                 };
             }
         }
