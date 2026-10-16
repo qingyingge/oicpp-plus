@@ -103,7 +103,7 @@ class DebugPanel {
         $('#dbg-add-watch')?.addEventListener('click', () => {
             const input = $('#dbg-watch-input');
             const expr = input?.value?.trim();
-            if (expr) {
+            if (expr && input) {
                 send('debug-add-watch', expr);
                 input.value = '';
             }
@@ -112,13 +112,13 @@ class DebugPanel {
             if (e.key === 'Enter') {
                 const input = $('#dbg-watch-input');
                 const expr = input?.value?.trim();
-                if (expr) {
+                if (expr && input) {
                     send('debug-add-watch', expr);
                     input.value = '';
                 }
             }
         });
-        this.root.querySelectorAll('.category-header').forEach(el => {
+        this.root?.querySelectorAll('.category-header').forEach(el => {
             el.addEventListener('click', () => {
                 const arrow = el.querySelector('.expand-arrow');
                 const content = el.nextElementSibling;
@@ -126,7 +126,8 @@ class DebugPanel {
                     return;
                 const hidden = content.style.display === 'none';
                 content.style.display = hidden ? 'block' : 'none';
-                arrow.textContent = hidden ? '▼' : '▶';
+                if (arrow)
+                    arrow.textContent = hidden ? '▼' : '▶';
             });
         });
         try {
@@ -151,18 +152,19 @@ class DebugPanel {
             });
         }
         catch (_) { }
-        if (this.root) {
-            this.root.addEventListener('click', (ev) => {
+        const boundRoot = this.root;
+        if (boundRoot) {
+            boundRoot.addEventListener('click', (ev) => {
                 if (!(ev.target instanceof Element))
                     return;
                 const target = ev.target;
                 const toggleBtn = target.closest('.expand-toggle-btn');
-                if (toggleBtn && this.root.contains(toggleBtn)) {
+                if (toggleBtn && boundRoot.contains(toggleBtn)) {
                     this._handleToggleButtonClick(toggleBtn, ev);
                     return;
                 }
                 const removeBtn = target.closest('.remove-watch-btn');
-                if (removeBtn && this.root.contains(removeBtn)) {
+                if (removeBtn && boundRoot.contains(removeBtn)) {
                     this._handleRemoveWatchClick(removeBtn, ev);
                     return;
                 }
@@ -197,8 +199,9 @@ class DebugPanel {
                 return String(data.name);
             }
         }
-        if (data && typeof data.displayExpression === 'string' && data.displayExpression) {
-            return String(data.displayExpression);
+        const displayExpression = data?.['displayExpression'];
+        if (typeof displayExpression === 'string' && displayExpression) {
+            return String(displayExpression);
         }
         return rootName;
     }
@@ -260,10 +263,11 @@ class DebugPanel {
         loadingToDelete.forEach((key) => this.loadingMore.delete(key));
     }
     _setToolbarEnabled(enabled) {
-        if (!this.root)
+        const root = this.root;
+        if (!root)
             return;
         ['#dbg-continue', '#dbg-step-over', '#dbg-step-into', '#dbg-step-out', '#dbg-stop', '#dbg-add-watch', '#dbg-start']
-            .forEach(sel => { const el = this.root.querySelector(sel); if (el instanceof HTMLButtonElement)
+            .forEach(sel => { const el = root.querySelector(sel); if (el instanceof HTMLButtonElement)
             el.disabled = !enabled; });
     }
     _handleVariableExpanded(payload) {
@@ -283,8 +287,10 @@ class DebugPanel {
                 if (current) {
                     for (let i = 0; i < payload.path.length - 1; i++) {
                         const idx = payload.path[i];
-                        if (current.children && current.children[idx]) {
-                            current = current.children[idx];
+                        const siblings = current ? current.children : undefined;
+                        const next = (idx !== undefined && siblings) ? siblings[idx] : undefined;
+                        if (next) {
+                            current = next;
                         }
                         else {
                             current = null;
@@ -293,7 +299,7 @@ class DebugPanel {
                     }
                     if (current && current.children) {
                         const lastIdx = payload.path[payload.path.length - 1];
-                        if (current.children[lastIdx]) {
+                        if (lastIdx !== undefined && current.children[lastIdx]) {
                             current.children[lastIdx] = payload.data;
                         }
                     }
@@ -338,7 +344,10 @@ class DebugPanel {
     }
     _renderVariableGroup(selector, variables, scope) {
         scope = this._normalizeScope(scope);
-        const container = this.root.querySelector(selector);
+        const root = this.root;
+        if (!root)
+            return;
+        const container = root.querySelector(selector);
         if (!container)
             return;
         const names = Object.keys(variables || {});
@@ -352,7 +361,7 @@ class DebugPanel {
             if (scope === 'watch' && this.pendingWatchRemovals.has(name)) {
                 continue;
             }
-            const data = variables[name] || {};
+            const data = variables?.[name] || {};
             const nodeEl = this._renderVariableNode({
                 scope,
                 rootName: name,
@@ -371,22 +380,23 @@ class DebugPanel {
         const nodeKey = this._makeNodeKey(scope, rootName, path);
         const item = document.createElement('div');
         item.className = isRoot ? 'variable-item' : 'variable-item variable-child';
-        item.dataset.scope = scope;
-        item.dataset.name = isRoot ? rootName : (data?.name != null ? String(data.name) : '');
-        item.dataset.root = rootName;
+        item.dataset['scope'] = scope;
+        item.dataset['name'] = isRoot ? rootName : (data?.name != null ? String(data.name) : '');
+        item.dataset['root'] = rootName;
         const pathSegments = Array.isArray(path) ? path.map((seg) => String(seg)) : [];
-        item.dataset.path = pathSegments.join(',');
+        item.dataset['path'] = pathSegments.join(',');
         const backendName = this._resolveBackendName(scope, rootName, data);
-        item.dataset.backendName = backendName || rootName || '';
+        item.dataset['backendName'] = backendName || rootName || '';
         const header = document.createElement('div');
         header.className = 'variable-header';
         item.appendChild(header);
         item.__variableData = data;
-        const hasChildren = Array.isArray(data?.children) && data.children.length > 0;
+        const childList = Array.isArray(data?.children) ? data.children : [];
+        const hasChildren = childList.length > 0;
         const numericCount = Number(data?.elementCount);
         const elementCount = Number.isFinite(numericCount)
             ? numericCount
-            : (hasChildren ? data.children.filter(ch => !ch?.isPlaceholder).length : null);
+            : (hasChildren ? childList.filter(ch => !ch?.isPlaceholder).length : null);
         const inferredExpandable = this._isExpandableVariable(data, elementCount, hasChildren);
         const extraExpandable = Number.isFinite(Number(data?.numchild)) && Number(data.numchild) > 0;
         const canExpand = inferredExpandable || !!data?.canExpand || extraExpandable;
@@ -424,11 +434,11 @@ class DebugPanel {
             header.appendChild(spacer);
         }
         else {
-            toggleEl.dataset.nodeKey = nodeKey;
-            toggleEl.dataset.scope = scope;
-            toggleEl.dataset.root = rootName;
-            toggleEl.dataset.path = item.dataset.path || '';
-            toggleEl.dataset.backendName = backendName || rootName || '';
+            toggleEl.dataset['nodeKey'] = nodeKey;
+            toggleEl.dataset['scope'] = scope;
+            toggleEl.dataset['root'] = rootName;
+            toggleEl.dataset['path'] = item.dataset['path'] || '';
+            toggleEl.dataset['backendName'] = backendName || rootName || '';
         }
         const nameEl = document.createElement('span');
         nameEl.className = 'variable-name';
@@ -456,11 +466,11 @@ class DebugPanel {
                 ? String(data.expression)
                 : backendName || rootName;
             if (watchExpression) {
-                rm.dataset.watchExpression = watchExpression;
+                rm.dataset['watchExpression'] = watchExpression;
             }
-            rm.dataset.scope = scope;
-            rm.dataset.root = rootName;
-            rm.dataset.backendName = backendName || rootName || '';
+            rm.dataset['scope'] = scope;
+            rm.dataset['root'] = rootName;
+            rm.dataset['backendName'] = backendName || rootName || '';
             rm.addEventListener('mousedown', (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
@@ -473,7 +483,7 @@ class DebugPanel {
         if (!isExpanded) {
             childrenWrap.style.display = 'none';
         }
-        childrenWrap.dataset.nodeKey = nodeKey;
+        childrenWrap.dataset['nodeKey'] = nodeKey;
         item.appendChild(childrenWrap);
         header.addEventListener('dblclick', (ev) => {
             if (!toggleEl)
@@ -513,13 +523,13 @@ class DebugPanel {
         const item = button.closest('.variable-item');
         if (!item)
             return;
-        const scope = this._normalizeScope(button.dataset.scope || item.dataset.scope);
-        const rootName = button.dataset.root || item.dataset.root || item.dataset.name || '';
-        const path = this._parsePathSegments(button.dataset.path || item.dataset.path || '');
-        const nodeKey = button.dataset.nodeKey
-            || item.querySelector('.variable-children')?.dataset.nodeKey
+        const scope = this._normalizeScope(button.dataset['scope'] || item.dataset['scope']);
+        const rootName = button.dataset['root'] || item.dataset['root'] || item.dataset['name'] || '';
+        const path = this._parsePathSegments(button.dataset['path'] || item.dataset['path'] || '');
+        const nodeKey = button.dataset['nodeKey']
+            || item.querySelector('.variable-children')?.dataset['nodeKey']
             || this._makeNodeKey(scope, rootName, path);
-        const backendName = button.dataset.backendName || item.dataset.backendName || rootName;
+        const backendName = button.dataset['backendName'] || item.dataset['backendName'] || rootName;
         const childrenWrap = item.querySelector(`.variable-children[data-node-key="${nodeKey}"]`) || item.querySelector('.variable-children');
         if (!childrenWrap)
             return;
@@ -550,11 +560,11 @@ class DebugPanel {
             start: 0
         };
         if (candidate?.varObjectName)
-            payload.varObjectName = candidate.varObjectName;
+            payload['varObjectName'] = candidate.varObjectName;
         if (candidate?.expression)
-            payload.expression = candidate.expression;
+            payload['expression'] = candidate.expression;
         if (candidate?.chunkSize && Number(candidate.chunkSize) > 0) {
-            payload.count = Number(candidate.chunkSize);
+            payload['count'] = Number(candidate.chunkSize);
         }
         const expandTarget = candidate?.expression || candidate?.varObjectName || backendName || rootName;
         this._ipcSend('debug-expand-variable', expandTarget, payload);
@@ -569,13 +579,13 @@ class DebugPanel {
         const item = button.closest('.variable-item');
         if (!item)
             return;
-        const scope = this._normalizeScope(button.dataset.scope || item.dataset.scope);
+        const scope = this._normalizeScope(button.dataset['scope'] || item.dataset['scope']);
         if (scope !== 'watch')
             return;
-        const rootName = button.dataset.root || item.dataset.root || item.dataset.name || '';
-        const removalKey = button.dataset.watchExpression
-            || button.dataset.backendName
-            || item.dataset.backendName
+        const rootName = button.dataset['root'] || item.dataset['root'] || item.dataset['name'] || '';
+        const removalKey = button.dataset['watchExpression']
+            || button.dataset['backendName']
+            || item.dataset['backendName']
             || rootName;
         if (!removalKey)
             return;
@@ -631,9 +641,9 @@ class DebugPanel {
             return false;
         if (!data)
             return false;
-        if (data.isArray || data.isContainer)
+        if (data['isArray'] || data['isContainer'])
             return true;
-        if (Number.isFinite(elementCount) && elementCount > 0)
+        if (elementCount !== null && Number.isFinite(elementCount) && elementCount > 0)
             return true;
         const hint = `${data.type || ''} ${data.value || ''}`.toLowerCase();
         if (/std::/.test(hint))
@@ -646,7 +656,7 @@ class DebugPanel {
     _shouldEmphasizeToggle(data) {
         if (!data)
             return false;
-        if (data.isArray || data.isContainer)
+        if (data['isArray'] || data['isContainer'])
             return true;
         const hint = `${data.type || ''} ${data.value || ''}`.toLowerCase();
         return /std::/.test(hint);
@@ -658,7 +668,7 @@ class DebugPanel {
             return true;
         if (elementCount != null && elementCount > 0)
             return true;
-        if (data.isContainer || data.isArray)
+        if (data['isContainer'] || data['isArray'])
             return true;
         const typeStr = String(data.type || '');
         const valueStr = String(data.value || '');
@@ -690,7 +700,7 @@ class DebugPanel {
             return;
         }
         const loadedCount = list.filter(child => !child?.isPlaceholder).length;
-        container.dataset.loadedCount = String(loadedCount);
+        container.dataset['loadedCount'] = String(loadedCount);
         list.forEach((child, index) => {
             if (child && child.isPlaceholder) {
                 const more = document.createElement('div');
@@ -712,8 +722,10 @@ class DebugPanel {
                     this.loadingMore.add(parentKey);
                     val.textContent = window.i18n.t('debug.loading');
                     const latestParent = this._getVariableNode(scope, rootName, parentPath) || parentData || {};
-                    const nextIndex = Number.isFinite(child.nextIndex) ? child.nextIndex : loadedCount;
-                    const count = Number.isFinite(child.chunkSize) && child.chunkSize > 0 ? child.chunkSize : 100;
+                    const rawNextIndex = child['nextIndex'];
+                    const nextIndex = typeof rawNextIndex === 'number' && Number.isFinite(rawNextIndex) ? rawNextIndex : loadedCount;
+                    const rawChunkSize = child.chunkSize;
+                    const count = typeof rawChunkSize === 'number' && Number.isFinite(rawChunkSize) && rawChunkSize > 0 ? rawChunkSize : 100;
                     const payload = {
                         scope,
                         path: parentPath,
@@ -723,9 +735,9 @@ class DebugPanel {
                         cacheKey: parentKey
                     };
                     if (latestParent?.varObjectName)
-                        payload.varObjectName = latestParent.varObjectName;
+                        payload['varObjectName'] = latestParent.varObjectName;
                     if (latestParent?.expression)
-                        payload.expression = latestParent.expression;
+                        payload['expression'] = latestParent.expression;
                     const loadMoreTarget = latestParent?.expression || latestParent?.varObjectName || rootName;
                     this._ipcSend('debug-load-more-variable', loadMoreTarget, payload);
                     setTimeout(() => this.loadingMore.delete(parentKey), 800);
@@ -764,7 +776,10 @@ class DebugPanel {
         catch (_) { }
     }
     _renderStack(stack) {
-        const c = this.root.querySelector('#call-stack');
+        const root = this.root;
+        if (!root)
+            return;
+        const c = root.querySelector('#call-stack');
         if (!c)
             return;
         c.innerHTML = '';
@@ -793,9 +808,9 @@ class DebugPanel {
         if (stdMatch && stdMatch[1]) {
             display = stdMatch[1];
         }
-        if (data.isArray || data.isContainer) {
+        if (data['isArray'] || data['isContainer']) {
             const cnt = data.elementCount != null ? data.elementCount : '?';
-            const typeLabel = data.isArray ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
+            const typeLabel = data['isArray'] ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
             display = `${typeLabel}[${cnt}] ${display}`;
         }
         if (display.length > 60)

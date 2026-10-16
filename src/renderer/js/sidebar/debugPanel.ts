@@ -5,6 +5,16 @@ interface DebugVariablePayload {
     data?: OicppVarData;
 }
 
+interface OicppVariableSnapshot {
+    local?: Record<string, OicppVarData>;
+    global?: Record<string, OicppVarData>;
+    watches?: Record<string, OicppVarData>;
+}
+
+interface DebugStoppedPayload {
+    reason?: string;
+}
+
 export class DebugPanel {
     isActive: boolean;
     root: HTMLElement | null;
@@ -109,41 +119,41 @@ export class DebugPanel {
         $('#dbg-add-watch')?.addEventListener('click', () => {
             const input = $('#dbg-watch-input') as HTMLInputElement | null;
             const expr = input?.value?.trim();
-            if (expr) { send('debug-add-watch', expr); input.value = ''; }
+            if (expr && input) { send('debug-add-watch', expr); input.value = ''; }
         });
         $('#dbg-watch-input')?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 const input = $('#dbg-watch-input') as HTMLInputElement | null;
                 const expr = input?.value?.trim();
-                if (expr) { send('debug-add-watch', expr); input.value = ''; }
+                if (expr && input) { send('debug-add-watch', expr); input.value = ''; }
             }
         });
 
-        this.root.querySelectorAll('.category-header').forEach(el => {
+        this.root?.querySelectorAll('.category-header').forEach(el => {
             el.addEventListener('click', () => {
                 const arrow = el.querySelector('.expand-arrow');
                 const content = el.nextElementSibling;
                 if (!(content instanceof HTMLElement)) return;
                 const hidden = content.style.display === 'none';
                 content.style.display = hidden ? 'block' : 'none';
-                arrow.textContent = hidden ? '▼' : '▶';
+                if (arrow) arrow.textContent = hidden ? '▼' : '▶';
             });
         });
 
         try {
             const { ipcRenderer } = require('electron');
-            ipcRenderer.on('debug-variables-updated', (_e, variables) => this._renderVariables(variables));
-            ipcRenderer.on('debug-callstack-updated', (_e, stack) => this._renderStack(stack));
+            ipcRenderer.on('debug-variables-updated', (_e: unknown, variables: OicppVariableSnapshot | null) => this._renderVariables(variables));
+            ipcRenderer.on('debug-callstack-updated', (_e: unknown, stack: unknown) => this._renderStack(stack));
             ipcRenderer.on('debug-program-exited', () => this._setToolbarEnabled(false));
-            ipcRenderer.on('debug-stopped', (_e, data) => {
+            ipcRenderer.on('debug-stopped', (_e: unknown, data: DebugStoppedPayload | null) => {
                 if (data && (data.reason === 'program-exited' || /exited/.test(String(data.reason || '')))) {
                     this._setToolbarEnabled(false);
                 }
             });
             ipcRenderer.on('debug-started', () => this._setToolbarEnabled(true));
             ipcRenderer.on('debug-running', () => this._setToolbarEnabled(true));
-            ipcRenderer.on('debug-variable-expanded', (_e, payload) => this._handleVariableExpanded(payload));
-            ipcRenderer.on('debug-error', (_e, msg) => {
+            ipcRenderer.on('debug-variable-expanded', (_e: unknown, payload: DebugVariablePayload) => this._handleVariableExpanded(payload));
+            ipcRenderer.on('debug-error', (_e: unknown, msg: unknown) => {
 
                 if (this.loadingMore.size > 0) {
                     this.loadingMore.clear();
@@ -153,18 +163,19 @@ export class DebugPanel {
             });
         } catch (_) { }
 
-        if (this.root) {
-            this.root.addEventListener('click', (ev) => {
+        const boundRoot = this.root;
+        if (boundRoot) {
+            boundRoot.addEventListener('click', (ev) => {
                 if (!(ev.target instanceof Element)) return;
                 const target = ev.target;
                 const toggleBtn = target.closest('.expand-toggle-btn');
-                if (toggleBtn && this.root.contains(toggleBtn)) {
+                if (toggleBtn && boundRoot.contains(toggleBtn)) {
                     this._handleToggleButtonClick(toggleBtn as HTMLElement, ev);
                     return;
                 }
 
                 const removeBtn = target.closest('.remove-watch-btn');
-                if (removeBtn && this.root.contains(removeBtn)) {
+                if (removeBtn && boundRoot.contains(removeBtn)) {
                     this._handleRemoveWatchClick(removeBtn as HTMLElement, ev);
                     return;
                 }
@@ -197,8 +208,9 @@ export class DebugPanel {
                 return String(data.name);
             }
         }
-        if (data && typeof data.displayExpression === 'string' && data.displayExpression) {
-            return String(data.displayExpression);
+        const displayExpression = data?.['displayExpression'];
+        if (typeof displayExpression === 'string' && displayExpression) {
+            return String(displayExpression);
         }
         return rootName;
     }
@@ -264,9 +276,10 @@ export class DebugPanel {
     }
 
     _setToolbarEnabled(enabled: boolean): void {
-        if (!this.root) return;
+        const root = this.root;
+        if (!root) return;
         ['#dbg-continue', '#dbg-step-over', '#dbg-step-into', '#dbg-step-out', '#dbg-stop', '#dbg-add-watch', '#dbg-start']
-            .forEach(sel => { const el = this.root!.querySelector(sel); if (el instanceof HTMLButtonElement) el.disabled = !enabled; });
+            .forEach(sel => { const el = root.querySelector(sel); if (el instanceof HTMLButtonElement) el.disabled = !enabled; });
     }
 
     _handleVariableExpanded(payload: DebugVariablePayload): void {
@@ -278,12 +291,14 @@ export class DebugPanel {
         const cacheRoot = this._getCacheRoot(scope);
         if (payload.data) {
             if (payload.path && payload.path.length > 0) {
-                let current = cacheRoot[payload.name];
+                let current: OicppVarData | null | undefined = cacheRoot[payload.name];
                 if (current) {
                     for (let i = 0; i < payload.path.length - 1; i++) {
                         const idx = payload.path[i];
-                        if (current.children && current.children[idx]) {
-                            current = current.children[idx];
+                        const siblings: OicppVarData[] | undefined = current ? current.children : undefined;
+                        const next: OicppVarData | undefined = (idx !== undefined && siblings) ? siblings[idx] : undefined;
+                        if (next) {
+                            current = next;
                         } else {
                             current = null;
                             break;
@@ -291,7 +306,7 @@ export class DebugPanel {
                     }
                     if (current && current.children) {
                         const lastIdx = payload.path[payload.path.length - 1];
-                        if (current.children[lastIdx]) {
+                        if (lastIdx !== undefined && current.children[lastIdx]) {
                             current.children[lastIdx] = payload.data;
                         }
                     }
@@ -312,7 +327,7 @@ export class DebugPanel {
         this._renderVariableGroup('#watch-variables', this.variableCache.watches, 'watch');
     }
 
-    _renderVariables(v: { local?: Record<string, OicppVarData>; global?: Record<string, OicppVarData>; watches?: Record<string, OicppVarData> } | null): void {
+    _renderVariables(v: OicppVariableSnapshot | null): void {
         console.log('[DebugPanel] _renderVariables:', v);
         if (!this.root) return;
         this.loadingMore.clear();
@@ -338,7 +353,9 @@ export class DebugPanel {
 
     _renderVariableGroup(selector: string, variables: Record<string, OicppVarData> | null, scope: string): void {
         scope = this._normalizeScope(scope);
-        const container = this.root!.querySelector(selector);
+        const root = this.root;
+        if (!root) return;
+        const container = root.querySelector(selector);
         if (!container) return;
         const names = Object.keys(variables || {});
         if (names.length === 0) {
@@ -353,7 +370,7 @@ export class DebugPanel {
             if (scope === 'watch' && this.pendingWatchRemovals.has(name)) {
                 continue;
             }
-            const data = variables[name] || {};
+            const data = variables?.[name] || {};
             const nodeEl = this._renderVariableNode({
                 scope,
                 rootName: name,
@@ -373,24 +390,25 @@ export class DebugPanel {
         const nodeKey = this._makeNodeKey(scope, rootName, path);
         const item = document.createElement('div');
         item.className = isRoot ? 'variable-item' : 'variable-item variable-child';
-        item.dataset.scope = scope;
-        item.dataset.name = isRoot ? rootName : (data?.name != null ? String(data.name) : '');
-        item.dataset.root = rootName;
+        item.dataset['scope'] = scope;
+        item.dataset['name'] = isRoot ? rootName : (data?.name != null ? String(data.name) : '');
+        item.dataset['root'] = rootName;
         const pathSegments = Array.isArray(path) ? path.map((seg) => String(seg)) : [];
-        item.dataset.path = pathSegments.join(',');
+        item.dataset['path'] = pathSegments.join(',');
         const backendName = this._resolveBackendName(scope, rootName, data);
-        item.dataset.backendName = backendName || rootName || '';
+        item.dataset['backendName'] = backendName || rootName || '';
 
         const header = document.createElement('div');
         header.className = 'variable-header';
         item.appendChild(header);
         item.__variableData = data;
 
-        const hasChildren = Array.isArray(data?.children) && data.children.length > 0;
+        const childList = Array.isArray(data?.children) ? data.children : [];
+        const hasChildren = childList.length > 0;
         const numericCount = Number(data?.elementCount);
         const elementCount = Number.isFinite(numericCount)
             ? numericCount
-            : (hasChildren ? data.children.filter(ch => !ch?.isPlaceholder).length : null);
+            : (hasChildren ? childList.filter(ch => !ch?.isPlaceholder).length : null);
         const inferredExpandable = this._isExpandableVariable(data, elementCount, hasChildren);
         const extraExpandable = Number.isFinite(Number(data?.numchild)) && Number(data.numchild) > 0;
         const canExpand = inferredExpandable || !!data?.canExpand || extraExpandable;
@@ -429,11 +447,11 @@ export class DebugPanel {
             spacer.className = 'expand-spacer';
             header.appendChild(spacer);
         } else {
-            toggleEl.dataset.nodeKey = nodeKey;
-            toggleEl.dataset.scope = scope;
-            toggleEl.dataset.root = rootName;
-            toggleEl.dataset.path = item.dataset.path || '';
-            toggleEl.dataset.backendName = backendName || rootName || '';
+            toggleEl.dataset['nodeKey'] = nodeKey;
+            toggleEl.dataset['scope'] = scope;
+            toggleEl.dataset['root'] = rootName;
+            toggleEl.dataset['path'] = item.dataset['path'] || '';
+            toggleEl.dataset['backendName'] = backendName || rootName || '';
         }
 
         const nameEl = document.createElement('span');
@@ -463,11 +481,11 @@ export class DebugPanel {
                 ? String(data.expression)
                 : backendName || rootName;
             if (watchExpression) {
-                rm.dataset.watchExpression = watchExpression;
+                rm.dataset['watchExpression'] = watchExpression;
             }
-            rm.dataset.scope = scope;
-            rm.dataset.root = rootName;
-            rm.dataset.backendName = backendName || rootName || '';
+            rm.dataset['scope'] = scope;
+            rm.dataset['root'] = rootName;
+            rm.dataset['backendName'] = backendName || rootName || '';
             rm.addEventListener('mousedown', (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
@@ -481,7 +499,7 @@ export class DebugPanel {
         if (!isExpanded) {
             childrenWrap.style.display = 'none';
         }
-        childrenWrap.dataset.nodeKey = nodeKey;
+        childrenWrap.dataset['nodeKey'] = nodeKey;
         item.appendChild(childrenWrap);
 
         header.addEventListener('dblclick', (ev) => {
@@ -520,13 +538,13 @@ export class DebugPanel {
         }
         const item = button.closest('.variable-item') as HTMLDivElement | null;
         if (!item) return;
-        const scope = this._normalizeScope(button.dataset.scope || item.dataset.scope);
-        const rootName = button.dataset.root || item.dataset.root || item.dataset.name || '';
-        const path = this._parsePathSegments(button.dataset.path || item.dataset.path || '');
-        const nodeKey = button.dataset.nodeKey
-            || (item.querySelector('.variable-children') as HTMLDivElement | null)?.dataset.nodeKey
+        const scope = this._normalizeScope(button.dataset['scope'] || item.dataset['scope']);
+        const rootName = button.dataset['root'] || item.dataset['root'] || item.dataset['name'] || '';
+        const path = this._parsePathSegments(button.dataset['path'] || item.dataset['path'] || '');
+        const nodeKey = button.dataset['nodeKey']
+            || (item.querySelector('.variable-children') as HTMLDivElement | null)?.dataset['nodeKey']
             || this._makeNodeKey(scope, rootName, path);
-        const backendName = button.dataset.backendName || item.dataset.backendName || rootName;
+        const backendName = button.dataset['backendName'] || item.dataset['backendName'] || rootName;
         const childrenWrap = (item.querySelector(`.variable-children[data-node-key="${nodeKey}"]`) as HTMLDivElement | null) || (item.querySelector('.variable-children') as HTMLDivElement | null);
         if (!childrenWrap) return;
 
@@ -558,10 +576,10 @@ export class DebugPanel {
             cacheKey: nodeKey,
             start: 0
         };
-        if (candidate?.varObjectName) payload.varObjectName = candidate.varObjectName;
-        if (candidate?.expression) payload.expression = candidate.expression;
+        if (candidate?.varObjectName) payload['varObjectName'] = candidate.varObjectName;
+        if (candidate?.expression) payload['expression'] = candidate.expression;
         if (candidate?.chunkSize && Number(candidate.chunkSize) > 0) {
-            payload.count = Number(candidate.chunkSize);
+            payload['count'] = Number(candidate.chunkSize);
         }
         const expandTarget = candidate?.expression || candidate?.varObjectName || backendName || rootName;
         this._ipcSend('debug-expand-variable', expandTarget, payload);
@@ -575,12 +593,12 @@ export class DebugPanel {
         }
         const item = button.closest('.variable-item') as HTMLDivElement | null;
         if (!item) return;
-        const scope = this._normalizeScope(button.dataset.scope || item.dataset.scope);
+        const scope = this._normalizeScope(button.dataset['scope'] || item.dataset['scope']);
         if (scope !== 'watch') return;
-        const rootName = button.dataset.root || item.dataset.root || item.dataset.name || '';
-        const removalKey = button.dataset.watchExpression
-            || button.dataset.backendName
-            || item.dataset.backendName
+        const rootName = button.dataset['root'] || item.dataset['root'] || item.dataset['name'] || '';
+        const removalKey = button.dataset['watchExpression']
+            || button.dataset['backendName']
+            || item.dataset['backendName']
             || rootName;
         if (!removalKey) return;
 
@@ -630,8 +648,8 @@ export class DebugPanel {
     _shouldForceToggle(scope: unknown, data: OicppVarData | null, elementCount: number | null): boolean {
         if (this._normalizeScope(scope) !== 'watch') return false;
         if (!data) return false;
-        if (data.isArray || data.isContainer) return true;
-        if (Number.isFinite(elementCount) && elementCount > 0) return true;
+        if (data['isArray'] || data['isContainer']) return true;
+        if (elementCount !== null && Number.isFinite(elementCount) && elementCount > 0) return true;
         const hint = `${data.type || ''} ${data.value || ''}`.toLowerCase();
         if (/std::/.test(hint)) return true;
         const rawVal = String(data.value || '').trim();
@@ -641,7 +659,7 @@ export class DebugPanel {
 
     _shouldEmphasizeToggle(data: OicppVarData | null): boolean {
         if (!data) return false;
-        if (data.isArray || data.isContainer) return true;
+        if (data['isArray'] || data['isContainer']) return true;
         const hint = `${data.type || ''} ${data.value || ''}`.toLowerCase();
         return /std::/.test(hint);
     }
@@ -650,7 +668,7 @@ export class DebugPanel {
         if (!data) return false;
         if (hasChildren) return true;
         if (elementCount != null && elementCount > 0) return true;
-        if (data.isContainer || data.isArray) return true;
+        if (data['isContainer'] || data['isArray']) return true;
         const typeStr = String(data.type || '');
         const valueStr = String(data.value || '');
         const stdContainerPattern = /std::(vector|array|deque|list|forward_list|basic_string|u8string|u16string|u32string|wstring|set|map|unordered_set|unordered_map|multiset|multimap|queue|stack)\b/;
@@ -680,7 +698,7 @@ export class DebugPanel {
         }
 
         const loadedCount = list.filter(child => !child?.isPlaceholder).length;
-        container.dataset.loadedCount = String(loadedCount);
+        container.dataset['loadedCount'] = String(loadedCount);
 
         list.forEach((child, index) => {
             if (child && child.isPlaceholder) {
@@ -703,8 +721,10 @@ export class DebugPanel {
                     this.loadingMore.add(parentKey);
                     val.textContent = window.i18n.t('debug.loading');
                     const latestParent = this._getVariableNode(scope, rootName, parentPath) || parentData || {};
-                    const nextIndex = Number.isFinite(child.nextIndex) ? child.nextIndex : loadedCount;
-                    const count = Number.isFinite(child.chunkSize) && child.chunkSize > 0 ? child.chunkSize : 100;
+                    const rawNextIndex = child['nextIndex'];
+                    const nextIndex = typeof rawNextIndex === 'number' && Number.isFinite(rawNextIndex) ? rawNextIndex : loadedCount;
+                    const rawChunkSize = child.chunkSize;
+                    const count = typeof rawChunkSize === 'number' && Number.isFinite(rawChunkSize) && rawChunkSize > 0 ? rawChunkSize : 100;
                     const payload: Record<string, unknown> = {
                         scope,
                         path: parentPath,
@@ -713,8 +733,8 @@ export class DebugPanel {
                         append: true,
                         cacheKey: parentKey
                     };
-                    if (latestParent?.varObjectName) payload.varObjectName = latestParent.varObjectName;
-                    if (latestParent?.expression) payload.expression = latestParent.expression;
+                    if (latestParent?.varObjectName) payload['varObjectName'] = latestParent.varObjectName;
+                    if (latestParent?.expression) payload['expression'] = latestParent.expression;
                     const loadMoreTarget = latestParent?.expression || latestParent?.varObjectName || rootName;
                     this._ipcSend('debug-load-more-variable', loadMoreTarget, payload);
                     setTimeout(() => this.loadingMore.delete(parentKey), 800);
@@ -753,7 +773,9 @@ export class DebugPanel {
     }
 
     _renderStack(stack: unknown): void {
-        const c = this.root!.querySelector('#call-stack');
+        const root = this.root;
+        if (!root) return;
+        const c = root.querySelector('#call-stack');
         if (!c) return;
         c.innerHTML = '';
         if (!Array.isArray(stack) || stack.length === 0) { c.innerHTML = '<div class="no-debug-message">' + window.i18n.t('debug.none') + '</div>'; return; }
@@ -779,9 +801,9 @@ export class DebugPanel {
         if (stdMatch && stdMatch[1]) {
             display = stdMatch[1];
         }
-        if (data.isArray || data.isContainer) {
+        if (data['isArray'] || data['isContainer']) {
             const cnt = data.elementCount != null ? data.elementCount : '?';
-            const typeLabel = data.isArray ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
+            const typeLabel = data['isArray'] ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
             display = `${typeLabel}[${cnt}] ${display}`;
         }
         if (display.length > 60) display = display.slice(0, 57) + '...';
