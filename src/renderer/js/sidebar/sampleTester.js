@@ -2094,7 +2094,17 @@ class SampleTester {
 
         if (runSamples.length === 0) return;
 
-        await this.autoSaveCurrentFile();
+        // 在途标记必须早于第一个 await 置位，否则并发点击会同时跑两轮全量编译+判题
+        if (this._runningAllSamples) return;
+        this._runningAllSamples = true;
+
+        try {
+            await this.autoSaveCurrentFile();
+        } catch (error) {
+            // 下面还没进 finally，这里失败要自己复位，否则按钮永远点不动
+            this._runningAllSamples = false;
+            throw error;
+        }
 
         const runAllBtn = document.getElementById('run-all-samples-btn');
         if (runAllBtn) {
@@ -2273,6 +2283,7 @@ class SampleTester {
             await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
 
         } finally {
+            this._runningAllSamples = false;
             this.deferSpjTempCleanup = false;
             await this.cleanupSpjTempFiles();
             // 主程序编译结果会被缓存复用，这里不删除可执行文件。
