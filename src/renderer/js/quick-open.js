@@ -62,7 +62,14 @@
     }
 
     function search(query) {
-        if (!query) { render(allFiles.slice(0, 100)); return; }
+        if (!query) {
+            // 空查询走的是浏览列表，必须同步 lastList/activeIndex：否则回车和方向键
+            // 仍会按上一次搜索的结果操作（界面显示的和被打开的不是同一批文件）。
+            lastList = allFiles.slice(0, 100);
+            activeIndex = lastList.length ? 0 : -1;
+            render(lastList);
+            return;
+        }
         const ranked = allFiles.map(f => ({ ...f, __s: fuzzyScore(query, f.path) }))
             .filter(x => x.__s > 0)
             .sort((a, b) => b.__s - a.__s || a.path.length - b.path.length);
