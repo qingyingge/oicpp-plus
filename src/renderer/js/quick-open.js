@@ -205,6 +205,10 @@
         window.electronIPC.on('file-pasted', (_event, _sourcePath, _targetPath, _operation, error) => {
             if (!error) markIndexDirty();
         });
+        // 重命名/移动同样会改变索引里的路径，主进程 main.js 里就发这个通道
+        window.electronIPC.on('file-moved', (_event, _sourcePath, _targetPath, error) => {
+            if (!error) markIndexDirty();
+        });
     }
 
     document.addEventListener('workspace-opened', () => {
