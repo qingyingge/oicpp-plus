@@ -1391,7 +1391,23 @@ function runFastspawnSyntaxCheck() {
 //  两处 emit 里的语义可疑点已回退：updateSettings 的 `patch` 从「typeof 判类型 + 退化成 {}」
 //  改回纯别名 `const patch = newSettings;`（原写法会把 for..in 遍历字符串索引的行为改掉），
 //  canceledIds 的 `if (oldest !== undefined)` 改回 `delete(oldest as number)`。
-const TS_ERROR_BASELINE = 435;
+// 435 → 368：renderer/js/tabs.ts 清零（67）。这一档同样只在调用点补断言 / 加形参标注：
+//  PdfTabOptions 解构出来的 string | null | undefined 往 activeTab / activeTabKey / activeGroupId
+//  上赋时用 `as string | null`；TabRecord 带索引签名，clientHeight 之类动态键改方括号读（TS4111）
+//  再 `as number`；welcomeTab 缺 element 这条必填字段，用 `as unknown as TabRecord` 双断言，
+//  不去动 TabRecord 的必填性（改了会牵动全文件几十处 element 访问）。
+//  隐式 any 的欢迎页一族方法（setupWelcomeEventListeners / updateWelcomeLogo / loadRecentFiles /
+//  handleWelcomeAction …）补 HTMLElement / string 形参标注后，querySelector 一族才需要 `as`，
+//  DOMStringMap 的索引签名允许 undefined，所以 dataset 赋值不用额外断言。
+//  本档回退了工作区里上一批未提交改动的 18 处语义漂移：`groups.get(x ?? '')` 全族、
+//  `activeTabKey = uniqueKey ?? null`、`targetGroup?.id ?? targetGroupId`（原式在分组缺失时
+//  就是要赋 undefined 走进「找不到分组」分支，留着兜底值会静默操作到旧分组）、
+//  `matchingTabs[0]?.tabData`、`groupedByName.get(k)?.push()`、`editorGroupsElement?.removeChild`
+//  （这三条把「抛错」改成了「静默跳过」）、dataset 赋值上的 `?? undefined`（原来赋 null 会写成
+//  字符串 "null"）、dropEffect 外面新加的 `if (e.dataTransfer)`，以及 createPdfViewerContainer
+//  的 `= {}` 默认参数（两个调用点都传对象）。全部换成擦除型 `as` 断言，重发后 emit 只剩
+//  dataset 点号改方括号、JSDoc 注释擦除和 _welcomeVersionLabel 这条惰性 class 字段声明。
+const TS_ERROR_BASELINE = 368;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
