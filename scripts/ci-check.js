@@ -1363,7 +1363,12 @@ function runFastspawnSyntaxCheck() {
 //  单点最大收益仍是 _miRequest 的返回类型：原先 Promise<unknown> 让 7 个调用点的
 //  fields.* 全部退化成 unknown（14 条），改成 Promise<Record<string, unknown>> 并同步
 //  _miPending 的 resolve 形参后，一次消掉一片，且 _settleMi 的契约被迫对齐。
-const TS_ERROR_BASELINE = 3011;
+// 3011 → 2993：gdb-mi-debugger 清零。抽 MiPendingEntry / WatchEntry 两个 interface，
+//  _settleMi 形参改用前者（strictFunctionTypes 下 resolve 逆变才肯放行 Record）；
+//  _setVariable 形参收 unknown 自行收窄，_variables 三个 scope 的 value 类型换成
+//  WatchEntry，expandVariable 的 root/path/children 链条随之闭合。顺手清掉最后一处
+//  any：_ttyProcess: ChildProcess | null。
+const TS_ERROR_BASELINE = 2993;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

@@ -40,6 +40,24 @@ function numberValue(value: unknown, fallback: number = 0): number {
     return Number.isFinite(num) ? num : fallback;
 }
 
+/** Pending MI request entry tracked by token. */
+interface MiPendingEntry {
+    token: string;
+    command: string;
+    resolve: (value: Record<string, unknown>) => void;
+    reject: (reason: Error) => void;
+    timer: NodeJS.Timeout | null;
+    settled: boolean;
+}
+
+/** Variable entry stored per scope; children are filled lazily by parseGDBWatchValue. */
+interface WatchEntry {
+    name?: string;
+    value: string;
+    type?: string;
+    children: WatchEntry[];
+}
+
 /**
  * Creates a frame data object from a GDB frame record.
  * @param frame - The frame object (default: empty object).
@@ -73,7 +91,7 @@ class GDBDebugger extends EventEmitter {
     /** The spawned GDB process. */
     gdbProcess: import('child_process').ChildProcessWithoutNullStreams | null;
     /** Cached variables: local, global, watches. */
-    _variables: { local: { [key: string]: unknown }; global: { [key: string]: unknown }; watches: { [key: string]: unknown } };
+    _variables: { local: Record<string, WatchEntry>; global: Record<string, WatchEntry>; watches: Record<string, WatchEntry> };
     /** The call stack frames. */
     _callStack: Array<{ function: string; file: string; line: number; level: number; address: string }>;
     /** The breakpoints configured. */
@@ -93,13 +111,13 @@ class GDBDebugger extends EventEmitter {
     /** Maximum output buffer bytes limit. */
     _miBufferLimit: number;
     /** Pending MI requests by token. */
-    _miPending: Map<string, { token: string; command: string; resolve: (value: Record<string, unknown>) => void; reject: (reason: Error) => void; timer: NodeJS.Timeout | null; settled: boolean }>;
+    _miPending: Map<string, MiPendingEntry>;
     /** Next MI token to assign. */
     _nextMiToken: number;
     /** Linux TTY configuration options. */
     _linuxTTYOptions: { inferiorTTY?: string; noNewConsole: boolean; consoleTerminalTemplate: string };
     /** The TTY process spawned for Linux. */
-    _ttyProcess: any;
+    _ttyProcess: import('child_process').ChildProcess | null;
     /** The TTY process PID. */
     _ttyProcessPid: number;
     /** The TTY path. */
@@ -157,13 +175,13 @@ class GDBDebugger extends EventEmitter {
      * @param error - The error to reject with (optional).
      * @param value - The value to resolve with (optional).
      */
-    _settleMi(entry: { settled: boolean; timer: NodeJS.Timeout | null; resolve: (value: unknown) => void; reject: (reason: Error) => void }, error: Error | null, value: unknown): void {
+    _settleMi(entry: MiPendingEntry, error: Error | null, value?: Record<string, unknown>): void {
         if (!entry || entry.settled) return;
         entry.settled = true;
         if (entry.timer) clearTimeout(entry.timer);
         entry.timer = null;
         if (error) entry.reject(error);
-        else entry.resolve(value);
+        else entry.resolve(value || {});
     }
 
     /**
@@ -235,7 +253,7 @@ class GDBDebugger extends EventEmitter {
         }
         if (rec.type === 'stream') {
             if (rec.stream === 'target') {
-                this._emitTargetOutput(rec.text);
+                if (typeof rec.text === 'string') this._emitTargetOutput(rec.text);
             } else if (rec.text?.trim()) {
                 try { global.logInfo?.('[GDB-MI]', rec.text); } catch (_) { }
             }
@@ -692,7 +710,8 @@ class GDBDebugger extends EventEmitter {
             try {
                 const fields = await this._miRequest(`-data-evaluate-expression ${miQuote(expression)}`);
                 const value = typeof fields['value'] === 'string' ? fields['value'] : String(fields['value'] || '');
-                const item = { name: expression, value, type: fields['type'] || '', children: [] };
+                const rawType = fields['type'];
+                const item: WatchEntry = { name: expression, value, type: typeof rawType === 'string' ? rawType : (rawType ? String(rawType) : ''), children: [] };
                 parseGDBWatchValue(item, value);
                 this._variables.watches[expression] = item;
             } catch (_) {
@@ -709,12 +728,18 @@ class GDBDebugger extends EventEmitter {
      * @param scope - The variable scope ('local' or 'global').
      * @param variable - The variable record from GDB.
      */
-    _setVariable(scope: string, variable: { [key: string]: unknown }): void {
-        if (!variable || !variable['name']) return;
-        const value = typeof variable['value'] === 'string' ? variable['value'] : String(variable['value'] || '');
-        const item = { name: variable['name'], value, type: variable['type'] || '', children: [] };
+    _setVariable(scope: 'local' | 'global' | 'watches', variable: unknown): void {
+        if (!variable || typeof variable !== 'object') return;
+        const record = variable as Record<string, unknown>;
+        const rawName = record['name'];
+        if (!rawName) return;
+        const name = typeof rawName === 'string' ? rawName : String(rawName);
+        const rawValue = record['value'];
+        const value = typeof rawValue === 'string' ? rawValue : String(rawValue || '');
+        const rawType = record['type'];
+        const item: WatchEntry = { name, value, type: typeof rawType === 'string' ? rawType : (rawType ? String(rawType) : ''), children: [] };
         parseGDBWatchValue(item, value);
-        this._variables[scope][variable['name']] = item;
+        this._variables[scope][name] = item;
     }
 
     /**
@@ -725,12 +750,13 @@ class GDBDebugger extends EventEmitter {
         try {
             const fields = await this._miRequest('-stack-list-frames');
             this._callStack = asArray(fields['stack']).map((frame, index) => {
-                const data = frameData(frame);
+                const record = frame as Record<string, unknown>;
+                const data = frameData(record);
                 return {
                     function: data.function,
                     file: this._normalizePath(data.file),
                     line: data.line,
-                    level: numberValue(frame.level, index),
+                    level: numberValue(record['level'], index),
                     address: data.address
                 };
             });
@@ -763,17 +789,21 @@ class GDBDebugger extends EventEmitter {
      */
     async expandVariable(name: string, options: { scope?: string; path?: unknown } = { scope: 'local' }): Promise<{ name: string; scope: string; path: unknown; data: unknown }> {
         const scope = options.scope || 'local';
-        let root = this._variables[scope]?.[name];
+        const scopeKeys: Array<'local' | 'global' | 'watches'> = ['local', 'global', 'watches'];
+        const scopeKey = scopeKeys.includes(scope as 'local' | 'global' | 'watches') ? (scope as 'local' | 'global' | 'watches') : null;
+        let root: WatchEntry | undefined = scopeKey ? this._variables[scopeKey][name] : undefined;
         if (!root) {
-            for (const key of ['local', 'global', 'watches']) {
-                if (this._variables[key]?.[name]) {
-                    root = this._variables[key][name];
+            for (const key of scopeKeys) {
+                const candidate = this._variables[key][name];
+                if (candidate) {
+                    root = candidate;
                     break;
                 }
             }
         }
         if (!root) throw new Error(t('debug.variableNotFound', { name }));
-        if ((!options.path || options.path.length === 0) && (!root.children || root.children.length === 0)) {
+        const pathEmpty = !options.path || (options.path as Array<unknown>).length === 0;
+        if (pathEmpty && root.children.length === 0) {
             try {
                 const fields = await this._miRequest(`-data-evaluate-expression ${miQuote(name)}`);
                 parseGDBWatchValue(root, typeof fields['value'] === 'string' ? fields['value'] : String(fields['value'] || ''));
@@ -785,9 +815,10 @@ class GDBDebugger extends EventEmitter {
         const pathParts = Array.isArray(options.path) ? options.path : [];
         for (const part of pathParts) {
             const index = numberValue(part, -1);
-            if (Number.isInteger(index) && current.children?.[index]) current = current.children[index];
+            const childByIndex = Number.isInteger(index) ? current.children[index] : undefined;
+            if (childByIndex) current = childByIndex;
             else {
-                const child = current.children?.find((item) => item.name === String(part));
+                const child = current.children.find((item) => item.name === String(part));
                 if (child) current = child;
             }
         }
@@ -894,7 +925,7 @@ class GDBDebugger extends EventEmitter {
                 const match = line.trim().match(/^(\S+)\s+(\d+)\s+(.+)$/);
                 if (!match) continue;
                 const ttyName = match[1];
-                const pid = parseInt(match[2], 10);
+                const pid = parseInt(match[2] || '', 10);
                 if (!ttyName || ttyName === '?' || ttyName === '-' || !Number.isInteger(pid) || pid <= 0) continue;
                 this._ttyPath = ttyName.startsWith('/dev/') ? ttyName : '/dev/' + ttyName;
                 this._ttyShellPid = pid;
