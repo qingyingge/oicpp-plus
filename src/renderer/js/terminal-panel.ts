@@ -15,13 +15,55 @@ interface TerminalSession {
     tab: HTMLButtonElement;
     pane: HTMLDivElement;
     mount: HTMLDivElement;
-    terminal: import('@xterm/xterm').Terminal;
-    fitAddon: import('@xterm/addon-fit').FitAddon;
+    terminal: XtermTerminal;
+    fitAddon: XtermFitAddon;
     remoteId: string | null;
     cwd: string | null;
     shell: string | null;
     inputBridge: ((data: string) => void) | null;
     muteRemoteOutput: boolean;
+}
+
+type XtermTerminal = import('@xterm/xterm').Terminal;
+type XtermBufferLine = import('@xterm/xterm').IBufferLine;
+type XtermBufferRange = import('@xterm/xterm').IBufferRange;
+type XtermLink = import('@xterm/xterm').ILink;
+
+// @xterm/addon-fit declares FitAddon inside a module augmentation, so its
+// instance type is not reachable through an import type reference. Mirror the
+// members this panel relies on.
+interface XtermFitAddon {
+    activate(terminal: XtermTerminal): void;
+    dispose(): void;
+    fit(): void;
+    proposeDimensions(): { rows: number; cols: number } | undefined;
+}
+
+interface TerminalCreateResult {
+    ok?: boolean;
+    terminalId?: string;
+    cwd?: string;
+    shell?: string;
+    error?: string;
+}
+
+interface TerminalEventData {
+    terminalId?: unknown;
+    data?: unknown;
+    exitCode?: unknown;
+    signal?: unknown;
+}
+
+interface TerminalShieldHandlers {
+    keydown: (event: KeyboardEvent) => void;
+    wheel: (event: WheelEvent) => void;
+}
+
+declare global {
+    interface HTMLElement {
+        _terminalKeyShielded?: boolean;
+        _terminalShieldHandlers?: TerminalShieldHandlers | null;
+    }
 }
 
 export class IntegratedTerminalPanel {
@@ -44,7 +86,7 @@ export class IntegratedTerminalPanel {
     _dragState: { startY: number; startHeight: number } | null;
     fixedTerminalFontSize: number;
     _resizeObserver: ResizeObserver | null;
-    _windowResizeHandler: (() => void) | null;
+    _windowResizeHandler: (() => void) | undefined;
 
     constructor(options: { getApp?: () => unknown } = {}) {
         this.getApp = typeof options.getApp === 'function' ? options.getApp : () => null;
@@ -121,14 +163,17 @@ export class IntegratedTerminalPanel {
         this._resizeObserver = new ResizeObserver(() => {
             this.fitActiveTerminal();
         });
-        this._resizeObserver.observe(this.panel);
+        if (this.panel) {
+            this._resizeObserver.observe(this.panel);
+        }
 
         this._windowResizeHandler = () => this.fitActiveTerminal();
         window.addEventListener('resize', this._windowResizeHandler);
     }
 
-    startResizeDrag(event) {
-        if (!this.panel || !this.visible) {
+    startResizeDrag(event: PointerEvent) {
+        const resizer = this.resizer;
+        if (!this.panel || !this.visible || !resizer) {
             return;
         }
 
@@ -137,10 +182,10 @@ export class IntegratedTerminalPanel {
             startHeight: this.panel.getBoundingClientRect().height
         };
 
-        this.resizer.classList.add('dragging');
-        this.resizer.setPointerCapture(event.pointerId);
+        resizer.classList.add('dragging');
+        resizer.setPointerCapture(event.pointerId);
 
-        const onMove = (moveEvent) => {
+        const onMove = (moveEvent: PointerEvent) => {
             if (!this._dragState) {
                 return;
             }
@@ -152,18 +197,18 @@ export class IntegratedTerminalPanel {
 
         const stop = () => {
             this._dragState = null;
-            this.resizer.classList.remove('dragging');
-            this.resizer.removeEventListener('pointermove', onMove);
-            this.resizer.removeEventListener('pointerup', stop);
-            this.resizer.removeEventListener('pointercancel', stop);
+            resizer.classList.remove('dragging');
+            resizer.removeEventListener('pointermove', onMove);
+            resizer.removeEventListener('pointerup', stop);
+            resizer.removeEventListener('pointercancel', stop);
         };
 
-        this.resizer.addEventListener('pointermove', onMove);
-        this.resizer.addEventListener('pointerup', stop);
-        this.resizer.addEventListener('pointercancel', stop);
+        resizer.addEventListener('pointermove', onMove);
+        resizer.addEventListener('pointerup', stop);
+        resizer.addEventListener('pointercancel', stop);
     }
 
-    setPanelHeight(height) {
+    setPanelHeight(height: number) {
         if (!this.panel) {
             return;
         }
@@ -193,7 +238,7 @@ export class IntegratedTerminalPanel {
             this.status = {
                 available: false,
                 reason: window.i18n.t('panel.terminalStatusFailed'),
-                detail: error?.message || String(error)
+                detail: String((error as { message?: unknown })?.message || error)
             };
         }
 
@@ -228,7 +273,7 @@ export class IntegratedTerminalPanel {
         return this.activeId || null;
     }
 
-    setVisible(visible) {
+    setVisible(visible: boolean) {
         this.visible = !!visible;
         if (!this.panel) {
             return;
@@ -367,21 +412,21 @@ export class IntegratedTerminalPanel {
         const tab = document.createElement('button');
         tab.type = 'button';
         tab.className = 'integrated-terminal-tab pending';
-        tab.dataset.terminalId = tabId;
+        tab.dataset['terminalId'] = tabId;
         const tabLabel = window.i18n?.t?.('terminal.tabLabel', { counter: this.counter }) || `终端 ${this.counter}`;
         const closeLabel = window.i18n?.t?.('terminal.closeTerminal') || '关闭终端';
         tab.innerHTML = `<span class="terminal-tab-label">${tabLabel}</span><span class="terminal-tab-close" aria-label="${closeLabel}">×</span>`;
 
         const pane = document.createElement('div');
         pane.className = 'integrated-terminal-pane';
-        pane.dataset.terminalId = tabId;
+        pane.dataset['terminalId'] = tabId;
 
         const mount = document.createElement('div');
         mount.className = 'integrated-terminal-mount';
         pane.appendChild(mount);
 
-        this.tabs.appendChild(tab);
-        this.body.appendChild(pane);
+        this.tabs?.appendChild(tab);
+        this.body?.appendChild(pane);
 
         const fontOptions = this.resolveTerminalFontOptions();
 
@@ -405,7 +450,7 @@ export class IntegratedTerminalPanel {
         } catch (_) { }
         fitAddon.fit();
 
-        const provisionalSession = {
+        const provisionalSession: TerminalSession = {
             terminalId: tabId,
             tab,
             pane,
@@ -432,9 +477,9 @@ export class IntegratedTerminalPanel {
 
         let created;
         try {
-            created = await window.electronAPI.createTerminal(createPayload) as { ok?: boolean; terminalId?: string; cwd?: string; shell?: string; error?: string } | null;
+            created = await window.electronAPI.createTerminal(createPayload) as TerminalCreateResult | null;
         } catch (error) {
-            terminal.writeln(window.i18n.t('terminal.createFailed', { error: error?.message || String(error) }));
+            terminal.writeln(window.i18n.t('terminal.createFailed', { error: String((error as { message?: unknown })?.message || error) }));
             tab.classList.remove('pending');
             this.renderEmptyState();
             return;
@@ -458,8 +503,8 @@ export class IntegratedTerminalPanel {
         }
 
         tab.classList.remove('pending');
-        tab.dataset.terminalId = remoteId;
-        pane.dataset.terminalId = remoteId;
+        tab.dataset['terminalId'] = remoteId;
+        pane.dataset['terminalId'] = remoteId;
 
         this.sessions.delete(tabId);
         this.sessions.set(remoteId, provisionalSession);
@@ -495,22 +540,23 @@ export class IntegratedTerminalPanel {
         return remoteId;
     }
 
-    shieldTerminalKeyEvents(mountNode, sessionRef = null) {
+    shieldTerminalKeyEvents(mountNode: HTMLElement | null, sessionRef: TerminalSession | null = null) {
         if (!mountNode || mountNode._terminalKeyShielded) {
             return;
         }
 
-        const sendInput = async (text) => {
+        const sendInput = async (text: string) => {
             const session = sessionRef;
             const remoteId = session?.remoteId;
             if (!remoteId || !text) {
                 return;
             }
 
-            if (typeof session.inputBridge === 'function') {
+            const bridge = session?.inputBridge;
+            if (typeof bridge === 'function') {
                 this.echoBridgedInput(session, String(text));
                 try {
-                    session.inputBridge(String(text));
+                    bridge(String(text));
                 } catch (_) {
                 }
                 return;
@@ -522,7 +568,7 @@ export class IntegratedTerminalPanel {
             }
         };
 
-        const onKeyShield = (event) => {
+        const onKeyShield = (event: KeyboardEvent) => {
             const key = String(event?.key || '').toLowerCase();
             const ctrl = !!event.ctrlKey;
             const meta = !!event.metaKey;
@@ -570,7 +616,7 @@ export class IntegratedTerminalPanel {
             if (!ctrl && !meta && !alt && (key === 'arrowup' || key === 'arrowdown' || key === 'arrowleft' || key === 'arrowright')) {
                 event.preventDefault();
                 event.stopPropagation();
-                const map = {
+                const map: Record<string, string> = {
                     arrowup: '\u001b[A',
                     arrowdown: '\u001b[B',
                     arrowright: '\u001b[C',
@@ -583,7 +629,7 @@ export class IntegratedTerminalPanel {
         };
         mountNode.addEventListener('keydown', onKeyShield, true);
 
-        const onWheelShield = (event) => {
+        const onWheelShield = (event: WheelEvent) => {
             event.preventDefault();
             event.stopPropagation();
 
@@ -606,7 +652,7 @@ export class IntegratedTerminalPanel {
         mountNode._terminalShieldHandlers = { keydown: onKeyShield, wheel: onWheelShield };
     }
 
-    unshieldTerminalKeyEvents(mountNode) {
+    unshieldTerminalKeyEvents(mountNode: HTMLElement | null) {
         if (!mountNode || !mountNode._terminalShieldHandlers) {
             return;
         }
@@ -617,7 +663,7 @@ export class IntegratedTerminalPanel {
         mountNode._terminalKeyShielded = false;
     }
 
-    async initializeSessionEncodingIfNeeded(session) {
+    async initializeSessionEncodingIfNeeded(session: TerminalSession | null) {
         const terminalId = session?.remoteId;
         if (!terminalId || !window.electronAPI?.getPlatform || !window.electronAPI?.writeTerminal) {
             return;
@@ -661,7 +707,7 @@ export class IntegratedTerminalPanel {
         return cmd || '';
     }
 
-    setupTerminalLinkProvider(terminal) {
+    setupTerminalLinkProvider(terminal: XtermTerminal) {
         if (!terminal || typeof terminal.registerLinkProvider !== 'function') {
             return;
         }
@@ -682,7 +728,7 @@ export class IntegratedTerminalPanel {
                     return;
                 }
 
-                const links = [];
+                const links: XtermLink[] = [];
                 for (const match of lineText.matchAll(urlPattern)) {
                     const rawText = String(match[0] || '').replace(/[).,!?;:]+$/, '');
                     if (!rawText) {
@@ -716,15 +762,15 @@ export class IntegratedTerminalPanel {
         });
     }
 
-    resolveTerminalLinkRange(line, startIndex, endIndex, bufferLineNumber) {
+    resolveTerminalLinkRange(line: XtermBufferLine | null | undefined, startIndex: number, endIndex: number, bufferLineNumber: number): XtermBufferRange | null {
         if (!line || typeof line.getCell !== 'function' || startIndex < 0 || endIndex <= startIndex) {
             return null;
         }
 
         let textOffset = 0;
         let columnOffset = 0;
-        let startColumn = null;
-        let endColumn = null;
+        let startColumn: number | null = null;
+        let endColumn: number | null = null;
         const lineLength = Number(line.length) || 0;
 
         for (let cellIndex = 0; cellIndex < lineLength; cellIndex++) {
@@ -768,7 +814,7 @@ export class IntegratedTerminalPanel {
         };
     }
 
-    normalizeTerminalUrl(text) {
+    normalizeTerminalUrl(text: unknown) {
         const value = String(text || '').trim();
         if (!value) {
             return '';
@@ -800,7 +846,7 @@ export class IntegratedTerminalPanel {
         }
     }
 
-    async openExternalUrl(url) {
+    async openExternalUrl(url: unknown) {
         const targetUrl = String(url || '').trim();
         if (!targetUrl) {
             return;
@@ -818,7 +864,7 @@ export class IntegratedTerminalPanel {
         }
     }
 
-    setupTerminalClipboardShortcuts(terminal, sessionRef) {
+    setupTerminalClipboardShortcuts(terminal: XtermTerminal, sessionRef: TerminalSession | null) {
         if (!terminal || typeof terminal.attachCustomKeyEventHandler !== 'function') {
             return;
         }
@@ -860,7 +906,7 @@ export class IntegratedTerminalPanel {
         });
     }
 
-    async copyTextToClipboard(text) {
+    async copyTextToClipboard(text: unknown) {
         const value = String(text || '');
         if (!value) {
             return;
@@ -878,7 +924,7 @@ export class IntegratedTerminalPanel {
         } catch (_) { }
     }
 
-    async pasteClipboardToTerminal(terminalId) {
+    async pasteClipboardToTerminal(terminalId: string) {
         let text = '';
         try {
             text = await navigator.clipboard.readText();
@@ -910,7 +956,7 @@ export class IntegratedTerminalPanel {
         } catch (_) { }
     }
 
-    quoteExecutableForShell(executablePath, platform) {
+    quoteExecutableForShell(executablePath: unknown, platform: string) {
         const text = String(executablePath || '');
         if (platform === 'windows') {
             return `"${text.replace(/"/g, '""')}"`;
@@ -918,7 +964,7 @@ export class IntegratedTerminalPanel {
         return `'${text.replace(/'/g, `'\\''`)}'`;
     }
 
-    buildRunCommandForShell(executablePath, shellPath, platform) {
+    buildRunCommandForShell(executablePath: unknown, shellPath: unknown, platform: string) {
         const shell = String(shellPath || '').toLowerCase();
         const quoted = this.quoteExecutableForShell(executablePath, platform);
         if (platform === 'windows' && shell.includes('powershell')) {
@@ -930,7 +976,7 @@ export class IntegratedTerminalPanel {
         return `${quoted}\r`;
     }
 
-    async runExecutableInNewTerminal(executablePath, options: { workingDirectory?: string } = {}) {
+    async runExecutableInNewTerminal(executablePath: string, options: { workingDirectory?: string } = {}) {
         if (!executablePath) {
             throw new Error(window.i18n.t('panel.terminalExePathEmpty'));
         }
@@ -963,7 +1009,7 @@ export class IntegratedTerminalPanel {
         return terminalId;
     }
 
-    bindTabEvents(terminalId) {
+    bindTabEvents(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return;
@@ -981,7 +1027,7 @@ export class IntegratedTerminalPanel {
         });
     }
 
-    activateTerminal(terminalId) {
+    activateTerminal(terminalId: string) {
         this.activeId = terminalId;
 
         for (const [id, session] of this.sessions.entries()) {
@@ -994,7 +1040,7 @@ export class IntegratedTerminalPanel {
         this.focusTerminal(terminalId);
     }
 
-    focusTerminal(terminalId) {
+    focusTerminal(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session || !session.terminal) {
             return false;
@@ -1007,7 +1053,7 @@ export class IntegratedTerminalPanel {
         }
     }
 
-    echoBridgedInput(session, data) {
+    echoBridgedInput(session: TerminalSession | null, data: unknown) {
         if (!session || !session.terminal || typeof data !== 'string' || !data) {
             return;
         }
@@ -1038,9 +1084,10 @@ export class IntegratedTerminalPanel {
         }
     }
 
-    handleTerminalData(payload) {
-        const terminalId = payload?.terminalId;
-        const data = payload?.data;
+    handleTerminalData(payload: unknown) {
+        const info = payload as TerminalEventData | null;
+        const terminalId = typeof info?.terminalId === 'string' ? info.terminalId : '';
+        const data = info?.data;
         if (!terminalId || typeof data !== 'string') {
             return;
         }
@@ -1057,7 +1104,7 @@ export class IntegratedTerminalPanel {
         session.terminal.write(data);
     }
 
-    setInputBridge(terminalId, bridgeHandler) {
+    setInputBridge(terminalId: string, bridgeHandler: ((data: string) => void) | null) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -1066,11 +1113,11 @@ export class IntegratedTerminalPanel {
         return true;
     }
 
-    clearInputBridge(terminalId) {
+    clearInputBridge(terminalId: string) {
         return this.setInputBridge(terminalId, null);
     }
 
-    setRemoteOutputMuted(terminalId, muted) {
+    setRemoteOutputMuted(terminalId: string, muted: boolean) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -1079,7 +1126,7 @@ export class IntegratedTerminalPanel {
         return true;
     }
 
-    writeTerminalOutput(terminalId, data) {
+    writeTerminalOutput(terminalId: string, data: unknown) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return false;
@@ -1092,8 +1139,9 @@ export class IntegratedTerminalPanel {
         }
     }
 
-    handleTerminalExit(payload) {
-        const terminalId = payload?.terminalId;
+    handleTerminalExit(payload: unknown) {
+        const info = payload as TerminalEventData | null;
+        const terminalId = typeof info?.terminalId === 'string' ? info.terminalId : '';
         if (!terminalId) {
             return;
         }
@@ -1103,16 +1151,16 @@ export class IntegratedTerminalPanel {
             return;
         }
 
-        const code = payload?.exitCode;
-        const signal = payload?.signal;
-        const suffix = Number.isFinite(code)
+        const code = info?.exitCode;
+        const signal = info?.signal;
+        const suffix = Number.isFinite(code as number)
             ? window.i18n.t('terminal.exitCode', { code })
             : (signal ? window.i18n.t('terminal.exitSignal', { signal }) : window.i18n.t('terminal.exitedNoInfo'));
         session.terminal.writeln(window.i18n.t('terminal.exited', { info: suffix }));
         session.tab.classList.add('exited');
     }
 
-    async closeTerminal(terminalId) {
+    async closeTerminal(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session) {
             return;
@@ -1192,7 +1240,7 @@ export class IntegratedTerminalPanel {
         this.fitTerminal(this.activeId);
     }
 
-    fitTerminal(terminalId) {
+    fitTerminal(terminalId: string) {
         const session = this.sessions.get(terminalId);
         if (!session || !this.visible) {
             return;

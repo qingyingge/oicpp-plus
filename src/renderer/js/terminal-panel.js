@@ -85,20 +85,23 @@ class IntegratedTerminalPanel {
         this._resizeObserver = new ResizeObserver(() => {
             this.fitActiveTerminal();
         });
-        this._resizeObserver.observe(this.panel);
+        if (this.panel) {
+            this._resizeObserver.observe(this.panel);
+        }
         this._windowResizeHandler = () => this.fitActiveTerminal();
         window.addEventListener('resize', this._windowResizeHandler);
     }
     startResizeDrag(event) {
-        if (!this.panel || !this.visible) {
+        const resizer = this.resizer;
+        if (!this.panel || !this.visible || !resizer) {
             return;
         }
         this._dragState = {
             startY: event.clientY,
             startHeight: this.panel.getBoundingClientRect().height
         };
-        this.resizer.classList.add('dragging');
-        this.resizer.setPointerCapture(event.pointerId);
+        resizer.classList.add('dragging');
+        resizer.setPointerCapture(event.pointerId);
         const onMove = (moveEvent) => {
             if (!this._dragState) {
                 return;
@@ -110,14 +113,14 @@ class IntegratedTerminalPanel {
         };
         const stop = () => {
             this._dragState = null;
-            this.resizer.classList.remove('dragging');
-            this.resizer.removeEventListener('pointermove', onMove);
-            this.resizer.removeEventListener('pointerup', stop);
-            this.resizer.removeEventListener('pointercancel', stop);
+            resizer.classList.remove('dragging');
+            resizer.removeEventListener('pointermove', onMove);
+            resizer.removeEventListener('pointerup', stop);
+            resizer.removeEventListener('pointercancel', stop);
         };
-        this.resizer.addEventListener('pointermove', onMove);
-        this.resizer.addEventListener('pointerup', stop);
-        this.resizer.addEventListener('pointercancel', stop);
+        resizer.addEventListener('pointermove', onMove);
+        resizer.addEventListener('pointerup', stop);
+        resizer.addEventListener('pointercancel', stop);
     }
     setPanelHeight(height) {
         if (!this.panel) {
@@ -148,7 +151,7 @@ class IntegratedTerminalPanel {
             this.status = {
                 available: false,
                 reason: window.i18n.t('panel.terminalStatusFailed'),
-                detail: error?.message || String(error)
+                detail: String(error?.message || error)
             };
         }
         this.renderStatus();
@@ -299,18 +302,18 @@ class IntegratedTerminalPanel {
         const tab = document.createElement('button');
         tab.type = 'button';
         tab.className = 'integrated-terminal-tab pending';
-        tab.dataset.terminalId = tabId;
+        tab.dataset['terminalId'] = tabId;
         const tabLabel = window.i18n?.t?.('terminal.tabLabel', { counter: this.counter }) || `终端 ${this.counter}`;
         const closeLabel = window.i18n?.t?.('terminal.closeTerminal') || '关闭终端';
         tab.innerHTML = `<span class="terminal-tab-label">${tabLabel}</span><span class="terminal-tab-close" aria-label="${closeLabel}">×</span>`;
         const pane = document.createElement('div');
         pane.className = 'integrated-terminal-pane';
-        pane.dataset.terminalId = tabId;
+        pane.dataset['terminalId'] = tabId;
         const mount = document.createElement('div');
         mount.className = 'integrated-terminal-mount';
         pane.appendChild(mount);
-        this.tabs.appendChild(tab);
-        this.body.appendChild(pane);
+        this.tabs?.appendChild(tab);
+        this.body?.appendChild(pane);
         const fontOptions = this.resolveTerminalFontOptions();
         const terminal = new window.Terminal({
             cursorBlink: true,
@@ -358,7 +361,7 @@ class IntegratedTerminalPanel {
             created = await window.electronAPI.createTerminal(createPayload);
         }
         catch (error) {
-            terminal.writeln(window.i18n.t('terminal.createFailed', { error: error?.message || String(error) }));
+            terminal.writeln(window.i18n.t('terminal.createFailed', { error: String(error?.message || error) }));
             tab.classList.remove('pending');
             this.renderEmptyState();
             return;
@@ -378,8 +381,8 @@ class IntegratedTerminalPanel {
             labelNode.textContent = window.i18n.t('terminal.tabLabel', { counter: this.sessions.size });
         }
         tab.classList.remove('pending');
-        tab.dataset.terminalId = remoteId;
-        pane.dataset.terminalId = remoteId;
+        tab.dataset['terminalId'] = remoteId;
+        pane.dataset['terminalId'] = remoteId;
         this.sessions.delete(tabId);
         this.sessions.set(remoteId, provisionalSession);
         if (this.activeId === tabId) {
@@ -419,10 +422,11 @@ class IntegratedTerminalPanel {
             if (!remoteId || !text) {
                 return;
             }
-            if (typeof session.inputBridge === 'function') {
+            const bridge = session?.inputBridge;
+            if (typeof bridge === 'function') {
                 this.echoBridgedInput(session, String(text));
                 try {
-                    session.inputBridge(String(text));
+                    bridge(String(text));
                 }
                 catch (_) {
                 }
@@ -895,8 +899,9 @@ class IntegratedTerminalPanel {
         }
     }
     handleTerminalData(payload) {
-        const terminalId = payload?.terminalId;
-        const data = payload?.data;
+        const info = payload;
+        const terminalId = typeof info?.terminalId === 'string' ? info.terminalId : '';
+        const data = info?.data;
         if (!terminalId || typeof data !== 'string') {
             return;
         }
@@ -942,7 +947,8 @@ class IntegratedTerminalPanel {
         }
     }
     handleTerminalExit(payload) {
-        const terminalId = payload?.terminalId;
+        const info = payload;
+        const terminalId = typeof info?.terminalId === 'string' ? info.terminalId : '';
         if (!terminalId) {
             return;
         }
@@ -950,8 +956,8 @@ class IntegratedTerminalPanel {
         if (!session) {
             return;
         }
-        const code = payload?.exitCode;
-        const signal = payload?.signal;
+        const code = info?.exitCode;
+        const signal = info?.signal;
         const suffix = Number.isFinite(code)
             ? window.i18n.t('terminal.exitCode', { code })
             : (signal ? window.i18n.t('terminal.exitSignal', { signal }) : window.i18n.t('terminal.exitedNoInfo'));
