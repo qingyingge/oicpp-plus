@@ -44,10 +44,10 @@ function numberValue(value, fallback = 0) {
  */
 function frameData(frame = {}) {
     return {
-        file: String(frame.fullname || frame.file || ''),
-        line: numberValue(frame.line, -1),
-        function: String(frame.func || frame.function || '??'),
-        address: String(frame.addr || frame.address || '')
+        file: String(frame['fullname'] || frame['file'] || ''),
+        line: numberValue(frame['line'], -1),
+        function: String(frame['func'] || frame['function'] || '??'),
+        address: String(frame['addr'] || frame['address'] || '')
     };
 }
 /**
@@ -177,7 +177,7 @@ class GDBDebugger extends events_1.EventEmitter {
         if (!this.gdbProcess)
             return Promise.reject(new Error('GDB process is not running'));
         const token = String(this._nextMiToken++);
-        const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : MI_COMMAND_TIMEOUT_MS;
+        const timeoutMs = typeof options.timeoutMs === 'number' && Number.isFinite(options.timeoutMs) ? options.timeoutMs : MI_COMMAND_TIMEOUT_MS;
         return new Promise((resolve, reject) => {
             const entry = { token, command, resolve, reject, timer: null, settled: false };
             if (timeoutMs > 0) {
@@ -309,7 +309,7 @@ class GDBDebugger extends events_1.EventEmitter {
             return;
         }
         if (rec.name === 'breakpoint-modified' || rec.name === 'breakpoint-created') {
-            const bp = (rec.fields?.bkpt || rec.fields);
+            const bp = (rec.fields?.['bkpt'] || rec.fields);
             if (bp?.number)
                 this._updateBreakpointFromMi(bp);
         }
@@ -322,12 +322,12 @@ class GDBDebugger extends events_1.EventEmitter {
      * @param fields - The fields from the GDB stopped record.
      */
     _handleStopped(fields = {}) {
-        const reason = String(fields.reason || '').toLowerCase();
+        const reason = String(fields['reason'] || '').toLowerCase();
         if (reason.includes('exited')) {
             this._handleInferiorExited(fields);
             return;
         }
-        const frame = frameData((fields.frame || {}));
+        const frame = frameData((fields['frame'] || {}));
         this._programStopped = true;
         this._inferiorRunning = false;
         this._isStarted = true;
@@ -357,7 +357,7 @@ class GDBDebugger extends events_1.EventEmitter {
         this._inferiorRunning = false;
         this._isStarted = false;
         this.programExited = true;
-        const rawExitCode = fields.exitCode !== undefined ? fields.exitCode : fields['exit-code'];
+        const rawExitCode = fields['exitCode'] !== undefined ? fields['exitCode'] : fields['exit-code'];
         const exitCode = rawExitCode !== undefined ? numberValue(rawExitCode) : undefined;
         this.emit('program-exited', { exitCode });
     }
@@ -637,7 +637,7 @@ class GDBDebugger extends events_1.EventEmitter {
     async setBreakpoint(file, line) {
         const location = file + ':' + line;
         const fields = await this._miRequest(`-break-insert ${(0, gdb_mi_1.miQuote)(location)}`);
-        const bpRec = (fields.bkpt || fields);
+        const bpRec = (fields['bkpt'] || fields);
         const number = numberValue(bpRec.number, 0);
         if (!number)
             throw new Error((0, lang_1.t)('debug.breakpointSetFailed'));
@@ -691,7 +691,7 @@ class GDBDebugger extends events_1.EventEmitter {
         this._variables.watches = {};
         try {
             const fields = await this._miRequest('-stack-list-variables --all-values');
-            for (const variable of asArray(fields.variables)) {
+            for (const variable of asArray(fields['variables'])) {
                 this._setVariable('local', variable);
             }
         }
@@ -705,7 +705,7 @@ class GDBDebugger extends events_1.EventEmitter {
             return;
         try {
             const fields = await this._miRequest('-stack-list-arguments --all-values');
-            for (const variable of asArray(fields.arguments || fields.variables)) {
+            for (const variable of asArray(fields['arguments'] || fields['variables'])) {
                 this._setVariable('local', variable);
             }
         }
@@ -718,8 +718,8 @@ class GDBDebugger extends events_1.EventEmitter {
         for (const expression of this._watchExpressions) {
             try {
                 const fields = await this._miRequest(`-data-evaluate-expression ${(0, gdb_mi_1.miQuote)(expression)}`);
-                const value = typeof fields.value === 'string' ? fields.value : String(fields.value || '');
-                const item = { name: expression, value, type: fields.type || '', children: [] };
+                const value = typeof fields['value'] === 'string' ? fields['value'] : String(fields['value'] || '');
+                const item = { name: expression, value, type: fields['type'] || '', children: [] };
                 (0, gdb_utils_1.parseGDBWatchValue)(item, value);
                 this._variables.watches[expression] = item;
             }
@@ -737,12 +737,12 @@ class GDBDebugger extends events_1.EventEmitter {
      * @param variable - The variable record from GDB.
      */
     _setVariable(scope, variable) {
-        if (!variable || !variable.name)
+        if (!variable || !variable['name'])
             return;
-        const value = typeof variable.value === 'string' ? variable.value : String(variable.value || '');
-        const item = { name: variable.name, value, type: variable.type || '', children: [] };
+        const value = typeof variable['value'] === 'string' ? variable['value'] : String(variable['value'] || '');
+        const item = { name: variable['name'], value, type: variable['type'] || '', children: [] };
         (0, gdb_utils_1.parseGDBWatchValue)(item, value);
-        this._variables[scope][variable.name] = item;
+        this._variables[scope][variable['name']] = item;
     }
     /**
      * Updates the call stack frames from GDB.
@@ -752,7 +752,7 @@ class GDBDebugger extends events_1.EventEmitter {
             return;
         try {
             const fields = await this._miRequest('-stack-list-frames');
-            this._callStack = asArray(fields.stack).map((frame, index) => {
+            this._callStack = asArray(fields['stack']).map((frame, index) => {
                 const data = frameData(frame);
                 return {
                     function: data.function,
@@ -805,7 +805,7 @@ class GDBDebugger extends events_1.EventEmitter {
         if ((!options.path || options.path.length === 0) && (!root.children || root.children.length === 0)) {
             try {
                 const fields = await this._miRequest(`-data-evaluate-expression ${(0, gdb_mi_1.miQuote)(name)}`);
-                (0, gdb_utils_1.parseGDBWatchValue)(root, typeof fields.value === 'string' ? fields.value : String(fields.value || ''));
+                (0, gdb_utils_1.parseGDBWatchValue)(root, typeof fields['value'] === 'string' ? fields['value'] : String(fields['value'] || ''));
             }
             catch (error) {
                 try {
@@ -909,7 +909,7 @@ class GDBDebugger extends events_1.EventEmitter {
             return null;
         if (this._linuxTTYOptions.inferiorTTY)
             return { ttyPath: this._linuxTTYOptions.inferiorTTY };
-        if (!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY || process.env.MIR_SOCKET))
+        if (!(process.env['DISPLAY'] || process.env['WAYLAND_DISPLAY'] || process.env['MIR_SOCKET']))
             return null;
         const template = String(this._linuxTTYOptions.consoleTerminalTemplate || "xterm -T '$TITLE' -e").trim();
         const token = 80000000 + Math.floor(Math.random() * 100000);

@@ -1359,7 +1359,11 @@ function runFastspawnSyntaxCheck() {
 // 3048 → 3042：multi-thread-downloader 补完（上一个 commit 声称清零是误判：当时那次校验
 //  恰好落在一个 total=1 的失败样本上，grep 无输出被当成了 0。教训已写进 T3 的复跑逻辑口径：
 //  判「清零」必须用无 junk 且两轮一致的读数，不能用单次的空输出。）
-const TS_ERROR_BASELINE = 3042;
+// 3042 → 3011：gdb-mi-debugger 49 → 18（未完）。
+//  单点最大收益仍是 _miRequest 的返回类型：原先 Promise<unknown> 让 7 个调用点的
+//  fields.* 全部退化成 unknown（14 条），改成 Promise<Record<string, unknown>> 并同步
+//  _miPending 的 resolve 形参后，一次消掉一片，且 _settleMi 的契约被迫对齐。
+const TS_ERROR_BASELINE = 3011;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
