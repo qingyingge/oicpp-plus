@@ -1,5 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 class I18nManager {
     _messages = {};
     _fallbackMessages = {};

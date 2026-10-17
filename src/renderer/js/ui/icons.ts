@@ -1,4 +1,3 @@
-export {};
 
 const ICONS: Record<string, string> = {
     folder: `
@@ -144,13 +143,11 @@ function hydrate(root?: Document | Element): void {
     });
 }
 
-declare global {
-    interface Window {
-        uiIcons: {
-            svg: (name: string) => string;
-            hydrate: (root?: Document | Element) => void;
-        };
-    }
+interface Window {
+    uiIcons: {
+        svg: (name: string) => string;
+        hydrate: (root?: Document | Element) => void;
+    };
 }
 
 if (typeof window !== 'undefined') {

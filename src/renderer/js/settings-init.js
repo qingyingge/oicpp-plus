@@ -1,5 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 document.addEventListener('DOMContentLoaded', async function () {
     try {
         if (window.i18n && typeof window.i18n.init === 'function') {

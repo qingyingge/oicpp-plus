@@ -1,4 +1,3 @@
-export {};
 
 const E = (t: string, c?: string | null, txt?: string): HTMLElement => {
     const e = document.createElement(t);

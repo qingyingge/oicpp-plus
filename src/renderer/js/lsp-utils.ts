@@ -1,4 +1,3 @@
-export {};
 
 type FileOperationOptions = {
     overwrite?: boolean;
@@ -228,10 +227,8 @@ const OicppLspUtils = {
     applySemanticTokenEdits
 };
 
-declare global {
-    interface Window {
-        OicppLspUtils: typeof OicppLspUtils;
-    }
+interface Window {
+    OicppLspUtils: typeof OicppLspUtils;
 }
 
 if (typeof window !== 'undefined') {

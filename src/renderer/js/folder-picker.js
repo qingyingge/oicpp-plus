@@ -1,5 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 const E = (t, c, txt) => {
     const e = document.createElement(t);
     if (c)

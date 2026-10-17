@@ -1,5 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 const ICONS = {
     folder: `
         <svg class="ui-icon" viewBox="0 0 16 16" width="1em" height="1em" aria-hidden="true" focusable="false">

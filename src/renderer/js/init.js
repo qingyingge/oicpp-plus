@@ -1,5 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 document.addEventListener('DOMContentLoaded', async function () {
     logInfo('DOM 加载完成，开始初始化应用...');
     await setUserIconPath();

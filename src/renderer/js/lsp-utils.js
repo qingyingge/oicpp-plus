@@ -1,5 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 function toMonacoRange(range, monaco) {
     if (!range || !monaco || typeof monaco.Range !== 'function') {
         return null;

@@ -1,4 +1,3 @@
-export {};
 
 declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;

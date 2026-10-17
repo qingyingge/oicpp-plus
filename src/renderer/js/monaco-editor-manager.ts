@@ -281,6 +281,13 @@ interface InputTargetElement {
     selectionEnd?: number | null;
 }
 
+// edits 必须给精确形状：写成 unknown[] 过不了 OicppLspUtils.applySemanticTokenEdits 的收窄形参。
+type LspSemanticTokensResult = {
+    data?: number[];
+    edits?: Array<{ start: number; deleteCount: number; data: number[] }>;
+    resultId?: string;
+};
+
 export class MonacoEditorManager {
     currentEditor: monaco.editor.IStandaloneCodeEditor | null;
     editors: Map<string, monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor>;
@@ -3866,13 +3873,13 @@ export class MonacoEditorManager {
 
                         const modelVersion = model.getVersionId?.();
                         const previous = this._lspSemanticTokenCache.get(model);
-                        let result: { data?: number[]; edits?: unknown[]; resultId?: string } | null = null;
+                        let result: LspSemanticTokensResult | null = null;
                         if (supportsDelta && previous?.resultId) {
                             try {
                                 result = await this.lspClient.request('textDocument/semanticTokens/full/delta', {
                                     textDocument: { uri },
                                     previousResultId: previous.resultId
-                                }, cancellationToken) as { data?: number[]; edits?: unknown[]; resultId?: string } | null;
+                                }, cancellationToken) as LspSemanticTokensResult | null;
                             } catch (err) {
                                 if (cancellationToken?.isCancellationRequested) return null;
                             }
@@ -3880,7 +3887,7 @@ export class MonacoEditorManager {
                         if (!result) {
                             result = await this.lspClient.request('textDocument/semanticTokens/full', {
                                 textDocument: { uri }
-                            }, cancellationToken) as { data?: number[]; edits?: unknown[]; resultId?: string } | null;
+                            }, cancellationToken) as LspSemanticTokensResult | null;
                         }
 
                         if (model.isDisposed?.() || cancellationToken?.isCancellationRequested
