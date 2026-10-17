@@ -3,13 +3,17 @@
 // 切片工具自身的回归测试。它现在被多个读源码的测试依赖，
 // 一旦它自己切错，那些文件会一起静默失真，所以先验证工具本身。
 
-const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, funcDecl, toFn, toProviderFn } = require('./fixtures/source-extract');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, funcDecl, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
     console.log(`${condition ? '[PASS]' : '[FAIL]'} ${name}${extra ? ' | ' + extra : ''}`);
     if (!condition) failures++;
 };
+const read = (relative) => fs.readFileSync(path.resolve(__dirname, '..', relative), 'utf8');
 
 const SRC = [
     'class A {',
@@ -137,6 +141,43 @@ const INDENTED = "function bind() {\n    ipcMain.handle('p', () => 1);\n}";
 const indentedStmt = callStatement(INDENTED, /^\s*ipcMain\.handle\(\s*'p'/m);
 check('callStatement 容忍整条注册的缩进',
     indentedStmt.trim() === "ipcMain.handle('p', () => 1)", JSON.stringify(indentedStmt));
+
+// compileMethod：类方法里的 document/window/setTimeout 是自由标识符，
+// 用 new Function 编译会绑到 Node 全局，桩拦不住；只有 vm context 才吃得到桩。
+const CLS = [
+    'class Panel {',
+    '    tick() {',
+    '        logInfo("hi");',
+    '        setTimeout(() => {}, 10);',
+    '        return this.name;',
+    '    }',
+    '    async load() {',
+    '        return await this.helper(2);',
+    '    }',
+    '}'
+].join('\n');
+const hit = [];
+const panelCtx = vm.createContext({
+    logInfo: (m) => { hit.push(['log', m]); },
+    setTimeout: (fn, ms) => { hit.push(['timer', ms]); },
+    JSON, Math, String, Boolean, Array, Object, Error, RegExp, Promise
+});
+const tick = compileMethod(panelCtx, classMethod(CLS, 'tick'));
+check('compileMethod 抽不到时返回 null（调用方据此红）',
+    compileMethod(panelCtx, '') === null && compileMethod(panelCtx, classMethod(CLS, 'nope')) === null);
+check('compileMethod 的方法体自由标识符落到 context 的桩上',
+    tick.call({ name: 'P' }) === 'P' && JSON.stringify(hit) === '[["log","hi"],["timer",10]]',
+    JSON.stringify(hit));
+const loadFn = compileMethod(panelCtx, classMethod(CLS, 'load'));
+check('compileMethod 自己认出 async 前缀（漏了当场语法错）',
+    loadFn.constructor.name === 'AsyncFunction');
+const REAL_ASYNC = read('src/renderer/js/sidebar/sampleTester.js');
+const realLoad = compileMethod(panelCtx, classMethod(REAL_ASYNC, 'activate'));
+check('compileMethod 对真实 emit 产物里的 async 方法也成立',
+    realLoad !== null && realLoad.constructor.name === 'AsyncFunction',
+    JSON.stringify(classMethod(REAL_ASYNC, 'activate').slice(0, 24)));
+check('compileMethod 抽不到的真实方法名返回 null',
+    compileMethod(panelCtx, classMethod(REAL_ASYNC, 'noSuchMethod')) === null);
 
 // arrowExpr：连参数表一起配平，形参名不锁，产物可直接当表达式求值
 const NESTED = '    const normalize = (value) => {\n' +

@@ -1,5 +1,7 @@
 'use strict';
 
+const vm = require('vm');
+
 // 源码切片工具，供「读源码做断言」的回归测试定位方法体。
 //
 // 为什么不用 `\n    \}` 这类正则收尾：tsc printer 会重排源码（单行 if 拆行、
@@ -86,6 +88,21 @@ function arrowExpr(src, pattern) {
     return end < 0 ? '' : src.slice(open, end + 1);
 }
 
+// 把抽出的方法正文在 vm 里编译成可调用函数。
+// 为什么不用 toFn/new Function：方法体里的 document、window、clearInterval、
+// setTimeout 全是自由标识符，new Function 编译出来的函数会解析到 **Node 全局**，
+// 测试塞的桩一个都拦不住，断言就成了真空通过。在 vm context 里编译，
+// 自由标识符才会落到 context 的桩上。
+// async 前缀沿用 classMethod/toFn 的老办法自己认：调用方漏了也不会静默错。
+function compileMethod(ctx, methodSrc) {
+    if (!methodSrc) return null;
+    const src = methodSrc.trim();
+    const isAsync = /^async\s/.test(src);
+    const bare = isAsync ? src.replace(/^async\s+/, '') : src;
+    vm.runInContext(`this.__compiled = ${isAsync ? 'async ' : ''}function ${bare};`, ctx);
+    return ctx.__compiled;
+}
+
 // 从「方法名/关键字起始位置」配平出整个方法（含签名）
 function fromName(src, start) {
     const close = matchParen(src, src.indexOf('(', start));
@@ -139,4 +156,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { arrowExpr, classMethod, funcDecl, arrowProp, callbackBody, callStatement, toFn, toProviderFn };
+module.exports = { arrowExpr, classMethod, compileMethod, funcDecl, arrowProp, callbackBody, callStatement, toFn, toProviderFn };

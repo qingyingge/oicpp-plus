@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { classMethod } = require('./fixtures/source-extract');
+const { classMethod, compileMethod } = require('./fixtures/source-extract');
 
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -15,19 +15,6 @@ let failures = 0;
 const check = (name, condition, extra = '') => {
     console.log(`${condition ? '[PASS]' : '[FAIL]'} ${name}${extra ? ' | ' + extra : ''}`);
     if (!condition) failures++;
-};
-
-// 类方法要放进 vm 里编译：直接 new Function 的话，方法体里的 document / window /
-// clearInterval 会解析到 Node 全局，桩根本拦不住，断言就成了真空通过。
-// classMethod 连 async 关键字一起截下来，所以这里按前缀决定补不补 async ——
-// 少了它，方法体里的 await 当场语法错。
-const compileMethod = (ctx, methodSrc) => {
-    if (!methodSrc) return null;
-    const src = methodSrc.trim();
-    const isAsync = /^async\s/.test(src);
-    const bare = isAsync ? src.replace(/^async\s+/, '') : src;
-    vm.runInContext(`this.__out = ${isAsync ? 'async ' : ''}function ${bare};`, ctx);
-    return ctx.__out;
 };
 
 // 需要在假 DOM 里 await 一遍的断言，统一交给文件末尾的 async 收尾执行
