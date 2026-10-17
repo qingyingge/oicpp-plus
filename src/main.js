@@ -8007,6 +8007,94 @@ async function cleanupOldInstallers(keepFile = null) {
     }
 }
 
+// 编译缓存按签名成对存放（<sig>.<ext> + <sig>.oicpp-cache），而签名里含源文件 mtime，
+// 每次保存都会产生新的一对文件。若不回收，compile-cache 目录会按编译次数无界增长。
+const COMPILE_CACHE_MAX_ENTRIES = 60;
+const COMPILE_CACHE_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+const COMPILE_CACHE_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+let lastCompileCachePruneAt = 0;
+
+function pruneCompileCache(cacheDir) {
+    try {
+        const now = Date.now();
+        if (now - lastCompileCachePruneAt < COMPILE_CACHE_PRUNE_INTERVAL_MS) return;
+        lastCompileCachePruneAt = now;
+        if (!cacheDir || !fs.existsSync(cacheDir)) return;
+
+        // 按签名聚合：签名是 64 位 sha256 十六进制，产物为 <sig>.<ext>（.exe/.out 等），
+        // 元数据为 <sig>.oicpp-cache，成对存在才可能命中缓存
+        const grouped = new Map();
+        for (const entry of fs.readdirSync(cacheDir, { withFileTypes: true })) {
+            if (!entry.isFile()) continue;
+            const isMetadata = entry.name.endsWith('.oicpp-cache');
+            const dotIndex = entry.name.lastIndexOf('.');
+            if (dotIndex <= 0) continue;
+            const signature = entry.name.slice(0, dotIndex);
+            // 非签名命名的文件不归我们管，避免误删同目录下的其它东西
+            if (!/^[0-9a-f]{64}$/i.test(signature)) continue;
+            const filePath = path.join(cacheDir, entry.name);
+            let stats = null;
+            try {
+                stats = fs.statSync(filePath);
+            } catch (statsError) {
+                continue;
+            }
+            let group = grouped.get(signature);
+            if (!group) {
+                group = { hasPayload: false, hasMetadata: false, mtimeMs: 0, bytes: 0, files: [] };
+                grouped.set(signature, group);
+            }
+            group.files.push(filePath);
+            group.bytes += stats.size;
+            group.mtimeMs = Math.max(group.mtimeMs, stats.mtimeMs);
+            if (isMetadata) group.hasMetadata = true;
+            else group.hasPayload = true;
+        }
+
+        const toRemove = [];
+        // 只有一半的残缺条目永远无法命中缓存，直接清掉
+        for (const group of grouped.values()) {
+            if (!group.hasPayload || !group.hasMetadata) {
+                toRemove.push(group);
+            }
+        }
+        const complete = [...grouped.values()]
+            .filter((group) => group.hasPayload && group.hasMetadata)
+            .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+        // 从新到旧保留：条目数或容量任一触顶后，其余全部回收
+        let keptCount = 0;
+        let keptBytes = 0;
+        for (const group of complete) {
+            if (keptCount < COMPILE_CACHE_MAX_ENTRIES && keptBytes + group.bytes <= COMPILE_CACHE_MAX_TOTAL_BYTES) {
+                keptCount += 1;
+                keptBytes += group.bytes;
+                continue;
+            }
+            toRemove.push(group);
+        }
+
+        let removedBytes = 0;
+        let removedFiles = 0;
+        for (const group of toRemove) {
+            for (const filePath of group.files) {
+                try {
+                    fs.unlinkSync(filePath);
+                    removedFiles += 1;
+                    removedBytes += group.bytes;
+                } catch (unlinkError) {
+                    logWarn('[编译缓存] 删除缓存文件失败:', filePath, unlinkError?.message || unlinkError);
+                }
+            }
+        }
+        if (removedFiles > 0) {
+            logInfo(`[编译缓存] 回收 ${removedFiles} 个文件，释放约 ${Math.round(removedBytes / 1024 / 1024)}MB`);
+        }
+    } catch (error) {
+        logWarn('[编译缓存] 回收旧缓存时出错:', error?.message || error);
+    }
+}
+
 function promptLinuxManualInstall(pendingUpdate) {
     if (!pendingUpdate || !pendingUpdate.installerPath) return;
     const updateDesc = String(pendingUpdate.description || '').replace(/\\n/g, '\n').trim();
@@ -9144,6 +9232,7 @@ async function compileFile(options) {
                 } catch (cacheError) {
                     logWarn('[编译缓存] 写入签名失败:', cacheError?.message || cacheError);
                 }
+                pruneCompileCache(compileCacheDir);
             }
 
             if (code === 0) {
@@ -9410,6 +9499,12 @@ app.whenReady().then(() => {
     // 启动后的空闲时段预热 CPU 核心数，避免对拍器初始化等关键路径上的
     // get-cpu-threads 付出 os.cpus() 的全部同步开销
     scheduleCpuThreadsWarmUp();
+
+    // 编译缓存目录从无回收，长期使用会按编译次数膨胀（每对产物就是一份 exe），
+    // 这里启动后回收一次；函数内部有 5 分钟节流，之后编译路径上的调用不会重复做。
+    setTimeout(() => {
+        pruneCompileCache(path.join(os.homedir(), USER_DATA_DIR_NAME, 'compile-cache'));
+    }, 5000);
 
     // 首次运行需要把 clangd 包（96MB）拷到用户目录，与渲染层首屏抢磁盘会拖慢启动。
     // 延后到首屏之后再做；LSP 真正启动时（_startClangdInternal）仍会 await，
