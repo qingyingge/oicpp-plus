@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { arrowExpr, classMethod } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -19,22 +20,7 @@ const src = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'settings', 'comp
 const zh = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'zh-cn.json'), 'utf8'));
 const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'en.json'), 'utf8'));
 
-function methodBody(name) {
-    const m = new RegExp(`^\\s{4}(?:async\\s+)?${name}\\s*\\(`, 'm').exec(src);
-    if (!m) return '';
-    let i = src.indexOf('(', m.index);
-    let paren = 0;
-    for (; i < src.length; i++) {
-        if (src[i] === '(') paren++;
-        else if (src[i] === ')') { paren--; if (paren === 0) break; }
-    }
-    let depth = 0;
-    for (i = src.indexOf('{', i); i < src.length; i++) {
-        if (src[i] === '{') depth++;
-        else if (src[i] === '}') { depth--; if (depth === 0) return src.slice(m.index, i + 1); }
-    }
-    return '';
-}
+const methodBody = (name) => classMethod(src, name);
 
 // ---------------------------------------------------------------------------
 // init()：任一探测失败都不能让事件绑定被跳过
@@ -82,6 +68,8 @@ function methodBody(name) {
 {
     const load = methodBody('loadSettings');
     const save = methodBody('saveSettings');
+    check('方法体抽取成功: loadSettings', load.length > 0);
+    check('方法体抽取成功: saveSettings', save.length > 0);
 
     check('loadSettings 成功时置 _settingsLoaded = true', /this\._settingsLoaded = true;/.test(load));
     check('loadSettings 失败时置 _settingsLoaded = false',
@@ -89,13 +77,14 @@ function methodBody(name) {
     check('loadSettings 失败时提示用户', /compiler\.loadSettingsFailed/.test(load));
 
     check('saveSettings 开头检查 _settingsLoaded',
-        /async saveSettings\(\) \{\s*\n\s*try \{\s*\n\s*[\s\S]{0,120}?if \(this\._settingsLoaded === false\)/.test(save));
+        /saveSettings\s*\(\s*\)\s*\{[\s\S]{0,200}?if \(this\._settingsLoaded === false\)/.test(save));
     check('阻断时直接 return，不执行 updateSettings',
-        /if \(this\._settingsLoaded === false\) \{[\s\S]{0,300}?return;\s*\n\s*\}/.test(save));
+        /if \(this\._settingsLoaded === false\) \{[\s\S]{0,300}?return;\s*\}/.test(save));
     check('阻断提示复用 i18n 键', /compiler\.saveBlockedLoadFailed/.test(save));
 
     check('构造函数默认 _settingsLoaded = true（未加载过不应误挡）',
-        /this\._settingsLoaded = true;/.test(src.slice(0, 3000)));
+        /this\._settingsLoaded = true;/.test(methodBody('constructor')),
+        methodBody('constructor').replace(/\s+/g, ' ').slice(0, 60));
 
     check('zh-cn 存在两个新键',
         typeof zh.compiler?.loadSettingsFailed === 'string' &&
@@ -111,6 +100,7 @@ function methodBody(name) {
 
 {
     const body = methodBody('setupEventListeners');
+    check('方法体抽取成功: setupEventListeners', body.length > 0);
     const bindings = (body.match(/getElementById\('close-install-dialog'\)|elCtl\('close-install-dialog'\)/g) || []).length;
     const addListeners = (body.match(/closeBtn\.addEventListener|closeDialogBtn\.addEventListener/g) || []).length;
     check('#close-install-dialog 只查询一次', bindings === 1, `${bindings} 次`);
@@ -123,6 +113,7 @@ function methodBody(name) {
 
 {
     const body = methodBody('getCurrentPlatform');
+    check('方法体抽取成功: getCurrentPlatform', body.length > 0);
     check('getCurrentPlatform 内含归一化逻辑', /const normalize = \(value\)/.test(body));
     // \s* 容忍 tsc printer 把单行 `if (...) return 'x';` 拆成两行
     check('win32/windows 归一化', /v\.startsWith\('win'\)\)\s*return 'windows'/.test(body));
@@ -131,11 +122,13 @@ function methodBody(name) {
     check('getPlatform 的返回值经过归一化',
         /return normalize\(await window\.electronAPI\.getPlatform\(\)\)/.test(body));
 
-    // 行为验证：抽出 normalize 实际跑
-    const normMatch = /const normalize = \(value\) => \{[\s\S]*?\n {8}\};/m.exec(body);
-    check('能抽出 normalize 用于行为验证', !!normMatch);
-    if (normMatch) {
-        const normalize = vm.runInNewContext(`(${normMatch[0].replace(/^const normalize = /, '').replace(/;$/, '')})`);
+    // 行为验证：抽出 normalize 实际跑。终点用配平取，不锁 `\n {8}\};` ——
+    // 八个空格是 tsc printer 最容易改动的东西；形参名也不锁，交给箭头表达式配平。
+    const normSrc = arrowExpr(body, /const normalize\s*=/);
+    check('能抽出 normalize 用于行为验证', normSrc.startsWith('(') && normSrc.endsWith('}'),
+        normSrc.replace(/\s+/g, ' ').slice(0, 60));
+    {
+        const normalize = vm.runInNewContext(`(${normSrc})`);
         const cases = [
             ['win32', 'windows'], ['windows', 'windows'], ['Win32', 'windows'],
             ['darwin', 'macos'], ['macos', 'macos'], ['mac', 'macos'],

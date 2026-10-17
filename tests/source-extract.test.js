@@ -3,7 +3,7 @@
 // 切片工具自身的回归测试。它现在被多个读源码的测试依赖，
 // 一旦它自己切错，那些文件会一起静默失真，所以先验证工具本身。
 
-const { arrowProp, callbackBody, classMethod, funcDecl, toFn, toProviderFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, callbackBody, classMethod, funcDecl, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -106,6 +106,21 @@ check('callbackBody 不会越过自己的收尾括号吃到下一个回调',
 check('callbackBody 锚点查不到时返回空串', callbackBody(IPC, /ipcMain\.handle\("nope"/) === '');
 check('callbackBody 对单行回调也成立',
     callbackBody(IPC, /ipcMain\.handle\('other'/) === '{ return 1; }');
+
+// arrowExpr：连参数表一起配平，形参名不锁，产物可直接当表达式求值
+const NESTED = '    const normalize = (value) => {\n' +
+    '        if (!value) { return ""; }\n' +
+    '        return String(value).toLowerCase();\n' +
+    '    };\n';
+const arrowSrc = arrowExpr(NESTED, /const normalize\s*=/);
+check('arrowExpr 取到完整箭头表达式',
+    arrowSrc.startsWith('(value) =>') && arrowSrc.endsWith('}'),
+    JSON.stringify(arrowSrc.slice(0, 30)));
+check('arrowExpr 含嵌套 if 块时终点不提前',
+    (arrowSrc.match(/\{/g) || []).length === 2 && arrowSrc.includes('toLowerCase()'));
+check('arrowExpr 可被当作表达式求值',
+    new Function(`return (${arrowSrc})`)()('AB') === 'ab');
+check('arrowExpr 锚点查不到时返回空串', arrowExpr(NESTED, /const nope\s*=/) === '');
 // toFn：还原成可调用函数，this 动态绑定
 const fn = toFn(classMethod(SRC, 'loaded'));
 check('toFn 能处理 async 方法', typeof fn === 'function');

@@ -56,6 +56,21 @@ function callbackBody(src, pattern) {
     return end < 0 ? '' : src.slice(open, end + 1);
 }
 
+// 整个箭头函数表达式 `(params) => { ... }`：锚点只给到 `=>` 之前的位置，
+// 参数表由配平得到，不锁形参名 —— 用于把 `const f = (v) => { ... }` 直接 runInNewContext。
+function arrowExpr(src, pattern) {
+    const m = pattern.exec(src);
+    if (!m) return '';
+    const open = src.indexOf('(', m.index + m[0].length);
+    const close = matchParen(src, open);
+    if (close < 0) return '';
+    const arrow = src.indexOf('=>', close);
+    if (arrow < 0) return '';
+    const bodyOpen = src.indexOf('{', arrow);
+    const end = matchBrace(src, bodyOpen);
+    return end < 0 ? '' : src.slice(open, end + 1);
+}
+
 // 从「方法名/关键字起始位置」配平出整个方法（含签名）
 function fromName(src, start) {
     const close = matchParen(src, src.indexOf('(', start));
@@ -109,4 +124,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { classMethod, funcDecl, arrowProp, callbackBody, toFn, toProviderFn };
+module.exports = { arrowExpr, classMethod, funcDecl, arrowProp, callbackBody, toFn, toProviderFn };
