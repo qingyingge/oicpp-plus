@@ -6443,6 +6443,7 @@ function setupIPC() {
             let downloadCompleted = false;
             let progressWindow = null;
             let downloader = null;
+            let tempFile = '';
 
             try {
                 logInfo('[编译器下载] 创建进度窗口...');
@@ -6573,6 +6574,15 @@ function setupIPC() {
                             if (downloader) {
                                 downloader.cancel();
                             }
+                            // 清理已下载的部分压缩包，避免残留在 Compilers 目录
+                            try {
+                                if (tempFile && fs.existsSync(tempFile)) {
+                                    fs.unlinkSync(tempFile);
+                                    logInfo('[编译器下载] 已清理部分下载文件:', tempFile);
+                                }
+                            } catch (cleanupError) {
+                                logWarn('[编译器下载] 清理部分下载文件失败:', cleanupError.message);
+                            }
                             resolve({ success: false, error: '用户取消下载' });
                             progressWindow.destroy();
                             return;
@@ -6653,7 +6663,7 @@ function setupIPC() {
                     fileExtension = urlParts[urlParts.length - 1].toLowerCase();
                 }
                 if (!/^[a-z0-9]+$/.test(fileExtension)) throw new Error(t('error.unknownDownloadFileType'));
-                const tempFile = path.join(compilersDir, `${version}.${fileExtension}`);
+                tempFile = path.join(compilersDir, `${version}.${fileExtension}`);
 
                 downloader = new MultiThreadDownloader({
                     maxConcurrency: 16,
@@ -6742,6 +6752,23 @@ function setupIPC() {
 
             } catch (error) {
                 downloadCompleted = true;
+
+                // 取消/下载失败/解压失败时清理残留：避免半残的 versionDir 被
+                // get-downloaded-compilers/list 当成已安装版本，避免部分下载的 zip
+                // 残留在 Compilers 目录。（本处理器只在 versionDir 不存在时才进入下载，
+                // 因此 catch 里的 versionDir 一定是本次尝试建立的、未完成的目录。）
+                try {
+                    if (tempFile && fs.existsSync(tempFile)) {
+                        fs.unlinkSync(tempFile);
+                        logInfo('[编译器下载] 已清理临时下载文件:', tempFile);
+                    }
+                    if (fs.existsSync(versionDir)) {
+                        fs.rmSync(versionDir, { recursive: true, force: true });
+                        logInfo('[编译器下载] 已清理未完成的版本目录:', versionDir);
+                    }
+                } catch (cleanupError) {
+                    logWarn('[编译器下载] 清理残留文件失败:', cleanupError.message);
+                }
 
                 const isCancelled = isDownloadCancelled(error);
                 const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
