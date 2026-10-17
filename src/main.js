@@ -6378,10 +6378,12 @@ function setupIPC() {
                 return [];
             }
 
-            const versions = fs.readdirSync(compilersDir).filter(item => {
-                const itemPath = path.join(compilersDir, item);
-                return fs.statSync(itemPath).isDirectory();
-            });
+            // 与 get-downloaded-testlibs 保持一致：用 withFileTypes 而不是 statSync。单个坏条目
+            //（断开的链接、无权限目录）会让 statSync 抛错，外层 catch 把列表变成空数组，
+            // 用户以为编译器全没了
+            const versions = fs.readdirSync(compilersDir, { withFileTypes: true })
+                .filter(dirent => dirent.isDirectory())
+                .map(dirent => dirent.name);
 
             logInfo('[获取已下载编译器] 找到的版本:', versions);
             return versions;
