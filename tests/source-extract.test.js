@@ -311,6 +311,19 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
         typeof made.on === 'function' && made.on('x') === 'ok' && forwarded.length === 1 &&
         made.on('nope') === null && forwarded.length === 1, JSON.stringify(forwarded));
     check('objectConst 查不到名字时返回空串', objectConst(OBJ_SRC, 'nope') === '');
+    const INDENTED_OBJ = [
+        '    function go() {',
+        '        const cfg = {',
+        '            a: 1,',
+        '            nested: { b: 2 }',
+        '        };',
+        '        return cfg;',
+        '    }'
+    ].join('\n');
+    const indented = objectConst(INDENTED_OBJ, 'cfg');
+    check('objectConst 剥掉行首缩进，产物能直接拼进 new Function 正文',
+        indented.startsWith('const cfg = {') && indented.endsWith('}')
+        && new Function(`${indented}; return cfg;`)().nested.b === 2, JSON.stringify(indented.slice(0, 24)));
 
     // scalarConst：整条标量声明。终点收在深度 0 的第一个 ; 上，
     // 括号里的 > 0 / ? : 都不算终点；返回值去掉行首缩进（缩进不带信息，留着只会让断言锁空格）。

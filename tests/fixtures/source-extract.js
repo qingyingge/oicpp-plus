@@ -137,12 +137,16 @@ function forStatement(src, pattern) {
 // 整条对象字面量声明：`const NAME = { ... }`（含 const 关键字和配平的右括号）。
 // 守卫挂在对象方法里（如 preload 的 IPC 白名单包装器）时，只有拿到真对象才能测，
 // 再靠 includes 比长相就只能验证「这行字还在」。
+// 行首缩进会被剥掉（和 scalarConst 一致）：抽出来的声明大多要塞进 new Function 的正文里，
+// 留着八个空格会让 startsWith('const ') 这类「抽取成功」断言在缩进代码上假红。
 function objectConst(src, name) {
     const m = new RegExp('^\\s*(?:const|let)\\s+' + name + '\\s*=\\s*\\{', 'm').exec(src);
     if (!m) return '';
     const open = src.indexOf('{', m.index + m[0].length - 1);
     const end = matchBrace(src, open);
-    return end < 0 ? '' : src.slice(m.index, end + 1);
+    if (end < 0) return '';
+    const start = m.index + (m[0].length - m[0].trimStart().length);
+    return src.slice(start, end + 1);
 }
 
 // 从「方法名/关键字起始位置」配平出整个方法（含签名）

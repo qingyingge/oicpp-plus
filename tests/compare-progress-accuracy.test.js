@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, classMethod, funcDecl, scalarConst, toFn } = require('./fixtures/source-extract');
+const { arrowExpr, classMethod, compileMethod, funcDecl, objectConst, scalarConst, toFn } = require('./fixtures/source-extract');
 const { runEngine, pick } = require('./fixtures/fake-compare-engine');
 
 let failures = 0;
@@ -54,12 +54,208 @@ cmp.getTruncationText = () => '⟪输出已截断⟫';
 cmp.escapeHtml = (s) => String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// ---- 完成数必须是真实执行数，不是计划数 ----
+// ---------------------------------------------------------------------------
+// 渲染层状态机：把 codeComparer 的成员方法抽进 vm 真调。
+//
+// 为什么走 vm 而不是上面那批 toFn：这些方法里的 document / window / ccInput / logInfo
+// 全是自由标识符，new Function 编译出来的函数会解析到 **Node 全局**，测试塞的桩一个都拦不住。
+// compileMethod 在 context 里编译，自由标识符才落到桩上；ccInput/ccButton 也从源码抽进来真跑，
+// 「只有 <input> 才算输入框」那道 instanceof 门槛就一起被测到了。
+// self 用 Proxy：给了真身的走真身，没给的记名字和实参 ——
+// 「完成面板收到的是执行数还是计划数」这类断言就此变成 showComplete 的实际入参。
+// ---------------------------------------------------------------------------
 
-check('task state tracks a real completedTests counter', /completedTests:\s*0/.test(comparerSource));
-check('completion panel is fed the executed count, not totalTests',
-    /showComplete\(this\.getCompletedCount\(task\)/.test(comparerSource)
-    && !/showComplete\(task\.state\.totalTests/.test(comparerSource));
+const INPUT_IDS = new Set(['compare-count', 'compare-threads', 'time-limit', 'compare-use-testlib',
+    'compare-spj-path', 'compare-freopen-input-file', 'compare-freopen-output-file']);
+const BUTTON_IDS = new Set(['compare-start-btn', 'compare-stop-btn']);
+
+class FakeEl {
+    constructor(id) {
+        this.id = id;
+        this.style = {};
+        this._text = '';
+        this._html = '';
+        // 最近一次写入的是哪一路。showError 有些分支写 textContent、有些写 innerHTML，
+        // 两个字段各自留旧值，断言只能读「当前真正显示出来的那一份」。
+        this._last = null;
+        this.value = '';
+        this.checked = false;
+        this.children = {};
+    }
+    get textContent() { return this._text; }
+    set textContent(v) { this._text = String(v); this._last = ['textContent', this._text]; }
+    get innerHTML() { return this._html; }
+    set innerHTML(v) { this._html = String(v); this._last = ['innerHTML', this._html]; }
+    get shown() { return this._last ? this._last[1] : ''; }
+    get lastKind() { return this._last ? this._last[0] : null; }
+    querySelector(sel) {
+        if (!this.children[sel]) this.children[sel] = new FakeEl(`${this.id}::${sel}`);
+        return this.children[sel];
+    }
+}
+class FakeInput extends FakeEl { }
+class FakeButton extends FakeEl { }
+
+// document.createElement 出来的临时节点：escapeHtml 靠「写 textContent、读 innerHTML」
+// 这一步浏览器的转义语义活着，所以这里必须把那条规则模型出来，
+// 而不是返回原样 —— 否则「差异正文里的 < 被转义」就成了在测我的桩。
+class FakeNode {
+    constructor(tag) {
+        this.tagName = String(tag).toUpperCase();
+        this.style = {};
+        this.children = [];
+        this._raw = '';
+    }
+    get textContent() { return this._raw; }
+    set textContent(v) { this._raw = String(v); }
+    get innerHTML() {
+        return this._raw
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    set innerHTML(v) { this._raw = String(v); }
+    appendChild(child) { this.children.push(child); return child; }
+}
+
+const comparerHarness = (names, own = {}) => {
+    const seen = { elements: {}, lookups: [], t: [], logs: [], warns: [], errors: [] };
+    const element = (id) => {
+        seen.lookups.push(id);
+        if (!seen.elements[id]) {
+            const Ctor = INPUT_IDS.has(id) ? FakeInput : BUTTON_IDS.has(id) ? FakeButton : FakeEl;
+            seen.elements[id] = new Ctor(id);
+        }
+        return seen.elements[id];
+    };
+    const api = { stopCompareCalls: 0, stopCompare: () => { api.stopCompareCalls++; return Promise.resolve(); } };
+    const ctx = vm.createContext({
+        Number, String, Object, Array, JSON, Math, Map, Set, Promise, RegExp, Error, isNaN, parseInt, parseFloat,
+        setTimeout, clearTimeout, console,
+        document: { getElementById: element, createElement: (tag) => new FakeNode(tag) },
+        HTMLInputElement: FakeInput,
+        HTMLButtonElement: FakeButton,
+        window: {
+            i18n: { t: (key, params) => { seen.t.push([key, params]); return params ? `${key}|${JSON.stringify(params)}` : key; } },
+            electronAPI: api
+        },
+        logInfo: (...a) => seen.logs.push(a),
+        logWarn: (...a) => seen.warns.push(a),
+        logError: (...a) => seen.errors.push(a)
+    });
+    // 这两个文件级小工具本身就是守卫的一部分（类型门槛写错，renderTask 就什么都写不到）
+    for (const [global, pattern] of [['ccInput', /const ccInput = /], ['ccButton', /const ccButton = /]]) {
+        const src = arrowExpr(comparerSource, pattern);
+        check(`文件级工具抽取成功: ${global}`, src.startsWith('(id) =>'), src.slice(0, 20));
+        vm.runInContext(`this.${global} = ${src}`, ctx);
+    }
+    const real = {};
+    for (const name of names) {
+        const src = classMethod(comparerSource, name);
+        check(`状态机方法抽取成功: ${name}`, src.length > 0);
+        real[name] = compileMethod(ctx, src);
+        check(`状态机方法可调用: ${name}`, typeof real[name] === 'function');
+    }
+    const calls = [];
+    const target = { calls, tasks: new Map(), ...real, ...own };
+    const self = new Proxy(target, {
+        get: (t, k) => (k in t ? t[k] : (typeof k === 'string'
+            ? (...args) => { t.calls.push({ name: k, args }); } : undefined))
+    });
+    return { ctx, self, seen, calls, real, api, el: (id) => element(id), named: (id) => seen.elements[id] };
+};
+// Proxy 记下来的 this.* 调用里挑某个方法的实参表
+const argsOf = (calls, name) => calls.filter((c) => c.name === name).map((c) => c.args);
+const called = (calls, name) => calls.some((c) => c.name === name);
+
+// ---- 完成数必须是真实执行数，不是计划数 ----
+{
+    // 任务状态里的 completedTests 初值 + 完成面板的入参，都改成调用真身后的实际值。
+    // 原先锁的是 /completedTests:\s*0/ 和 /showComplete\(this\.getCompletedCount\(task\)/ 两行字：
+    // 初值改成 100、或者把 totalTests 直接喂给面板，只要那两行字还在就照样绿。
+    const h = comparerHarness(['normalizeTaskKey', 'getOrCreateTask']);
+    const fresh = h.real.getOrCreateTask.call(h.self, 'a.cpp');
+    check('新建任务的初始执行数是 0，不是计划数',
+        fresh.state.completedTests === 0 && fresh.state.totalTests === 0,
+        JSON.stringify(fresh.state));
+    check('新建任务落在 idle，且 errorResult/warningMessage 是空位',
+        fresh.state.mode === 'idle' && fresh.state.errorResult === null && fresh.state.warningMessage === null,
+        fresh.state.mode);
+    check('新建任务的计数齐备（completedTests/failedTests/currentTest/stopped 都有初值）',
+        ['completedTests', 'failedTests', 'currentTest', 'stopped'].every((k) => k in fresh.state),
+        JSON.stringify(Object.keys(fresh.state)));
+    check('同一 key 再取拿到同一个任务对象（重复取不重置计数）',
+        h.real.getOrCreateTask.call(h.self, 'a.cpp') === fresh);
+    fresh.state.completedTests = 7;
+    check('取回后再改的计数不会被第二次 getOrCreate 抹掉',
+        h.real.getOrCreateTask.call(h.self, 'a.cpp').state.completedTests === 7);
+    check('不同 key 得到不同任务对象',
+        h.real.getOrCreateTask.call(h.self, 'b.cpp') !== fresh && h.self.tasks.size === 2);
+    check('空 key 返回 null 且不入库',
+        h.real.getOrCreateTask.call(h.self, '') === null && h.self.tasks.size === 2);
+
+    const r = comparerHarness(['renderTask', 'getCompletedCount', 'updateProgress']);
+    const panelTask = (state) => ({ config: {}, state: { completedTests: 7, totalTests: 50, ...state } });
+    r.real.renderTask.call(r.self, panelTask({ mode: 'stopped' }));
+    check('mode=stopped 走完成面板，且面板收到的是执行数 7 而不是计划数 50',
+        JSON.stringify(argsOf(r.calls, 'showComplete')) === '[[7,null]]',
+        JSON.stringify(argsOf(r.calls, 'showComplete')));
+    check('stopped 态不该被当成运行态（不 showStatus）',
+        !called(r.calls, 'showStatus'), JSON.stringify(r.calls.map((c) => c.name)));
+    const warnRun = comparerHarness(['renderTask', 'getCompletedCount', 'updateProgress']);
+    warnRun.real.renderTask.call(warnRun.self, panelTask({ mode: 'complete', warningMessage: 'W' }));
+    check('mode=complete 同样喂执行数，并把 warningMessage 一并传给面板',
+        JSON.stringify(argsOf(warnRun.calls, 'showComplete')) === '[[7,"W"]]',
+        JSON.stringify(argsOf(warnRun.calls, 'showComplete')));
+    const noCount = comparerHarness(['renderTask', 'getCompletedCount', 'updateProgress']);
+    noCount.real.renderTask.call(noCount.self, { config: {}, state: { mode: 'complete', totalTests: 50 } });
+    check('执行数缺失时才退回计划数（getCompletedCount 的口径贯穿到面板）',
+        JSON.stringify(argsOf(noCount.calls, 'showComplete')) === '[[50,null]]',
+        JSON.stringify(argsOf(noCount.calls, 'showComplete')));
+    const stopRun = comparerHarness(['renderTask', 'getCompletedCount', 'updateProgress']);
+    stopRun.real.renderTask.call(stopRun.self, panelTask({ mode: 'stopping', statusText: 'S' }));
+    check('mode=stopping 仍按可见运行态渲染（showStatus + 状态文案）',
+        called(stopRun.calls, 'showStatus')
+        && JSON.stringify(argsOf(stopRun.calls, 'updateStatusText')) === '[["S"]]',
+        JSON.stringify(stopRun.calls.map((c) => c.name)));
+    check('stopping 不落到完成面板也不清空它',
+        !called(stopRun.calls, 'showComplete') && !called(stopRun.calls, 'hideComplete'),
+        JSON.stringify(stopRun.calls.map((c) => c.name)));
+    const errRun = comparerHarness(['renderTask', 'getCompletedCount', 'updateProgress']);
+    errRun.real.renderTask.call(errRun.self, { config: {}, state: { mode: 'error', errorResult: { testNumber: 3 } } });
+    check('mode=error 把 state.errorResult 原样交给错误区',
+        JSON.stringify(argsOf(errRun.calls, 'showError')) === '[[{"testNumber":3}]]',
+        JSON.stringify(argsOf(errRun.calls, 'showError')));
+    const idleRun = comparerHarness(['renderTask', 'getCompletedCount', 'updateProgress']);
+    idleRun.real.renderTask.call(idleRun.self, panelTask({ mode: 'idle' }));
+    check('mode=idle 三个区域全部收起',
+        ['hideStatus', 'hideError', 'hideComplete'].every((n) => called(idleRun.calls, n)),
+        JSON.stringify(idleRun.calls.map((c) => c.name)));
+    const nullRun = comparerHarness(['renderTask', 'getCompletedCount', 'updateProgress']);
+    nullRun.real.renderTask.call(nullRun.self, null);
+    check('task 为 null 时什么都不做，不抛异常',
+        nullRun.calls.length === 0, JSON.stringify(nullRun.calls.map((c) => c.name)));
+
+    const s = comparerHarness(['showComplete', 'hideStatus', 'hideError']);
+    s.real.showComplete.call(s.self, 7, null, true);
+    check('showComplete 把执行数写进「已完成」元素，并展开完成区',
+        String(s.named('completed-tests').textContent) === '7'
+        && s.named('compare-complete').style.display === 'flex',
+        JSON.stringify({ text: s.named('completed-tests').textContent, disp: s.named('compare-complete').style.display }));
+    check('stopped=true 的提示用 stoppedText 且带上同一个计数',
+        s.named('compare-complete').children['.complete-info span'].innerHTML.startsWith('compare.stoppedText|{"count":7}'),
+        s.named('compare-complete').children['.complete-info span'].innerHTML);
+    const s2 = comparerHarness(['showComplete', 'hideStatus', 'hideError']);
+    s2.real.showComplete.call(s2.self, 5, 'WARN');
+    check('带 warningMessage 时改用 completedWithWarning，count 与 warning 都传下去',
+        s2.seen.t.some(([k, p]) => k === 'compare.completedWithWarning' && p.count === 5 && p.warning === 'WARN'),
+        JSON.stringify(s2.seen.t));
+    const s3 = comparerHarness(['showComplete']);
+    s3.real.showComplete.call(s3.self, 3);
+    check('无告警、未停止时用 completedText，并收起状态区与错误区',
+        s3.seen.t.some(([k]) => k === 'compare.completedText')
+        && called(s3.calls, 'hideStatus') && called(s3.calls, 'hideError'),
+        JSON.stringify(s3.calls.map((c) => c.name)));
+}
 {
     // getCompletedCount 的口径：真实执行数优先，且 0 也是合法执行数（不能退回计划数）
     const count = (task) => cmp.getCompletedCount.call(null, task);
@@ -77,11 +273,11 @@ check('completion panel is fed the executed count, not totalTests',
     check('字符串不做隐式转换',
         count({ state: { completedTests: '12', totalTests: 9 } }) === 9);
 }
-check('legacy engine records executed groups including generation failures',
-    /const markExecuted = \(\) => \{[\s\S]*?executed\+\+;[\s\S]*?task\.state\.completedTests = executed;/.test(comparerSource));
-check('legacy engine completion summary uses executed count',
-    /const successfulTests = executed - failedGenerations;/.test(comparerSource)
-    && !/successfulTests = task\.state\.totalTests - failedGenerations/.test(comparerSource));
+// 旧引擎的执行计数与成功数口径都改成真跑（见文件尾 handlerBehaviour）：
+// 原守卫是 /const markExecuted = \(\) => \{[\s\S]*?executed\+\+;…completedTests = executed;/
+// 和 /successfulTests = task\.state\.totalTests - failedGenerations/ 的否定式 ——
+// 把 completedTests 写成 totalTests、或者只累加内部计数不回写任务，那行字照样匹配。
+
 // 引擎事件载荷（complete / stopped / incomplete_run）改成真跑：
 // fixtures/fake-compare-engine.js 用 vm 注入假 Worker，跑 compare-engine-v2.js 的本体，
 // 按 worker 真实上报的 progress/error 消息收事件。原先锁的是
@@ -90,27 +286,74 @@ check('legacy engine completion summary uses executed count',
 // 而计数算错、停止时发成 complete，同样是绿。见文件尾 engineBehaviour()。
 
 // ---- 手动停止后仍要能看到完成数 ----
+{
+    // stopComparison / resetComparison 真调，断言的是 task.state 的最终值和 electronAPI 的调用次数。
+    // 原守卫锁 /task\.state\.mode = 'stopping';/ 这行字 —— 把它改回 'idle'（就是这个 bug 本体）
+    // 只要字面上还剩 'stopping' 三个字，正则照样绿。
+    const mk = (mode) => {
+        const task = { state: { mode, isRunning: mode === 'running', shouldStop: false, completedTests: 4, totalTests: 9 } };
+        const h = comparerHarness(['stopComparison'], { getActiveTask: () => task });
+        h.real.stopComparison.call(h.self);
+        return { task, h };
+    };
+    const running = mk('running');
+    check('停止运行中的任务落成 stopping，不是 idle（否则完成事件的计数全丢）',
+        running.task.state.mode === 'stopping', running.task.state.mode);
+    check('停止时 isRunning 归 false、shouldStop 置 true',
+        running.task.state.isRunning === false && running.task.state.shouldStop === true);
+    check('停止要通知主进程一次，并立刻重画',
+        running.h.api.stopCompareCalls === 1 && called(running.h.calls, 'renderTask'),
+        JSON.stringify(running.h.calls.map((c) => c.name)));
+    check('停止不许顺手抹掉已完成计数',
+        running.task.state.completedTests === 4);
+    for (const mode of ['complete', 'stopped', 'error', 'idle']) {
+        const kept = mk(mode);
+        check(`非运行态（${mode}）停止不改 mode，避免把完成/错误面板刷掉`,
+            kept.task.state.mode === mode, kept.task.state.mode);
+    }
+    const noTask = comparerHarness(['stopComparison'], { getActiveTask: () => null });
+    noTask.real.stopComparison.call(noTask.self);
+    check('没有活动任务时直接返回，不打主进程也不重画',
+        noTask.api.stopCompareCalls === 0 && noTask.calls.length === 0,
+        JSON.stringify(noTask.calls.map((c) => c.name)));
 
-check('stopComparison keeps a stopping mode instead of dropping to idle',
-    /task\.state\.mode = 'stopping';/.test(comparerSource)
-    && !/if \(task\.state\.mode === 'running'\) \{\s*task\.state\.mode = 'idle';\s*\}/.test(comparerSource));
-check('renderTask handles the stopping mode as a visible running state',
-    /mode === 'running' \|\| task\.state\.mode === 'stopping'/.test(comparerSource));
-check('renderTask renders the stopped mode through the completion panel',
-    /mode === 'complete' \|\| task\.state\.mode === 'stopped'/.test(comparerSource));
-check('stopped completion event is consumed and persisted',
-    /if \(result\.stopped\) \{[\s\S]*?task\.state\.mode = 'stopped';/.test(comparerSource));
-check('the previously orphaned compareStopped key is now referenced',
-    /compare\.compareStopped/.test(comparerSource));
+    const resetTask = {
+        state: {
+            isRunning: true, currentTest: 3, totalTests: 9, completedTests: 7, failedTests: 2,
+            statusText: 'X', errorResult: { a: 1 }, warningMessage: 'W', mode: 'error'
+        }
+    };
+    const r = comparerHarness(['resetComparison'], { getActiveTask: () => resetTask });
+    r.real.resetComparison.call(r.self);
+    check('重置把进度条宽度写回 0%',
+        r.named('progress-fill').style.width === '0%',
+        JSON.stringify(r.named('progress-fill').style));
+    check('重置清空全部计数与状态（completedTests/currentTest/failedTests 归零，面板数据置空）',
+        resetTask.state.completedTests === 0 && resetTask.state.currentTest === 0
+        && resetTask.state.failedTests === 0 && resetTask.state.totalTests === 0
+        && resetTask.state.errorResult === null && resetTask.state.warningMessage === null
+        && resetTask.state.mode === 'idle' && resetTask.state.isRunning === false
+        && resetTask.state.stopped === false, JSON.stringify(resetTask.state));
+    check('重置后的状态文案取 compare.ready',
+        r.seen.t.some(([k]) => k === 'compare.ready'), JSON.stringify(r.seen.t.map(([k]) => k)));
+    check('重置也走一次 renderTask', called(r.calls, 'renderTask'),
+        JSON.stringify(r.calls.map((c) => c.name)));
+    const rIdle = comparerHarness(['resetComparison'], { getActiveTask: () => null });
+    rIdle.real.resetComparison.call(rIdle.self);
+    check('没有活动任务时 reset 不碰进度条',
+        rIdle.named('progress-fill') === undefined && rIdle.calls.length === 0,
+        JSON.stringify(rIdle.seen.lookups));
+}
+// 停止收尾（result.stopped → mode='stopped' + compare.compareStopped）改成真跑：
+// 见文件尾 handlerBehaviour 的完成回调段。原守卫是
+// /if \(result\.stopped\) \{[\s\S]*?task\.state\.mode = 'stopped';/ 和 /compare\.compareStopped/ ——
+// 把完成数取错字段、或者停止态误用完成文案，那两行字都还在。
 
 // ---- 进度标签与状态文案语义分离 ----
 
-check('progress label reports completed/total instead of a current group number',
-    /compare\.progressGroup/.test(comparerSource)
-    && zh.compare.progressGroup.includes('{current}')
+check('进度标签的译文带齐 current 与 total 两个占位',
+    zh.compare.progressGroup.includes('{current}')
     && zh.compare.progressGroup.includes('{total}'));
-check('progress label is not fed the current running group index',
-    !/updateProgress\(completed, totalTests\)/.test(comparerSource));
 {
     // 进度条宽度：真调 updateProgress，看写进 style.width 的实际百分比
     const realDocument = global.document;
@@ -153,11 +396,250 @@ check('progress label is not fed the current running group index',
 check('progress label element carries no hardcoded English literal',
     !/<span id="current-test">Test 0<\/span>/.test(htmlSource));
 
-// ---- 编译/引擎级错误不显示「第 0 组」 ----
+// ---- 错误区渲染：把 showError 真调，读它落到 DOM 桩上的最终值 ----
+//
+// 下面这些断言的对象全挤在 showError 那 190 行里。原先锁的是四处字面量：
+// errorGroup 的三元、`:\s*''` 的空串分支、output_limit 的标题分支、
+// diffPosition 的 truncated 短路。正则只能看见「那行字还在」，看不见
+// errType 走错分支、上一轮的「第 4 组」没被清掉、截断了照样算行列。
+// showError 的分支判断依赖六个成员的真返回值，所以一起抽进 vm；
+// updateErrorOutputExpandButton / renderExpandedOutput 不在断言范围内，留给 Proxy 记录。
+const hasLangKey = (key) => {
+    const [ns, ...rest] = key.split('.');
+    const leaf = rest.join('.');
+    return [zh, en].every((pack) => pack[ns] !== undefined && pack[ns][leaf] !== undefined);
+};
+const ERROR_METHODS = ['showError', 'hideError', 'isEngineErrorType', 'getEngineErrorLabel',
+    'getEngineErrorMessage', 'buildEngineErrorText', 'getDifferenceInfo', 'normalizeForCompare',
+    'limitOutputLines', 'formatCompareOutput', 'addLineNumbers', 'highlightCharacterDifferences',
+    'getTruncationText', 'escapeHtml'];
+const eh = comparerHarness(ERROR_METHODS);
+const draw = (result) => eh.self.showError(result);
+// 各错误区元素「当前显示的那一份」（textContent / innerHTML  whichever 最后被写）
+const shown = (id) => eh.el(id).shown;
 
-check('error group label is hidden when there is no real test index',
-    /Number\(errorResult\.testNumber\) > 0\s*\?\s*window\.i18n\.t\('compare\.errorGroup'/.test(comparerSource)
-    && /:\s*'';\s*\}/.test(comparerSource));
+{
+    draw({
+        errorType: 'wrong_answer', testNumber: 4, usedSpj: false,
+        input: 'IN', stdOutput: 'a\nb', testOutput: 'a\nc', stdOutputTruncated: true
+    });
+    check('输出被截断时只说「行列不可靠」，不给具体行列',
+        shown('std-output-diff-label').includes('compare.diffPositionUnreliable')
+        && !shown('std-output-diff-label').includes('compare.diffPosition|'),
+        shown('std-output-diff-label'));
+    check('test 侧标签同样说不可靠（两侧各自渲染，不是只补了 std）',
+        shown('test-output-diff-label').includes('compare.diffPositionUnreliable')
+        && !shown('test-output-diff-label').includes('compare.diffPosition|'),
+        shown('test-output-diff-label'));
+    check('有真实组号时组号那格写 errorGroup 并带上组号',
+        shown('error-test-num') === 'compare.errorGroup|{"number":4}', shown('error-test-num'));
+    check('渲染错误结果会把错误区显出来',
+        eh.el('compare-result').style.display === 'block',
+        JSON.stringify(eh.el('compare-result').style));
+    check('顺手收起状态区与完成面板（错误结果不能和上一轮的面板并存）',
+        called(eh.calls, 'hideStatus') && called(eh.calls, 'hideComplete'),
+        JSON.stringify(eh.calls.map((c) => c.name)));
+
+    draw({ errorType: 'wrong_answer', testNumber: 4, usedSpj: false, input: 'IN', stdOutput: 'a\nb', testOutput: 'a\nc' });
+    check('同一份输出没收截断时，按真实差异给出行列（第 2 行第 1 列）',
+        shown('std-output-diff-label').includes('compare.diffPosition|{"line":2,"char":1}'),
+        shown('std-output-diff-label'));
+
+    draw({
+        errorType: 'wrong_answer', testNumber: 4, usedSpj: false, input: 'IN',
+        stdOutput: 'a\nb', testOutput: 'a\nc', testOutputTruncated: true
+    });
+    check('test 侧被截断也让 std 侧一并放弃行列（两个标记是「或」关系）',
+        shown('std-output-diff-label').includes('compare.diffPositionUnreliable'),
+        shown('std-output-diff-label'));
+
+    draw({
+        errorType: 'std_re', testNumber: 6, errorMessage: 'compare.stdRe',
+        rawErrorMessage: '  terminate called  ', stdOutput: 'S', testOutput: 'T'
+    });
+    check('引擎错误走 buildEngineErrorText：本地化在前、原始细节折叠在后',
+        shown('std-output-diff') === 'compare.stdRe\n[terminate called]'
+        && shown('test-output-diff') === 'compare.stdRe\n[terminate called]',
+        JSON.stringify(shown('std-output-diff')));
+    check('引擎错误的两侧标签各按 std / test 取，不共用一句',
+        shown('std-output-diff-label') === 'compare.errorStandardOutput'
+        && shown('test-output-diff-label') === 'compare.errorStdTestOutput',
+        `${shown('std-output-diff-label')} / ${shown('test-output-diff-label')}`);
+    check('组号 6 照样显示（引擎错误不是没有组号）',
+        shown('error-test-num') === 'compare.errorGroup|{"number":6}', shown('error-test-num'));
+
+    draw({ errorType: 'output_limit', testNumber: 0, stdOutput: '', testOutput: '' });
+    check('output_limit 用自己的译文当标题，不落「找到差异」兜底',
+        shown('error-title') === 'compare.errorOutputLimit', shown('error-title'));
+    check('没有真实组号时把上一轮残留的组号清空',
+        shown('error-test-num') === '', JSON.stringify(shown('error-test-num')));
+    draw({ errorType: 'worker_crash', testNumber: 1, stdOutput: '', testOutput: '' });
+    check('worker_crash 归到引擎错误标题', shown('error-title') === 'compare.engineError', shown('error-title'));
+    draw({ errorType: 'compile_error', compileType: 'test', testNumber: 0, errorMessage: 'boom', testOutput: '' });
+    check('编译失败按 compileType 取标题，正文走编译输出那一分支',
+        shown('error-title') === 'compare.testCompileFail'
+        && shown('std-output-diff') === 'boom',
+        `${shown('error-title')} / ${JSON.stringify(shown('std-output-diff'))}`);
+    draw({ errorType: 'mismatch', testNumber: 2, usedSpj: true, stdOutput: 'S', testOutput: 'T' });
+    check('SPJ 模式不给行列提示，标签就是标准输出那一句',
+        shown('std-output-diff-label') === 'compare.errorStandardOutput'
+        && !shown('std-output-diff-label').includes('diffPosition'),
+        shown('std-output-diff-label'));
+
+    draw({ errorType: 'mismatch', testNumber: 1, usedSpj: false, input: 'I', stdOutput: '<script>bad()</script>', testOutput: 'ok' });
+    check('差异正文按 HTML 转义后写进 innerHTML，不把用户输出当标签注入',
+        shown('std-output-diff').includes('&lt;script&gt;') && !shown('std-output-diff').includes('<script>'),
+        shown('std-output-diff').slice(0, 120));
+
+    // errorResult 为空是渲染层的常态（hideError 之后重开），不能抛
+    let threw = null;
+    try { draw(null); } catch (error) { threw = error; }
+    check('errorResult 为 null 时什么都不画，也不抛', threw === null, String(threw && threw.message));
+    eh.self.hideError();
+    check('hideError 把错误区收回 none', eh.el('compare-result').style.display === 'none',
+        JSON.stringify(eh.el('compare-result').style));
+}
+
+// 输出被截断时 diffPosition 那一格：input 侧的截断标注同样要真落到文本里
+{
+    draw({
+        errorType: 'mismatch', testNumber: 1, usedSpj: false, input: 'IN',
+        inputTruncated: true, stdOutput: 'a', testOutput: 'b'
+    });
+    check('input 被截断时正文后面附截断提示，不静默砍',
+        shown('input-diff') === 'IN\ncompare.outputTruncated', JSON.stringify(shown('input-diff')));
+    draw({ errorType: 'mismatch', testNumber: 1, usedSpj: false, input: 'IN', stdOutput: 'a', testOutput: 'b' });
+    check('没截断时 input 就是正文本身（截断提示不许常驻）',
+        shown('input-diff') === 'IN', JSON.stringify(shown('input-diff')));
+}
+
+// ---- 引擎错误面板标题：std / test 两侧共用一套码表 ----
+{
+    const label = (code, panel) => eh.real.getEngineErrorLabel.call(eh.self, code, panel);
+    const pairs = [
+        ['generator', 'std', 'compare.errorGeneratorOutput'],
+        ['output_limit', 'std', 'compare.errorOutputLimit'],
+        ['output_limit', 'test', 'compare.errorOutputLimit'],
+        ['std_tle', 'std', 'compare.errorStandardOutput'],
+        ['std_re', 'std', 'compare.errorStandardOutput'],
+        ['std_tle', 'test', 'compare.errorStdTestOutput'],
+        ['test_tle', 'test', 'compare.errorTestOutput'],
+        ['test_re', 'std', 'compare.errorStdTestOutput'],
+        ['worker_crash', 'std', 'compare.engineError'],
+        ['weird_code', 'std', 'compare.engineError']
+    ];
+    const wrong = pairs.filter(([c, p, want]) => label(c, p) !== want)
+        .map(([c, p, want]) => `${c}/${p}→${label(c, p)}≠${want}`);
+    check('每个错误码在 std / test 两侧都拿到自己的面板标题', wrong.length === 0, wrong.join(', '));
+    const keys = [...new Set(pairs.map(([, , want]) => want))];
+    const missing = keys.filter((k) => !hasLangKey(k));
+    check('标题用到的键在两语言包都存在', missing.length === 0, missing.join(','));
+}
+
+// ---- 引擎码 → 译文：跑真映射，顺带把键存在性交叉锁到语言包 ----
+{
+    const msg = (error) => eh.real.getEngineErrorMessage.call(eh.self, error);
+    const keyOf = (out) => String(out).split('|')[0];
+    const MAP = {
+        gen_timeout: 'compare.genTle',
+        gen_error: 'compare.generatorRunFailed',
+        gen_exit: 'compare.genExit',
+        std_timeout: 'compare.stdTle',
+        std_exit: 'compare.stdExit',
+        std_error: 'compare.stdRe',
+        test_timeout: 'compare.testTle',
+        test_exit: 'compare.testExit',
+        test_error: 'compare.testRe',
+        output_limit: 'compare.errorOutputLimitDetail',
+        mismatch: 'compare.foundDiff',
+        exception: 'compare.engineError',
+        engine_start: 'compare.engineError',
+        worker_crash: 'compare.engineError',
+        fastspawn_fallback: 'compare.fastspawnFallback',
+        incomplete_run: 'compare.incompleteRun'
+    };
+    const mismapped = Object.entries(MAP)
+        .filter(([code, want]) => keyOf(msg({ code, exitCode: null, message: 'd' })) !== want)
+        .map(([code, want]) => `${code}→${keyOf(msg({ code, exitCode: null, message: 'd' }))}≠${want}`);
+    check('每个引擎码都落到码表里那条译文（掉出码表会被 engineError 悄悄吞掉）',
+        mismapped.length === 0, mismapped.join(', '));
+    const absent = Object.values(MAP).filter((k) => !hasLangKey(k));
+    check('码表引用的键在 zh / en 两语言包都存在', absent.length === 0, absent.join(','));
+    check('码表里没有的码走引擎错误兜底，不返回 undefined',
+        msg({ code: 'no_such_code' }) === 'compare.engineError'
+        && msg({}) === 'compare.engineError' && msg(null) === 'compare.engineError',
+        String(msg({ code: 'no_such_code' })));
+    check('退出类错误带 exitCode 时把组号与技术细节一起传给译文',
+        msg({ code: 'gen_exit', exitCode: 3, message: 'boom' })
+        === 'compare.genExit|{"code":3,"error":"boom"}',
+        msg({ code: 'gen_exit', exitCode: 3, message: 'boom' }));
+    check('exitCode 为 null 时不带 code 参数（否则模板里的 {code} 会原样显示）',
+        msg({ code: 'std_exit', exitCode: null, message: 'boom' }) === 'compare.stdExit',
+        msg({ code: 'std_exit', exitCode: null, message: 'boom' }));
+    check('message 缺失时退出类错误把 error 参数收成空串',
+        msg({ code: 'test_exit', exitCode: 1 }) === 'compare.testExit|{"code":1,"error":""}',
+        msg({ code: 'test_exit', exitCode: 1 }));
+    check('运行错误类（*_error）无条件带 code 与 error 两个参数',
+        msg({ code: 'std_error', message: 're' }) === 'compare.stdRe|{"error":"re","code":""}',
+        msg({ code: 'std_error', message: 're' }));
+}
+
+// ---- 本地化文案在前、技术细节附后，两份一样时不重复 ----
+{
+    const build = (r) => eh.real.buildEngineErrorText.call(eh.self, r);
+    check('有原始细节时拼在本地化文案后面并用方括号标出',
+        build({ errorMessage: '引擎错误', rawErrorMessage: '  worker exit 1  ' })
+        === '引擎错误\n[worker exit 1]',
+        JSON.stringify(build({ errorMessage: '引擎错误', rawErrorMessage: ' worker exit 1 ' })));
+    check('原始细节两侧空白被去掉，不靠 trim 之外的加工',
+        build({ errorMessage: 'A', rawErrorMessage: '\t\nB\n' }) === 'A\n[B]',
+        JSON.stringify(build({ errorMessage: 'A', rawErrorMessage: '\t\nB\n' })));
+    check('两份内容相同只出一份（不许自己跟自己重复一遍）',
+        build({ errorMessage: 'same', rawErrorMessage: 'same' }) === 'same');
+    check('没有原始细节时只有本地化文案，不留方括号',
+        build({ errorMessage: 'only', rawErrorMessage: '' }) === 'only'
+        && build({ errorMessage: 'only' }) === 'only');
+    check('本地化文案缺失时至少给出原始细节，不返回空串',
+        build({ rawErrorMessage: 'raw only' }) === '[raw only]',
+        JSON.stringify(build({ rawErrorMessage: 'raw only' })));
+    check('两者都缺时返回空串而不是 "undefined"（拼进 DOM 就是字面量）',
+        build({}) === '' && build({ errorMessage: '', rawErrorMessage: '' }) === '',
+        JSON.stringify(build({})));
+}
+
+// ---- 截断提示：i18n 没就绪时不许抛 ----
+{
+    const gt = comparerHarness(['getTruncationText']);
+    const call = () => {
+        try { return gt.real.getTruncationText.call(gt.self); }
+        catch (error) { return `THREW:${error.message}`; }
+    };
+    check('i18n 就绪时取 compare.outputTruncated', call() === 'compare.outputTruncated', String(call()));
+    gt.ctx.window = {};
+    check('window 上没有 i18n 时回落占位串（可选链不能省）', call() === '[truncated]', String(call()));
+    gt.ctx.window = { i18n: {} };
+    check('i18n 在但 t 不是函数时同样回落', call() === '[truncated]', String(call()));
+    gt.ctx.window = { i18n: { t: () => undefined } };
+    check('译文查不到（返回 undefined）时用占位串顶上空 DOM', call() === '[truncated]', String(call()));
+}
+
+// ---- 完成面板不被当成任意提示位 ----
+{
+    // 原守卫锁 /showSuccessMessage\(message\) \{\s*logInfo\(String\(message \|\| ''\)\);/
+    // —— 把 logInfo 换成往完成面板写一句、或不再 String()，只要那行字没动就照样绿。
+    const sh = comparerHarness(['showSuccessMessage']);
+    sh.real.showSuccessMessage.call(sh.self, '导出完成');
+    check('成功提示只写日志，一个 DOM 元素都不碰',
+        sh.seen.logs.length === 1 && sh.seen.logs[0][0] === '导出完成' && sh.seen.lookups.length === 0,
+        JSON.stringify({ logs: sh.seen.logs, lookups: sh.seen.lookups }));
+    sh.real.showSuccessMessage.call(sh.self, undefined);
+    check('提示内容缺失时写空串，不把 "undefined" 记进日志',
+        sh.seen.logs.length === 2 && sh.seen.logs[1][0] === '',
+        JSON.stringify(sh.seen.logs));
+    sh.real.showSuccessMessage.call(sh.self, 0);
+    check('数字 0 也按 falsy 收成空串（这是 String(message || \'\') 的实际口径）',
+        sh.seen.logs[2][0] === '', JSON.stringify(sh.seen.logs[2]));
+}
 
 // ---- 导出/差异数据不得被静默截断 ----
 //
@@ -167,9 +649,9 @@ check('error group label is hidden when there is no real test index',
 // 原来锁的是 /MAX_CAPTURED_INPUT_BYTES = 1024 \* 1024/ 和 /inputTruncated: input\.truncated/
 // 这类字面量 —— 上限改回 200 字节、或者把标记错配到别的字段上，只要那行字还在就照样绿。
 
-check('renderer persists truncation flags on the error result',
-    /inputTruncated: !!error\.inputTruncated/.test(comparerSource)
-    && /stdOutputTruncated: !!error\.stdOutputTruncated/.test(comparerSource));
+// 渲染层这一环（截断标记落进 errorResult）改成真跑：见文件尾 handlerBehaviour 的错误回调段，
+// 原守卫是 /inputTruncated: !!error\.inputTruncated/ 三行字 —— 标记错配到别的字段、
+// 或者不收布尔（undefined 直接进面板），字面量都照样匹配。
 {
     // 行列提示是直接给用户看的，0-based/1-based、短侧补齐规则都必须按返回值验，
     // 光锁「truncated 时不给 diffPosition」那行字改不动它的算法。
@@ -192,9 +674,9 @@ check('renderer persists truncation flags on the error result',
     check('空输出 vs 有输出报 line 1 char 1', pos('', 'a') === '{"line":1,"char":1}');
     check('null 输入不抛异常，按空串处理', pos(null, null) === 'null' && pos(null, 'a') === '{"line":1,"char":1}');
 }
-check('difference position is not reported for truncated output',
-    (comparerSource.match(/compare\.diffPositionUnreliable/g) || []).length >= 2
-    && /const truncated = !!\(errorResult\.stdOutputTruncated \|\| errorResult\.testOutputTruncated\)[\s\S]{0,40}?const diffPosition = truncated \? null/.test(comparerSource));
+// 截断时不报行列改成真跑（见上面 showError 段）：原守卫是
+// `/const truncated = !!\(errorResult\.stdOutputTruncated \|\| .*\)[\s\S]{0,40}?const diffPosition = truncated \? null/`
+// —— 只覆盖 std 一侧，且把 `||` 写成 `&&`、或者让 test 侧漏掉这道短路，都照样绿。
 
 // ---- output_limit 不得被当成 WA 渲染 ----
 
@@ -207,8 +689,6 @@ check('difference position is not reported for truncated output',
     const misjudged = judged.filter((code) => cmp.isEngineErrorType.call(null, code) !== false);
     check('判定结果不是答案错误，不被当成引擎错误', misjudged.length === 0, misjudged.join(','));
 }
-check('output_limit gets its own localized title',
-    /errType === 'output_limit'\)[\s\S]{0,120}?compare\.errorOutputLimit/.test(comparerSource));
 
 // ---- 0 = 不限时的语义在两条引擎路径上一致 ----
 //
@@ -216,29 +696,58 @@ check('output_limit gets its own localized title',
 // worker 侧把 `const genTimeout = ...` 那条语句抽出来求值（workerBehaviour）。
 // 原来锁的是 `/Number\.isFinite\(config\.timeLimit\) && ... : 0/` 整串三元表达式 ——
 // 把 `> 0` 写成 `>= 0`、或者退回 `|| 5000` 兜底，只要字面量还在就照样绿。
-
-check('renderer explicitly sends generatorTimeout for the new engine',
-    /generatorTimeout: 0,/.test(comparerSource));
-
-// ---- 英文错误信息不得直接进 UI ----
-
-check('renderer maps engine codes to localized strings',
-    /getEngineErrorMessage\(error\)/.test(comparerSource) && /compare\.fastspawnFallback/.test(comparerSource));
-check('raw technical detail is appended after the localized message, not instead of it',
-    /buildEngineErrorText\(errorResult\)/.test(comparerSource));
-check('every engine code maps to an existing key in both locales',
-    ['compare.genTle', 'compare.genExit', 'compare.stdTle', 'compare.stdExit', 'compare.stdRe',
-        'compare.testTle', 'compare.testExit', 'compare.testRe', 'compare.errorOutputLimitDetail',
-        'compare.foundDiff', 'compare.engineError', 'compare.fastspawnFallback']
-        .every((k) => {
-            const [ns, key] = k.split('.');
-            return zh[ns]?.[key] !== undefined && en[ns]?.[key] !== undefined;
-        }));
+// 渲染层这一环（config 里到底带不带 generatorTimeout）见文件尾 handlerBehaviour()。
 
 // ---- 输入框 clamp 必须回写 ----
 
-check('compare count clamp is written back to the input',
-    /cappedCount !== compareCount\)\s*compareCountEl\.value = String\(cappedCount\)/.test(comparerSource));
+{
+    // syncInstanceConfigToTask 真调：夹完的组数既要落进 task.config，也要写回输入框，
+    // 否则界面显示 200000、实际跑 100000，用户看到的和跑的不是一回事。
+    // 上限不写死数字，从 `const MAX_COMPARE_COUNT = ...` 那条声明求值后交叉锁。
+    const maxSrc = scalarConst(comparerSource, 'MAX_COMPARE_COUNT');
+    check('组数上限常量抽取成功', maxSrc.startsWith('const MAX_COMPARE_COUNT'), maxSrc);
+    const CAP = new Function(`${maxSrc} return MAX_COMPARE_COUNT;`)();
+    const clampHarness = (value) => {
+        const h = comparerHarness(['syncInstanceConfigToTask']);
+        // MAX_COMPARE_COUNT 是文件级 const（浏览器里同一份脚本内可见，但不在 window 上）。
+        // vm 里只编译了这一个方法，所以把抽出来的常量值绑到全局：换个标识符引用就会
+        // ReferenceError 当场红，值本身仍来自源码，不是我编的桩。
+        h.ctx.MAX_COMPARE_COUNT = CAP;
+        const task = { config: { compareCount: 7, timeLimit: 900 } };
+        h.el('compare-count').value = String(value);
+        h.el('time-limit').value = '1500';
+        h.el('compare-threads').value = '4';
+        h.real.syncInstanceConfigToTask.call(h.self, task);
+        return { h, task, inputValue: () => h.el('compare-count').value };
+    };
+    const over = clampHarness(CAP + 500);
+    check('超上限的组数被夹到上限，并回写输入框',
+        over.task.config.compareCount === CAP && over.inputValue() === String(CAP),
+        JSON.stringify({ inTask: over.task.config.compareCount, inBox: over.inputValue() }));
+    const under = clampHarness(0);
+    check('0 组夹成 1 组（同样回写，输入框不许还停在 0）',
+        under.task.config.compareCount === 1 && under.inputValue() === '1',
+        JSON.stringify({ inTask: under.task.config.compareCount, inBox: under.inputValue() }));
+    const legal = clampHarness(30);
+    check('合法值不被 clamp 动过，也不多余地重写输入框',
+        legal.task.config.compareCount === 30 && legal.inputValue() === '30',
+        JSON.stringify({ inTask: legal.task.config.compareCount, inBox: legal.inputValue() }));
+    check('时限与线程数一并同步进任务配置',
+        legal.task.config.timeLimit === 1500, String(legal.task.config.timeLimit));
+    const empty = clampHarness('abc');
+    check('输入框不是数字时保留任务里原有的组数，不写 NaN 也不清空输入框',
+        empty.task.config.compareCount === 7 && empty.inputValue() === 'abc',
+        JSON.stringify({ inTask: empty.task.config.compareCount, inBox: empty.inputValue() }));
+    check('两个 null 都不抛（任务缺 config、输入框缺元素）',
+        (() => {
+            const h = comparerHarness(['syncInstanceConfigToTask']);
+            try { h.real.syncInstanceConfigToTask.call(h.self, null); return true; }
+            catch (_) { return false; }
+        })());
+}
+// 起跑路径上还有第二处同样的 clamp（runTask 里，夹完写回 #compare-count）：
+// 它嵌在一个 await 链中间，抽不出可独立运行的构造，所以留两条字面量断言 ——
+// 一处已经真跑锁住算法，另一处至少锁住「也回写、且共用同一个命名常量」。
 check('start-time compare count clamp is also written back',
     /compareCountEl && Number\(compareCountEl\.value\) !== compareCount/.test(comparerSource));
 check('compare count cap is a named constant shared by both clamps',
@@ -316,8 +825,9 @@ check('compare count cap is a named constant shared by both clamps',
         cmp.limitOutputLines.call(cmp, few, 100) === few);
     check('limitOutputLines 对 null 返回空串', cmp.limitOutputLines.call(cmp, null, 100) === '');
 }
-check('truncation text access is i18n-ready guarded',
-    /window\.i18n\?\.t\?\.\('compare\.outputTruncated'\)/.test(comparerSource));
+// 截断文案的 i18n 守卫改成真跑：见上面「截断提示：i18n 没就绪时不许抛」一段，
+// 原守卫锁 /window\.i18n\?\.t\?\.\('compare\.outputTruncated'\)/ —— 少写一个 `?.` 就是运行期炸，
+// 但那行字照样在。
 
 // ---- 字符级差异高亮 ----
 
@@ -399,15 +909,9 @@ check('expand dialog no longer hardcodes MB in the language pack',
     && !en.compare.expandConfirmMsgText.includes('{size} MB'));
 check('no leftover MB-only size helper', !/getOutputSizeMbText/.test(comparerSource));
 
-// ---- 进度条残留 ----
-
-check('resetComparison clears the progress bar width',
-    /progressFill\.style\.width = '0%'/.test(comparerSource));
-
-// ---- 完成面板不得被当成任意提示位 ----
-
-check('export success no longer overwrites the completion panel with a message',
-    /showSuccessMessage\(message\) \{\s*logInfo\(String\(message \|\| ''\)\);/.test(comparerSource));
+// 进度条残留 / 完成面板被当成提示位：两条都改成真跑了 ——
+// resetComparison 看它实际写进 #progress-fill 的 style.width，
+// showSuccessMessage 看它落进日志的内容和「一个 DOM 都不碰」。见上面两段。
 
 // ---- 新增告警通道 ----
 
@@ -415,8 +919,9 @@ check('main process forwards non-fatal engine warnings',
     /engine\.on\('warning'[\s\S]*?compare-warning/.test(mainSource));
 check('preload exposes the warning channel',
     /onCompareWarning/.test(preloadSource) && /compare-warning/.test(preloadSource));
-check('renderer treats engine warnings as non-fatal',
-    /onCompareWarning\(\(data\) => \{\s*logWarn/.test(comparerSource));
+// 渲染层把告警当非致命改成真跑（见文件尾 handlerBehaviour）：原守卫是
+// /onCompareWarning\(\(data\) => \{\s*logWarn/ —— 只要那两行字在，把告警改成 showError
+// 或者照样 stopCompare 都查不出来。
 
 // ---- 引擎事件载荷：跑真引擎 + 假 Worker ----
 //
@@ -612,17 +1117,242 @@ const workerBehaviour = async () => {
                 && withMs.stdMs === 22 && withMs.testMs === 33;
         })());
 
-    // 生成器超时的归一化语句：唯一自由标识符是内建 Number，两侧语义一致，直接求值即可
+    // 生成器超时的归一化语句：唯一自由标识符是内建 Number，两侧语义一致，直接求值即可。
+    // 抽取断言只确认锚点找到了那条 const —— 万一它抽到的是别的语句，
+    // 下面 new Function('generatorTimeout', …) 会因 ReferenceError 当场红。
     const genTimeoutSrc = scalarConst(workerSource, 'genTimeout');
     check('worker 的生成器超时归一化语句抽取成功',
-        genTimeoutSrc.startsWith('const genTimeout') && genTimeoutSrc.includes('generatorTimeout'),
-        genTimeoutSrc);
+        genTimeoutSrc.startsWith('const genTimeout'), genTimeoutSrc);
     const normalizeGenTimeout = new Function('generatorTimeout', genTimeoutSrc + ' return genTimeout;');
     check('worker 侧 0 / 负数 / NaN 的生成器超时都归一成不限时（不再被 || 5000 兜底）',
         normalizeGenTimeout(0) === 0 && normalizeGenTimeout(-1) === 0
         && normalizeGenTimeout(NaN) === 0 && normalizeGenTimeout('x') === 0,
         [0, -1, NaN, 'x'].map(normalizeGenTimeout).join(','));
     check('worker 侧正数生成器超时原样生效', normalizeGenTimeout(1500) === 1500);
+};
+
+// ---- runTask 注册的四个引擎事件回调 + 下发配置 + 旧引擎的执行计数 ----
+//
+// 这四个回调是渲染层唯一接收引擎数据的地方。原先锁的是七处字面量：
+// /inputTruncated: !!error\.inputTruncated/、/generatorTimeout: 0,/、
+// /onCompareWarning\(\(data\) => \{\s*logWarn/、/if \(result\.stopped\) \{…mode = 'stopped'/、
+// /compare\.compareStopped/、/compare\.progressGroup/、!/updateProgress\(completed, totalTests\)/。
+// 它们都在闭包里，旁边改一行就整段失效而字面量毫发无伤：completed 取错字段、
+// 告警被当错误打断对拍、message 没兜底写进 "undefined"、进度条拿计划数画 —— 全是静默的。
+//
+// 处理器是 runTask 作用域里的箭头函数，自由标识符 task / window / logWarn /
+// cleanupAllListeners / this 都由沙箱提供。注意 this：箭头函数继承定义处的 this，
+// 而 vm 顶层脚本的 this 就是沙箱对象本身，所以记录器必须挂在 ctx 上；
+// 挂到 Proxy self 上的话处理器里的 this.updateProgress 一个都拦不到。
+const HANDLER_SITES = [
+    ['warning', /window\.electronAPI\.onCompareWarning\(/, false],
+    ['progress', /window\.electronAPI\.onCompareProgress\(/, false],
+    ['error', /window\.electronAPI\.onCompareError\(async\s/, true],
+    ['complete', /window\.electronAPI\.onCompareComplete\(/, false]
+];
+const RECORD_METHODS = ['updateProgress', 'updateTaskStatus', 'updateTaskProgress',
+    'renderIfActive', 'finishCompareTask', 'cleanupAllListeners', 'showError', 'showComplete'];
+
+const handlerHarness = (realMethods) => {
+    const h = comparerHarness(realMethods);
+    // 回调里的 this.xxx 解析到 vm 全局，不是 Proxy self：真身挂全局，其余挂记录器。
+    for (const name of realMethods) h.ctx[name] = h.real[name];
+    for (const name of RECORD_METHODS) {
+        if (realMethods.includes(name)) continue;
+        h.ctx[name] = (...args) => h.calls.push({ name, args });
+    }
+    const handlers = {};
+    for (const [name, pattern, isAsync] of HANDLER_SITES) {
+        const src = arrowExpr(comparerSource, pattern);
+        check(`引擎事件回调抽取成功: ${name}`, src.startsWith('('), src.slice(0, 24));
+        vm.runInContext(`this.${name}Handler = ${isAsync ? 'async ' : ''}${src};`, h.ctx);
+        handlers[name] = h.ctx[`${name}Handler`];
+        check(`回调可调用: ${name}`, typeof handlers[name] === 'function');
+    }
+    return { ...h, handlers, task: (state) => { h.ctx.task = { state }; return h.ctx.task; } };
+};
+
+const handlerBehaviour = async () => {
+    const h = handlerHarness(['getEngineErrorMessage']);
+
+    // ---- 进度回调 ----
+    const p = h.task({ totalTests: 50, completedTests: 0, currentTest: 0 });
+    h.calls.length = 0;
+    h.handlers.progress({ current: '3', total: 9, testIndex: 4 });
+    check('进度回调把引擎报的组号归一成数字后写进任务状态',
+        p.state.completedTests === 3 && p.state.currentTest === 3,
+        JSON.stringify({ c: p.state.completedTests, n: p.state.currentTest }));
+    check('进度条按引擎给的 total 画，不拿计划数 50 顶',
+        JSON.stringify(argsOf(h.calls, 'updateProgress')) === '[[3,9]]',
+        JSON.stringify(argsOf(h.calls, 'updateProgress')));
+    check('状态文案走 compare.testGroup 并带上 testIndex',
+        h.seen.t.some(([k, prm]) => k === 'compare.testGroup' && prm.i === 4),
+        JSON.stringify(h.seen.t.map(([k]) => k)));
+    h.seen.t.length = 0;
+    h.handlers.progress({ current: 'abc', total: 9 });
+    check('current 不是数字时收成 0，不把 NaN 写进状态（NaN 会一路带到百分比里）',
+        p.state.completedTests === 0 && !Number.isNaN(p.state.completedTests),
+        String(p.state.completedTests));
+    check('进度回调不碰错误区与完成面板', !called(h.calls, 'showError') && !called(h.calls, 'showComplete'),
+        JSON.stringify(h.calls.map((c) => c.name)));
+
+    // ---- 错误回调 ----
+    const e = h.task({ mode: 'running' });
+    h.calls.length = 0;
+    h.api.stopCompareCalls = 0;
+    await h.handlers.error({
+        testNumber: 7, input: 'IN', stdOutput: 'S', testOutput: 'T',
+        inputTruncated: 1, stdOutputTruncated: 0, type: 'std_re', code: 'std_exit',
+        exitCode: 2, message: 'boom'
+    });
+    const er = e.state.errorResult || {};
+    check('三个截断标记各按布尔收窄（1→true、0→false、缺省→false，不许留 undefined）',
+        er.inputTruncated === true && er.stdOutputTruncated === false && er.testOutputTruncated === false,
+        JSON.stringify({ i: er.inputTruncated, s: er.stdOutputTruncated, t: er.testOutputTruncated }));
+    check('引擎的 type 落成 errorType、code 落成 errorCode，正文译文由 getEngineErrorMessage 现算',
+        er.errorType === 'std_re' && er.errorCode === 'std_exit'
+        && er.errorMessage === 'compare.stdExit|{"code":2,"error":"boom"}',
+        JSON.stringify({ t: er.errorType, c: er.errorCode, m: er.errorMessage }));
+    check('原始技术细节单独留一份，不参与本地化', er.rawErrorMessage === 'boom', String(er.rawErrorMessage));
+    check('错误回调把任务落成 error 态并重绘',
+        e.state.mode === 'error' && called(h.calls, 'renderIfActive'),
+        JSON.stringify(h.calls.map((c) => c.name)));
+    check('出错即停：摘监听、调一次 stopCompare、收尾',
+        called(h.calls, 'cleanupAllListeners') && h.api.stopCompareCalls === 1
+        && called(h.calls, 'finishCompareTask'),
+        JSON.stringify({ calls: h.calls.map((c) => c.name), stop: h.api.stopCompareCalls }));
+    h.calls.length = 0;
+    await h.handlers.error({ testNumber: 1 });
+    const thin = h.ctx.task.state.errorResult;
+    check('只有组号的错误：输出三段收成空串，code/message 也是空串',
+        thin.input === '' && thin.stdOutput === '' && thin.testOutput === ''
+        && thin.errorCode === '' && thin.rawErrorMessage === '',
+        JSON.stringify(thin));
+    check('缺 exitCode 时译文走无参分支（面板不会出现裸 {code}）',
+        thin.errorMessage === 'compare.engineError', String(thin.errorMessage));
+
+    // ---- 完成 / 停止回调 ----
+    const c1 = h.task({ mode: 'stopping', completedTests: 1, failedTests: 0, totalTests: 5 });
+    h.calls.length = 0;
+    h.seen.t.length = 0;
+    h.handlers.complete({ stopped: true, completed: 4, failed: 2 });
+    check('停止收尾把 mode 落成 stopped，完成数取引擎给的 4',
+        c1.state.mode === 'stopped' && c1.state.completedTests === 4,
+        JSON.stringify({ m: c1.state.mode, c: c1.state.completedTests }));
+    check('停止也置 stopped 标记（面板靠它区分「停止」与「跑完」）', c1.state.stopped === true);
+    check('停止态的状态文案用 compare.compareStopped 并带上 completed/failed',
+        h.seen.t.some(([k, prm]) => k === 'compare.compareStopped' && prm.completed === 4 && prm.failed === 2),
+        JSON.stringify(h.seen.t.map(([k]) => k)));
+    check('有生成失败时把失败组数一并告警',
+        c1.state.warningMessage === 'compare.genFailedWarning|{"count":2}',
+        String(c1.state.warningMessage));
+    check('收尾同样摘监听 + 重绘 + finish',
+        called(h.calls, 'cleanupAllListeners') && called(h.calls, 'renderIfActive')
+        && called(h.calls, 'finishCompareTask'), JSON.stringify(h.calls.map((c) => c.name)));
+
+    const c2 = h.task({ mode: 'running', completedTests: 3, totalTests: 9 });
+    h.handlers.complete({ completed: NaN, failed: undefined });
+    check('completed 不是数字时保留已累计的 3，不写 NaN',
+        c2.state.completedTests === 3, String(c2.state.completedTests));
+    check('failed 缺失按 0 计，此时不该有告警文案',
+        c2.state.failedTests === 0 && c2.state.warningMessage === null,
+        JSON.stringify({ f: c2.state.failedTests, w: c2.state.warningMessage }));
+    check('正常跑完落 complete 态', c2.state.mode === 'complete', c2.state.mode);
+
+    const c3 = h.task({ mode: 'error', completedTests: 2 });
+    h.handlers.complete({ completed: 2, failed: 0 });
+    check('已经落到 error 就不改写成 complete（差异面板不能被完成态覆盖）',
+        c3.state.mode === 'error', c3.state.mode);
+
+    // ---- 告警回调 ----
+    const w = h.task({ mode: 'running' });
+    h.calls.length = 0;
+    h.seen.warns.length = 0;
+    h.api.stopCompareCalls = 0;
+    h.handlers.warning({ code: 'fastspawn_fallback', message: 'falling back' });
+    check('引擎告警只记一条日志，带 code 与 message',
+        h.seen.warns.length === 1 && h.seen.warns[0][1] === 'fastspawn_fallback'
+        && h.seen.warns[0][2] === 'falling back', JSON.stringify(h.seen.warns));
+    check('告警是非致命的：不改状态、不弹错误面板、不停引擎',
+        w.state.mode === 'running' && !called(h.calls, 'showError') && h.api.stopCompareCalls === 0,
+        JSON.stringify(h.calls.map((c) => c.name)));
+    h.handlers.warning({});
+    check('缺 code/message 的告警用占位串，不把 undefined 写进日志',
+        h.seen.warns[1][1] === 'warning' && h.seen.warns[1][2] === '',
+        JSON.stringify(h.seen.warns[1]));
+
+    // ---- 下发给引擎的 config ----
+    const configSrc = objectConst(comparerSource, 'config');
+    check('下发配置的整条 const 抽取成功', configSrc.startsWith('const config = {'), configSrc.slice(0, 30));
+    const buildConfig = new Function('compiledPrograms', 'task', 'effectiveTimeLimit', 'workerCount',
+        `${configSrc}; return config;`);
+    const taskForConfig = (state, config = {}) => ({ state, config });
+    const cfg = buildConfig({ stdExe: 'a.exe', testExe: 'b.exe', generatorExe: 'g.exe', spjExe: null },
+        taskForConfig({ totalTests: 9 }), 2000, 4);
+    check('config 显式给 generatorTimeout = 0（时限由 worker 侧按 0=不限时处理）',
+        cfg.generatorTimeout === 0, String(cfg.generatorTimeout));
+    check('时限用折算后的 effectiveTimeLimit，组数与线程数各归各处',
+        cfg.timeLimit === 2000 && cfg.totalTests === 9 && cfg.threadCount === 4,
+        JSON.stringify({ t: cfg.timeLimit, n: cfg.totalTests, w: cfg.threadCount }));
+    // 0 是「不限时」的合法取值，写成 `effectiveTimeLimit || 5000` 会把它悄悄换成 5 秒。
+    check('时限为 0（不限时）时原样下发，不落到 5000 兜底',
+        buildConfig({}, taskForConfig({ totalTests: 1 }), 0, 1).timeLimit === 0,
+        String(buildConfig({}, taskForConfig({ totalTests: 1 }), 0, 1).timeLimit));
+    check('生成器优先用 runTarget（Windows 需要 .cmd 包装）',
+        buildConfig({ generatorRunTarget: 'g.cmd', generatorExe: 'g.exe' }, taskForConfig({ totalTests: 1 }), 0, 1).generator
+        === 'g.cmd');
+    check('freopen 两个路径缺省落成 null，不是 undefined',
+        cfg.freopen.inputFile === null && cfg.freopen.outputFile === null,
+        JSON.stringify(cfg.freopen));
+    check('SPJ / freopen 的配置原样透传给引擎（回退判定在调用方，这里不许吞）',
+        buildConfig({}, taskForConfig({ totalTests: 1 },
+            { useTestlib: true, freopenInputFile: 'in.txt', freopenOutputFile: 'out.txt' }), 0, 1).useTestlib === true
+        && buildConfig({}, taskForConfig({ totalTests: 1 }, { freopenInputFile: 'in.txt' }), 0, 1).freopen.inputFile
+        === 'in.txt');
+
+    // ---- 旧引擎的执行计数 ----
+    const mh = comparerHarness([]);
+    const markSrc = arrowExpr(comparerSource, /const markExecuted = /);
+    check('旧引擎 markExecuted 抽取成功', markSrc.startsWith('() =>'), markSrc.slice(0, 20));
+    vm.runInContext(`let executed = 0; this.markExecuted = ${markSrc}; this.executedOf = () => executed;`, mh.ctx);
+    mh.ctx.task = { state: { completedTests: 0, currentTest: 0 } };
+    const mt = mh.ctx.task;
+    mh.ctx.markExecuted();
+    mh.ctx.markExecuted();
+    mh.ctx.markExecuted();
+    check('每执行一组 +1，并同步写回任务的 completedTests / currentTest',
+        mt.state.completedTests === 3 && mt.state.currentTest === 3 && mh.ctx.executedOf() === 3,
+        JSON.stringify({ inTask: mt.state.completedTests, inner: mh.ctx.executedOf() }));
+    mh.ctx.markExecuted();
+    check('计数继续累加，不会在某一轮后被计划数接管',
+        mt.state.completedTests === 4 && mh.ctx.executedOf() === 4, String(mt.state.completedTests));
+
+    // 旧引擎收尾：所有 worker 退出后再把真实执行数写一遍并刷进度。
+    // 这段和 markExecuted 是同一份不变量的重复写入，写成计划数就会「停止后进度条满格」。
+    // 三行按 currentTest → completedTests → updateTaskProgress 的顺序整体匹配（markExecuted
+    // 里前两句顺序相反），只锁顺序不锁空白与缩进。
+    const tailSrc = /task\.state\.currentTest = executed;\s*task\.state\.completedTests = executed;\s*this\.updateTaskProgress\(task\);/
+        .exec(comparerSource)?.[0] || '';
+    check('旧引擎收尾的三行写入抽取成功', tailSrc.includes('completedTests = executed'), JSON.stringify(tailSrc.slice(0, 40)));
+    const th = comparerHarness([]);
+    th.ctx.updateTaskProgress = (...args) => th.calls.push({ name: 'updateTaskProgress', args });
+    th.ctx.task = { state: { totalTests: 50, completedTests: 0, currentTest: 0 } };
+    vm.runInContext(`const executed = 7; this.finishTail = () => { ${tailSrc} };`, th.ctx);
+    th.ctx.finishTail();
+    check('收尾写入的是真实执行数，不是计划数',
+        th.ctx.task.state.completedTests === 7 && th.ctx.task.state.currentTest === 7,
+        JSON.stringify({ done: th.ctx.task.state.completedTests, cur: th.ctx.task.state.currentTest }));
+    check('收尾顺手刷一次进度面板', called(th.calls, 'updateTaskProgress'),
+        JSON.stringify(th.calls.map((c) => c.name)));
+
+    // 成功组数：只绑 executed / failedGenerations 两个自由标识符，
+    // 一旦改回「计划数 - 失败数」，new Function 里找不到 task 会当场 ReferenceError。
+    const succSrc = scalarConst(comparerSource, 'successfulTests');
+    check('成功组数的计算语句抽取成功', succSrc.startsWith('const successfulTests'), succSrc);
+    const successfulOf = new Function('executed', 'failedGenerations', `${succSrc} return successfulTests;`);
+    check('成功数按真实执行数减生成失败数，不拿计划数起算',
+        successfulOf(9, 2) === 7 && successfulOf(9, 0) === 9 && successfulOf(4, 4) === 0,
+        [successfulOf(9, 2), successfulOf(9, 0), successfulOf(4, 4)].join(','));
 };
 
 // ---- 导出真跑一遍：截断标记必须逐字段跟着数据走 ----
@@ -634,6 +1364,7 @@ const workerBehaviour = async () => {
 (async () => {
     await engineBehaviour();
     await workerBehaviour();
+    await handlerBehaviour();
     const NOTICE = '⟪导出数据不完整⟫';
     const realWindow = global.window;
     const realLogError = global.logError;
