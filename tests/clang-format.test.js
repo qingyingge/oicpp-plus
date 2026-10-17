@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { EventEmitter } = require('events');
-const { classMethod } = require('./fixtures/source-extract');
+const { callbackBody, classMethod, funcDecl } = require('./fixtures/source-extract');
 const {
     buildClangFormatArgs,
     formatCodeWithClangFormat,
@@ -52,6 +52,20 @@ function compileMethod(source, name, ctx) {
         : (/^async\s+/.test(s) ? 'async function ' + s.replace(/^async\s+/, '') : 'function ' + s);
     vm.runInContext(`${decl}\nthis.__compiled = ${name};`, ctx);
     return { raw, fn: ctx.__compiled };
+}
+
+// 顶层函数声明一族：一次抽多个，抽不到的名字带回去让调用方先断言「抽取成功」，
+// 否则后面所有基于返回值的断言都会在 undefined 上真空通过。
+function compileFuncs(source, names, ctx) {
+    const fns = {};
+    const missing = [];
+    for (const name of names) {
+        const body = funcDecl(source, name);
+        if (!body) { missing.push(name); continue; }
+        vm.runInContext(`${body}\nthis.__fns.${name} = ${name};`, ctx);
+        fns[name] = ctx.__fns[name];
+    }
+    return { fns, missing };
 }
 
 function makeFormatSandbox() {
@@ -567,10 +581,366 @@ function makeModel(lines, state = {}) {
     }
 
     const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
-    check('main process exposes the standalone formatter IPC', mainSource.includes("ipcMain.handle('format-cpp-code'"));
-    check('packaged app resolves a separately bundled clang-format', mainSource.includes("path.join(process.resourcesPath, 'clang-format')"));
-    check('clang-format resolution falls back to the user LSP dir and PATH', mainSource.includes('resolveClangFormatExecutable(getUserClangdRoot())') && mainSource.includes('findClangFormatExecutableOnPath()'));
-    check('missing clang-format error reports the searched paths instead of build instructions', mainSource.includes('describeClangFormatSearchPaths()') && !mainSource.includes('Run pnpm run prebuild:clang-format'));
+
+    // 主进程侧的解析与 IPC：这四条原来是 includes() 读源码长相 —— 回退顺序写反、
+    // 打包基准目录从 resourcesPath 换成 __dirname、缓存标记忘记置位，字符串全都照样命中。
+    // 现在按场景搭 vm 沙箱：existsSync/statSync 由集合驱动并记账，
+    // 每次落在哪个候选上、走没走过 PATH 都能数出来。
+    const USER_DATA_DIR_NAME = (mainSource.match(/const USER_DATA_DIR_NAME\s*=\s*'([^']+)'/) || [])[1];
+    const RESOLVER_LETS = mainSource.match(
+        /^let (?:cachedClangFormatExecutablePath|clangFormatExecutablePathResolved)[^\n]*$/gm) || [];
+    const CACHE_LIMIT = Number((mainSource.match(/^const CLANG_FORMAT_RESULT_CACHE_LIMIT\s*=\s*(\d+)/m) || [])[1]);
+
+    const RESOLVER_NAMES = [
+        'getClangdPlatformKey', 'getUserClangdRoot', 'getClangFormatExecutableName',
+        'resolveClangFormatRootFromBundle', 'resolveClangFormatExecutable',
+        'findClangFormatExecutableOnPath', 'describeClangFormatSearchPaths',
+        'resolveClangFormatExecutablePath', 'cacheClangFormatResult'
+    ];
+
+    function makeMainFormatSandbox(opts = {}) {
+        const {
+            isPackaged = false,
+            platform = 'linux',
+            resourcesPath = '/pkg/resources',
+            homedir = '/home/tester',
+            env = {},
+            exists = [],
+            pathFiles = [],
+            pathDirs = [],
+            pathThrows = []
+        } = opts;
+        const fsCalls = { exists: [], stat: [] };
+        const existsSet = new Set(exists);
+        const fileSet = new Set(pathFiles);
+        const dirSet = new Set(pathDirs);
+        const throwSet = new Set(pathThrows);
+        const logErrors = [];
+        const ctx = vm.createContext({
+            __fns: {},
+            path, JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Map, Set,
+            os: { homedir: () => homedir },
+            app: { isPackaged },
+            process: { platform, resourcesPath, env },
+            __dirname: '/app/src',
+            USER_DATA_DIR_NAME,
+            CLANG_FORMAT_RESULT_CACHE_LIMIT: CACHE_LIMIT,
+            clangFormatInFlight: new Map(),
+            clangFormatResultCache: new Map(),
+            logError: (...a) => { logErrors.push(a.map(String)); },
+            fs: {
+                existsSync: (candidate) => { fsCalls.exists.push(candidate); return existsSet.has(candidate); },
+                statSync: (candidate) => {
+                    fsCalls.stat.push(candidate);
+                    if (throwSet.has(candidate)) throw new Error(`ENOENT: no such file, '${candidate}'`);
+                    if (dirSet.has(candidate)) return { isFile: () => false };
+                    if (fileSet.has(candidate)) return { isFile: () => true };
+                    throw new Error(`ENOENT: no such file, '${candidate}'`);
+                }
+            }
+        });
+        vm.runInContext(RESOLVER_LETS.join('\n'), ctx);
+        const { fns, missing } = compileFuncs(mainSource, RESOLVER_NAMES, ctx);
+        // 锚点不能停在 'format-cpp-code' —— 参数默认值 request = {} 里那对花括号
+        // 会先被配平走，抽出来只剩个空函数体。这里吃到第一个 `) =>` 为止，
+        // 但不锁形参名（改名不算破坏行为）。
+        const handlerBody = callbackBody(mainSource, /ipcMain\.handle\('format-cpp-code'[\s\S]*?\)\s*=>/);
+        let handler;
+        if (handlerBody) {
+            vm.runInContext(`this.__fns.handler = async (_event, request = {}) => ${handlerBody};`, ctx);
+            handler = ctx.__fns.handler;
+        }
+        const formatter = {
+            calls: [],
+            // 把参与缓存键的字段都编进正文：缓存认错一项，断言立刻看出来
+            impl: (req) => Promise.resolve({
+                content: `[${req.content}|${req.filePath}|${req.startLine}|${req.styleRaw}]`
+            })
+        };
+        ctx.formatCodeWithClangFormat = (req) => {
+            formatter.calls.push({ ...req });
+            return formatter.impl(req);
+        };
+        const resetResolveCache = () => vm.runInContext(
+            'cachedClangFormatExecutablePath = undefined;\nclangFormatExecutablePathResolved = false;', ctx);
+        const inFlightSize = () => ctx.clangFormatInFlight.size;
+        const cacheSize = () => ctx.clangFormatResultCache.size;
+        return {
+            ctx, fns, missing, handler, handlerBody, fsCalls, logErrors, formatter,
+            resetResolveCache, inFlightSize, cacheSize
+        };
+    }
+
+    const HOME = '/home/tester';
+    const userRoot = () => path.join(HOME, USER_DATA_DIR_NAME, 'LSP');
+    const userExe = (exe = 'clang-format') => path.join(userRoot(), 'bin', exe);
+    const devRoot = (key = 'linux') => path.join('/app/src', '..', 'build', 'clang-format', key);
+    const devExe = (exe = 'clang-format') => path.join(devRoot(), 'bin', exe);
+    const pkgExe = (exe = 'clang-format') => path.join('/pkg/resources', 'clang-format', 'bin', exe);
+
+    {
+        const sb = makeMainFormatSandbox();
+        check('主进程函数与 IPC handler 抽取成功',
+            sb.missing.length === 0 && typeof sb.handler === 'function' &&
+            sb.handlerBody.length > 400 &&
+            RESOLVER_LETS.length === 2 && CACHE_LIMIT > 0,
+            JSON.stringify({ missing: sb.missing, handler: typeof sb.handler, body: sb.handlerBody.length, lets: RESOLVER_LETS.length, limit: CACHE_LIMIT }));
+        check('exe 名按平台走（win32 才带 .exe）',
+            sb.fns.getClangFormatExecutableName &&
+            makeMainFormatSandbox({ platform: 'win32' }).fns.getClangFormatExecutableName() === 'clang-format.exe' &&
+            sb.fns.getClangFormatExecutableName() === 'clang-format');
+
+        {
+            const dev = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
+            check('开发态以 build/clang-format/<平台键> 为基准目录并命中包内 clang-format',
+                dev.fns.resolveClangFormatRootFromBundle() === devRoot() &&
+                dev.fns.resolveClangFormatExecutablePath() === devExe(),
+                String(dev.fns.resolveClangFormatExecutablePath()));
+            const pkg = makeMainFormatSandbox({ isPackaged: true, exists: ['/pkg/resources/clang-format', pkgExe()] });
+            check('打包态改按 process.resourcesPath 解析（换成 __dirname 就等于装完即失效）',
+                pkg.fns.resolveClangFormatRootFromBundle() === path.join('/pkg/resources', 'clang-format') &&
+                pkg.fns.resolveClangFormatExecutablePath() === pkgExe(),
+                String(pkg.fns.resolveClangFormatExecutablePath()));
+            const win = makeMainFormatSandbox({
+                isPackaged: true, platform: 'win32',
+                exists: ['/pkg/resources/clang-format', pkgExe('clang-format.exe')]
+            });
+            check('打包 + win32 解析到 clang-format.exe',
+                win.fns.resolveClangFormatExecutablePath() === pkgExe('clang-format.exe'),
+                String(win.fns.resolveClangFormatExecutablePath()));
+        }
+
+        {
+            const order = makeMainFormatSandbox({ exists: [userRoot(), userExe()] });
+            check('包内目录缺失时回退到用户 LSP 目录（与 clangd 同级）',
+                order.fns.resolveClangFormatExecutablePath() === userExe(),
+                String(order.fns.resolveClangFormatExecutablePath()));
+            const both = makeMainFormatSandbox({
+                isPackaged: true,
+                exists: ['/pkg/resources/clang-format', pkgExe(), userRoot(), userExe()]
+            });
+            check('两处都有时用包内的那份，不再去看用户目录',
+                both.fns.resolveClangFormatExecutablePath() === pkgExe() &&
+                !both.fsCalls.exists.includes(userExe()),
+                JSON.stringify(both.fsCalls.exists));
+            const onPath = makeMainFormatSandbox({
+                env: { PATH: ['/opt/llvm/bin', '/usr/bin'].join(path.delimiter) },
+                pathFiles: ['/usr/bin/clang-format']
+            });
+            check('两处都没有时退到 PATH，逐条试到命中为止',
+                onPath.fns.resolveClangFormatExecutablePath() === '/usr/bin/clang-format' &&
+                JSON.stringify(onPath.fsCalls.stat) ===
+                    JSON.stringify(['/opt/llvm/bin/clang-format', '/usr/bin/clang-format']),
+                JSON.stringify(onPath.fsCalls.stat));
+            const quoted = makeMainFormatSandbox({
+                env: { PATH: `"${path.sep}opt${path.sep}my dir"${path.delimiter}/usr/bin` },
+                pathFiles: [`/opt/my dir${path.sep}clang-format`]
+            });
+            check('PATH 里带引号/空格的条目能正确还原',
+                quoted.fns.resolveClangFormatExecutablePath() === `/opt/my dir${path.sep}clang-format`,
+                String(quoted.fns.resolveClangFormatExecutablePath()));
+            const dirEntry = makeMainFormatSandbox({
+                env: { PATH: ['/first', '/second'].join(path.delimiter) },
+                pathDirs: ['/first/clang-format'],
+                pathFiles: ['/second/clang-format']
+            });
+            check('PATH 命中的是个目录时继续往下找（不当成可执行文件返回）',
+                dirEntry.fns.resolveClangFormatExecutablePath() === '/second/clang-format' &&
+                dirEntry.fsCalls.stat.length === 2,
+                JSON.stringify(dirEntry.fsCalls.stat));
+            const broken = makeMainFormatSandbox({
+                env: { PATH: ['/first', '', '/second'].join(path.delimiter) },
+                pathThrows: ['/first/clang-format'],
+                pathFiles: ['/second/clang-format']
+            });
+            check('PATH 条目 stat 抛错被吞掉、空条目不产出候选',
+                broken.fns.resolveClangFormatExecutablePath() === '/second/clang-format' &&
+                broken.fsCalls.stat.length === 2,
+                JSON.stringify(broken.fsCalls.stat));
+            const none = makeMainFormatSandbox({ env: { PATH: '/usr/bin' } });
+            check('三处都找不到时返回 null，而不是抛出或返回假路径',
+                none.fns.resolveClangFormatExecutablePath() === null,
+                String(none.fns.resolveClangFormatExecutablePath()));
+        }
+
+        {
+            const cached = makeMainFormatSandbox({
+                env: { PATH: '/opt/llvm/bin' }, pathFiles: ['/opt/llvm/bin/clang-format']
+            });
+            const first = cached.fns.resolveClangFormatExecutablePath();
+            const existsOnce = cached.fsCalls.exists.length;
+            const statOnce = cached.fsCalls.stat.length;
+            const second = cached.fns.resolveClangFormatExecutablePath();
+            check('解析结果按进程缓存：第二次不再遍历 PATH',
+                second === first && cached.fsCalls.exists.length === existsOnce &&
+                cached.fsCalls.stat.length === statOnce,
+                JSON.stringify({ first, existsOnce, statOnce, after: cached.fsCalls.stat.length }));
+            cached.resetResolveCache();
+            const third = cached.fns.resolveClangFormatExecutablePath();
+            check('缓存标记复位后确实会重新解析（说明上面那条是缓存在起作用）',
+                third === first && cached.fsCalls.stat.length === statOnce * 2,
+                JSON.stringify({ statNow: cached.fsCalls.stat.length }));
+        }
+
+        {
+            const bare = makeMainFormatSandbox();
+            check('rootDir 为空时直接判不可用（不拿 undefined 去拼路径）',
+                bare.fns.resolveClangFormatExecutable(null) === null &&
+                bare.fns.resolveClangFormatExecutable('') === null &&
+                bare.fsCalls.exists.length === 0);
+            const noBin = makeMainFormatSandbox({ exists: [devRoot()] });
+            check('基准目录在但 bin 里没有可执行文件时返回 null（不把目录本身当结果）',
+                noBin.fns.resolveClangFormatExecutable(devRoot()) === null &&
+                noBin.fsCalls.exists.includes(devExe()));
+        }
+
+        {
+            const pkg = makeMainFormatSandbox({ isPackaged: true });
+            const listed = String(pkg.fns.describeClangFormatSearchPaths()).split(' | ');
+            check('报错文案里的搜索路径就是解析真正走过的三处（打包态）',
+                listed.length === 3 && listed[0] === pkgExe() && listed[1] === userExe() && listed[2] === 'PATH',
+                JSON.stringify(listed));
+            const dev = makeMainFormatSandbox({ platform: 'darwin' });
+            const devListed = String(dev.fns.describeClangFormatSearchPaths()).split(' | ');
+            check('开发态的报错文案跟着 build/clang-format/<平台键> 走',
+                devListed[0] === path.join(devRoot('darwin'), 'bin', 'clang-format'),
+                JSON.stringify(devListed));
+        }
+    }
+
+    {
+        const REQ = {
+            content: 'int  main( ) { }',
+            filePath: '/proj/a.cpp',
+            style: 'Google',
+            styleRaw: '{ BasedOnStyle:  Google }',
+            fallbackStyle: 'LLVM',
+            startLine: 2,
+            endLine: 5
+        };
+        const missing = makeMainFormatSandbox({ env: { PATH: '' } });
+        const reply = await missing.handler(null, REQ);
+        const errText = String(reply && reply.error);
+        check('找不到 clang-format 时把搜索过的路径原样带回渲染层',
+            reply && reply.ok === false && errText.includes('clang-format not found') &&
+            errText.includes(devExe()) && errText.includes(userExe()) && errText.includes('PATH'),
+            errText);
+        check('缺失原因里不塞构建指令（用户装的是安装包，跑不了 pnpm）',
+            !/pnpm|prebuild/i.test(errText), errText);
+        check('缺失时完全不启动格式化进程',
+            missing.formatter.calls.length === 0);
+
+        const ok1 = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
+        const r1 = await ok1.handler(null, REQ);
+        check('格式化成功回 {ok:true, content}，正文原样透传',
+            r1 && r1.ok === true && typeof r1.content === 'string',
+            JSON.stringify(r1));
+        const sent = ok1.formatter.calls[0] || {};
+        check('请求字段逐个转给格式化服务，可执行文件用解析出来的那份',
+            sent.executablePath === devExe() && sent.content === REQ.content &&
+            sent.filePath === REQ.filePath && sent.style === REQ.style &&
+            sent.styleRaw === REQ.styleRaw && sent.fallbackStyle === REQ.fallbackStyle &&
+            sent.startLine === REQ.startLine && sent.endLine === REQ.endLine,
+            JSON.stringify(sent));
+
+        const served = (req) => `[${req.content}|${req.filePath}|${req.startLine}|${req.styleRaw}]`;
+        const r2 = await ok1.handler(null, REQ);
+        check('相同请求第二次命中结果缓存，不再 spawn clang-format',
+            r2.ok === true && r2.content === served(REQ) &&
+            ok1.formatter.calls.length === 1,
+            `calls=${ok1.formatter.calls.length} content=${r2.content}`);
+        const r3 = await ok1.handler(null, { ...REQ, content: 'int main(){}' });
+        check('正文不同就是不同缓存项（不能把上一份结果端出去）',
+            ok1.formatter.calls.length === 2 && r3.content === served({ ...REQ, content: 'int main(){}' }),
+            `calls=${ok1.formatter.calls.length} content=${r3.content}`);
+        const varied = [
+            await ok1.handler(null, { ...REQ, styleRaw: '{ IndentWidth: 4 }' }),
+            await ok1.handler(null, { ...REQ, startLine: 3 }),
+            await ok1.handler(null, { ...REQ, filePath: '/proj/b.cpp' })
+        ];
+        check('styleRaw / 行号 / 文件路径都参与缓存键',
+            ok1.formatter.calls.length === 5 && ok1.cacheSize() === 5 &&
+            new Set(varied.map((row) => row.content)).size === 3,
+            JSON.stringify({ calls: ok1.formatter.calls.length, size: ok1.cacheSize(), varied }));
+
+        const gate = (() => {
+            let resolve; let reject;
+            const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+            return { promise, resolve, reject };
+        })();
+        const inflight = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
+        inflight.formatter.impl = () => gate.promise;
+        const pA = inflight.handler(null, REQ);
+        const pB = inflight.handler(null, REQ);
+        check('同一请求并发只排队一次（在途合并）',
+            inflight.formatter.calls.length === 1 && inflight.inFlightSize() === 1,
+            `calls=${inflight.formatter.calls.length} inFlight=${inflight.inFlightSize()}`);
+        gate.resolve({ content: 'FORMATTED' });
+        const [rA, rB] = await Promise.all([pA, pB]);
+        check('合并的两路都拿到同一份结果',
+            rA.ok === true && rB.ok === true && rA.content === rB.content,
+            JSON.stringify({ rA, rB }));
+        check('在途表结算后必须清空（漏清就永远不再重算）',
+            inflight.inFlightSize() === 0, `inFlight=${inflight.inFlightSize()}`);
+
+        const boom = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
+        boom.formatter.impl = () => Promise.reject(new Error('clang-format 解析失败: line 3'));
+        const rb = await boom.handler(null, REQ);
+        check('格式化失败回 {ok:false, error} 并把原始原因带回去',
+            rb.ok === false && rb.error === 'clang-format 解析失败: line 3', JSON.stringify(rb));
+        check('失败被记进日志（渲染层只看返回值，主进程不留日志就查不到）',
+            boom.logErrors.length === 1 &&
+            boom.logErrors[0].join(' ').includes('clang-format 解析失败: line 3'),
+            JSON.stringify(boom.logErrors));
+        check('失败结果不进缓存，下一次会真重试',
+            boom.cacheSize() === 0 && boom.inFlightSize() === 0,
+            JSON.stringify({ cache: boom.cacheSize(), inFlight: boom.inFlightSize() }));
+        boom.formatter.impl = (req) => Promise.resolve({ content: served(req) });
+        const rb2 = await boom.handler(null, REQ);
+        check('重试成功（失败没有被当成结果缓存下来）',
+            rb2.ok === true && rb2.content === served(REQ), JSON.stringify(rb2));
+
+        {
+            const many = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
+            const bodies = [];
+            for (let i = 0; i < CACHE_LIMIT; i += 1) {
+                const one = await many.handler(null, { ...REQ, content: `c${i}` });
+                bodies.push(one.content);
+            }
+            check('灌满缓存：每条都拿到自己的正文，一条没多 spawn',
+                bodies.every((body, i) => body === served({ ...REQ, content: `c${i}` })) &&
+                many.formatter.calls.length === CACHE_LIMIT && many.cacheSize() === CACHE_LIMIT,
+                `size=${many.cacheSize()} calls=${many.formatter.calls.length}`);
+            await many.handler(null, { ...REQ, content: 'c-new' });
+            check('超上限时淘汰一条，且只多一次 spawn',
+                many.cacheSize() === CACHE_LIMIT && many.formatter.calls.length === CACHE_LIMIT + 1,
+                `size=${many.cacheSize()} calls=${many.formatter.calls.length}`);
+            const stillThere = await many.handler(null, { ...REQ, content: 'c-new' });
+            const top = await many.handler(null, { ...REQ, content: `c${CACHE_LIMIT - 1}` });
+            check('没被淘汰的条目继续命中，正文不会被串位',
+                many.formatter.calls.length === CACHE_LIMIT + 1 &&
+                stillThere.content === served({ ...REQ, content: 'c-new' }) &&
+                top.content === served({ ...REQ, content: `c${CACHE_LIMIT - 1}` }),
+                JSON.stringify({ stillThere, top }));
+        }
+        {
+            const bareReq = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
+            await bareReq.handler(null, { content: 'x' });
+            const got = bareReq.formatter.calls[0];
+            check('缺省请求也照转（未给的字段留空，不在这里瞎补默认值）',
+                bareReq.formatter.calls.length === 1 && got.content === 'x' &&
+                got.filePath === undefined && got.style === undefined &&
+                got.startLine === undefined && got.fallbackStyle === undefined,
+                JSON.stringify(got));
+            let bareErr = null;
+            let bareReply = null;
+            try { bareReply = await bareReq.handler(null, undefined); }
+            catch (e) { bareErr = e; }
+            check('request 整个缺失也不抛（IPC 返回值必须是对象）',
+                bareErr === null && bareReply && typeof bareReply.ok === 'boolean',
+                JSON.stringify({ err: bareErr && String(bareErr), reply: bareReply }));
+        }
+    }
 
     const installerSource = fs.readFileSync(path.join(root, 'installer.nsi'), 'utf8');
     check('installer ships clang-format into the resources dir the app resolves', installerSource.includes('File /r "dist\\win-unpacked\\resources\\clang-format\\*"') && installerSource.includes('SetOutPath "$INSTDIR\\resources\\clang-format"'));
