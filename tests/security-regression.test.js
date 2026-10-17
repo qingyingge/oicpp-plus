@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { classMethod } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -35,8 +36,8 @@ check('cloud compilation endpoint is no longer allowlisted', !mainSource.include
 // 锁死字面量会在无安全影响的纯重构上误报。
 {
     const compileManagerSource = read('src/renderer/js/compile-manager.js');
-    const method = /async cloudCompileCurrentFile\(\)\s*\{([\s\S]*?)\n    \}/.exec(compileManagerSource);
-    const body = method ? method[1] : '';
+    const body = classMethod(compileManagerSource, 'cloudCompileCurrentFile');
+    check('方法体抽取成功: cloudCompileCurrentFile', body.length > 0);
     check('cloud compiler method is disabled before reading source',
         /cloudCompile\.disabled/.test(body) && !/getActiveFile|readFile|currentContent|electronAPI/.test(body));
 }

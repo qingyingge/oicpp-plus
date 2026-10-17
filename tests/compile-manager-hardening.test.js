@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { classMethod } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -159,10 +160,10 @@ const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'en.json'),
 // ---------------------------------------------------------------------------
 
 {
-    const body = src.slice(src.indexOf('async checkFileExists('));
-    const seg = body.slice(0, body.indexOf('\n    }'));
+    const seg = classMethod(src, 'checkFileExists');
+    check('方法体抽取成功: checkFileExists', seg.length > 0);
     check('checkFileExists 的异常路径不再 return true',
-        !/catch \(error\)[\s\S]{0,200}?return true;/.test(seg),
+        !/catch\s*\(\s*error\s*\)[\s\S]{0,200}?return true;/.test(seg),
         seg.replace(/\s+/g, ' ').slice(0, 160));
     check('无 electronAPI 时返回 false 并说明原因',
         /按不存在处理[\s\S]{0,80}?return false;/.test(seg));
@@ -176,11 +177,13 @@ const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'en.json'),
 
 {
     // compileCurrentFile 里那处 content 是取而不用（报告 §六末条），
-    // 但自动保存路径（:1411）那处 content 确实被使用，不能一并删
-    const compileFn = src.slice(src.indexOf('async compileCurrentFile(') || 0);
-    const compileSeg = compileFn.slice(0, 20000);
+    // 但自动保存路径（:1411）那处 content 确实被使用，不能一并删。
+    // 用配平取整个方法体，而不是 indexOf + 固定 20000 字符窗口：
+    // 窗口既会漏掉方法尾部，也会在定位失败时（-1 || 0）退化成「扫全文件」。
+    const compileSeg = classMethod(src, 'compileCurrentFile');
+    check('方法体抽取成功: compileCurrentFile', compileSeg.length > 0);
     check('compileCurrentFile 不再取未使用的 content = currentEditor.getValue()',
-        !/const content = currentEditor\.getValue\(\);/.test(compileSeg.slice(0, 4000)));
+        !/const content = currentEditor\.getValue\(\);/.test(compileSeg));
     check('自动保存路径的 getValue 仍在（那里 content 确实被使用）',
         /\[自动保存\]/.test(src) && /const content = currentEditor\.getValue\(\);/.test(src));
 }

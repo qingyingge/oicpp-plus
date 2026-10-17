@@ -18,12 +18,11 @@ const tabsSrc = fs.readFileSync(
 // _normalizeLspUri: 统一解码，而不是只认 %3A
 // ---------------------------------------------------------------------------
 
-const normStart = monacoSrc.indexOf('    _normalizeLspUri(uri) {');
-const normEnd = monacoSrc.indexOf('\n    }', normStart);
-if (normStart < 0 || normEnd < 0) throw new Error('_normalizeLspUri not found');
-const normalizeSrc = monacoSrc.slice(normStart, normEnd);
-
-const norm = new Function('uri', normalizeSrc.slice(normalizeSrc.indexOf('{') + 1));
+// 定位靠括号配平，不锁 '    _normalizeLspUri(uri) {' 的缩进和 '\n    }' 的收尾位置。
+const { classMethod, toFn } = require('./fixtures/source-extract');
+const normalizeSrc = classMethod(monacoSrc, '_normalizeLspUri');
+check('方法体抽取成功: _normalizeLspUri', normalizeSrc.length > 0);
+const norm = toFn(normalizeSrc);
 
 check('%2B 被解码（clangd 按 RFC 编码 + 号）',
     norm('file:///D:/MX/U1904%2B%2B.cpp') === 'file:///D:/MX/U1904++.cpp',
@@ -51,23 +50,8 @@ check('非字符串输入不抛异常', norm(null) === null);
 // 挂一个假时钟观察实际排的延迟，model 出现后再放行回调，看诊断到底落没落。
 // ---------------------------------------------------------------------------
 
-// 抽方法体：行首四空格 + 方法名 + 参数列表，再括号/花括号配平。
-// 必须连签名一起截，剥了只剩方法体会被 new Function 当形参列表。
-function methodBody(name) {
-    const m = new RegExp(`^\\s{4}${name}\\s*\\(`, 'm').exec(monacoSrc);
-    if (!m) return '';
-    let i = monacoSrc.indexOf('(', m.index), p = 0;
-    for (; i < monacoSrc.length; i++) {
-        if (monacoSrc[i] === '(') p++;
-        else if (monacoSrc[i] === ')') { p--; if (p === 0) break; }
-    }
-    let d = 0;
-    for (i = monacoSrc.indexOf('{', i); i < monacoSrc.length; i++) {
-        if (monacoSrc[i] === '{') d++;
-        else if (monacoSrc[i] === '}') { d--; if (d === 0) return monacoSrc.slice(m.index, i + 1); }
-    }
-    return '';
-}
+// 方法体抽取见 tests/fixtures/source-extract.js
+const methodBody = (name) => classMethod(monacoSrc, name);
 
 const RETRY_METHODS = ['applyLspDiagnostics', '_scheduleLspDiagnosticsRetry'];
 for (const name of RETRY_METHODS) {
@@ -109,7 +93,7 @@ function makeHarness() {
         findModelByLspUri: (uri) => h.models.get(uri) || null
     };
     for (const name of RETRY_METHODS) {
-        manager[name] = new Function('return (function ' + methodBody(name) + ')')();
+        manager[name] = toFn(methodBody(name));
     }
     global.monaco.editor.setModelMarkers = (model, owner, markers) => h.writes.push({ model, owner, markers });
     global.logWarn = (...args) => h.warns.push(args.join(' '));
@@ -248,29 +232,7 @@ global.clearTimeout = realClearTimeout;
 // 改成真调这个方法，看它实际发了几次保存、标记了哪些 tab。
 // ---------------------------------------------------------------------------
 
-function tabsMethod(name) {
-    const m = new RegExp('^\\s{4}(?:async\\s+)?' + name + '\\s*\\(', 'm').exec(tabsSrc);
-    if (!m) return '';
-    let i = tabsSrc.indexOf('(', m.index), p = 0;
-    for (; i < tabsSrc.length; i++) {
-        if (tabsSrc[i] === '(') p++;
-        else if (tabsSrc[i] === ')') { p--; if (p === 0) break; }
-    }
-    let d = 0;
-    for (i = tabsSrc.indexOf('{', i); i < tabsSrc.length; i++) {
-        if (tabsSrc[i] === '{') d++;
-        else if (tabsSrc[i] === '}') { d--; if (d === 0) return tabsSrc.slice(m.index, i + 1); }
-    }
-    return '';
-}
-
-function toFn(src) {
-    if (!src) return undefined;
-    const s = src.replace(/^\s+/, '');
-    const isAsync = /^async\s+/.test(s);
-    return new Function('return (' + (isAsync ? 'async function ' : 'function ') +
-        s.replace(/^async\s+/, '') + ')')();
-}
+const tabsMethod = (name) => classMethod(tabsSrc, name);
 
 const saveAllSrc = tabsMethod('saveAllFiles');
 check('方法体抽取成功: saveAllFiles', saveAllSrc.length > 0);

@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const os = require('os');
+const { callbackBody, funcDecl } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -136,12 +137,14 @@ const normalizeExternalOpenUrl = extractFunction(mainSource, 'normalizeExternalO
 
 // --- A3: 语言代码白名单 ---
 {
-    const handler = mainSource.slice(
-        mainSource.indexOf("ipcMain.handle('get-language-file'"),
-        mainSource.indexOf("ipcMain.handle('get-available-languages'"));
+    // 原先是「两个 indexOf 之间」+「起点 + 1500 字符」的窗口：锚点一旦定位失败，
+    // slice(-1, x) / 空串会让否定断言真空通过，窗口也会随代码变长丢掉方法尾部。
+    // 改成按锚点配平：handler 取整个回调体，helper 取整个函数声明。
+    const handler = callbackBody(mainSource, /ipcMain\.handle\('get-language-file'/);
     // 语言代码/路径校验已抽到 loadLanguageFile，检查范围含该 helper
-    const helperStart = mainSource.indexOf('function loadLanguageFile(code)');
-    const helper = helperStart >= 0 ? mainSource.slice(helperStart, helperStart + 1500) : '';
+    const helper = funcDecl(mainSource, 'loadLanguageFile');
+    check('handler 抽取成功: get-language-file', handler.length > 0);
+    check('函数抽取成功: loadLanguageFile', helper.length > 0);
     const langCodeScope = handler + helper;
     check('get-language-file 校验语言代码字符集',
         /if \(!\/\^\[a-z0-9-\]\+\$\/i\.test\(code\)\)/.test(langCodeScope), '');

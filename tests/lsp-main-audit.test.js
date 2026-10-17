@@ -4,6 +4,13 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { EventEmitter } = require('events');
+const {
+    arrowProp: extractArrowProp,
+    classMethod: extractMethod,
+    funcDecl,
+    toFn,
+    toProviderFn: buildProviderFn
+} = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -285,11 +292,62 @@ class FakeProc extends EventEmitter {
 
     // M55: clangd 包准备走异步拷贝，不再 cpSync 阻塞主进程
     const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
-    const bundleFn = /function ensureClangdUserBundle\(\)[\s\S]*?\n\}/.exec(mainSource);
-    check('M55: ensureClangdUserBundle copies the bundle asynchronously',
-        !!bundleFn && bundleFn[0].includes('fs.promises.cp') && !bundleFn[0].includes('cpSync'));
-    check('M55: ensureClangdUserBundle de-duplicates concurrent calls',
-        !!bundleFn && bundleFn[0].includes('clangdBundlePromise'));
+    const bundleFn = funcDecl(mainSource, 'ensureClangdUserBundle');
+    check('函数体抽取成功: ensureClangdUserBundle', bundleFn.length > 0);
+    {
+        // 文本断言只能证明「源码里出现过 fs.promises.cp」，证不出运行期真走了异步分支。
+        // 这里把函数抽出来真调：cpSync 一旦被改回去、或并发合流被拆掉，都会当场红。
+        const seen = { cp: [], cpSync: [], mkdir: [] };
+        const saved = {
+            fs: global.fs, logInfo: global.logInfo, logWarn: global.logWarn,
+            getUserClangdRoot: global.getUserClangdRoot,
+            resolveClangdExecutable: global.resolveClangdExecutable,
+            resolveClangdRootFromBundle: global.resolveClangdRootFromBundle,
+            clangdBundlePromise: global.clangdBundlePromise
+        };
+        global.fs = {
+            promises: {
+                mkdir: async (p) => { seen.mkdir.push(p); },
+                cp: async (from, to) => { seen.cp.push([from, to]); }
+            },
+            cpSync: () => { seen.cpSync.push(1); }
+        };
+        // 拷贝完成前用户目录里没有 clangd，拷完才有 —— 复刻真实时序，
+        // 也顺带验证「已存在就短路」这条路径不会重复拷贝
+        global.getUserClangdRoot = () => '/user/clangd';
+        global.resolveClangdExecutable = () => (seen.cp.length ? '/user/clangd/bin/clangd' : null);
+        global.resolveClangdRootFromBundle = () => '/bundle/clangd';
+        global.logInfo = () => {};
+        global.logWarn = () => {};
+        global.clangdBundlePromise = null;
+        try {
+            const run = toFn(bundleFn);
+            check('M55: ensureClangdUserBundle 可重建为可调用函数', typeof run === 'function');
+            const firstCall = run();
+            // 同步阶段刚停在第一个 await 上，mkdir 都还没落定，比不得 cp 次数；
+            // 这里只要求「第二次调用没有再启动任何新的拷贝动作」
+            const mkdirAfterFirst = seen.mkdir.length;
+            const secondCall = run();
+            check('M55: 同步阶段不碰 cpSync（阻塞主进程那条路已断）', seen.cpSync.length === 0);
+            check('M55: 在途期间的第二次调用不再发起新的拷贝',
+                seen.mkdir.length === mkdirAfterFirst && seen.cp.length === 0,
+                `mkdir=${seen.mkdir.length} cp=${seen.cp.length}`);
+            const [first, second] = await Promise.all([firstCall, secondCall]);
+            check('M55: 两个调用者拿到同一个结果对象', first === second && first.ok === true,
+                JSON.stringify(first));
+            check('M55: 拷贝走的是 fs.promises.cp',
+                seen.cp.length === 1 && JSON.stringify(seen.cp[0]) === '["/bundle/clangd","/user/clangd"]' &&
+                seen.mkdir.length === 1, `cp=${JSON.stringify(seen.cp)}`);
+            const third = await run();
+            check('M55: 落定后再调用，靠「已存在」短路而不是再拷一次',
+                seen.cp.length === 1 && third.ok === true, `cp=${seen.cp.length}`);
+            check('M55: 在途句柄会被清空（否则失败后永远卡在旧 promise）',
+                global.clangdBundlePromise === null);
+        }
+        finally {
+            Object.assign(global, saved);
+        }
+    }
 
     // M52: fallbackFlags 死链路已删除，编译参数改由 compile_flags.txt 承载
     check('M52: fallbackFlags no longer leaves the main process',
@@ -313,44 +371,9 @@ class FakeProc extends EventEmitter {
     // -----------------------------------------------------------------------
     const managerSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'js', 'monaco-editor-manager.js'), 'utf8');
 
-    // 类方法：行首缩进 + 名字 + '('，先配平参数列表再配平方法体，连签名一起返回。
-    // 不能剥签名 —— new Function 会把剩下的方法体当形参列表。
-    function classMethod(name) {
-        const m = new RegExp('^\\s{4}(?:async\\s+)?' + name + '\\s*\\(', 'm').exec(managerSource);
-        if (!m) return '';
-        let i = managerSource.indexOf('(', m.index), p = 0;
-        for (; i < managerSource.length; i++) {
-            if (managerSource[i] === '(') p++;
-            else if (managerSource[i] === ')') { p--; if (p === 0) break; }
-        }
-        let d = 0;
-        for (i = managerSource.indexOf('{', i); i < managerSource.length; i++) {
-            if (managerSource[i] === '{') d++;
-            else if (managerSource[i] === '}') { d--; if (d === 0) return managerSource.slice(m.index, i + 1); }
-        }
-        return '';
-    }
-
-    // 对象字面量里的箭头属性：`name: async (args) => { ... }`
-    function arrowProp(name) {
-        const m = new RegExp(name + '\\s*:\\s*(async\\s*)?\\(', 'm').exec(managerSource);
-        if (!m) return '';
-        const isAsync = !!m[1];
-        let i = managerSource.indexOf('(', m.index), p = 0;
-        for (; i < managerSource.length; i++) {
-            if (managerSource[i] === '(') p++;
-            else if (managerSource[i] === ')') { p--; if (p === 0) break; }
-        }
-        const params = managerSource.slice(m.index + m[0].indexOf('('), i + 1);
-        const arrow = managerSource.indexOf('=>', i);
-        if (arrow < 0) return '';
-        let d = 0;
-        for (i = managerSource.indexOf('{', arrow); i < managerSource.length; i++) {
-            if (managerSource[i] === '{') d++;
-            else if (managerSource[i] === '}') { d--; if (d === 0) return { params, body: managerSource.slice(managerSource.indexOf('{', arrow), i + 1), isAsync }; }
-        }
-        return '';
-    }
+    // 抽取与重建一律走 tests/fixtures/source-extract.js
+    const classMethod = (name) => extractMethod(managerSource, name);
+    const arrowProp = (name) => extractArrowProp(managerSource, name) || '';
 
     const ensureLspReadySrc = classMethod('ensureLspReady');
     const sendLspDidChangeSrc = classMethod('sendLspDidChange');
@@ -359,25 +382,14 @@ class FakeProc extends EventEmitter {
     check('方法体抽取成功: ensureLspReady', ensureLspReadySrc.length > 0);
     check('方法体抽取成功: sendLspDidChange', sendLspDidChangeSrc.length > 0);
     check('方法体抽取成功: buildMinimalFormatEdits', buildMinimalSrc.length > 0);
-    check('箭头属性抽取成功: provideDocumentRangeFormattingEdits', !!rangeProvider && rangeProvider.isAsync === true);
+    check('箭头属性抽取成功: provideDocumentRangeFormattingEdits', rangeProvider.isAsync === true);
 
-    // classMethod 连签名带行首缩进一起截，async 关键字也在里面，
-    // 所以前缀必须是 `async function`，否则拼出 async function async name() {}
-    function toFn(methodSrc) {
-        if (!methodSrc) return undefined;
-        const src = methodSrc.replace(/^\s+/, '');
-        const isAsync = /^async\s+/.test(src);
-        return new Function('return (' + (isAsync ? 'async function ' : 'function ') +
-            src.replace(/^async\s+/, '') + ')')();
-    }
     check('toFn 能把抽出的方法还原成可调用函数',
         typeof toFn(ensureLspReadySrc) === 'function' && typeof toFn(sendLspDidChangeSrc) === 'function');
 
-    // 抽出来的是箭头函数，箭头函数的 this 是词法绑定的，.call(self) 改不了它。
-    // 用同样的参数表和函数体重建成 async function 表达式，this 才变成动态绑定。
-    function toProviderFn() {
-        return new Function('return (async function ' + rangeProvider.params + ' ' + rangeProvider.body + ')')();
-    }
+    // 抽出来的是箭头函数，箭头函数的 this 是词法绑定的，.call(self) 改不了它，
+    // 必须重建成 async function 表达式，this 才变成动态绑定。
+    const toProviderFn = () => buildProviderFn(rangeProvider);
 
     // new Function 的作用链终止于全局，模块级常量在函数里不可见，
     // 只能按值取出来再挂上去。取的是数值本身，与源码排版无关。
@@ -670,13 +682,75 @@ class FakeProc extends EventEmitter {
     delete global.LSP_START_RETRY_COOLDOWN_MS;
 
     // L36: clang-format 可执行路径只解析一次，同参数请求合并/命中缓存
-    const formatPathFn = /function resolveClangFormatExecutablePath\(\) \{[\s\S]*?\n\}/.exec(mainSource);
-    check('L36: clang-format executable path resolution is cached',
-        !!formatPathFn &&
-        formatPathFn[0].includes('clangFormatExecutablePathResolved') &&
-        formatPathFn[0].includes('findClangFormatExecutableOnPath()') &&
-        !formatPathFn[0].includes('const exeName'),
-        formatPathFn ? formatPathFn[0].split('\n').length + ' lines' : 'not found');
+    const formatPathFn = funcDecl(mainSource, 'resolveClangFormatExecutablePath');
+    check('函数体抽取成功: resolveClangFormatExecutablePath', formatPathFn.length > 0);
+    {
+        // 「只解析一次」是运行期契约，`includes('clangFormatExecutablePathResolved')`
+        // 挡不住「读了标志但忘了置位」这种变异 —— 真调两次才看得出来。
+        const seen = { resolve: 0, fromBundle: 0, onPath: 0 };
+        const saved = {
+            clangFormatExecutablePathResolved: global.clangFormatExecutablePathResolved,
+            cachedClangFormatExecutablePath: global.cachedClangFormatExecutablePath,
+            resolveClangFormatExecutable: global.resolveClangFormatExecutable,
+            resolveClangFormatRootFromBundle: global.resolveClangFormatRootFromBundle,
+            getUserClangdRoot: global.getUserClangdRoot,
+            findClangFormatExecutableOnPath: global.findClangFormatExecutableOnPath
+        };
+        global.clangFormatExecutablePathResolved = false;
+        global.cachedClangFormatExecutablePath = null;
+        global.clangFormatPathProbe = { bundleFail: false, userFail: false };
+        global.resolveClangFormatRootFromBundle = () => { seen.fromBundle++; return '/bundle'; };
+        global.getUserClangdRoot = () => '/user/clangd';
+        global.findClangFormatExecutableOnPath = () => { seen.onPath++; return '/usr/bin/clang-format'; };
+        global.resolveClangFormatExecutable = (root) => {
+            seen.resolve++;
+            if (root === '/bundle' && global.clangFormatPathProbe.bundleFail) return null;
+            if (root === '/user/clangd' && global.clangFormatPathProbe.userFail) return null;
+            return root === '/bundle' ? '/bin/clang-format' : `${root}/bin/clang-format`;
+        };
+        try {
+            const run = toFn(formatPathFn);
+            const resetCache = () => {
+                global.clangFormatExecutablePathResolved = false;
+                global.cachedClangFormatExecutablePath = null;
+                seen.resolve = seen.fromBundle = seen.onPath = 0;
+            };
+            const first = run();
+            const second = run();
+            const third = run();
+            check('L36: 三次调用只解析一次',
+                seen.resolve === 1 && seen.fromBundle === 1 && first === second && second === third,
+                `resolve=${seen.resolve} fromBundle=${seen.fromBundle}`);
+            check('L36: 解析过就置位，命中缓存走的是同一条路径',
+                global.clangFormatExecutablePathResolved === true &&
+                global.cachedClangFormatExecutablePath === '/bin/clang-format',
+                String(global.clangFormatExecutablePathResolved));
+            // 顺序契约：打包根 → 用户目录 → PATH，前一档命中就不许再往下探
+            resetCache();
+            global.clangFormatPathProbe.userFail = true;
+            check('L36: 打包根命中时不去翻用户目录和 PATH',
+                run() === '/bin/clang-format' && seen.fromBundle === 1 && seen.onPath === 0,
+                `fromBundle=${seen.fromBundle} onPath=${seen.onPath}`);
+            resetCache();
+            global.clangFormatPathProbe.bundleFail = true;
+            global.clangFormatPathProbe.userFail = false;
+            check('L36: 打包根解析失败才退到用户目录',
+                run() === '/user/clangd/bin/clang-format' && seen.onPath === 0,
+                `onPath=${seen.onPath}`);
+            resetCache();
+            global.clangFormatPathProbe.userFail = true;
+            check('L36: 两档都失败才落到 PATH 查找',
+                run() === '/usr/bin/clang-format' && seen.onPath === 1,
+                `onPath=${seen.onPath}`);
+            check('L36: 不再用局部 exeName 变量中转（历史形态回归）',
+                !formatPathFn.includes('const exeName'),
+                formatPathFn.split('\n').length + ' lines');
+        }
+        finally {
+            delete global.clangFormatPathProbe;
+            Object.assign(global, saved);
+        }
+    }
     check('L36: identical format requests are merged and cached',
         mainSource.includes('clangFormatInFlight') && mainSource.includes('clangFormatResultCache') &&
         mainSource.includes('cacheClangFormatResult'));

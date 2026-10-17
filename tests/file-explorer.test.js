@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { classMethod } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -30,6 +31,10 @@ const whitelistBody = (name) => {
     const m = new RegExp(`${name}[^=]*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`).exec(preloadSource);
     return m ? m[1] : '';
 };
+// 三个名单都得真的抽到，否则下面的否定断言会在空串上真空通过
+for (const name of ['ALLOWED_SEND_CHANNELS', 'ALLOWED_EVENT_CHANNELS', 'ALLOWED_INVOKE_CHANNELS']) {
+    check(`白名单抽取成功: ${name}`, whitelistBody(name).length > 0);
+}
 check('P6 preload no longer whitelists the removed read-directory send/event channels',
     !whitelistBody('ALLOWED_SEND_CHANNELS').includes('read-directory') &&
     !whitelistBody('ALLOWED_EVENT_CHANNELS').includes('directory-read') &&
@@ -108,9 +113,13 @@ vm.runInNewContext(`${explorerSource.slice(classStart, classEnd)}\nthis.__FileEx
         `calls=${readDirectoryCalls}`);
 
     // 渲染层不得再退回 send + 事件回传那套路径
-    const readBlock = /_readDirectory\(dirPath\) \{[\s\S]*?\n    \}/.exec(explorerSource);
+    const readBlock = classMethod(explorerSource, '_readDirectory');
+    check('方法体抽取成功: _readDirectory', readBlock.length > 0);
+    // 只锁语义：走 electronAPI.readDirectory（点号或中括号访问都算），且不再碰 electronIPC。
+    // 锁死 `electronAPI.readDirectory` 字面量会在 tsc emit 把点号改写成中括号时误报。
     check('P6 _readDirectory has a single invoke-based path',
-        !!readBlock && !readBlock[0].includes('electronIPC') && readBlock[0].includes('electronAPI.readDirectory'));
+        !readBlock.includes('electronIPC') && /electronAPI\s*(?:\?\.|\.|\[\s*['"])readDirectory/.test(readBlock),
+        readBlock.replace(/\s+/g, ' ').slice(0, 80));
 
     console.log(`file-explorer regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
     process.exit(failures ? 1 : 0);

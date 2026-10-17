@@ -9,6 +9,7 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
+const { callbackBody } = require('./fixtures/source-extract');
 
 const root = path.resolve(__dirname, '..');
 let failures = 0;
@@ -207,12 +208,14 @@ const runEngineOnce = async (Ctor, progressCount) => {
     }
 
     check('check-file-exists 不把权限类错误当成不存在', () => {
-        const m = /ipcMain\.handle\('check-file-exists'[\s\S]{0,1200}?\n    \}\);/.exec(mainSrc);
-        assert.ok(m, '未找到 check-file-exists handler');
-        assert.ok(/error\?\.code !== 'ENOENT'/.test(m[0]),
+        // 原先用 `{0,1200}?\n    });` 划窗口：既锁收尾括号的缩进与 `);` 排版，
+        // 又会在 handler 变长时静默截断。改成按锚点配平花括号取整个回调体。
+        const body = callbackBody(mainSrc, /ipcMain\.handle\('check-file-exists'/);
+        assert.ok(body.length > 0, '未找到 check-file-exists handler');
+        assert.ok(/error\?\.code !== 'ENOENT'/.test(body),
             '必须按 errno 分流：EACCES/ENAMETOOLONG/EINVAL 会被吞成 false');
         // 只看代码行，注释里提到 existsSync 不算
-        const code = m[0].split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+        const code = body.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
         assert.ok(!/existsSync/.test(code), 'existsSync 兜底已移除');
     });
 }
