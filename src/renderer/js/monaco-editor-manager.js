@@ -1142,7 +1142,7 @@ class MonacoEditorManager {
             tags: Array.isArray(item.tags) ? item.tags : (item.deprecated === true ? [monaco.languages.CompletionItemTag.Deprecated] : undefined),
             preselect: item.preselect === true ? true : undefined,
             commitCharacters: Array.isArray(item.commitCharacters) ? item.commitCharacters : undefined,
-            range: range || undefined,
+            range: (range || undefined),
             insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
             __oicppLspItem: item
         };
@@ -1365,7 +1365,7 @@ class MonacoEditorManager {
             label,
             tooltip: this.lspMarkupToMonaco(hint.tooltip),
             textEdits,
-            kind: monaco.languages.InlayHintKind?.[hint.kind] ?? hint.kind,
+            kind: (monaco.languages.InlayHintKind?.[hint.kind] ?? hint.kind),
             paddingLeft: hint.paddingLeft,
             paddingRight: hint.paddingRight,
             __oicppLspInlayHint: hint
@@ -1778,10 +1778,10 @@ class MonacoEditorManager {
         }
     }
     lspRangeToMonaco(range) {
-        return window.OicppLspUtils?.toMonacoRange(range, monaco) || null;
+        return (window.OicppLspUtils?.toMonacoRange(range, monaco) || null);
     }
     lspLocationToMonaco(location) {
-        return window.OicppLspUtils?.toMonacoLocation(location, monaco) || null;
+        return (window.OicppLspUtils?.toMonacoLocation(location, monaco) || null);
     }
     lspWorkspaceEditToMonaco(edit) {
         return window.OicppLspUtils?.toMonacoWorkspaceEdit(edit, monaco);
@@ -2195,7 +2195,7 @@ class MonacoEditorManager {
                             newName
                         }, token);
                         const workspaceEdit = this.lspWorkspaceEditToMonaco(result);
-                        return workspaceEdit || null;
+                        return (workspaceEdit || null);
                     }
                     catch (_) {
                         return null;
@@ -3090,14 +3090,14 @@ class MonacoEditorManager {
                 variable: '#f8f8f2'
             }
         };
-        return { ...(presets[themeKey] || presets.dark) };
+        return { ...(presets[themeKey] || presets['dark']) };
     }
     getDefaultSyntaxStyles() {
         const styles = {};
         this.getSyntaxTokenKeys().forEach((key) => {
             styles[key] = { bold: false, italic: false };
         });
-        styles.comment.italic = true;
+        styles['comment'].italic = true;
         return styles;
     }
     normalizeSyntaxColors(raw, theme = 'dark') {
@@ -3391,7 +3391,7 @@ class MonacoEditorManager {
                     // 语义 token 必须走 rules：Monaco 不读 semanticTokenColors 字段
                     ...this.buildSemanticTokenRules(normalized.colors, normalized.styles)
                 ],
-                colors: themePreset.colors || {}
+                colors: (themePreset.colors || {})
             });
             return customThemeName;
         }
@@ -3981,8 +3981,8 @@ class MonacoEditorManager {
                 actionItem.getAttribute('data-command') || '',
                 actionItem.getAttribute('data-action') || '',
                 actionItem.getAttribute('id') || '',
-                actionItem.dataset?.command || '',
-                actionItem.dataset?.action || ''
+                actionItem.dataset?.['command'] || '',
+                actionItem.dataset?.['action'] || ''
             ].join(' ').toLowerCase();
             if (commandId.includes('clipboardpasteaction') || /\bpaste\b/.test(commandId)) {
                 return true;
@@ -4145,7 +4145,7 @@ class MonacoEditorManager {
         }
         const defaultArea = document.querySelector('.editor-area');
         if (defaultArea instanceof HTMLElement) {
-            const defaultId = defaultArea.dataset.groupId || 'group-1';
+            const defaultId = defaultArea.dataset['groupId'] || 'group-1';
             this.groupContainers.set(defaultId, defaultArea);
             if (!this.groupActiveTab.has(defaultId)) {
                 this.groupActiveTab.set(defaultId, null);
@@ -4304,8 +4304,8 @@ class MonacoEditorManager {
             containers.forEach(c => c.style.display = 'none');
             const monacoContainer = document.createElement('div');
             monacoContainer.className = 'monaco-editor-container';
-            monacoContainer.dataset.tabId = tabId; // 使用 tabId 关联容器
-            monacoContainer.dataset.groupId = groupId;
+            monacoContainer.dataset['tabId'] = tabId; // 使用 tabId 关联容器
+            monacoContainer.dataset['groupId'] = groupId;
             monacoContainer.style.width = '100%';
             monacoContainer.style.height = '100%';
             editorArea.appendChild(monacoContainer);
@@ -4488,7 +4488,7 @@ class MonacoEditorManager {
                 },
                 stickyScroll: { enabled: stickyScrollEnabled }
             });
-            this.updatePreprocessorLineDecorations(editor, unifiedPreprocessorColor, syntaxOverride.colors.preprocessor);
+            this.updatePreprocessorLineDecorations(editor, unifiedPreprocessorColor, syntaxOverride.colors['preprocessor']);
             try {
                 monaco.editor.setTheme(monacoTheme);
                 this.updateIndentGuideTone(monacoTheme);
@@ -5036,9 +5036,9 @@ class MonacoEditorManager {
                 const severity = sev === 'warning'
                     ? monaco.MarkerSeverity.Warning
                     : (sev === 'note' ? monaco.MarkerSeverity.Info : monaco.MarkerSeverity.Error);
-                const parsedLine = parseInt(d?.line || 1, 10);
+                const parsedLine = parseInt((d?.line || 1), 10);
                 const line = Math.min(lineCount, Math.max(1, Number.isFinite(parsedLine) ? parsedLine : 1));
-                const parsedColumn = parseInt(d?.column || 1, 10);
+                const parsedColumn = parseInt((d?.column || 1), 10);
                 const col = Math.max(1, Number.isFinite(parsedColumn) ? parsedColumn : 1);
                 if (severity === monaco.MarkerSeverity.Error) {
                     errorLines.add(line);
@@ -5191,6 +5191,7 @@ class MonacoEditorManager {
             : (diagnostic?.severity === 3
                 ? monaco.MarkerSeverity.Info
                 : (diagnostic?.severity === 4 ? monaco.MarkerSeverity.Hint : monaco.MarkerSeverity.Error));
+        //关联项里的空值只是跳过该条，运行期已由过滤器剔除
         const relatedInformation = Array.isArray(diagnostic?.relatedInformation)
             ? diagnostic.relatedInformation
                 .map((item) => {
@@ -5444,7 +5445,7 @@ class MonacoEditorManager {
                 const model = editor.getModel();
                 if (!model)
                     return;
-                const idx = editor.__breakpointDecos.findIndex(id => {
+                const idx = editor.__breakpointDecos.findIndex((id) => {
                     const r = model.getDecorationRange(id);
                     return r && r.startLineNumber === line;
                 });
@@ -5470,6 +5471,7 @@ class MonacoEditorManager {
                             options: {
                                 isWholeLine: true,
                                 glyphMarginClassName: 'breakpoint-glyph',
+                                //新版类型把边栏装饰改成了对象，运行期仍按旧写法传布尔值
                                 glyphMargin: true
                             }
                         }]);
@@ -5804,7 +5806,7 @@ class MonacoEditorManager {
         const editor = this.editors.get(tabId);
         if (editor) {
             try {
-                const model = editor.getModel ? editor.getModel() : null;
+                const model = (editor.getModel ? editor.getModel() : null);
                 if (model) {
                     this.closeLspDocument(model);
                 }
@@ -5866,8 +5868,8 @@ class MonacoEditorManager {
             editorArea.querySelectorAll('.monaco-editor-container').forEach((c) => (c.style.display = 'none'));
             const container = document.createElement('div');
             container.className = 'monaco-editor-container diff-editor-container';
-            container.dataset.tabId = tabId;
-            container.dataset.groupId = groupId;
+            container.dataset['tabId'] = tabId;
+            container.dataset['groupId'] = groupId;
             container.style.width = '100%';
             container.style.height = '100%';
             editorArea.appendChild(container);
@@ -5992,10 +5994,10 @@ class MonacoEditorManager {
     }
     updateSettings(settings) {
         if (settings && Object.prototype.hasOwnProperty.call(settings, 'syntaxColorsByTheme')) {
-            this.syntaxColorsByTheme = this.normalizeSyntaxColorsByTheme(settings.syntaxColorsByTheme);
+            this.syntaxColorsByTheme = this.normalizeSyntaxColorsByTheme(settings['syntaxColorsByTheme']);
         }
         if (settings && Object.prototype.hasOwnProperty.call(settings, 'syntaxFontStyles')) {
-            this.syntaxStyles = this.normalizeSyntaxStyles(settings.syntaxFontStyles);
+            this.syntaxStyles = this.normalizeSyntaxStyles(settings['syntaxFontStyles']);
         }
         this.updateFormatterSettings(settings);
         this.updateClangFormatSettings(settings);
@@ -6005,7 +6007,7 @@ class MonacoEditorManager {
             if (settings['fontSize'] !== undefined) {
                 const fontSize = parseInt(String(settings['fontSize']), 10);
                 if (!Number.isNaN(fontSize)) {
-                    updateOptions.fontSize = fontSize;
+                    updateOptions['fontSize'] = fontSize;
                     targetFontSize = fontSize;
                 }
             }
@@ -6020,44 +6022,44 @@ class MonacoEditorManager {
                 this.lineHeightSetting = !Number.isNaN(parsedLineHeight) && parsedLineHeight > 0 ? parsedLineHeight : 0;
             }
             if (targetFontSize !== null || settings['lineHeight'] !== undefined) {
-                updateOptions.lineHeight = this.getLineHeightValue(targetFontSize, this.lineHeightSetting);
+                updateOptions['lineHeight'] = this.getLineHeightValue(targetFontSize, this.lineHeightSetting);
             }
             if (settings['fontFamily']) {
                 if (window.fontDetector) {
-                    updateOptions.fontFamily = window.fontDetector.validateFont(String(settings['fontFamily']));
+                    updateOptions['fontFamily'] = window.fontDetector.validateFont(String(settings['fontFamily']));
                 }
                 else {
-                    updateOptions.fontFamily = String(settings['fontFamily']);
+                    updateOptions['fontFamily'] = String(settings['fontFamily']);
                 }
             }
             else if (settings['font']) {
                 if (window.fontDetector) {
-                    updateOptions.fontFamily = window.fontDetector.validateFont(String(settings['font']));
+                    updateOptions['fontFamily'] = window.fontDetector.validateFont(String(settings['font']));
                 }
                 else {
-                    updateOptions.fontFamily = String(settings['font']);
+                    updateOptions['fontFamily'] = String(settings['font']);
                 }
             }
             if (settings['tabSize'] !== undefined) {
                 const parsedTabSize = parseInt(String(settings['tabSize']), 10);
                 if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
-                    updateOptions.tabSize = parsedTabSize;
+                    updateOptions['tabSize'] = parsedTabSize;
                 }
             }
             if (settings['wordWrap'] !== undefined) {
-                updateOptions.wordWrap = settings['wordWrap'] ? 'on' : 'off';
+                updateOptions['wordWrap'] = settings['wordWrap'] ? 'on' : 'off';
             }
             if (settings['foldingEnabled'] !== undefined) {
-                updateOptions.folding = !!settings['foldingEnabled'];
+                updateOptions['folding'] = !!settings['foldingEnabled'];
             }
             if (settings['stickyScrollEnabled'] !== undefined) {
-                updateOptions.stickyScroll = { enabled: !!settings['stickyScrollEnabled'] };
+                updateOptions['stickyScroll'] = { enabled: !!settings['stickyScrollEnabled'] };
             }
             if (settings['fontLigaturesEnabled'] !== undefined) {
-                updateOptions.fontLigatures = !!settings['fontLigaturesEnabled'];
+                updateOptions['fontLigatures'] = !!settings['fontLigaturesEnabled'];
             }
             if (settings['fontLigaturesEnabled'] !== undefined) {
-                updateOptions.fontLigatures = !!settings['fontLigaturesEnabled'];
+                updateOptions['fontLigatures'] = !!settings['fontLigaturesEnabled'];
             }
             if (settings['syntaxCheckEnabled'] !== undefined) {
                 this.setSyntaxCheckEnabled(settings['syntaxCheckEnabled']);
@@ -6065,12 +6067,12 @@ class MonacoEditorManager {
             if (settings['enableAutoCompletion'] !== undefined) {
                 const enabled = settings['enableAutoCompletion'] !== false;
                 this._lspCompletionEnabled = enabled;
-                updateOptions.quickSuggestions = enabled ? true : false;
-                updateOptions.suggestOnTriggerCharacters = enabled ? true : false;
-                updateOptions.wordBasedSuggestions = enabled ? 'currentDocument' : 'off';
-                updateOptions.tabCompletion = enabled ? 'on' : 'off';
-                updateOptions.acceptSuggestionOnEnter = enabled ? 'on' : 'off';
-                updateOptions.parameterHints = { enabled };
+                updateOptions['quickSuggestions'] = enabled ? true : false;
+                updateOptions['suggestOnTriggerCharacters'] = enabled ? true : false;
+                updateOptions['wordBasedSuggestions'] = enabled ? 'currentDocument' : 'off';
+                updateOptions['tabCompletion'] = enabled ? 'on' : 'off';
+                updateOptions['acceptSuggestionOnEnter'] = enabled ? 'on' : 'off';
+                updateOptions['parameterHints'] = { enabled };
                 if (!enabled) {
                     this.disableEnhancedCompletionProviders();
                 }
@@ -6098,7 +6100,7 @@ class MonacoEditorManager {
             return;
         }
         if (Object.prototype.hasOwnProperty.call(settings, 'formatterIndentStyle')) {
-            const style = String(settings.formatterIndentStyle || 'editor').trim().toLowerCase();
+            const style = String(settings['formatterIndentStyle'] || 'editor').trim().toLowerCase();
             this.formatterIndentStyle = ['editor', 'spaces', 'tabs'].includes(style) ? style : 'editor';
         }
     }
@@ -6149,22 +6151,22 @@ class MonacoEditorManager {
             const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
             return matched || fallback;
         };
-        normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-        normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-        normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-        normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-        normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-        normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-        normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-        normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-        normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-        normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-        normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-        normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
+        normalized.BasedOnStyle = toEnum(raw['BasedOnStyle'], ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
+        normalized.IndentWidth = toInt(raw['IndentWidth'], defaults.IndentWidth);
+        normalized.TabWidth = toInt(raw['TabWidth'], normalized.IndentWidth);
+        normalized.UseTab = toEnum(raw['UseTab'], ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
+        normalized.ColumnLimit = toInt(raw['ColumnLimit'], defaults.ColumnLimit);
+        normalized.BreakBeforeBraces = toEnum(raw['BreakBeforeBraces'], ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
+        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw['AllowShortIfStatementsOnASingleLine'], ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
+        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw['AllowShortFunctionsOnASingleLine'], ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
+        normalized.IndentCaseLabels = toBool(raw['IndentCaseLabels'], defaults.IndentCaseLabels);
+        normalized.PointerAlignment = toEnum(raw['PointerAlignment'], ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
+        normalized.SpaceBeforeParens = toEnum(raw['SpaceBeforeParens'], ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
+        normalized.SortIncludes = toBool(raw['SortIncludes'], defaults.SortIncludes);
+        normalized.AlignConsecutiveAssignments = toBool(raw['AlignConsecutiveAssignments'], defaults.AlignConsecutiveAssignments);
+        normalized.AlignConsecutiveDeclarations = toBool(raw['AlignConsecutiveDeclarations'], defaults.AlignConsecutiveDeclarations);
         if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-            const legacyStyle = String(raw.formatterIndentStyle || '').trim().toLowerCase();
+            const legacyStyle = String(raw['formatterIndentStyle'] || '').trim().toLowerCase();
             if (legacyStyle === 'tabs') {
                 normalized.UseTab = 'Always';
             }
@@ -6182,15 +6184,15 @@ class MonacoEditorManager {
             return;
         }
         if (Object.prototype.hasOwnProperty.call(settings, 'clangFormatRaw')) {
-            this.clangFormatRaw = typeof settings.clangFormatRaw === 'string' ? settings.clangFormatRaw : '';
+            this.clangFormatRaw = typeof settings['clangFormatRaw'] === 'string' ? settings['clangFormatRaw'] : '';
         }
-        const source = settings.clangFormatStyle || settings.clangFormat || settings.clangFormatSettings || null;
+        const source = settings['clangFormatStyle'] || settings['clangFormat'] || settings['clangFormatSettings'] || null;
         if (source && typeof source === 'object') {
             this.clangFormatStyle = this.normalizeClangFormatStyle(source);
             return;
         }
         if (Object.prototype.hasOwnProperty.call(settings, 'formatterIndentStyle')) {
-            const legacyStyle = String(settings.formatterIndentStyle || '').trim().toLowerCase();
+            const legacyStyle = String(settings['formatterIndentStyle'] || '').trim().toLowerCase();
             this.clangFormatStyle = this.normalizeClangFormatStyle({
                 ...this.getDefaultClangFormatStyle(),
                 UseTab: legacyStyle === 'tabs' ? 'Always' : 'Never'
@@ -6354,7 +6356,7 @@ class MonacoEditorManager {
                 if (settings['fontSize'] !== undefined) {
                     const fontSize = parseInt(String(settings['fontSize']), 10);
                     if (!Number.isNaN(fontSize)) {
-                        updateOptions.fontSize = fontSize;
+                        updateOptions['fontSize'] = fontSize;
                         targetFontSize = fontSize;
                     }
                 }
@@ -6369,34 +6371,34 @@ class MonacoEditorManager {
                     this.lineHeightSetting = !Number.isNaN(parsedLineHeight) && parsedLineHeight > 0 ? parsedLineHeight : 0;
                 }
                 if (targetFontSize !== null || settings['lineHeight'] !== undefined) {
-                    updateOptions.lineHeight = this.getLineHeightValue(targetFontSize, this.lineHeightSetting);
+                    updateOptions['lineHeight'] = this.getLineHeightValue(targetFontSize, this.lineHeightSetting);
                 }
                 if (settings['fontFamily'] || settings['font']) {
                     const fontToValidate = settings['fontFamily'] || settings['font'];
                     if (window.fontDetector) {
-                        updateOptions.fontFamily = window.fontDetector.validateFont(String(fontToValidate));
+                        updateOptions['fontFamily'] = window.fontDetector.validateFont(String(fontToValidate));
                     }
                     else {
-                        updateOptions.fontFamily = String(fontToValidate);
+                        updateOptions['fontFamily'] = String(fontToValidate);
                     }
                 }
                 if (settings['tabSize'] !== undefined) {
                     const parsedTabSize = parseInt(String(settings['tabSize']), 10);
                     if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
-                        updateOptions.tabSize = parsedTabSize;
+                        updateOptions['tabSize'] = parsedTabSize;
                     }
                 }
                 if (settings['wordWrap'] !== undefined) {
-                    updateOptions.wordWrap = settings['wordWrap'] ? 'on' : 'off';
+                    updateOptions['wordWrap'] = settings['wordWrap'] ? 'on' : 'off';
                 }
                 if (settings['foldingEnabled'] !== undefined) {
-                    updateOptions.folding = !!settings['foldingEnabled'];
+                    updateOptions['folding'] = !!settings['foldingEnabled'];
                 }
                 if (settings['stickyScrollEnabled'] !== undefined) {
-                    updateOptions.stickyScroll = { enabled: !!settings['stickyScrollEnabled'] };
+                    updateOptions['stickyScroll'] = { enabled: !!settings['stickyScrollEnabled'] };
                 }
                 if (settings['fontLigaturesEnabled'] !== undefined) {
-                    updateOptions.fontLigatures = !!settings['fontLigaturesEnabled'];
+                    updateOptions['fontLigatures'] = !!settings['fontLigaturesEnabled'];
                 }
                 if (settings['syntaxCheckEnabled'] !== undefined) {
                     this.setSyntaxCheckEnabled(settings['syntaxCheckEnabled']);
@@ -6404,12 +6406,12 @@ class MonacoEditorManager {
                 if (settings['enableAutoCompletion'] !== undefined) {
                     const enabled = settings['enableAutoCompletion'] !== false;
                     this._lspCompletionEnabled = enabled;
-                    updateOptions.quickSuggestions = enabled ? true : false;
-                    updateOptions.suggestOnTriggerCharacters = enabled ? true : false;
-                    updateOptions.wordBasedSuggestions = enabled ? 'currentDocument' : 'off';
-                    updateOptions.tabCompletion = enabled ? 'on' : 'off';
-                    updateOptions.acceptSuggestionOnEnter = enabled ? 'on' : 'off';
-                    updateOptions.parameterHints = { enabled };
+                    updateOptions['quickSuggestions'] = enabled ? true : false;
+                    updateOptions['suggestOnTriggerCharacters'] = enabled ? true : false;
+                    updateOptions['wordBasedSuggestions'] = enabled ? 'currentDocument' : 'off';
+                    updateOptions['tabCompletion'] = enabled ? 'on' : 'off';
+                    updateOptions['acceptSuggestionOnEnter'] = enabled ? 'on' : 'off';
+                    updateOptions['parameterHints'] = { enabled };
                 }
                 try {
                     editor.updateOptions(updateOptions);
@@ -6449,7 +6451,7 @@ class MonacoEditorManager {
         }
         if ((settings['theme'] !== undefined || settings['syntaxColorsByTheme'] !== undefined || settings['syntaxFontStyles'] !== undefined || settings['syntaxColors'] !== undefined) && typeof monaco !== 'undefined' && monaco.editor) {
             const fallbackTheme = document?.body?.getAttribute('data-theme') || 'dark';
-            const selectedTheme = settings.theme !== undefined ? settings.theme : fallbackTheme;
+            const selectedTheme = settings['theme'] !== undefined ? settings['theme'] : fallbackTheme;
             const resolvedTheme = this.resolveMonacoTheme(selectedTheme, settings);
             try {
                 monaco.editor.setTheme(resolvedTheme);
@@ -6459,18 +6461,18 @@ class MonacoEditorManager {
                 logWarn('切换主题失败:', e);
             }
         }
-        if (settings && (settings.unifiedPreprocessorColor !== undefined
-            || settings.theme !== undefined
-            || settings.syntaxColorsByTheme !== undefined
-            || settings.syntaxColors !== undefined)) {
-            if (settings.unifiedPreprocessorColor !== undefined) {
-                this.unifiedPreprocessorColor = !!settings.unifiedPreprocessorColor;
+        if (settings && (settings['unifiedPreprocessorColor'] !== undefined
+            || settings['theme'] !== undefined
+            || settings['syntaxColorsByTheme'] !== undefined
+            || settings['syntaxColors'] !== undefined)) {
+            if (settings['unifiedPreprocessorColor'] !== undefined) {
+                this.unifiedPreprocessorColor = !!settings['unifiedPreprocessorColor'];
             }
-            const selectedTheme = settings.theme || document?.body?.getAttribute('data-theme') || 'dark';
+            const selectedTheme = settings['theme'] || document?.body?.getAttribute('data-theme') || 'dark';
             const syntaxOverride = this.getThemeSyntaxOverride(selectedTheme, settings);
             this.editors.forEach((value) => {
                 const editor = value?.getModifiedEditor ? value.getModifiedEditor() : value;
-                this.updatePreprocessorLineDecorations(editor, this.unifiedPreprocessorColor, syntaxOverride.colors.preprocessor);
+                this.updatePreprocessorLineDecorations(editor, this.unifiedPreprocessorColor, syntaxOverride.colors['preprocessor']);
             });
         }
     }
@@ -6530,7 +6532,7 @@ class MonacoEditorManager {
         this._lspChangePending.clear();
         this.clearAllLspDiagnostics();
         this.resetLspProviders();
-        logWarn('[LSP] clangd 已停止，将在下次请求时自动恢复', details.code ?? details.signal ?? '');
+        logWarn('[LSP] clangd 已停止，将在下次请求时自动恢复', details['code'] ?? details['signal'] ?? '');
     }
     resetLspProviders() {
         this.resetLspSemanticProviders();
@@ -6950,7 +6952,8 @@ class MonacoEditorManager {
             if (!funcs.length && !this.lspClient?._ready) {
                 return;
             }
-            let overlay = (document.getElementById('oicpp-func-picker'));
+            //面板是复用的单例节点，判空交给下面的 if (!overlay) 分支
+            let overlay = document.getElementById('oicpp-func-picker');
             if (!overlay) {
                 overlay = document.createElement('div');
                 overlay.id = 'oicpp-func-picker';
@@ -8322,7 +8325,7 @@ class MonacoEditorManager {
             });
             if (!result)
                 return [];
-            return Array.isArray(result) ? result.filter(Boolean) : [result];
+            return (Array.isArray(result) ? result.filter(Boolean) : [result]);
         }
         catch (_) {
             return [];
@@ -8414,7 +8417,7 @@ class MonacoEditorManager {
             }
             if (!pathStr)
                 return false;
-            const start = converted.range.start || {};
+            const start = (converted.range.start || {});
             const position = new monaco.Position(Number(start.lineNumber) || 1, Number(start.column) || 1);
             await this.openFileAtPosition(pathStr, position);
             return true;
@@ -8803,7 +8806,7 @@ class MonacoEditorManager {
             const entries = await this.readDirectorySafe(dirPath);
             if (!Array.isArray(entries) || !entries.length)
                 return [];
-            return entries.filter(item => item && item.type === 'folder' && typeof item.path === 'string').map(item => /** @type {string} */ (item.path));
+            return entries.filter(item => item && item.type === 'folder' && typeof item.path === 'string').map(item => item.path);
         }
         catch (_) {
             return [];
@@ -8982,11 +8985,11 @@ class MonacoEditorManager {
             try {
                 const remote = await window.electronAPI.getSettings();
                 if (remote && typeof remote === 'object') {
-                    if (!result.compilerPath && typeof remote.compilerPath === 'string') {
-                        result.compilerPath = remote.compilerPath;
+                    if (!result.compilerPath && typeof remote['compilerPath'] === 'string') {
+                        result.compilerPath = remote['compilerPath'];
                     }
-                    if (!result.compilerArgs && typeof remote.compilerArgs === 'string') {
-                        result.compilerArgs = remote.compilerArgs;
+                    if (!result.compilerArgs && typeof remote['compilerArgs'] === 'string') {
+                        result.compilerArgs = remote['compilerArgs'];
                     }
                 }
             }

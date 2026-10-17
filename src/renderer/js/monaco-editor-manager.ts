@@ -237,6 +237,12 @@ type IncludeResolveOptions = {
 
 // electronAPI.readDirectory 返回的目录项
 type FsEntry = { path?: string; name?: string; type?: string; ext?: string };
+
+// 语法配色表的读法。动态键仍走索引签名；要用点号读的槽得先把它声明成成员，
+// 因为 noPropertyAccessFromIndexSignature 只放行已声明的成员，否则只能改写成方括号，
+// 而方括号会一路带进 emit 产物，把运行期文本从 colors.keyword 变成 colors['keyword']。
+type SyntaxColorSlots = Record<string, string> & { keyword?: string };
+
 type OicppCodeEditor = monaco.editor.IStandaloneCodeEditor & {
     __oicppCtrlNavBound?: boolean;
     __oicppMarkerWidgetInstalled?: boolean;
@@ -3362,7 +3368,7 @@ export class MonacoEditorManager {
     }
 
     buildSyntaxColorRules(syntaxColors: Record<string, unknown> | null | undefined, syntaxStyles: Record<string, unknown> | null | undefined, theme = 'dark') {
-        const colors = this.normalizeSyntaxColors(syntaxColors, theme);
+        const colors: SyntaxColorSlots = this.normalizeSyntaxColors(syntaxColors, theme);
         const styles = this.normalizeSyntaxStyles(syntaxStyles);
         // 必须与 Monaco C++ 语言定义（monaco-editor/esm/vs/languages/definitions/cpp/cpp.js）
         // 的关键字表对齐：漏一个，同一处声明里两种颜色（auto 是 keyword 色、int 是
@@ -3396,7 +3402,7 @@ export class MonacoEditorManager {
         // 因为规则虽然命中，取的却是「类型」槽的颜色。
         const cppTypeKeywordRules = cppBuiltinTypeKeywords.map((keyword) => ({
             token: `keyword.${keyword}`,
-            foreground: this.toMonacoColorHex(colors['keyword']),
+            foreground: this.toMonacoColorHex(colors.keyword),
             ...(this.toMonacoFontStyle(styles.keyword) ? { fontStyle: this.toMonacoFontStyle(styles.keyword) } : {})
         }));
         return [
