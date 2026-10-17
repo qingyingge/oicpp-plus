@@ -5837,7 +5837,7 @@ function setupIPC() {
 
                 const effectiveExitCode = outputLimitExceeded ? (code ?? -3) : code;
                 const measuredTime = useTimeouts ? Math.max(0, Math.min(executionTime, effectiveTimeLimit + 100)) : Math.max(0, executionTime);
-                const timedOut = outputLimitExceeded ? false : (useTimeouts ? timeout : false);
+                const timedOut = (outputLimitExceeded || memoryLimitExceeded) ? false : (useTimeouts ? timeout : false);
 
                 const result = {
                     output: finalOutput,
