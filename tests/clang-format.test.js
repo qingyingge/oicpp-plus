@@ -68,6 +68,262 @@ function compileFuncs(source, names, ctx) {
     return { fns, missing };
 }
 
+// 下载器脚本正文：整份 require 头 + 配置段 + 各个函数，只要底部那句 `main().catch(...)`
+// 之前的部分 —— 别把脚本自己跑起来。锚点用「行首 main() 再 .catch」而不是某行内容，
+// 找不到锚点就返回 ''，由调用方断言抽取成功，避免切空之后所有断言真空通过。
+function extractDownloaderBlock(source) {
+    const stop = source.search(/^\s*main\s*\(\s*\)\s*\.\s*catch/m);
+    if (stop < 0) return '';
+    return source.slice(0, stop);
+}
+
+const DOWNLOADER_BINDINGS = [
+    'args', 'readArg', 'normalizePlatform', 'version', 'tag', 'repo', 'platform',
+    'architecture', 'usesIntelMacFallback', 'assetVersion', 'releaseTag', 'outputRoot',
+    'directUrl', 'expectedDigest', 'skipSslVerify', 'tempRoot', 'assetNames',
+    'ensureDir', 'run7z', 'extractFromZip', 'extractFromXz', 'findFile',
+    'getAssetName', 'selectReleaseAsset', 'main'
+];
+
+// scripts/download-clang-format.js 的行为沙箱：正文原样跑进 vm，require 全部换成记账桩，
+// argv / env / 平台 / 架构 / 虚拟文件树由用例喂进来。
+// 原来的文本守卫是 includes("'llvm/llvm-project'") && includes("'23.1.2'") ——
+// 这两个字符串在注释里出现也算命中；tag 拼错、intel-mac 回退条件写反、
+// 下载上限漏传、校验失败没清 staging，全都照样绿。跑起来才有数：
+// 版本号是算出来的哪个、7z 收到的参数、落盘改名顺序、失败时留下什么。
+function makeDownloaderSandbox(options = {}) {
+    const opts = options || {};
+    const PATH7ZA = '/opt/7zip-bin/7za';
+    const fileSet = new Set((opts.files || []).map((f) => path.resolve(f)));
+    const fsOps = [];
+    const resolve = (p) => path.resolve(String(p));
+    const dirPrefix = (p) => {
+        const r = resolve(p);
+        return r.endsWith(path.sep) ? r : r + path.sep;
+    };
+    const hasDir = (p) => {
+        const pre = dirPrefix(p);
+        for (const f of fileSet) {
+            if (f.startsWith(pre)) return true;
+        }
+        return false;
+    };
+    const fsStub = {
+        existsSync: (p) => fileSet.has(resolve(p)) || hasDir(p),
+        mkdirSync: (p) => { fsOps.push(`mkdir ${resolve(p)}`); },
+        readdirSync: (p) => {
+            const pre = dirPrefix(p);
+            const names = new Map();
+            for (const f of fileSet) {
+                if (!f.startsWith(pre)) continue;
+                const rest = f.slice(pre.length);
+                const cut = rest.indexOf(path.sep);
+                if (cut < 0) names.set(rest, false);
+                else names.set(rest.slice(0, cut), true);
+            }
+            return Array.from(names, ([name, isDir]) => ({ name, isDirectory: () => isDir }));
+        },
+        rmSync: (p) => {
+            const r = resolve(p);
+            const pre = dirPrefix(r);
+            for (const f of Array.from(fileSet)) {
+                if (f === r || f.startsWith(pre)) fileSet.delete(f);
+            }
+            fsOps.push(`rm ${r}`);
+        },
+        copyFileSync: (a, b) => {
+            fileSet.add(resolve(b));
+            fsOps.push(`copy ${resolve(a)} -> ${resolve(b)}`);
+        },
+        chmodSync: (p, mode) => { fsOps.push(`chmod ${resolve(p)} ${Number(mode).toString(8)}`); },
+        renameSync: (a, b) => {
+            const from = resolve(a);
+            const to = resolve(b);
+            for (const f of Array.from(fileSet)) {
+                if (f === from) { fileSet.delete(f); fileSet.add(to); } else if (f.startsWith(dirPrefix(from))) {
+                    fileSet.delete(f);
+                    fileSet.add(to + f.slice(from.length));
+                }
+            }
+            fsOps.push(`rename ${from} -> ${to}`);
+        }
+    };
+
+    const logs = { log: [], warn: [], error: [] };
+    const spawnCalls = [];
+    const syncCalls = [];
+    const extractCalls = [];
+    const requestJsonCalls = [];
+    const downloadCalls = [];
+    const push = (bucket, row) => { bucket.push(row.map(String)); };
+
+    const makeProc = (cmd, argsList) => {
+        const rec = { cmd: String(cmd), args: (argsList || []).map(String) };
+        spawnCalls.push(rec);
+        const proc = new EventEmitter();
+        proc.stdin = { write() {}, end() {}, on() {}, once() {}, emit() {} };
+        proc.stderr = { on() {} };
+        proc.stdout = { pipe(dest) { rec.pipedTo = dest; } };
+        if (rec.cmd === PATH7ZA && !rec.args.includes('-so')) {
+            const outArg = rec.args.find((a) => a.startsWith('-o'));
+            const extractTo = outArg ? outArg.slice(2) : '';
+            const includes = rec.args.filter((a) => a.startsWith('-ir!')).map((a) => a.slice(4));
+            extractCalls.push({ extractTo, includes, streaming: rec.args.includes('-ttar') });
+            fsOps.push(`extract ${path.resolve(extractTo)}`);
+            setImmediate(() => {
+                if (opts.omitExtracted) { proc.emit('close', opts.closeCode ?? 0); return; }
+                for (const name of opts.extractProduces || includes) {
+                    // 放进一层子目录，逼着 findFile 递归找 —— 真实 LLVM 包里正是这样
+                    fileSet.add(path.join(path.resolve(extractTo), 'llvm-project', name));
+                }
+                proc.emit('close', opts.closeCode ?? 0);
+            });
+        }
+        return proc;
+    };
+
+    const requireStub = (id) => {
+        if (id === 'fs') return fsStub;
+        if (id === 'path') return path;
+        if (id === './lib/release-downloader') {
+            const config = { calls: [] };
+            downloaderConfigs.push(config);
+            return {
+                createReleaseDownloader: (cfg) => {
+                    config.cfg = cfg;
+                    return {
+                        requestJson: async (url, token) => {
+                            requestJsonCalls.push({ url, token });
+                            if (opts.apiError) throw new Error(opts.apiError);
+                            return { assets: (opts.releaseAssets || []) };
+                        },
+                        ensureDownload: async (url, dest, token, digest) => {
+                            downloadCalls.push({ url, dest: path.resolve(String(dest)), token, digest });
+                            fsOps.push(`download ${path.resolve(String(dest))}`);
+                            fileSet.add(path.resolve(String(dest)));
+                            if (opts.downloadImpl) return opts.downloadImpl({ url, dest, token, digest });
+                            return { digestVerified: true };
+                        }
+                    };
+                }
+            };
+        }
+        if (id === 'child_process') {
+            return {
+                spawn: makeProc,
+                spawnSync: (cmd, argsList) => {
+                    const rec = { cmd: String(cmd), args: (argsList || []).map(String) };
+                    syncCalls.push(rec);
+                    if (rec.cmd === PATH7ZA) {
+                        if ((opts.spawnStatus ?? 0) !== 0) return { status: opts.spawnStatus, stdout: '', stderr: '' };
+                        const outArg = rec.args.find((a) => a.startsWith('-o'));
+                        const extractTo = outArg ? outArg.slice(2) : '';
+                        const includes = rec.args.filter((a) => a.startsWith('-ir!')).map((a) => a.slice(4));
+                        extractCalls.push({ extractTo, includes, streaming: false });
+                        fsOps.push(`extract ${path.resolve(extractTo)}`);
+                        if (!opts.omitExtracted) {
+                            for (const name of opts.extractProduces || includes) {
+                                fileSet.add(path.join(path.resolve(extractTo), 'llvm-project', name));
+                            }
+                        }
+                        return { status: 0, stdout: '', stderr: '' };
+                    }
+                    fsOps.push(`verify ${resolve(rec.cmd)}`);
+                    return {
+                        status: opts.versionStatus ?? 0,
+                        stdout: opts.versionStdout ?? 'clang-format version 23.1.2\n',
+                        stderr: opts.versionStderr ?? ''
+                    };
+                }
+            };
+        }
+        if (id === '7zip-bin') return { path7za: PATH7ZA };
+        throw new Error(`下载器沙箱里不该 require 这个模块: ${id}`);
+    };
+
+    const downloaderConfigs = [];
+    const ctx = vm.createContext({
+        path, JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp,
+        Promise, Map, Set, Buffer, EventEmitter,
+        process: {
+            argv: ['node', 'download-clang-format.js', ...(opts.argv || [])],
+            env: opts.env || {},
+            platform: opts.platform || 'linux',
+            arch: opts.arch || 'x64',
+            pid: opts.pid ?? 4242,
+            exit: (code) => { push(logs.error, [`process.exit(${code})`]); }
+        },
+        __dirname: opts.dirname || '/repo/scripts',
+        fs: fsStub,
+        require: requireStub,
+        console: {
+            log: (...a) => push(logs.log, a),
+            warn: (...a) => push(logs.warn, a),
+            error: (...a) => push(logs.error, a)
+        }
+    });
+    let runError = null;
+    try {
+        vm.runInContext(`${opts.block}\nthis.__dl = { ${DOWNLOADER_BINDINGS.join(', ')} };`, ctx);
+    } catch (e) {
+        runError = e;
+    }
+    const dl = runError ? {} : ctx.__dl;
+    const missing = DOWNLOADER_BINDINGS.filter((name) => dl[name] === undefined);
+    const call = (name, ...args) => (typeof dl[name] === 'function' ? dl[name](...args) : undefined);
+    return {
+        ctx, dl, missing, runError, logs, fsOps, spawnCalls, syncCalls, extractCalls,
+        requestJsonCalls, downloadCalls, downloaderConfigs, fileSet, call,
+        main: () => dl.main(),
+        has: (p) => fileSet.has(path.resolve(String(p))),
+        fsOpsText: () => fsOps.join('\n')
+    };
+}
+
+// installer.nsi 解析：先按 Section/SectionEnd 配对切段，再在段内跟着当前 SetOutPath
+// 归集 File / RMDir 指令。原来那两条守卫是两段硬编码字符串比对：
+// includes('SetOutPath "$INSTDIR\\resources\\clang-format"') —— 把 package.json 里
+// extraResources 的 to 改名（clang-format → llvm），安装脚本照样往 resources\clang-format
+// 装、主进程照样去 resources\llvm 找，打包完直接没有格式化器，而两条守卫全绿。
+// 解析成数据之后，安装目标 / 复制来源 / 卸载删除目标三处必须来自同一份推导。
+function nsiSections(source) {
+    const closed = [];
+    const stack = [];
+    for (const raw of source.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (/^Section\b/i.test(line)) { stack.push({ header: line, body: [] }); continue; }
+        if (/^SectionEnd\b/i.test(line)) { if (stack.length) closed.push(stack.pop()); continue; }
+        if (stack.length) stack[stack.length - 1].body.push(line);
+    }
+    return closed;
+}
+
+function nsiOps(body) {
+    const ops = [];
+    let outPath = '';
+    for (const line of body) {
+        if (line.startsWith(';') || line.startsWith('#')) continue;
+        const m = /^([A-Za-z]+)\b(.*)$/.exec(line);
+        if (!m) continue;
+        const kind = m[1];
+        const rest = m[2];
+        const quoted = Array.from(rest.matchAll(/"([^"]*)"/g), (q) => q[1]);
+        if (/^setoutpath$/i.test(kind)) {
+            if (quoted[0] !== undefined) outPath = quoted[0];
+            continue;
+        }
+        if (/^(file|rmdir|delete)$/i.test(kind)) {
+            ops.push({
+                kind: kind.toLowerCase(),
+                recursive: /(^|\s)\/r(\s|$)/i.test(rest),
+                outPath,
+                targets: quoted
+            });
+        }
+    }
+    return ops;
+}
+
 function makeFormatSandbox() {
     const registrations = [];
     const logCalls = { info: [], warn: [] };
@@ -943,8 +1199,9 @@ function makeModel(lines, state = {}) {
     }
 
     const installerSource = fs.readFileSync(path.join(root, 'installer.nsi'), 'utf8');
-    check('installer ships clang-format into the resources dir the app resolves', installerSource.includes('File /r "dist\\win-unpacked\\resources\\clang-format\\*"') && installerSource.includes('SetOutPath "$INSTDIR\\resources\\clang-format"'));
-    check('installer removes clang-format on uninstall', /RMDir \/r "\$INSTDIR\\resources\\clang-format"/.test(installerSource));
+
+    // 下面这几条是 consolepauser 的 C 源码字符串：那是拿去 gcc 编译的源文本，
+    // 本仓库跑不了编译器，只能按文本守。留在这里的理由写清楚，别再误当成可换的行为守卫。
 
     const pauserSource = fs.readFileSync(path.join(root, 'src', 'utils', 'consolepauser-source.js'), 'utf8');
     // H16: shell:false 下 libuv 会把参数内的 " 转义成 \"，cmd.exe 不认这种转义，
@@ -972,8 +1229,433 @@ function makeModel(lines, state = {}) {
     const packagedSources = ['win', 'mac', 'linux'].flatMap(platform => packageJson.build[platform].extraResources || []);
     check('standalone clang-format is packaged for every desktop platform', packagedSources.filter(item => item.to === 'clang-format').length === 3);
 
+    // ---- 下载器：把 scripts/download-clang-format.js 真跑起来 ----
+    // 原来是 downloaderSource.includes("'llvm/llvm-project'") && includes("'23.1.2'")：
+    // 字符串出现在注释里也算命中，tag 拼错、回退条件反了、上限漏传全都照样绿。
     const downloaderSource = fs.readFileSync(path.join(root, 'scripts', 'download-clang-format.js'), 'utf8');
-    check('clang-format comes from the official LLVM project', downloaderSource.includes("'llvm/llvm-project'") && downloaderSource.includes("'23.1.2'"));
+    const downloaderBlock = extractDownloaderBlock(downloaderSource);
+    {
+        const base = makeDownloaderSandbox({ block: downloaderBlock });
+        const d = base.dl;
+        check('下载器正文抽取成功（锚点失配就别再往下断言）',
+            downloaderBlock.length > 2000 && base.runError === null && base.missing.length === 0,
+            JSON.stringify({
+                len: downloaderBlock.length,
+                err: base.runError && String(base.runError.message),
+                missing: base.missing
+            }));
+        check('默认从官方 LLVM 仓库取 23.1.2，tag 按版本推',
+            d.repo === 'llvm/llvm-project' && d.version === '23.1.2' &&
+            d.tag === 'llvmorg-23.1.2' && d.releaseTag === 'llvmorg-23.1.2',
+            JSON.stringify({ repo: d.repo, version: d.version, tag: d.tag, releaseTag: d.releaseTag }));
+
+        {
+            const TABLE = [
+                ['version', 'CLANG_FORMAT_VERSION', 'version', '18.1.8', '20.1.0'],
+                ['tag', 'CLANG_FORMAT_TAG', 'tag', 'llvmorg-9.9.9', 'llvmorg-8.8.8'],
+                ['repo', 'CLANG_FORMAT_REPO', 'repo', 'someone/else', 'other/else'],
+                ['url', 'CLANG_FORMAT_DOWNLOAD_URL', 'directUrl', 'https://mirror/a.tar.xz', 'https://mirror/b.tar.xz'],
+                ['digest', 'CLANG_FORMAT_SHA256', 'expectedDigest', 'deadbeef', 'cafebabe'],
+                ['platform', 'OICPP_CLANG_FORMAT_PLATFORM', 'platform', 'linux', 'win32'],
+                ['arch', 'OICPP_CLANG_FORMAT_ARCH', 'architecture', 'arm64', 'x64'],
+                ['output', 'CLANG_FORMAT_OUTPUT', 'outputRoot', '/tmp/one', '/tmp/two']
+            ];
+            const bad = [];
+            for (const [flag, envName, binding, envValue, cliValue] of TABLE) {
+                const fromEnv = makeDownloaderSandbox({ block: downloaderBlock, env: { [envName]: envValue } }).dl[binding];
+                const fromArg = makeDownloaderSandbox({
+                    block: downloaderBlock,
+                    env: { [envName]: envValue },
+                    argv: [`--${flag}`, cliValue]
+                }).dl[binding];
+                const want = binding === 'outputRoot' ? path.resolve(envValue) : envValue;
+                const wantArg = binding === 'outputRoot' ? path.resolve(cliValue) : cliValue;
+                if (fromEnv !== want) bad.push(`${flag}:env=${fromEnv}`);
+                if (fromArg !== wantArg) bad.push(`${flag}:arg=${fromArg}`);
+            }
+            check('每个配置项都是「命令行参数 > 环境变量 > 内置默认」，两级都不能被吞',
+                bad.length === 0, bad.join(' '));
+            const defaults = [
+                ['version', d.version, '23.1.2'], ['tag', d.tag, 'llvmorg-23.1.2'],
+                ['repo', d.repo, 'llvm/llvm-project'], ['directUrl', d.directUrl, ''],
+                ['expectedDigest', d.expectedDigest, ''],
+                ['outputRoot', d.outputRoot, path.resolve('/repo/build/clang-format')],
+                ['tempRoot', d.tempRoot, path.resolve('/repo/build/clang-format/_download')]
+            ].filter(([name, got, want]) => got !== want);
+            check('什么都不给时落到内置默认（输出目录跟着脚本位置走，不是硬编码绝对路径）',
+                defaults.length === 0, JSON.stringify(defaults));
+            const dangling = makeDownloaderSandbox({ block: downloaderBlock, argv: ['--version'] }).dl;
+            const nearMiss = makeDownloaderSandbox({ block: downloaderBlock, argv: ['--versions', '1.2.3'] }).dl;
+            const firstWins = makeDownloaderSandbox({ block: downloaderBlock, argv: ['--version', '1.1.1', '--version', '2.2.2'] }).dl;
+            check('flag 取值只认整词、只认第一次出现，后面没跟值就退回默认',
+                dangling.version === '23.1.2' && nearMiss.version === '23.1.2' && firstWins.version === '1.1.1',
+                JSON.stringify({ dangling: dangling.version, nearMiss: nearMiss.version, firstWins: firstWins.version }));
+        }
+
+        {
+            const np = d.normalizePlatform;
+            const aliasOk = np('win') === 'win32' && np('Windows') === 'win32' &&
+                np('MAC') === 'darwin' && np('osx') === 'darwin' && np('macOS') === 'darwin' &&
+                np('Linux') === 'linux';
+            check('平台别名归一到 process.platform 的写法', aliasOk,
+                JSON.stringify(['win', 'Windows', 'MAC', 'osx', 'macOS', 'Linux'].map(np)));
+            check('空值回落当前平台，未知平台原样小写（别把 freebsd 悄悄当成 linux 下包）',
+                np('') === 'linux' && np(undefined) === 'linux' && np('FreeBSD') === 'freebsd',
+                JSON.stringify([np(''), np(undefined), np('FreeBSD')]));
+            const quoted = makeDownloaderSandbox({ block: downloaderBlock, argv: ['--arch', 'X64'] }).dl;
+            check('架构强制小写（大写 ARCH 环境变量在 CI 里很常见）',
+                quoted.architecture === 'x64' &&
+                makeDownloaderSandbox({ block: downloaderBlock, env: { OICPP_CLANG_FORMAT_ARCH: 'ARM64' } }).dl.architecture === 'arm64',
+                quoted.architecture);
+        }
+
+        {
+            const mac = (o = {}) => makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', ...o }).dl;
+            const fb = mac({ arch: 'x64' });
+            check('intel mac 换 19.1.7 那份（上游不再出 x86 macOS 包），资产名跟着换',
+                fb.usesIntelMacFallback === true && fb.assetVersion === '19.1.7' &&
+                fb.releaseTag === 'llvmorg-19.1.7' && fb.assetNames['darwin-x64'] === 'LLVM-19.1.7-macOS-x86_64.tar.xz',
+                JSON.stringify({ v: fb.assetVersion, tag: fb.releaseTag, name: fb.assetNames['darwin-x64'] }));
+            const byArg = mac({ arch: 'x64', argv: ['--version', '20.1.0'] });
+            const byEnv = mac({ arch: 'x64', env: { CLANG_FORMAT_VERSION: '20.1.0' } });
+            const arm = mac({ arch: 'arm64' });
+            const lin = makeDownloaderSandbox({ block: downloaderBlock, platform: 'linux', arch: 'x64' }).dl;
+            check('只要显式指定了版本（参数或环境变量）就停止回退，否则会下错版本还报成功',
+                byArg.usesIntelMacFallback === false && byArg.assetVersion === '20.1.0' &&
+                byEnv.usesIntelMacFallback === false && byEnv.assetVersion === '20.1.0',
+                JSON.stringify({ byArg: byArg.assetVersion, byEnv: byEnv.assetVersion }));
+            check('回退只针对 darwin+x64，arm64 mac 和 linux 不许被换版本',
+                arm.usesIntelMacFallback === false && arm.assetVersion === '23.1.2' &&
+                lin.usesIntelMacFallback === false && lin.assetVersion === '23.1.2',
+                JSON.stringify({ arm: arm.assetVersion, lin: lin.assetVersion }));
+        }
+
+        {
+            const want = {
+                'win32-x64': `clang+llvm-${d.assetVersion}-x86_64-pc-windows-msvc.tar.xz`,
+                'win32-arm64': `clang+llvm-${d.assetVersion}-aarch64-pc-windows-msvc.tar.xz`,
+                'darwin-x64': `LLVM-${d.assetVersion}-macOS-x86_64.tar.xz`,
+                'darwin-arm64': `LLVM-${d.assetVersion}-macOS-ARM64.tar.xz`,
+                'linux-x64': `LLVM-${d.assetVersion}-Linux-X64.tar.xz`,
+                'linux-arm64': `LLVM-${d.assetVersion}-Linux-ARM64.tar.xz`
+            };
+            const got = Object.keys(d.assetNames).sort();
+            const mismatched = Object.keys(want).filter((k) => d.assetNames[k] !== want[k]);
+            check('资产表恰好六个键、命名与上游一致，且都用当前版本',
+                JSON.stringify(got) === JSON.stringify(Object.keys(want).sort()) &&
+                mismatched.length === 0 &&
+                Object.values(d.assetNames).every((n) => n.includes(d.assetVersion) && n.endsWith('.tar.xz')),
+                JSON.stringify({ got, mismatched }));
+            const sb = makeDownloaderSandbox({ block: downloaderBlock, platform: 'win32' }).dl;
+            check('资产选择按 平台-架构 取键，win32 拿到 msvc 那份',
+                sb.getAssetName() === want['win32-x64'], String(sb.getAssetName()));
+            const bad = makeDownloaderSandbox({ block: downloaderBlock, platform: 'freebsd' });
+            let badErr = null;
+            try { bad.dl.getAssetName(); } catch (e) { badErr = e; }
+            check('没配过的平台直接报错并带上 平台-架构（不能悄悄下个别平台的包）',
+                badErr !== null && String(badErr.message) === 'Unsupported clang-format platform: freebsd-x64',
+                String(badErr && badErr.message));
+        }
+
+        {
+            const combos = [
+                [{}, false],
+                [{ NODE_ENV: 'development' }, false],
+                [{ OICPP_SKIP_SSL_VERIFY: '1' }, false],
+                [{ NODE_ENV: 'development', OICPP_SKIP_SSL_VERIFY: '1' }, true],
+                [{ NODE_ENV: 'development', OICPP_SKIP_SSL_VERIFY: '0' }, false],
+                [{ NODE_ENV: 'production', OICPP_SKIP_SSL_VERIFY: '1' }, false]
+            ];
+            const wrong = combos.filter(([env, want]) =>
+                makeDownloaderSandbox({ block: downloaderBlock, env }).dl.skipSslVerify !== want);
+            check('跳过证书校验要两个开关同时满足（少一个条件就是发布包里能关 TLS）',
+                wrong.length === 0, JSON.stringify(wrong.map(([, want]) => want)));
+            const cfg = base.downloaderConfigs[0].cfg;
+            check('下载上限 4GiB / 重定向 10 次 / label 与 UA 都真的传给了下载库',
+                cfg.label === 'clang-format' && cfg.userAgent === 'oicpp-clang-format-downloader' &&
+                cfg.maxBytes === 4 * 1024 * 1024 * 1024 && cfg.maxRedirects === 10 &&
+                cfg.skipSslVerify === false,
+                JSON.stringify(cfg));
+            check('开关打开时把 skipSslVerify 一起带给下载库',
+                makeDownloaderSandbox({
+                    block: downloaderBlock,
+                    env: { NODE_ENV: 'development', OICPP_SKIP_SSL_VERIFY: '1' }
+                }).downloaderConfigs[0].cfg.skipSslVerify === true);
+            check('digest 前缀大小写都剥掉并转小写',
+                makeDownloaderSandbox({ block: downloaderBlock, env: { CLANG_FORMAT_SHA256: 'sha256:DEADBEEF' } }).dl.expectedDigest === 'deadbeef' &&
+                makeDownloaderSandbox({ block: downloaderBlock, env: { CLANG_FORMAT_SHA256: 'DEADBEEF' } }).dl.expectedDigest === 'deadbeef',
+                makeDownloaderSandbox({ block: downloaderBlock, env: { CLANG_FORMAT_SHA256: 'sha256:DEADBEEF' } }).dl.expectedDigest);
+        }
+
+        {
+            const assets = [];
+            const api = makeDownloaderSandbox({ block: downloaderBlock, releaseAssets: assets, env: { GITHUB_TOKEN: 'ghp_x' } });
+            const name = api.dl.assetNames['linux-x64'];
+            assets.push({ name, browser_download_url: 'https://gh/api-asset', digest: 'sha256:BEEF' });
+            const gotAsset = await api.dl.selectReleaseAsset('ghp_x');
+            check('release 接口按 repo + tag 拼 URL，token 一起带上',
+                api.requestJsonCalls.length === 1 &&
+                api.requestJsonCalls[0].url === 'https://api.github.com/repos/llvm/llvm-project/releases/tags/llvmorg-23.1.2' &&
+                api.requestJsonCalls[0].token === 'ghp_x',
+                JSON.stringify(api.requestJsonCalls));
+            check('命中就用上游给的资产对象（自己拼 URL 等于绕过 release 表）',
+                gotAsset.browser_download_url === 'https://gh/api-asset' && gotAsset.name === name,
+                JSON.stringify(gotAsset));
+            await api.dl.selectReleaseAsset('');
+            check('没 token 时传 undefined，不传空串（库会把空串当有效凭据）',
+                api.requestJsonCalls[1].token === undefined, String(api.requestJsonCalls[1].token));
+
+            const off = makeDownloaderSandbox({ block: downloaderBlock, platform: 'win32', apiError: 'API rate limit exceeded' });
+            const winName = off.dl.assetNames['win32-x64'];
+            const fallbackAsset = await off.dl.selectReleaseAsset('');
+            check('API 挂了回落到官方直链，且资产名必须转义（clang+llvm 里的 + 会被解成空格）',
+                off.requestJsonCalls.length === 1 &&
+                off.requestJsonCalls[0].url === 'https://api.github.com/repos/llvm/llvm-project/releases/tags/llvmorg-23.1.2' &&
+                fallbackAsset.browser_download_url ===
+                    `https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.2/${encodeURIComponent(winName)}` &&
+                fallbackAsset.name === winName &&
+                off.logs.warn.join(' ').includes('API rate limit exceeded'),
+                JSON.stringify({ url: fallbackAsset.browser_download_url, warn: off.logs.warn }));
+
+            const macOff = makeDownloaderSandbox({
+                block: downloaderBlock,
+                platform: 'darwin',
+                arch: 'x64',
+                apiError: 'boom',
+                env: { CLANG_FORMAT_SHA256: 'sha256:BEEF' }
+            });
+            const macAsset = await macOff.dl.selectReleaseAsset('');
+            check('回落 URL 用的是生效 tag（intel mac 回退到 19.1.7 时不能用原 tag）',
+                macAsset.browser_download_url ===
+                    'https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/' +
+                    encodeURIComponent('LLVM-19.1.7-macOS-x86_64.tar.xz') &&
+                macAsset.name === 'LLVM-19.1.7-macOS-x86_64.tar.xz',
+                String(macAsset.browser_download_url));
+            check('回落时也要把 digest 带上，否则校验形同没有',
+                macAsset.digest === 'sha256:beef', String(macAsset.digest));
+
+            const miss = makeDownloaderSandbox({                block: downloaderBlock,
+                releaseAssets: [{ name: 'LLVM-some-other-thing.tar.xz', browser_download_url: 'https://gh/other' }]
+            });
+            const missAsset = await miss.dl.selectReleaseAsset('');
+            const missName = miss.dl.assetNames['linux-x64'];
+            check('release 表里没有目标资产时，警告要说清有哪些可选，仍然走官方直链',
+                missAsset.name === missName &&
+                missAsset.browser_download_url.endsWith(encodeURIComponent(missName)) &&
+                miss.logs.warn.join(' ').includes('LLVM-some-other-thing.tar.xz'),
+                JSON.stringify(miss.logs.warn));
+
+            const direct = makeDownloaderSandbox({
+                block: downloaderBlock,
+                argv: ['--url', 'https://mirror.internal/LLVM-23.1.2-Linux-X64.tar.xz', '--digest', 'sha256:ABCD']
+            });
+            const directAsset = await direct.dl.selectReleaseAsset('');
+            check('指定 --url 就完全不碰 API，digest 补上 sha256: 前缀交给下载库',
+                direct.requestJsonCalls.length === 0 &&
+                directAsset.browser_download_url === 'https://mirror.internal/LLVM-23.1.2-Linux-X64.tar.xz' &&
+                directAsset.digest === 'sha256:abcd',
+                JSON.stringify(directAsset));
+        }
+
+        {
+            function installRun(o = {}) {
+                const assets = [];
+                const sb = makeDownloaderSandbox({
+                    block: downloaderBlock,
+                    dirname: path.join(root, 'scripts'),
+                    releaseAssets: assets,
+                    pid: 4242,
+                    ...o
+                });
+                const key = `${sb.dl.platform}-${sb.dl.architecture}`;
+                const name = sb.dl.assetNames[key];
+                assets.push({
+                    name,
+                    browser_download_url: `https://up.example/${name}`,
+                    digest: o.assetDigest === undefined ? 'sha256:AAAA' : o.assetDigest
+                });
+                return { sb, name, out: String(sb.dl.outputRoot), key };
+            }
+
+            const run = installRun();
+            await run.sb.main();
+            const linuxRoot = path.join(run.out, 'linux');
+            const linuxBin = path.join(linuxRoot, 'bin', 'clang-format');
+            const linuxLicense = path.join(linuxRoot, 'LICENSE.TXT');
+            const staging = path.join(run.out, '.linux.staging-4242');
+            check('装完落在 build/clang-format/<平台>/bin/clang-format，并带 LICENSE.TXT',
+                run.sb.has(linuxBin) && run.sb.has(linuxLicense),
+                run.sb.fsOpsText());
+            check('下载落到临时目录里的资产同名文件，URL 用 release 给的那份',
+                run.sb.downloadCalls.length === 1 &&
+                run.sb.downloadCalls[0].dest === path.join(run.out, '_download', run.name) &&
+                run.sb.downloadCalls[0].url === `https://up.example/${run.name}`,
+                JSON.stringify(run.sb.downloadCalls));
+            {
+                const seq = run.sb.fsOps.join('\n');
+                const at = (needle) => seq.indexOf(needle);
+                const extractRoot = path.join(run.out, '_download', 'extract');
+                const order = [
+                    at(`download ${path.join(run.out, '_download', run.name)}`),
+                    at(`extract ${extractRoot}`),
+                    at(`-> ${path.join(staging, 'bin', 'clang-format')}`),
+                    at('verify'),
+                    at(`rm ${linuxRoot}`),
+                    at(`rename ${staging} -> ${linuxRoot}`)
+                ];
+                check('顺序是「解压到 staging → 跑 --version 校验 → 才删目标目录 → 原子改名」',
+                    order.every((i) => i >= 0) && order.every((i, k) => k === 0 || i > order[k - 1]),
+                    JSON.stringify({ order, seq }));
+            }
+            check('非 win32 给二进制补 0755',
+                run.sb.fsOpsText().includes(`chmod ${path.join(staging, 'bin', 'clang-format')} 755`),
+                run.sb.fsOpsText());
+            check('7z 只解 clang-format 与 LICENSE.TXT，走 -so | -si -ttar 两级管道',
+                run.sb.extractCalls.length === 1 &&
+                JSON.stringify(run.sb.extractCalls[0].includes) === JSON.stringify(['clang-format', 'LICENSE.TXT']) &&
+                run.sb.extractCalls[0].streaming === true,
+                JSON.stringify(run.sb.extractCalls));
+            check('默认用 release 表里的 digest（sha256: 前缀剥掉后交给校验）',
+                run.sb.downloadCalls[0].digest === 'AAAA', String(run.sb.downloadCalls[0].digest));
+
+            const winRun = installRun({ platform: 'win32' });
+            await winRun.sb.main();
+            check('win32 装 clang-format.exe 且不 chmod（Windows 没有这个语义）',
+                winRun.sb.has(path.join(winRun.out, 'win32', 'bin', 'clang-format.exe')) &&
+                winRun.sb.extractCalls[0].includes[0] === 'clang-format.exe' &&
+                !winRun.sb.fsOpsText().includes('chmod'),
+                JSON.stringify({ ops: winRun.sb.fsOps, extract: winRun.sb.extractCalls }));
+
+            const pinned = installRun({ env: { CLANG_FORMAT_SHA256: 'sha256:BEEFBEEF' } });
+            await pinned.sb.main();
+            check('自己指定的 digest 优先于 release 表里的（内网镜像没有可信 tag 时靠这个）',
+                pinned.sb.downloadCalls[0].digest === 'beefbeef', String(pinned.sb.downloadCalls[0].digest));
+
+            const halfDone = installRun({ files: [linuxBin] });
+            await halfDone.sb.main();
+            check('只有二进制没有 LICENSE 也要重装（缺许可证不能算已装好）',
+                halfDone.sb.downloadCalls.length === 1, String(halfDone.sb.downloadCalls.length));
+            const installed = installRun({ files: [linuxBin, linuxLicense] });
+            await installed.sb.main();
+            check('目标已存在就整个跳过：一次下载、一次解压、一次校验都不发',
+                installed.sb.downloadCalls.length === 0 && installed.sb.spawnCalls.length === 0 &&
+                installed.sb.syncCalls.length === 0 &&
+                installed.sb.logs.log.join(' ').includes('Target exists'),
+                JSON.stringify({ logs: installed.sb.logs.log }));
+
+            for (const [label, probe] of [
+                ['--version 退出码非零', { versionStatus: 1 }],
+                ['--version 输出不是 clang-format', { versionStdout: 'GNU indent, version 2.2.11' }]
+            ]) {
+                const broken = installRun(probe);
+                let err = null;
+                try { await broken.sb.main(); } catch (e) { err = e; }
+                check(`${label} → 报错、清掉 staging、目标目录一个字节没动`,
+                    err !== null && /not executable/.test(String(err.message)) &&
+                    broken.sb.fsOps.join('\n').includes(`rm ${staging}`) &&
+                    !broken.sb.fsOpsText().includes('rename') &&
+                    !broken.sb.has(linuxBin),
+                    JSON.stringify({ err: String(err && err.message), ops: broken.sb.fsOps }));
+            }
+
+            const noLicense = installRun({ extractProduces: ['clang-format'] });
+            let licenseErr = null;
+            try { await noLicense.sb.main(); } catch (e) { licenseErr = e; }
+            check('解压结果里没有 LICENSE.TXT 也要报错，不能只把二进制装上去',
+                licenseErr !== null && /Unable to locate LICENSE.TXT/.test(String(licenseErr.message)) &&
+                !noLicense.sb.has(linuxBin) && !noLicense.sb.fsOpsText().includes('rename'),
+                String(licenseErr && licenseErr.message));
+
+            const emptyExtract = installRun({ omitExtracted: true });
+            let locateErr = null;
+            try { await emptyExtract.sb.main(); } catch (e) { locateErr = e; }
+            check('解压结果里找不到 clang-format 就报错，别把半个目录改名上架',
+                locateErr !== null && /Unable to locate clang-format/.test(String(locateErr.message)) &&
+                !emptyExtract.sb.has(linuxBin) && !emptyExtract.sb.fsOpsText().includes('rename'),
+                String(locateErr && locateErr.message));
+
+            const failExtract = installRun({ closeCode: 1 });
+            let extractErr = null;
+            try { await failExtract.sb.main(); } catch (e) { extractErr = e; }
+            check('7z 解压非零退出必须报错，不能当成功继续装',
+                extractErr !== null && /Unable to extract clang-format/.test(String(extractErr.message)),
+                String(extractErr && extractErr.message));
+
+            {
+                const zipRun = installRun();
+                zipRun.sb.call('extractFromZip', '/tmp/LLVM.zip', '/tmp/out', 'clang-format');
+                const zipArgs = zipRun.sb.syncCalls[0] ? zipRun.sb.syncCalls[0].args : [];
+                check('zip 分支走单次 7z x，include 过滤同样只取二进制和许可证',
+                    zipArgs[0] === 'x' && zipArgs[1] === '/tmp/LLVM.zip' &&
+                    zipArgs.includes('-o/tmp/out') && zipArgs.includes('-y') &&
+                    zipArgs.includes('-ir!clang-format') && zipArgs.includes('-ir!LICENSE.TXT'),
+                    JSON.stringify(zipArgs));
+                const seven = installRun({ spawnStatus: 2 });
+                let sevenErr = null;
+                try { seven.sb.call('extractFromZip', '/tmp/a.zip', '/tmp/out', 'clang-format'); } catch (e) { sevenErr = e; }
+                check('7z 非零退出要抛错（否则后面 copyFileSync 拷的是空气）',
+                    sevenErr !== null && /7z failed/.test(String(sevenErr.message)),
+                    String(sevenErr && sevenErr.message));
+            }
+
+            {
+                const bfs = installRun({ files: ['/x/c/clang-format', '/x/a/b/clang-format'] });
+                check('findFile 逐层往下找，浅层的先命中（深层优先会跟着目录顺序漂）',
+                    bfs.sb.call('findFile', '/x', 'clang-format') === path.resolve('/x/c/clang-format'),
+                    String(bfs.sb.call('findFile', '/x', 'clang-format')));
+                check('找不到返回 null，不抛（调用方自己决定怎么报错）',
+                    bfs.sb.call('findFile', '/x', 'no-such-file') === null);
+            }
+
+            // ---- 打包链路交叉链接：下载器落点 → package.json → installer.nsi → 主进程解析 ----
+            const chainBad = [];
+            const RESOURCE_BY_PLATFORM = { win32: 'win', darwin: 'mac', linux: 'linux' };
+            for (const [key, buildName] of Object.entries(RESOURCE_BY_PLATFORM)) {
+                const one = installRun({ platform: key });
+                await one.sb.main();
+                const builtFrom = path.relative(root, path.join(one.out, key)).split(path.sep).join('/');
+                const exeName = key === 'win32' ? 'clang-format.exe' : 'clang-format';
+                const entry = (packageJson.build[buildName].extraResources || [])
+                    .find((item) => item.from === builtFrom);
+                if (!entry) chainBad.push(`${key}: 下载器写到 ${builtFrom}，package.json 里没有这份 from`);
+                else if (!one.sb.has(path.join(one.out, key, 'bin', exeName))) {
+                    chainBad.push(`${key}: 下载器没把二进制放进 package.json 期望的目录`);
+                }
+            }
+            check('三个平台的 extraResources.from 必须正好是下载器的落点（改一边就得同步另一边）',
+                chainBad.length === 0, chainBad.join(' | '));
+
+            const sections = nsiSections(installerSource);
+            const installSection = sections.find((s) => /SEC01/i.test(s.header));
+            const uninstallSection = sections.find((s) => /\bUninstall\b/i.test(s.header));
+            const installOps = installSection ? nsiOps(installSection.body) : [];
+            const uninstallOps = uninstallSection ? nsiOps(uninstallSection.body) : [];
+            const cfEntry = (packageJson.build.win.extraResources || [])
+                .find((item) => /clang-format/.test(String(item.from)));
+            const winUnpacked = path.posix.join(packageJson.build.directories.output, 'win-unpacked');
+            const wantSrc = `${winUnpacked.replace(/\//g, '\\')}\\resources\\${cfEntry ? cfEntry.to : ''}\\*`;
+            const wantDest = `$INSTDIR\\resources\\${cfEntry ? cfEntry.to : ''}`;
+            const fileOp = installOps.find((op) => op.kind === 'file' && op.targets[0] === wantSrc);
+            const rmdirOps = uninstallOps.filter((op) => op.kind === 'rmdir' && op.recursive);
+            check('安装段把 extraResources 那份目录整包复制到 $INSTDIR\\resources\\<to>（来源与目标都由 package.json 推导）',
+                sections.length >= 2 && !!installSection && !!uninstallSection && !!fileOp &&
+                fileOp && fileOp.recursive === true && fileOp.outPath === wantDest,
+                JSON.stringify({ wantSrc, wantDest, file: fileOp, ops: installOps.length }));
+            check('卸载删掉的目录必须与安装写入的完全一致（装了就删不干净会越攒越大）',
+                rmdirOps.some((op) => op.targets[0] === wantDest),
+                JSON.stringify(rmdirOps.map((op) => op.targets[0])));
+            const pkgRuntime = makeMainFormatSandbox({
+                isPackaged: true, exists: ['/pkg/resources/clang-format', pkgExe()]
+            });
+            const runtimeDir = path.basename(String(pkgRuntime.fns.resolveClangFormatRootFromBundle &&
+                pkgRuntime.fns.resolveClangFormatRootFromBundle()));
+            check('运行期打包态解析出的目录名，就是安装脚本写入的那个（两边都改了才算接上）',
+                runtimeDir === (cfEntry && cfEntry.to) && wantDest.endsWith(runtimeDir),
+                JSON.stringify({ runtimeDir, to: cfEntry && cfEntry.to }));
+            check('Windows 用 dir 目标出 win-unpacked 给 installer.nsi 取文件（不是 nsis target）',
+                packageJson.build.win.target === 'dir');
+        }
+    }
 
     console.log(`clang-format tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
     process.exitCode = failures ? 1 : 0;
