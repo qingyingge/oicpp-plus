@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, funcDecl, ifStatement, scalarConst, setMembers } = require('./fixtures/source-extract');
+const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, forStatement, funcDecl, ifStatement, scalarConst, setMembers } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -385,9 +385,236 @@ const miRows = (() => {
         return rows;
     })().catch((e) => [{ name: 'MI 命令守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
 })();
+// 对拍子进程的输出预算、停止响应与「唯一一套输出归一化」。
+// 原来三条守卫全在比字符串（includes('output_limit')、includes('function outputsEqual')、
+// 数 `if (!running) break;` 的个数）：把常量改名、把循环拆成两个函数，守卫就空了；
+// 真把预算判错、把 break 漏掉，守卫照样绿。
+// 现在抽真函数在 vm 里跑：喂数据看截断与杀进程，在 await 里翻 running 看循环停在哪。
+const workerRows = (() => {
+    const rows = [];
+    const push = (name, cond, extra = '') => rows.push({ name, cond, extra });
+    const budgetSrc = scalarConst(workerSource, 'MAX_WORKER_OUTPUT_BYTES');
+    const activeSrc = scalarConst(workerSource, 'activeProcesses');
+    const spawnSrc = funcDecl(workerSource, 'spawnProcess');
+    const normSrc = funcDecl(workerSource, 'normalizeOutput');
+    const equalSrc = funcDecl(workerSource, 'outputsEqual');
+    const loopSrc = forStatement(workerSource, /^\s*for \(let i = startIdx; i < startIdx \+ count && running;/m);
+    const stopSrc = ifStatement(workerSource, /^\s*else if \(msg\.type === 'stop'\)/m).replace(/^else\s+/, '');
+    const parts = { budgetSrc, activeSrc, spawnSrc, normSrc, equalSrc, loopSrc, stopSrc };
+    push('worker 关键片段抽取成功', Object.values(parts).every((s) => s.length > 0),
+        JSON.stringify(Object.entries(parts).map(([k, s]) => [k, s.slice(0, 14)])));
+    if (!Object.values(parts).every((s) => s.length > 0)) return Promise.resolve(rows);
 
-check('comparer rejects truncated output', workerSource.includes('output_limit') && workerSource.includes('MAX_WORKER_OUTPUT_BYTES'));
-check('comparer uses one output normalization policy', workerSource.includes('function outputsEqual'));
+    class FakeStream {
+        constructor() { this.handlers = {}; }
+        on(type, fn) { this.handlers[type] = fn; }
+        push(data) { if (this.handlers.data) this.handlers.data(data); }
+    }
+    class FakeProc {
+        constructor(tag) { this.tag = tag; this.stdout = new FakeStream(); this.stderr = new FakeStream(); this.handlers = {}; }
+        on(type, fn) { this.handlers[type] = fn; }
+        fire(type, arg) { if (this.handlers[type]) this.handlers[type](arg); }
+    }
+    // 抽出的 spawnProcess 里 MAX_WORKER_OUTPUT_BYTES 是 const，测试要按场景压小它，
+    // 所以只把这一条声明改成 let（其余正文一字不动），改完仍在同一个脚本里跑。
+    const mkProcCtx = () => {
+        const seen = { kills: [], spawned: [] };
+        const ctx = vm.createContext({
+            Buffer, Promise, Number, String, Object, Array, Error, JSON, Math, Symbol, Set,
+            process: { platform: 'linux' },
+            child_process_1: { spawn: (exe) => { const p = new FakeProc(exe); seen.spawned.push(p); return p; } },
+            process_supervisor_1: { terminateProcessTree: (p) => seen.kills.push(p.tag) },
+            console
+        });
+        vm.runInContext([
+            budgetSrc.replace(/^const\s/, 'let '),
+            activeSrc, normSrc, equalSrc, spawnSrc,
+            'this.__setBudget = (n) => { MAX_WORKER_OUTPUT_BYTES = n; };',
+            'this.__peek = () => ({ budget: MAX_WORKER_OUTPUT_BYTES, size: activeProcesses.size });'
+        ].join('\n'), ctx);
+        return { ctx, seen };
+    };
+    const eqCtx = vm.createContext({ Buffer, String, Number });
+    vm.runInContext(`${normSrc}\n${equalSrc};`, eqCtx);
+    const eq = (a, b) => vm.runInContext(`outputsEqual(${JSON.stringify(a)}, ${JSON.stringify(b)})`, eqCtx);
+
+    // 把真循环体整条搬进 vm 跑：stop 从哪个 await 后面生效，只看 trace 里各计数器停在哪。
+    const runLoop = ({ useFast = false, flipAt = '', stopBefore = false, pairMode = 'ok', jsMode = 'same' } = {}) => {
+        const trace = { gen: 0, js: 0, pair: 0, fails: [], posts: [] };
+        const lctx = vm.createContext({ Buffer, Number, String, Object, Array, Error, JSON, Math, Promise, trace });
+        const jsFlip = flipAt === 'js1' ? 'if (trace.js === 1) running = false;'
+            : flipAt === 'js2' ? 'if (trace.js === 2) running = false;' : '';
+        const PAIR = {
+            ok: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated1: false, truncated2: false }",
+            truncated: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated1: true, truncated2: false }",
+            mismatch: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('a'), out2: Buffer.from('b'), truncated1: false, truncated2: false }",
+            stdtle: '{ code1: -3, code2: 0, ms: 5, out1: Buffer.from(\'\'), out2: Buffer.from(\'\'), truncated1: false, truncated2: false }'
+        }[pairMode];
+        // 非 fastpath 的两个程序各调一次 runJs：按奇偶次返回不同输出，
+        // 用来验「差异判定走的是同一套 normalizeOutput」而不是裸比字节。
+        const jsReturn = jsMode === 'differ'
+            ? "(trace.js % 2 ? okRun : { code: 0, ms: 5, output: Buffer.from('other') })"
+            : jsMode === 'trailing'
+                ? "(trace.js % 2 ? okRun : { code: 0, ms: 5, output: Buffer.from('same\\r\\n') })"
+                : 'okRun';
+        vm.runInContext([
+            normSrc, equalSrc,
+            `let running = ${stopBefore ? 'false' : 'true'};`,
+            'let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;',
+            "const startIdx = 0, count = 3, gen = 'gen.exe', genTimeout = 0, stdPath = 'std.exe', testPath = 'test.exe', timeout = 1000;",
+            `const useFast = ${useFast};`,
+            'const okRun = { code: 0, ms: 5, output: Buffer.from(\'same\') };',
+            `const runGenerator = async () => { trace.gen++; ${flipAt === 'gen' ? 'running = false;' : ''} return okRun; };`,
+            `const runJs = async () => { trace.js++; ${jsFlip} return ${jsReturn}; };`,
+            `const runFastPair = () => { trace.pair++; return ${PAIR}; };`,
+            'const fail = (i, kind, code) => { trace.fails.push([i, kind, code]); };',
+            "const worker_threads_1 = { parentPort: { postMessage: (m) => trace.posts.push(m.type) } };",
+            `this.__done = (async () => { ${loopSrc} })();`
+        ].join('\n'), lctx);
+        return lctx.__done.then(() => trace, (e) => { trace.error = String((e && e.stack) || e); return trace; });
+    };
+
+    return (async () => {
+        const real = mkProcCtx();
+        push('输出预算是正的有限数（写成 0 就是一口数据都收不下）',
+            real.ctx.__peek().budget > 1024 * 1024 && Number.isFinite(real.ctx.__peek().budget),
+            String(real.ctx.__peek().budget));
+
+        const procA = await vm.runInContext('spawnProcess("a", [], undefined)', real.ctx);
+        const procB = await vm.runInContext('spawnProcess("b", [], undefined)', real.ctx);
+        push('每个子进程各自登记进 activeProcesses（退回单一 currentProc 就看不见并发子进程）',
+            real.ctx.__peek().size === 2, String(real.ctx.__peek().size));
+        procA.fire('close', 0);
+        push('close 只摘掉自己那个进程，另一个仍在跟踪',
+            real.ctx.__peek().size === 1, String(real.ctx.__peek().size));
+        push('close 结算 exitCode、置 done，收集回调跑完即清空',
+            procA._done === true && procA._result.exitCode === 0, JSON.stringify(procA._result));
+        const procErr = await vm.runInContext('spawnProcess("e", [], undefined)', real.ctx);
+        procErr.fire('error', new Error('spawn ENOENT'));
+        push('error 也走同一套摘除，并把错误信息带进结果',
+            procErr._result.error === 'spawn ENOENT' && procErr._result.exitCode === -1
+            && real.ctx.__peek().size === 1, JSON.stringify(procErr._result));
+
+        // 预算是 stdout+stderr **共享**的一条总额度：先各收 2 字节把额度用满，
+        // 下一口数据 remaining 已经是 0，此时应当只标记超限并杀进程，一个字节都不再收。
+        const full = mkProcCtx();
+        full.ctx.__setBudget(4);
+        const procC = await vm.runInContext('spawnProcess("c", [], undefined)', full.ctx);
+        procC.stdout.push(Buffer.from('ab'));
+        procC.stderr.push(Buffer.from('cd'));
+        push('预算内的 stdout/stderr 原样收下，一个进程都不杀',
+            procC._collect().length === 2 && procC._stderr().length === 2 && full.seen.kills.length === 0,
+            JSON.stringify({ out: procC._collect().toString(), err: procC._stderr(), kills: full.seen.kills }));
+        procC.stdout.push(Buffer.from('efgh'));
+        push('额度用尽后再来的数据一字节都不收，只标记超限并杀掉整棵进程树',
+            procC._collect().toString() === 'ab' && procC._outputTruncated() === true
+            && full.seen.kills.length === 1 && full.seen.kills[0] === 'c',
+            JSON.stringify({ collected: procC._collect().toString(), truncated: procC._outputTruncated(), kills: full.seen.kills }));
+        procC.stdout.push(Buffer.from('zzz'));
+        procC.stderr.push(Buffer.from('zzz'));
+        push('截断之后的数据一律不再收，也不会重复杀第二次',
+            procC._collect().length === 2 && procC._stderr().length === 2 && full.seen.kills.length === 1,
+            JSON.stringify({ out: procC._collect().length, err: procC._stderr().length, kills: full.seen.kills.length }));
+
+        // 半口越界（remaining>0 且 buffer 更长）时必须补到额度为止，不能整口丢弃：
+        // 丢掉这段就等于把「已经拿到的输出」也一起抹了，导出用例时会是空的。
+        const part = mkProcCtx();
+        part.ctx.__setBudget(4);
+        const procP = await vm.runInContext('spawnProcess("p", [], undefined)', part.ctx);
+        procP.stdout.push(Buffer.from('ab'));
+        procP.stdout.push(Buffer.from('efg'));
+        push('最后一口数据只截到预算长度（前 4 字节保留），并标记超限',
+            procP._collect().toString() === 'abef' && procP._outputTruncated() === true
+            && part.seen.kills.length === 1,
+            JSON.stringify({ collected: procP._collect().toString(), truncated: procP._outputTruncated(), kills: part.seen.kills }));
+        const exact = mkProcCtx();
+        exact.ctx.__setBudget(4);
+        const procD = await vm.runInContext('spawnProcess("d", [], undefined)', exact.ctx);
+        procD.stdout.push(Buffer.from('abcd'));
+        push('正好用满预算不算超限（<= 写成 < 会把正常规模的数据判成溢出）',
+            procD._outputTruncated() === false && exact.seen.kills.length === 0,
+            JSON.stringify({ truncated: procD._outputTruncated(), kills: exact.seen.kills }));
+        // 额度见底那一瞬间就必须判超限，哪怕后续只是流上一口空数据：
+        // 只按「这一口装不装得下」判，采集会在满额状态下永远停在「还没超限」，
+        // 上层也就不会报 output_limit。
+        procD.stdout.push(Buffer.from(''));
+        push('额度耗尽后哪怕来一口空数据也算超限（不能只在「这一口溢出」时才翻脸）',
+            procD._outputTruncated() === true && exact.seen.kills.length === 1,
+            JSON.stringify({ truncated: procD._outputTruncated(), kills: exact.seen.kills }));
+
+        push('归一化只抹平行尾与空白差异：CRLF、行尾空格、尾随空行都算相同',
+            eq('1\r\n2', '1\n2') === true && eq('1  \n2', '1\n2') === true
+            && eq('1\t\t\n2', '1\n2') === true && eq('1\n\n\n', '1') === true
+            && eq('1\n', '1') === true && eq('1  ', '1') === true,
+            JSON.stringify([eq('1\r\n2', '1\n2'), eq('1  \n2', '1\n2'), eq('1\n\n\n', '1'), eq('1  ', '1')]));
+        push('真不同的内容仍然判不等（归一化不能把差异也抹平）',
+            eq('1\n2', '1\n3') === false && eq('1\n2', '1\n2 3') === false && eq('a', 'a b') === false,
+            JSON.stringify([eq('1\n2', '1\n3'), eq('1\n2', '1\n2 3'), eq('a', 'a b')]));
+        push('normalizeOutput 容忍空输入（null/undefined 不抛）',
+            vm.runInContext('[normalizeOutput(null), normalizeOutput(undefined), normalizeOutput(Buffer.from(""))].join("|")', eqCtx) === '||',
+            vm.runInContext('String(normalizeOutput(null))', eqCtx));
+
+        const stopped = await runLoop({ stopBefore: true });
+        push('running 已置否时一组都不跑（for 条件里的 running 是唯一入口闸门）',
+            stopped.gen === 0 && stopped.js === 0 && stopped.posts.length === 0, JSON.stringify(stopped));
+        const afterGen = await runLoop({ flipAt: 'gen' });
+        push('生成器 await 之后立刻查停：不再跑标准/测试程序，也不报任何错',
+            afterGen.gen === 1 && afterGen.js === 0 && afterGen.fails.length === 0 && afterGen.posts.length === 0,
+            JSON.stringify({ gen: afterGen.gen, js: afterGen.js, fails: afterGen.fails, posts: afterGen.posts }));
+        const afterStd = await runLoop({ flipAt: 'js1' });
+        push('标准程序 await 之后查停：不跑测试程序、不发 progress',
+            afterStd.gen === 1 && afterStd.js === 1 && afterStd.posts.length === 0 && afterStd.fails.length === 0,
+            JSON.stringify({ js: afterStd.js, posts: afterStd.posts, fails: afterStd.fails }));
+        const afterTest = await runLoop({ flipAt: 'js2' });
+        push('测试程序 await 之后查停：结果一致也不发 progress',
+            afterTest.js === 2 && afterTest.posts.length === 0, JSON.stringify({ js: afterTest.js, posts: afterTest.posts }));
+        const clean = await runLoop({});
+        push('不停止时 3 组各发一条 progress，一条错都不报（对照组）',
+            clean.gen === 3 && clean.js === 6 && clean.posts.length === 3 && clean.fails.length === 0,
+            JSON.stringify({ gen: clean.gen, js: clean.js, posts: clean.posts.length, fails: clean.fails }));
+        const fastClean = await runLoop({ useFast: true });
+        push('fastpath 同样按 count 跑满 3 组',
+            fastClean.pair === 3 && fastClean.posts.length === 3 && fastClean.fails.length === 0,
+            JSON.stringify({ pair: fastClean.pair, posts: fastClean.posts }));
+        const fastTrunc = await runLoop({ useFast: true, pairMode: 'truncated' });
+        push('fastpath 输出超限逐组报 output_limit，且一条 progress 都不发',
+            fastTrunc.fails.length === 3 && fastTrunc.fails.every((f) => f[1] === 'output_limit' && f[2] === 'output_limit')
+            && fastTrunc.posts.length === 0, JSON.stringify(fastTrunc.fails));
+        const fastTle = await runLoop({ useFast: true, pairMode: 'stdtle' });
+        push('fastpath 标准程序超时按 code -3 认，报 std_tle 而不是「退出码非 0」',
+            fastTle.fails.length === 3 && fastTle.fails.every((f) => f[1] === 'std_tle' && f[2] === 'std_timeout'),
+            JSON.stringify(fastTle.fails[0]));
+        const fastDiff = await runLoop({ useFast: true, pairMode: 'mismatch' });
+        push('fastpath 输出不同逐组报 mismatch',
+            fastDiff.fails.length === 3 && fastDiff.fails.every((f) => f[1] === 'mismatch'),
+            JSON.stringify(fastDiff.fails[0]));
+        const slowTrailing = await runLoop({ jsMode: 'trailing' });
+        push('非 fastpath 的差异判定走同一套 normalizeOutput：只差行尾空白不算差异',
+            slowTrailing.fails.length === 0 && slowTrailing.posts.length === 3,
+            JSON.stringify(slowTrailing.fails));
+        const slowDiff = await runLoop({ jsMode: 'differ' });
+        push('非 fastpath 真差异逐组报 mismatch（归一化没把判等口径松开）',
+            slowDiff.fails.length === 3 && slowDiff.fails.every((f) => f[1] === 'mismatch')
+            && slowDiff.posts.length === 0, JSON.stringify(slowDiff.fails[0]));
+
+        const stopCtx = vm.createContext({ Set, String, JSON });
+        vm.runInContext([
+            'let running = true;',
+            "const activeProcesses = new Set([{ tag: 'a' }, { tag: 'b' }]);",
+            'const killed = [];',
+            'const killProc = (p) => { killed.push(p.tag); };',
+            "const msg = { type: 'stop' };",
+            stopSrc,
+            'this.__out = { running, killed: killed.join(","), size: activeProcesses.size };'
+        ].join('\n'), stopCtx);
+        push('stop 消息把每个在点子进程都杀掉并清空登记表（漏 clear 就永远赖着不放）',
+            stopCtx.__out.running === false && stopCtx.__out.killed === 'a,b' && stopCtx.__out.size === 0,
+            JSON.stringify(stopCtx.__out));
+        return rows;
+    })().catch((e) => [{ name: 'worker 守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
+})();
+
+
 check('workflows do not depend on the Node 22-only system CA flag', !workflows.includes('--use-system-ca'));
 check('markdown fallback does not assign untrusted innerHTML', !preloadSource.includes('innerHTML'));
 check('Linux hard memory limits use a non-shell prlimit wrapper', read('src/utils/process-supervisor.js').includes('getResourceLimitedSpawn') && read('src/utils/process-supervisor.js').includes('prlimit'));
@@ -607,7 +834,6 @@ const deferredRows = (async () => {
 
 check('startup font validation stays local', !settingsInitSource.includes('updateSettings({ font: validatedFont })') && settingsInitSource.includes('fontFamily = validatedFont'));
 check('downloader releases probe response bodies', (downloaderSource.match(/\.body\.resume\(\)/g) || []).length >= 3);
-check('comparer tracks all children and observes stop between awaits', workerSource.includes('const activeProcesses = new Set()') && !workerSource.includes('currentProc') && (workerSource.match(/if \(!running\)\s+break;/g) || []).length >= 3);
 check('uninstaller preserves foreign cpp associations', installerSource.includes('ReadRegStr $0 HKCR ".cpp" ""') && installerSource.includes('${If} $0 == "OICPPIDE.cpp"') && !installerSource.includes('DeleteRegKey HKCR ".cpp"'));
 check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') && Object.hasOwn(packageJson.devDependencies, 'sharp'));
 check('CI icon boundary matching is exact', ciSource.includes('/oicpp\\.ico(?=$|[^-])/'));
@@ -615,7 +841,7 @@ check('CI secret detections fail the build', ciSource.includes("fail(`potential 
 
 // 同步断言先跑完，再补上假 DOM 那批（它们是 promise，微任务里才落地）。
 // 汇总必须等这一批落地后才能数 failures，否则 exitCode 会停在 0。
-Promise.all([deferredRows, remoteRows, miRows])
+Promise.all([deferredRows, remoteRows, miRows, workerRows])
     .then((batches) => { for (const rows of batches) for (const row of rows) check(row.name, row.cond, row.extra); })
     .then(() => {
         console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
