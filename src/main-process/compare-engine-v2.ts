@@ -1,3 +1,8 @@
+/**
+ * CompareEngineV2 — Worker Thread 多线程对拍引擎
+ * 每个 Worker Thread 有独立事件循环 + 独立 spawn
+ * 消除单事件循环瓶颈，实现真并行
+ */
 import { EventEmitter } from 'events';
 import { Worker } from 'worker_threads';
 import * as path from 'path';
@@ -9,8 +14,8 @@ interface CompareConfig {
     timeLimit?: number;
     generatorTimeout?: number;
     generator: string | { executablePath?: string; path?: string; exe?: string };
-    stdExe: string | { executablePath?: string; path?: string; exe?: string };
-    testExe: string | { executablePath?: string; path?: string; exe?: string };
+    stdExe: string | { executablePath?: string; path?: string };
+    testExe: string | { executablePath?: string; path?: string };
 }
 
 interface WorkerMessageProgress {
@@ -48,30 +53,46 @@ interface WorkerMessageDone {
 type WorkerMessage = WorkerMessageProgress | WorkerMessageError | WorkerMessageFastspawnWarning | WorkerMessageDone;
 
 export class CompareEngineV2 extends EventEmitter {
+    // 轮次序号：start() 用 ++CompareEngineV2._runCounter 分配本轮 _runId，
+    // 配合 isCurrentRun() 把上一轮 worker 的迟到消息挡在门外。
+    // 必须初始化 —— 未初始化时 ++undefined === NaN，而 NaN !== NaN，
+    // isCurrentRun() 恒为 false，会把本轮每条 worker 消息都当成上一轮的
+    // 迟到消息丢弃，表现为对拍秒结束且完成数恒为 0。
     static _runCounter = 0;
 
-    private _state: 'idle' | 'running' | 'stopping' = 'idle';
-    private _workers: Worker[] = [];
-    private _completed = 0;
-    private _total = 0;
-    private _errors = 0;
-    private _stopRequested = false;
-    private _fastspawnErrorForwarded = false;
-    private _runId = 0;
+    private declare _state: 'idle' | 'running' | 'stopping';
+    private declare _workers: Worker[];
+    private declare _completed: number;
+    private declare _total: number;
+    private declare _errors: number;
+    private declare _stopRequested: boolean;
+    private declare _fastspawnErrorForwarded: boolean;
+    private declare _runId: number;
 
-    get state(): string {
-        return this._state;
+    constructor() {
+        super();
+        this._state = 'idle';
+        this._workers = [];
+        this._completed = 0;
+        this._total = 0;
+        this._errors = 0;
+        this._stopRequested = false;
+        this._fastspawnErrorForwarded = false;
     }
 
+    get state(): string { return this._state; }
+
     async start(config: CompareConfig): Promise<void> {
-        if (this._state === 'running' || this._state === 'stopping') { throw new Error('Engine already running'); }
+        if (this._state === 'running' || this._state === 'stopping') throw new Error('Engine already running');
         this._state = 'running';
         this._stopRequested = false;
         this._fastspawnErrorForwarded = false;
         this._completed = 0;
         this._total = 0;
         this._errors = 0;
-
+        // 本次运行的标识。stop() 是 fire-and-forget：旧 worker 的消息可能在
+        // terminate 生效前抵达，若不加归属校验，这些迟到的 progress/error 会被
+        // 算到下一次运行头上（完成数虚高、错误张冠李戴）。
         this._runId = ++CompareEngineV2._runCounter;
         const runId = this._runId;
         const isCurrentRun = (): boolean => this._runId === runId;
@@ -81,20 +102,21 @@ export class CompareEngineV2 extends EventEmitter {
             if (!Number.isInteger(totalTests) || totalTests <= 0 || totalTests > 100000) {
                 throw new Error('totalTests must be an integer between 1 and 100000');
             }
-            const requestedThreads = Number.isInteger(config.threadCount) && (config.threadCount ?? 0) > 0
-                ? config.threadCount!
+            const requestedThreads = Number.isInteger(config.threadCount) && (config.threadCount as number) > 0
+                ? (config.threadCount as number)
                 : os.cpus().length;
-            const runTimeout = (Number.isFinite(config.timeLimit) && config.timeLimit! > 0) ? config.timeLimit! : 0;
-            const genTimeout = (Number.isFinite(config.generatorTimeout) && config.generatorTimeout! > 0) ? config.generatorTimeout! : 0;
+            // 0 = 不限时，与 main.js run-program 的 useTimeouts 语义保持一致；不能用 || 兜底
+            const runTimeout = (Number.isFinite(config.timeLimit) && (config.timeLimit as number) > 0) ? (config.timeLimit as number) : 0;
+            const genTimeout = (Number.isFinite(config.generatorTimeout) && (config.generatorTimeout as number) > 0) ? (config.generatorTimeout as number) : 0;
             const threadCount = Math.min(Math.max(1, requestedThreads), totalTests, 32);
             this._total = totalTests;
             const perThread = Math.ceil(totalTests / threadCount);
             const workerPath = path.join(__dirname, 'compare-worker-v6.js');
 
-            const resolvePath = (exe: string | { executablePath?: string; path?: string; exe?: string }): string => {
+            const resolvePath = (exe: string | { executablePath?: string; path?: string }): string => {
                 if (!exe) return '';
                 if (typeof exe === 'string') return exe;
-                return exe.executablePath || exe.path || exe.exe || '';
+                return exe.executablePath || exe.path || '';
             };
 
             const gen = config.generator;
@@ -124,11 +146,10 @@ export class CompareEngineV2 extends EventEmitter {
                         worker.removeListener('message', handler);
                         worker.removeListener('error', onWorkerError);
                         worker.removeListener('exit', onWorkerExit);
-                        resolve();
+                        resolve(undefined);
                     };
                     const handler = (msg: WorkerMessage): void => {
                         // 上一轮遗留的迟到消息：不再计入本轮状态，也不再向上广播
-                        // if (!isCurrentRun()) { settle(); return; }
                         if (!isCurrentRun()) { settle(); return; }
                         if (msg.type === 'progress') {
                             this._completed++;
@@ -152,6 +173,7 @@ export class CompareEngineV2 extends EventEmitter {
                                 testMs: msg.testMs
                             });
                         } else if (msg.type === 'fastspawn-load-warning') {
+                            // 每个 worker 都会独立上报一次，一次对拍就是十条同样的告警。
                             if (this._fastspawnErrorForwarded) return;
                             this._fastspawnErrorForwarded = true;
                             this.emit('warning', {
@@ -190,11 +212,15 @@ export class CompareEngineV2 extends EventEmitter {
 
             await Promise.all(donePromises);
 
+            // worker 崩溃/提前退出时，它负责的那批测试根本没跑完，
+            // 但完成数只统计了真正跑过的。不指出这点，UI 会显示
+            // 「已完成 N 组」并给出 100% 覆盖率，缺口不可见。
             if (isCurrentRun() && this._state === 'running' && this._completed < this._total) {
                 this.emit('warning', {
                     testNumber: 0,
                     type: 'incomplete_run',
                     code: 'incomplete_run',
+                    // 不在此处拼英文文案：只给计数，由渲染层按 i18n 组装
                     completed: this._completed,
                     total: this._total,
                     missing: this._total - this._completed,
@@ -203,10 +229,10 @@ export class CompareEngineV2 extends EventEmitter {
                 });
             }
 
-            const finalState = this._state as 'idle' | 'running' | 'stopping';
-            if (finalState === 'stopping') {
+            if ((this._state as 'idle' | 'running' | 'stopping') === 'stopping') {
                 this.emit('stopped', { total: this._total, completed: this._completed, failed: this._errors });
             } else {
+                // 不在此处拼英文文案，只给计数，由渲染层按 i18n 组装
                 this.emit('complete', {
                     total: this._total, completed: this._completed, failed: this._errors
                 });

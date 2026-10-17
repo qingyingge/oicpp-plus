@@ -121,7 +121,7 @@ function collect(calls, evt) {
 
 {
     check('H4 start() 在 stopping 状态抛错',
-        /if \(this\._state === 'running' \|\| this\._state === 'stopping'\) throw new Error\('Engine already running'\)/.test(engineSrc));
+        /if \(this\._state === 'running' \|\| this\._state === 'stopping'\)\s+throw new Error\('Engine already running'\)/.test(engineSrc));
     check('H4 stop() 保留 fire-and-forget 语义（不 await）',
         /async stop\(\) \{/.test(engineSrc) && !/await this\._workers/.test(methodBody(engineSrc, 'stop')));
 }
@@ -135,8 +135,8 @@ function collect(calls, evt) {
         /this\._runId = \+\+CompareEngineV2\._runCounter/.test(engineSrc));
     check('H3 存在 isCurrentRun 归属判定', /const isCurrentRun = \(\) => this\._runId === runId;/.test(engineSrc));
     check('H3 message handler 先做归属校验再计数',
-        /const handler = \(msg\) => \{\s*\n\s*\/\/ [^\n]*\n\s*if \(!isCurrentRun\(\)\) \{ settle\(\); return; \}/.test(engineSrc) ||
-        /if \(!isCurrentRun\(\)\) \{ settle\(\); return; \}/.test(engineSrc));
+        /const handler = \(msg\) => \{\s*\n\s*\/\/ [^\n]*\n\s*if \(!isCurrentRun\(\)\)\s*\{\s*settle\(\);\s*return;\s*\}/.test(engineSrc) ||
+        /if \(!isCurrentRun\(\)\)\s*\{\s*settle\(\);\s*return;\s*\}/.test(engineSrc));
     check('H3 worker error 也做归属校验',
         /if \(isCurrentRun\(\) && !this\._stopRequested\)/.test(engineSrc));
 

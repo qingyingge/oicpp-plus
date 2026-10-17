@@ -37,7 +37,8 @@ const makeEngineWithFakeWorker = (progressCount) => {
     const { EventEmitter } = require('events');
     const engineSrc = fs.readFileSync(path.join(root, 'src/main-process/compare-engine-v2.js'), 'utf8');
     const sandbox = {
-        require, module: { exports: {} }, console,
+        //编译产物用这个对象挂模块标记，真实环境里由模块包装器提供，沙箱必须补上这个绑定
+        require, module: { exports: {} }, exports: {}, console,
         setTimeout, clearTimeout, Promise, EventEmitter,
         os: { cpus: () => [{ length: 4 }] },
         path,
@@ -58,10 +59,12 @@ const makeEngineWithFakeWorker = (progressCount) => {
         }
     };
     vm.createContext(sandbox);
-    // 剥掉两行原生 require，改用沙箱注入的 EventEmitter / Worker
+    //剥掉原生引入改用沙箱假件，产物里同一件事换成命名空间对象，两种形态都要接住否则假件失效
     vm.runInContext(engineSrc
         .replace(/^const \{ EventEmitter \} = require\('events'\);$/m, '')
-        .replace(/^const \{ Worker \} = require\('worker_threads'\);$/m, ''),
+        .replace(/^const \{ Worker \} = require\('worker_threads'\);$/m, '')
+        .replace(/^const events_1 = require\("events"\);$/m, 'const events_1 = { EventEmitter };')
+        .replace(/^const worker_threads_1 = require\("worker_threads"\);$/m, 'const worker_threads_1 = { Worker };'),
     sandbox, { filename: 'compare-engine-v2.js' });
     return sandbox.module.exports.CompareEngineV2;
 };
@@ -126,13 +129,13 @@ const runEngineOnce = async (Ctor, progressCount) => {
 
     check('isCurrentRun 在 worker 消息处理前被检查', () => {
         assert.ok(/const isCurrentRun = \(\) => this\._runId === runId;/.test(engineSrc));
-        assert.ok(/if \(!isCurrentRun\(\)\) \{ settle\(\); return; \}/.test(engineSrc),
+        assert.ok(/if \(!isCurrentRun\(\)\)\s*\{\s*settle\(\);\s*return;\s*\}/.test(engineSrc),
             '迟到消息必须先 settle 再 return，否则本轮进度会被丢弃');
     });
 
     check('迟到消息分支不会被误当成当前轮的 progress/error', () => {
         // settle 之后直接 return：若误落到 progress 分支，本轮 _completed 会被污染
-        const branch = /if \(!isCurrentRun\(\)\) \{ settle\(\); return; \}\s*\n\s*if \(msg\.type === 'progress'\)/.test(engineSrc);
+        const branch = /if \(!isCurrentRun\(\)\)\s*\{\s*settle\(\);\s*return;\s*\}\s*\n\s*if \(msg\.type === 'progress'\)/.test(engineSrc);
         assert.ok(branch, 'settle 必须在 progress 分支之前');
     });
 }
