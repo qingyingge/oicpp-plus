@@ -179,6 +179,17 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
         fold(classMethod(REFLOW, 'loaded')) === fold(loaded),
         fold(classMethod(REFLOW, 'loaded')).slice(-30));
 
+    // async 关键字必须一起吃进锚点：漏了它就抽出少了 async 的正文，
+    // 里面的 await 在编译期直接报错，抽出来的函数根本跑不起来。
+    const TOP_ASYNC = 'function plain() { }\nasync function load(x) {\n    return x + 1;\n}';
+    const asyncRaw = funcDecl(TOP_ASYNC, 'load');
+    check('funcDecl 连 async 关键字一起抽走',
+        asyncRaw === 'async function load(x) {\n    return x + 1;\n}', JSON.stringify(asyncRaw));
+    check('funcDecl 抽出的 async 函数能直接编译执行',
+        await toFn(asyncRaw)(1) === 2, String(await toFn(asyncRaw)(1)));
+    check('funcDecl 不会把 async 前的普通函数整段吞掉',
+        funcDecl(TOP_ASYNC, 'plain') === 'function plain() { }', JSON.stringify(funcDecl(TOP_ASYNC, 'plain')));
+
     console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
     process.exit(failures ? 1 : 0);
 })().catch((e) => {

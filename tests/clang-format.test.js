@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const vm = require('vm');
 const { EventEmitter } = require('events');
 const { callbackBody, classMethod, funcDecl } = require('./fixtures/source-extract');
@@ -322,6 +323,122 @@ function nsiOps(body) {
         }
     }
     return ops;
+}
+
+// consolepauser 自动构建链的行为沙箱：把 src/main.js 里的 6 个函数原样抽出来跑，
+// fs / child_process.spawn / iconv-lite 全是记账桩。
+// 原来这两条是文本守卫：includes("{ name: 'utf8-static', ... args: ['-static'] }")
+// 与 includes('getConsolePauserSourceFingerprint()') —— 策略数组排第二、指纹写了但
+// 从来不比对、编译退出码非 0 也当成功，字符串全都照样命中。跑起来才看得见：
+// 第一次 g++ 到底带没带 -static、指纹不匹配时重不重编、失败后留下什么。
+function makePauserSandbox(options = {}) {
+    const opts = options || {};
+    const HOME = '/home/tester';
+    const UDN = opts.userDataDirName || '.oicpp-plus';
+    const COMPILER = '/opt/mingw/bin/g++.exe';
+    const targetPath = path.join(HOME, UDN, 'consolepauser.exe');
+    const cppPath = path.join(HOME, UDN, 'consolepauser.cpp');
+    const fingerprintPath = `${targetPath}.src.sha256`;
+
+    const files = new Map();
+    if (opts.compilerExists !== false) files.set(path.resolve(COMPILER), 'EXE');
+    for (const f of (opts.files || [])) files.set(path.resolve(f), '');
+    for (const [k, v] of Object.entries(opts.contents || {})) files.set(path.resolve(k), v);
+    const writes = [];
+    const mkdirs = [];
+    const builds = [];
+    const logs = { info: [], warn: [] };
+    const iconvCalls = [];
+    const fmt = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+    const fsStub = {
+        existsSync: (p) => files.has(path.resolve(String(p))),
+        readFileSync: (p, enc) => {
+            const key = path.resolve(String(p));
+            if (!files.has(key)) throw new Error(`ENOENT: ${key}`);
+            const value = files.get(key);
+            return enc ? String(value) : Buffer.from(String(value));
+        },
+        writeFileSync: (p, data, enc) => {
+            const key = path.resolve(String(p));
+            files.set(key, data);
+            writes.push({ path: key, data, encoding: enc });
+        },
+        mkdirSync: (p) => { mkdirs.push(path.resolve(String(p))); }
+    };
+    const requireStub = (id) => {
+        if (id === 'child_process') {
+            return {
+                spawn: (cmd, argsList, spawnOptions) => {
+                    const rec = { cmd: String(cmd), args: (argsList || []).map(String), options: spawnOptions };
+                    builds.push(rec);
+                    const child = new EventEmitter();
+                    child.stdout = new EventEmitter();
+                    child.stderr = new EventEmitter();
+                    child.stdin = new EventEmitter();
+                    setImmediate(() => {
+                        if (opts.spawnError) {
+                            child.emit('error', new Error(opts.spawnError));
+                            return;
+                        }
+                        const at = rec.args.indexOf('-o');
+                        const out = at >= 0 ? rec.args[at + 1] : '';
+                        const ok = opts.succeed ? opts.succeed(rec.args) : true;
+                        if (ok) {
+                            if (out && opts.produceExe !== false) files.set(path.resolve(out), 'EXE');
+                            child.stdout.emit('data', Buffer.from(opts.stdoutText || 'g++ ok'));
+                            child.emit('close', 0);
+                            return;
+                        }
+                        child.stderr.emit('data', Buffer.from(opts.stderrText || 'ld returned 1 exit status'));
+                        child.emit('close', opts.exitCode ?? 1);
+                    });
+                    return child;
+                }
+            };
+        }
+        if (id === 'iconv-lite') {
+            if (opts.iconvAvailable === false) throw new Error('Cannot find module iconv-lite');
+            return {
+                encode: (text) => { iconvCalls.push('encode'); return Buffer.from(`GBK:${text}`); },
+                decode: (buf) => buf.toString('utf8')
+            };
+        }
+        throw new Error(`pauser 沙箱里不该 require 这个模块: ${id}`);
+    };
+
+    const ctx = vm.createContext({
+        __fns: {},
+        fs: fsStub, path, crypto, Buffer, EventEmitter,
+        os: { homedir: () => HOME },
+        process: { platform: opts.platform || 'win32', env: { PATH: opts.pathEnv || '/usr/bin' } },
+        USER_DATA_DIR_NAME: UDN,
+        CONSOLE_PAUSER_SOURCE: opts.pauserSource || 'PAUSER-C-SOURCE',
+        logInfo: (...a) => { logs.info.push(a.map(fmt)); },
+        logWarn: (...a) => { logs.warn.push(a.map(fmt)); },
+        t: (key, params) => `${key}|${(params && params.details) || ''}`,
+        detectEncoding: () => 'utf8',
+        require: requireStub,
+        JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Map, Set
+    });
+    const names = [
+        'findConsolePauser', 'getConsolePauserTargetPath', 'getConsolePauserFingerprintPath',
+        'getConsolePauserSourceFingerprint', 'getCompilerRuntimeBinPaths',
+        'ensureConsolePauserExecutable'
+    ];
+    const { fns, missing } = compileFuncs(opts.src, names, ctx);
+    const attempt = (compilerPath) => fns.ensureConsolePauserExecutable(
+        compilerPath === undefined ? COMPILER : compilerPath);
+    const argsAt = (index) => (builds[index] ? builds[index].args : []);
+    return {
+        fns, missing, files, writes, mkdirs, builds, logs, iconvCalls, attempt, argsAt,
+        targetPath, cppPath, fingerprintPath, compilerPath: COMPILER,
+        fingerprintOf: (text) => crypto.createHash('sha256').update(text, 'utf8').digest('hex'),
+        pathEnvOf: (index) => (builds[index] && builds[index].options.env ? String(builds[index].options.env.PATH) : ''),
+        writtenCpp: () => {
+            const last = writes.filter((w) => w.path === path.resolve(cppPath)).pop();
+            return last ? last.data : undefined;
+        }
+    };
 }
 
 function makeFormatSandbox() {
@@ -1200,8 +1317,12 @@ function makeModel(lines, state = {}) {
 
     const installerSource = fs.readFileSync(path.join(root, 'installer.nsi'), 'utf8');
 
-    // 下面这几条是 consolepauser 的 C 源码字符串：那是拿去 gcc 编译的源文本，
-    // 本仓库跑不了编译器，只能按文本守。留在这里的理由写清楚，别再误当成可换的行为守卫。
+    // 下面这几条留作文本守卫，理由写在这：
+    // - cmd start 那两条是历史故障 H16 的「反面」断言 —— 它锁的是某段写法不存在，
+    //   而那段代码在 run 主流程的巨型函数里，抽出来跑等于要把整条运行链路搬进沙箱；
+    //   构建链的行为已经由上面的 pauser 沙箱覆盖，这里只补「别退回 cmd /c start」。
+    // - consolepauser 的 C 源码是要拿去 g++ 编译的源文本，CI 上没有 MinGW，
+    //   能跑的只有「字符串本身」这一层，改成行为守卫就得真编译。
 
     const pauserSource = fs.readFileSync(path.join(root, 'src', 'utils', 'consolepauser-source.js'), 'utf8');
     // H16: shell:false 下 libuv 会把参数内的 " 转义成 \"，cmd.exe 不认这种转义，
@@ -1220,8 +1341,130 @@ function makeModel(lines, state = {}) {
         /int main\(int argc, char\*\* argv\)\s*\{\s*EnsureConsole\(\);/.test(pauserSource));
     check('console output is gated on GetConsoleMode again', pauserSource.includes('GetConsoleMode(outputHandle, &mode)') && !pauserSource.includes('if (WriteConsoleW(outputHandle, line'));
     check('console pauser keeps the legacy summary wording', pauserSource.includes('-----------------------------------------------') && pauserSource.includes('\\u6267\\u884c\\u65f6\\u95f4') && pauserSource.includes('\\u5cf0\\u503c\\u5185\\u5b58\\u4f7f\\u7528') && pauserSource.includes('\\u7a0b\\u5e8f\\u8fd4\\u56de\\u503c') && pauserSource.includes('\\u8bf7\\u6309\\u4efb\\u610f\\u952e\\u7ee7\\u7eed...'));
-    check('console pauser is built statically first so it needs no MinGW runtime DLLs', mainSource.includes("{ name: 'utf8-static', sourceMode: 'utf8', args: ['-static'] }"));
-    check('stale console pauser binaries are rebuilt from a source fingerprint', mainSource.includes('getConsolePauserSourceFingerprint()') && mainSource.includes('getConsolePauserFingerprintPath()'));
+    {
+        const ps = (o = {}) => makePauserSandbox({ src: mainSource, userDataDirName: USER_DATA_DIR_NAME, ...o });
+        const ok = ps();
+        const FIRST = String(ok.fns.getConsolePauserSourceFingerprint &&
+            ok.fns.getConsolePauserSourceFingerprint());
+        check('consolepauser 构建链抽取成功（函数抽不到就别再往下断言）',
+            ok.missing.length === 0 && typeof ok.fns.ensureConsolePauserExecutable === 'function',
+            JSON.stringify({ missing: ok.missing }));
+        check('指纹文件挂在 exe 旁边，内容就是当前 C 源码的 sha256',
+            ok.fns.getConsolePauserTargetPath() === ok.targetPath &&
+                ok.fns.getConsolePauserFingerprintPath() === `${ok.targetPath}.src.sha256` &&
+                FIRST === ok.fingerprintOf('PAUSER-C-SOURCE') && FIRST.length === 64,
+            JSON.stringify({ fp: FIRST.slice(0, 12), path: ok.fns.getConsolePauserFingerprintPath() }));
+        await ok.attempt();
+        check('第一次编译就带 -static（静态链接，免得用户机器缺 libgcc/libstdc++ DLL）',
+            ok.builds.length === 1 && ok.argsAt(0).includes('-static') &&
+                ok.argsAt(0).includes('-O2') &&
+                ok.argsAt(0)[ok.argsAt(0).indexOf('-o') + 1] === ok.targetPath &&
+                ok.argsAt(0).includes(ok.cppPath),
+            JSON.stringify(ok.argsAt(0)));
+        check('构建成功后把当前源码指纹写进指纹文件，日志里写清用的哪条策略',
+            String(ok.files.get(path.resolve(ok.fingerprintPath))) === FIRST &&
+                ok.logs.info.join(' ').includes('utf8-static'),
+            JSON.stringify({ written: String(ok.files.get(path.resolve(ok.fingerprintPath))).slice(0, 12), logs: ok.logs.info }));
+        check('spawn 用 shell:false、cwd 在用户目录、stdio 全 pipe（不能退回 cmd 包装）',
+            ok.builds[0].options.shell === false &&
+                ok.builds[0].options.cwd === path.resolve(path.dirname(ok.targetPath)) &&
+                JSON.stringify(ok.builds[0].options.stdio) === JSON.stringify(['ignore', 'pipe', 'pipe']),
+            JSON.stringify(ok.builds[0].options));
+        check('findConsolePauser 只有 exe 真在才返回路径',
+            ps({ files: [] }).fns.findConsolePauser() === null &&
+                ok.fns.findConsolePauser() === ok.targetPath,
+            String(ok.fns.findConsolePauser()));
+        check('编译器不存在时 PATH 前缀是空数组（不把不存在的路径塞进去）',
+            JSON.stringify(ok.fns.getCompilerRuntimeBinPaths('/nope/g++.exe')) === '[]');
+
+        const other = ps({ platform: 'linux' });
+        check('非 Windows 直接返回 null，一次编译都不发（POSIX 有自己的终端，不需要 pauser）',
+            await other.attempt() === null && other.builds.length === 0 && other.writes.length === 0,
+            JSON.stringify({ builds: other.builds.length }));
+        const warm = ps({ files: [ok.targetPath], contents: { [ok.fingerprintPath]: FIRST } });
+        check('exe 在、指纹也对 → 直接复用，一次 g++ 都不发',
+            await warm.attempt() === warm.targetPath && warm.builds.length === 0,
+            JSON.stringify({ builds: warm.builds.length }));
+        const noRecord = ps({ files: [ok.targetPath] });
+        await noRecord.attempt();
+        check('有 exe 但没有指纹记录，也按旧版处理重编一次',
+            noRecord.builds.length === 1 &&
+                noRecord.logs.info.join(' ').includes('源码指纹不匹配'),
+            JSON.stringify({ builds: noRecord.builds.length, logs: noRecord.logs.info }));
+        const stale = ps({ files: [ok.targetPath], contents: { [ok.fingerprintPath]: 'deadbeef' } });
+        await stale.attempt();
+        check('C 源码改过（指纹对不上）必须重编，并记下新指纹，否则用户永远跑旧 exe',
+            stale.builds.length === 1 &&
+                String(stale.files.get(path.resolve(stale.fingerprintPath))) === FIRST,
+            JSON.stringify({ builds: stale.builds.length }));
+
+        const noCompiler = ps({ compilerExists: false });
+        let ncErr = null;
+        try { await noCompiler.attempt(); } catch (e) { ncErr = e; }
+        let blankErr = null;
+        try { await ps().attempt(''); } catch (e) { blankErr = e; }
+        check('没装编译器时报「缺编译器」，不写 .cpp、不发 spawn',
+            ncErr !== null && /error\.consolePauserNoCompiler/.test(String(ncErr.message)) &&
+                noCompiler.builds.length === 0 && noCompiler.writes.length === 0 &&
+                blankErr !== null && /error\.consolePauserNoCompiler/.test(String(blankErr.message)),
+            JSON.stringify({ nc: String(ncErr && ncErr.message), blank: String(blankErr && blankErr.message) }));
+
+        const fb = ps({ succeed: (args) => !args.includes('-static') });
+        const fbPath = await fb.attempt();
+        check('静态链接失败会退到不带 -static 的第二次尝试，成功照样返回路径',
+            fb.builds.length === 2 && fb.argsAt(0).includes('-static') &&
+                !fb.argsAt(1).includes('-static') && fbPath === fb.targetPath,
+            JSON.stringify(fb.builds.map((b) => b.args)));
+        const allBad = ps({ succeed: () => false, stderrText: 'cc1plus: fatal error: no input files' });
+        let abErr = null;
+        try { await allBad.attempt(); } catch (e) { abErr = e; }
+        check('四条策略全失败才抛错，错误里要能看出每次尝试的退出码与 stderr',
+            abErr !== null && /error\.consolePauserBuildFailed/.test(String(abErr.message)) &&
+                (String(abErr.message).match(/exit=/g) || []).length === 4 &&
+                String(abErr.message).includes('cc1plus: fatal error: no input files') &&
+                !allBad.writes.some((w) => w.path === path.resolve(allBad.fingerprintPath)),
+            String(abErr && abErr.message).slice(0, 220));
+        const ghost = ps({ produceExe: false });
+        let ghostErr = null;
+        try { await ghost.attempt(); } catch (e) { ghostErr = e; }
+        check('编译器返回 0 但没产出 exe 也算失败，四条策略都得走一遍',
+            ghostErr !== null && ghost.builds.length === 4 &&
+                !ghost.files.has(path.resolve(ghost.targetPath)),
+            JSON.stringify({ builds: ghost.builds.length, err: String(ghostErr && ghostErr.message).slice(0, 60) }));
+        const eno = ps({ spawnError: 'spawn /opt/mingw/bin/g++.exe ENOENT' });
+        let enoErr = null;
+        try { await eno.attempt(); } catch (e) { enoErr = e; }
+        check('spawn 自身报错记成 exit=-1 并继续下一条策略（不能一条卡死整个构建）',
+            enoErr !== null && String(enoErr.message).includes('exit=-1') && eno.builds.length === 4,
+            String(enoErr && enoErr.message).slice(0, 160));
+
+        const noIconv = ps({ iconvAvailable: false, succeed: () => false });
+        let noIconvErr = null;
+        try { await noIconv.attempt(); } catch (e) { noIconvErr = e; }
+        // 缺 iconv 时必须「跳过 gbk 策略继续兜」，不能把 require 的异常抛穿：
+        // 抛穿的话用户看到的是一条模块报错，而不是结构化失败详情
+        check('缺 iconv-lite 时跳过两条 gbk 策略，只试两次、都按 utf8 写盘，仍以结构化失败报错',
+            noIconv.builds.length === 2 && noIconv.writes.length === 2 &&
+                noIconv.writes.every((w) => w.encoding === 'utf8' && !String(w.data).startsWith('GBK:')) &&
+                noIconvErr !== null && String(noIconvErr.message).includes('error.consolePauserBuildFailed') &&
+                (String(noIconvErr.message).match(/exit=/g) || []).length === 2,
+            JSON.stringify({ builds: noIconv.builds.length, writes: noIconv.writes.length, err: String(noIconvErr && noIconvErr.message).slice(0, 80) }));
+        const gbk = ps({ succeed: (args) => args.includes('-finput-charset=gbk') });
+        await gbk.attempt();
+        check('走到 gbk 策略时源码按 gbk 编码落盘（MinGW 按本地代码页读文件）',
+            gbk.builds.length === 3 && gbk.argsAt(2).includes('-finput-charset=gbk') &&
+                String(gbk.writtenCpp()).startsWith('GBK:PAUSER-C-SOURCE'),
+            JSON.stringify({ builds: gbk.builds.length, cpp: String(gbk.writtenCpp()).slice(0, 24) }));
+
+        const withDirs = ps({ files: ['/opt/mingw/bin', '/opt/mingw/mingw64/bin'] });
+        await withDirs.attempt();
+        check('PATH 前缀只补真实存在的编译器目录，原 PATH 留在最后',
+            withDirs.pathEnvOf(0).startsWith(`/opt/mingw/bin${path.delimiter}`) &&
+                withDirs.pathEnvOf(0).includes('/opt/mingw/mingw64/bin') &&
+                !withDirs.pathEnvOf(0).includes('/opt/mingw/mingw32/bin') &&
+                withDirs.pathEnvOf(0).endsWith(`${path.delimiter}/usr/bin`),
+            withDirs.pathEnvOf(0));
+    }
     check('detached run failures are logged through the child exit code', mainSource.includes("logInfo('[运行] 子进程已退出:'"));
 
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));

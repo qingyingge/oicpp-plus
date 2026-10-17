@@ -18,9 +18,11 @@ function classMethod(src, name) {
     return fromName(src, m.index);
 }
 
-// 顶层函数声明：`function name(...) { ... }`
+// 顶层函数声明：`function name(...) { ... }`，含 `async function name(...) { ... }`
+// （async 关键字必须在行首锚点里吃掉：m.index 指向匹配起点，漏了 async
+//   抽出来的正文就少了关键字，await 直接在非 async 函数里编译失败）
 function funcDecl(src, name) {
-    const m = new RegExp('^\\s*function\\s+' + name + '\\s*\\(', 'm').exec(src);
+    const m = new RegExp('^\\s*(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'm').exec(src);
     if (!m) return '';
     return fromName(src, m.index);
 }
