@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.TabManager = void 0;
 class TabManager {
     tabs;
     groups;
@@ -1143,7 +1141,7 @@ class TabManager {
         const tabData = this.tabs.get(uniqueKey);
         if (!tabData) {
             logError('未找到uniqueKey对应的标签页:', uniqueKey);
-            return;
+            return false;
         }
         this.saveCurrentEditorContent();
         this.activeTab = tabData;
@@ -1249,7 +1247,7 @@ class TabManager {
             this.hideGroupViewContainers(tabData.groupId);
             if (!window.browserManager) {
                 logError('BrowserManager 未初始化');
-                return;
+                return false;
             }
             const targetGroup = this.groups.get(tabData.groupId);
             const state = window.browserManager.getBrowserState(uniqueKey);
@@ -1258,7 +1256,7 @@ class TabManager {
                 // 创建新的浏览器容器
                 container = window.browserManager.getOrCreateContainer({
                     groupId: tabData.groupId,
-                    uniqueKey,
+                    uniqueKey: uniqueKey,
                     url: tabData.browserUrl || 'about:blank'
                 });
                 if (targetGroup?.editorArea) {
@@ -1329,6 +1327,7 @@ class TabManager {
             const forcePrompt = !!tabData.pendingExternalPrompt || !tabData.externalPromptDismissed;
             this.maybePromptExternalReload(tabData, { force: forcePrompt }).catch(logWarn);
         }
+        return true;
     }
     closeTabByUniqueKey(uniqueKey, options = {}) {
         const tabData = this.tabs.get(uniqueKey);
@@ -5256,7 +5255,6 @@ void hello() {
         }
     }
 }
-exports.TabManager = TabManager;
 let tabManager;
 document.addEventListener('DOMContentLoaded', () => {
     tabManager = new TabManager();

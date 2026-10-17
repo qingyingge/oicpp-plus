@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.IntegratedTerminalPanel = void 0;
 class IntegratedTerminalPanel {
     getApp;
     sessions;
@@ -1057,7 +1055,6 @@ class IntegratedTerminalPanel {
         return typeof workspacePath === 'string' && workspacePath.trim() ? workspacePath : undefined;
     }
 }
-exports.IntegratedTerminalPanel = IntegratedTerminalPanel;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = IntegratedTerminalPanel;
 }

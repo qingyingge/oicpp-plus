@@ -59,7 +59,7 @@ p{font-size:13px;color:${muted};margin-bottom:24px;text-align:center;line-height
 </body></html>`)}`;
 };
 
-export class BrowserManager {
+class BrowserManager {
     browserTabs: Map<string, BrowserTabState>;
     _currentFocusKey: string | null;
     _pendingNav: Map<string, string>;
@@ -501,10 +501,10 @@ export class BrowserManager {
         if (!title || !window.tabManager) return;
         const tabData = window.tabManager.tabs.get(uniqueKey);
         if (!tabData) return;
-        const displayTitle = title || tabData.fileName;
+        const displayTitle = title || tabData.fileName || '';
         tabData.fileName = displayTitle;
         if (tabData.element) {
-            const label = tabData.element.querySelector('.tab-label');
+            const label = tabData.element.querySelector('.tab-label') as HTMLElement | null;
             if (label) {
                 label.textContent = displayTitle;
                 label.title = displayTitle;

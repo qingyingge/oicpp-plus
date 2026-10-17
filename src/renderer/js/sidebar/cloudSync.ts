@@ -79,7 +79,7 @@ function csErrMessage(error: unknown): string {
     return '';
 }
 
-export class CloudSyncPanel {
+class CloudSyncPanel {
     rootPath: string;
     currentPath: string;
     itemsCache: Map<string, CloudItem[]>;

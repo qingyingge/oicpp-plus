@@ -59,14 +59,12 @@ interface TerminalShieldHandlers {
     wheel: (event: WheelEvent) => void;
 }
 
-declare global {
-    interface HTMLElement {
-        _terminalKeyShielded?: boolean;
-        _terminalShieldHandlers?: TerminalShieldHandlers | null;
-    }
+interface HTMLElement {
+    _terminalKeyShielded?: boolean;
+    _terminalShieldHandlers?: TerminalShieldHandlers | null;
 }
 
-export class IntegratedTerminalPanel {
+class IntegratedTerminalPanel {
     getApp: () => unknown;
     sessions: Map<string, TerminalSession>;
     activeId: string | null;

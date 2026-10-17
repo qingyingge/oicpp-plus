@@ -32,7 +32,7 @@ interface ElectronAPI {
   showOpenDialog(options: Record<string, unknown>): Promise<{ canceled?: boolean; filePaths?: string[] } | null>;
   showSaveDialog(options: Record<string, unknown>): Promise<{ canceled?: boolean; filePath?: string } | null>;
   saveTempFile(filePath: string, content: string): Promise<string>;
-  saveBinaryTempFile(fileName: string, base64Data: string): Promise<unknown>;
+  saveBinaryTempFile(fileName: string, base64Data: string): Promise<string>;
   loadTempFile(filePath: string): Promise<unknown>;
   deleteTempFile(filePath: string): Promise<unknown>;
   getAllSettings(): Promise<AppSettings>;

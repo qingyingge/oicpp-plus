@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DebugPanel = void 0;
 class DebugPanel {
     isActive;
     root;
@@ -818,7 +816,6 @@ class DebugPanel {
         return display;
     }
 }
-exports.DebugPanel = DebugPanel;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = DebugPanel;
 }

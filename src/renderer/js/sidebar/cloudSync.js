@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.CloudSyncPanel = void 0;
 /**
  * 从事件目标向上找 .tree-item 祖先元素（收窄类型）。
  * @param {Event} e
@@ -1309,7 +1307,6 @@ class CloudSyncPanel {
         return (data?.data ?? data);
     }
 }
-exports.CloudSyncPanel = CloudSyncPanel;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = CloudSyncPanel;
 }

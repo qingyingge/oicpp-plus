@@ -1840,7 +1840,7 @@ class FileExplorer {
                                 logInfo('在文件夹', folder.name, '中创建文件:', fileName);
                                 this.refresh();
                                 if (window.tabManager) {
-                                    window.tabManager.openFile(fileName, defaultContent, false, createdPath);
+                                    window.tabManager.openFile(fileName as string, defaultContent, false, createdPath);
                                 }
                             }
                             window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);

@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.SidebarManager = void 0;
 const sbQs = (selector) => {
     const el = document.querySelector(selector);
     return el instanceof HTMLElement ? el : null;
@@ -528,7 +526,6 @@ class SidebarManager {
         }
     }
 }
-exports.SidebarManager = SidebarManager;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = SidebarManager;
 }

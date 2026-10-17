@@ -280,23 +280,21 @@ interface EditorManagerLike {
     [key: string]: unknown;
 }
 
-declare global {
-    interface HTMLElement {
-        _editorDnDBound?: boolean;
-        _tabBarEventsBound?: boolean;
-        _horizontalWheelHandlerBound?: boolean;
-        _dragHandlersBound?: boolean;
-        _tabEventsBound?: boolean;
-        _pdfDnDBound?: boolean;
-        _dragListenersBound?: boolean;
-        _bound?: boolean;
-    }
-    interface Window {
-        PDFViewerApplication?: PdfViewerApplicationLike;
-    }
+interface HTMLElement {
+    _editorDnDBound?: boolean;
+    _tabBarEventsBound?: boolean;
+    _horizontalWheelHandlerBound?: boolean;
+    _dragHandlersBound?: boolean;
+    _tabEventsBound?: boolean;
+    _pdfDnDBound?: boolean;
+    _dragListenersBound?: boolean;
+    _bound?: boolean;
+}
+interface Window {
+    PDFViewerApplication?: PdfViewerApplicationLike;
 }
 
-export class TabManager {
+class TabManager {
     tabs: Map<string, TabRecord>;
     groups: Map<string, EditorGroup>;
     groupOrder: string[];
@@ -1544,11 +1542,11 @@ export class TabManager {
         return (matchingTabs[0] as (typeof matchingTabs)[number]).tabData;
     }
 
-    async activateTabByUniqueKey(uniqueKey: string | null | undefined) {
+    async activateTabByUniqueKey(uniqueKey: string | null | undefined): Promise<boolean> {
         const tabData = this.tabs.get(uniqueKey as string);
         if (!tabData) {
             logError('未找到uniqueKey对应的标签页:', uniqueKey);
-            return;
+            return false;
         }
         this.saveCurrentEditorContent();
 
@@ -1651,29 +1649,29 @@ export class TabManager {
             this.hideGroupViewContainers(tabData.groupId);
             if (!window.browserManager) {
                 logError('BrowserManager 未初始化');
-                return;
+                return false;
             }
             const targetGroup = this.groups.get(tabData.groupId as string);
-            const state = window.browserManager.getBrowserState(uniqueKey);
+            const state = window.browserManager.getBrowserState(uniqueKey as string);
             let container = state?.container;
             if (!container) {
                 // 创建新的浏览器容器
                 container = window.browserManager.getOrCreateContainer({
-                    groupId: tabData.groupId,
-                    uniqueKey,
+                    groupId: tabData.groupId as string,
+                    uniqueKey: uniqueKey as string,
                     url: tabData.browserUrl || 'about:blank'
                 });
                 if (targetGroup?.editorArea) {
                     targetGroup.editorArea.appendChild(container);
                 }
             } else if (container.dataset['groupId'] !== tabData.groupId) {
-                container.dataset['groupId'] = tabData.groupId;
+                container.dataset['groupId'] = tabData.groupId as string;
                 if (targetGroup?.editorArea && container.parentNode !== targetGroup.editorArea) {
                     targetGroup.editorArea.appendChild(container);
                 }
             }
-            window.browserManager.showBrowserContainer(uniqueKey);
-            window.browserManager.focusBrowserTab(uniqueKey);
+            window.browserManager.showBrowserContainer(uniqueKey as string);
+            window.browserManager.focusBrowserTab(uniqueKey as string);
             if (this.monacoEditorManager) {
                 this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
             }
@@ -1728,6 +1726,8 @@ export class TabManager {
             const forcePrompt = !!tabData.pendingExternalPrompt || !tabData.externalPromptDismissed;
             this.maybePromptExternalReload(tabData, { force: forcePrompt }).catch(logWarn);
         }
+
+        return true;
     }
 
     closeTabByUniqueKey(uniqueKey: string, options: CloseTabOptions = {}) {
@@ -2097,7 +2097,7 @@ export class TabManager {
     triggerFileExplorerRefresh() {
         try {
             const sidebar = window.sidebarManager || null;
-            let fileExplorer = null;
+            let fileExplorer: FileExplorer | null = null;
             if (sidebar?.getPanelManager) {
                 try {
                     fileExplorer = sidebar.getPanelManager('files') || null;
@@ -2107,10 +2107,10 @@ export class TabManager {
                 fileExplorer = sidebar.panels.files;
             }
             if (!fileExplorer && window.app?.fileExplorer) {
-                fileExplorer = window.app.fileExplorer;
+                fileExplorer = window.app.fileExplorer as FileExplorer;
             }
             if (!fileExplorer && window.fileExplorer) {
-                fileExplorer = window.fileExplorer;
+                fileExplorer = window.fileExplorer as FileExplorer;
             }
             if (fileExplorer?.refresh) {
                 fileExplorer.refresh();
@@ -2779,7 +2779,7 @@ export class TabManager {
         } else if (tabData.viewType === 'browser') {
             // 清理浏览器标签页
             if (window.browserManager && typeof window.browserManager.destroyBrowserTab === 'function') {
-                window.browserManager.destroyBrowserTab(uniqueKey);
+                window.browserManager.destroyBrowserTab(uniqueKey as string);
             }
         } else if (tabId && window.monacoEditorManager) {
             window.monacoEditorManager.cleanupEditor(tabId);

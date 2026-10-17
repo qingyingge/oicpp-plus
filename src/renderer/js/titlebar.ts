@@ -173,7 +173,7 @@ class TitlebarManager {
             const moreCount = Math.max(0, unsavedFiles.length - shown.length);
 
             const listHtml = shown
-                .map((name: string) => `- ${this._escapeHtml(name)}`)
+                .map((name: string | null | undefined) => `- ${this._escapeHtml(name)}`)
                 .join('<br>');
             const moreHtml = moreCount > 0 ? `<br>${window.i18n.t('dialog.unsavedFilesMore', { count: moreCount })}` : '';
 
@@ -212,7 +212,7 @@ class TitlebarManager {
     }
 
     async _confirmTemporaryFilesBeforeClose(): Promise<boolean> {
-        const tempFiles = Array.from<{ isTempFile?: unknown; viewType?: unknown; fileName?: string }>(window.tabManager?.tabs?.values?.() || [])
+        const tempFiles = Array.from(window.tabManager?.tabs?.values?.() || [])
             .filter((tab) => tab?.isTempFile && tab.viewType !== 'pdf');
         for (const tab of tempFiles) {
             const fileName = this._escapeHtml(tab.fileName || window.i18n.t('titlebar.tempFileDefault'));
@@ -228,6 +228,7 @@ class TitlebarManager {
             if (result === 'cancel' || !result) return false;
             if (result === 'save') {
                 const content = window.tabManager.getTabContentForSave?.(tab);
+                if (typeof content !== 'string') return false;
                 const savedPath = await window.electronAPI?.saveAsFile?.(content);
                 if (!savedPath) return false;
             }

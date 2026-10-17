@@ -216,6 +216,8 @@ class TitlebarManager {
                 return false;
             if (result === 'save') {
                 const content = window.tabManager.getTabContentForSave?.(tab);
+                if (typeof content !== 'string')
+                    return false;
                 const savedPath = await window.electronAPI?.saveAsFile?.(content);
                 if (!savedPath)
                     return false;

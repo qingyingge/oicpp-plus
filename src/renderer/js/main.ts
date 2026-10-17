@@ -2204,7 +2204,8 @@ export class OICPPApp {
         });
     }
 
-    async openIntegratedTerminalAndRunExecutable(executablePath: string, options: { forceCreate?: boolean; runMode?: string; inferiorTTY?: string; useInputBridge?: boolean; terminalId?: string } = {}) {
+    // options 整包转给 runExecutableInNewTerminal，所以形参必须与它的 workingDirectory 对齐（原来抄的是 openIntegratedTerminal 那组，全被吞掉）
+    async openIntegratedTerminalAndRunExecutable(executablePath: string, options: { workingDirectory?: string } = {}) {
         if (!this.terminalPanel) {
             throw new Error(window.i18n.t('message.terminalUninitialized'));
         }
@@ -2717,8 +2718,8 @@ export class OICPPApp {
                         const file = frame?.file;
                         const line = Number(frame?.line) || 1;
                         if (!file) return;
-                        if (window.tabManager && typeof window.tabManager.openFileByPath === 'function') {
-                            await window.tabManager.openFileByPath(file);
+                        if (window.tabManager && typeof window.tabManager.openFile === 'function') {
+                            await window.tabManager.openFile(file.split(/[\\/]/).pop() || file, '', false, file);
                         }
                         const ed = window.monacoEditorManager?.getCurrentEditor?.();
                         if (ed && typeof ed.highlightLine === 'function') {

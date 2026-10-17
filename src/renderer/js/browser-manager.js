@@ -3,8 +3,6 @@
  * BrowserManager - 内置浏览器管理器
  * 提供标签页内的网页浏览功能，支持分屏
  */
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.BrowserManager = void 0;
 // 新建标签页默认显示的欢迎页（data URI，避免约:blank 一片空白）
 const getNewTabPageHtml = () => {
     const isDark = document.body.classList.contains('theme-light') ? false : true;
@@ -482,7 +480,7 @@ class BrowserManager {
         const tabData = window.tabManager.tabs.get(uniqueKey);
         if (!tabData)
             return;
-        const displayTitle = title || tabData.fileName;
+        const displayTitle = title || tabData.fileName || '';
         tabData.fileName = displayTitle;
         if (tabData.element) {
             const label = tabData.element.querySelector('.tab-label');
@@ -651,7 +649,6 @@ class BrowserManager {
         return state.container;
     }
 }
-exports.BrowserManager = BrowserManager;
 // 全局实例
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = BrowserManager;

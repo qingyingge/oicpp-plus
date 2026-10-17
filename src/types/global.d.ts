@@ -9,16 +9,10 @@ declare function logerror(...args: unknown[]): void;
 
 // Monaco AMD loader 注入（monaco-editor 自带完整 ESM 类型）
 declare const monaco: typeof import('monaco-editor');
-// 渲染层 4 个 manager 单例：类在各文件顶层声明，经文件尾 guarded module.exports 可被 typeof import 精确引用
+// 渲染层 manager 单例：类在各文件顶层声明，本身就是全局，无需 ambient declare
 declare const OICPPApp: typeof import('../js/main.js');
 declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
 declare const CompilerManager: typeof import('../js/compile-manager.js');
-declare const DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
-declare const SidebarManager: typeof import('../js/sidebar.js');
-declare const TabManager: typeof import('../js/tabs.js');
-declare const IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
-// SampleTester 类为全局声明（sampleTester.ts script 形态），无需 ambient declare
-declare const CloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
 declare function require(moduleName: string): any;
 // 注：删掉此行会让 @types/node 合并进 Window.require 的 Require 形状激活（cache/extensions/main/resolve 必填），
@@ -126,13 +120,13 @@ interface Window {
     env: { NODE_ENV: string; CI: boolean };
   };
   // 渲染层各 manager 单例（window.X = ... 在各自文件里赋值；类经文件尾 guarded module.exports 可被 typeof import 引用）
-  tabManager: InstanceType<typeof import('../js/tabs.js')>;
+  tabManager: TabManager;
   titlebarManager: TitlebarManager;
-  sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
+  sidebarManager: SidebarManager;
   dialogManager: DialogManager;
-  browserManager: import('../js/browser-manager.js').BrowserManager;
+  browserManager: BrowserManager;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
-  cloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
+  cloudSyncPanel: CloudSyncPanel;
   editorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
   monacoEditorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
   compilerManager: InstanceType<typeof import('../js/compile-manager.js')>;
@@ -140,10 +134,10 @@ interface Window {
   OICPPApp: typeof OICPPApp;
   MonacoEditorManager: typeof MonacoEditorManager;
   CompilerManager: typeof CompilerManager;
-  IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
+  IntegratedTerminalPanel: typeof IntegratedTerminalPanel;
   OicppLspUtils: typeof import('../js/lsp-utils.js');
   // 从未赋值，仅死守卫读（window.sidebar / window.fileExplorer / window.app.* 无赋值位点）
-  sidebar?: InstanceType<typeof import('../js/sidebar.js')>;
+  sidebar?: SidebarManager;
   fileExplorer?: unknown;
   app?: {
     editorManager?: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
@@ -172,10 +166,10 @@ interface Window {
   TemplatesSettings: typeof import('../settings/templates.js').TemplatesSettings;
   debugUI?: unknown;
   TitlebarManager: typeof TitlebarManager;
-  SidebarManager: typeof import('../js/sidebar.js');
-  CloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
+  SidebarManager: typeof SidebarManager;
+  CloudSyncPanel: typeof CloudSyncPanel;
   CodeComparer: typeof import('../js/sidebar/codeComparer.js');
-  DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
+  DebugPanel: typeof DebugPanel;
   FileExplorer: typeof import('../js/sidebar/fileExplorer.js');
   Terminal: typeof import('@xterm/xterm').Terminal;
 }

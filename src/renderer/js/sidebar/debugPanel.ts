@@ -15,7 +15,7 @@ interface DebugStoppedPayload {
     reason?: string;
 }
 
-export class DebugPanel {
+class DebugPanel {
     isActive: boolean;
     root: HTMLElement | null;
     bound: boolean;

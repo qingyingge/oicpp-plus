@@ -3,7 +3,7 @@ const sbQs = (selector: string): HTMLElement | null => {
     return el instanceof HTMLElement ? el : null;
 };
 
-export class SidebarManager {
+class SidebarManager {
     currentPanel: string;
     panels: {
         files: FileExplorer;
@@ -507,7 +507,10 @@ export class SidebarManager {
         return this.currentPanel;
     }
 
-    getPanelManager(panelName: string) {
+    // 五个面板都是已知的类，按名字取要拿到具体类型；未知名字只保证生命周期方法（activate 那一层）
+    getPanelManager<K extends 'files' | 'samples' | 'compare' | 'debug' | 'cloud'>(panelName: K): SidebarManager['panels'][K];
+    getPanelManager(panelName: string): { activate: () => void; deactivate?: () => void } | undefined;
+    getPanelManager(panelName: string): { activate: () => void; deactivate?: () => void } | undefined {
         return this.panels[panelName];
     }
 
