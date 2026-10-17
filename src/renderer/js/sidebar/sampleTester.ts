@@ -1550,7 +1550,7 @@ class SampleTester {
                 );
                 enableFreopen = action === 'enable';
             } else if (window.dialogManager?.showConfirmDialog) {
-                enableFreopen = await window.dialogManager.showConfirmDialog(window.i18n.t('dialog.importSettings'), window.i18n.t('dialog.importSettingsDesc'));
+                enableFreopen = await window.dialogManager.showConfirmDialog(window.i18n.t('dialog.importSettings'), window.i18n.t('dialog.importSettingsDesc')) ?? false;
             } else {
                 enableFreopen = window.confirm(window.i18n.t('dialog.importSettingsDesc'));
             }
@@ -1722,7 +1722,7 @@ class SampleTester {
                 ]);
                 shouldImport = action === 'import';
             } else if (window.dialogManager?.showConfirmDialog) {
-                shouldImport = await window.dialogManager.showConfirmDialog(window.i18n.t('dialog.importPreview'), window.i18n.t('tester.importSummaryText', { count: pairs.length, recognized: importPlan.recognizedCount, unmatched: importPlan.unmatchedCount }));
+                shouldImport = await window.dialogManager.showConfirmDialog(window.i18n.t('dialog.importPreview'), window.i18n.t('tester.importSummaryText', { count: pairs.length, recognized: importPlan.recognizedCount, unmatched: importPlan.unmatchedCount })) ?? false;
             }
             if (!shouldImport) {
                 return;
@@ -3484,7 +3484,7 @@ class SampleTester {
                 ]);
                 shouldExpand = action === 'expand';
             } else if (window.dialogManager?.showConfirmDialog) {
-                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('tester.expandConfirmTitle'), window.i18n.t('tester.expandConfirmMsgText', { size: sizeMbText }));
+                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('tester.expandConfirmTitle'), window.i18n.t('tester.expandConfirmMsgText', { size: sizeMbText })) ?? false;
             } else {
                 shouldExpand = window.confirm(window.i18n.t('tester.expandConfirmMsgText', { size: sizeMbText }));
             }

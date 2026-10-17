@@ -369,7 +369,7 @@ class BackupSettings {
     /** 确认对话框 */
     private async confirmDialog(title: string, message: string): Promise<boolean> {
         if (window.dialogManager?.showConfirmDialog) {
-            return await window.dialogManager.showConfirmDialog(title, message);
+            return await window.dialogManager.showConfirmDialog(title, message) ?? false;
         }
         return window.confirm(message);
     }

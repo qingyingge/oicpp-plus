@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.DialogManager = void 0;
 class DialogManager {
     currentDialog;
     _keydownHandler;
@@ -119,6 +117,7 @@ class DialogManager {
             };
             overlay.addEventListener('keydown', this._overlayKeydown);
             this.currentDialog = {
+                // 本弹窗一定有 #dialog-input，confirmDialog() 只会递字符串进来，那个 true 分支是确认框的路径
                 resolve: resolve,
                 reject: reject
             };
@@ -343,7 +342,6 @@ class DialogManager {
         return div.innerHTML;
     }
 }
-exports.DialogManager = DialogManager;
 let dialogManager;
 document.addEventListener('DOMContentLoaded', () => {
     dialogManager = new DialogManager();

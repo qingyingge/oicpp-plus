@@ -1,4 +1,4 @@
-export class DialogManager {
+class DialogManager {
     currentDialog: { resolve: (value: string | boolean | null) => void; reject: (reason?: unknown) => void; } | null;
     _keydownHandler: ((e: KeyboardEvent) => void) | null;
     _overlayKeydown: ((e: KeyboardEvent) => void) | null;
@@ -65,7 +65,7 @@ export class DialogManager {
         }
     }
 
-    showInputDialog(title: string, defaultValue = '', placeholder = '', options: { selectStart?: number; selectEnd?: number } = {}): Promise<string | boolean | null> {
+    showInputDialog(title: string, defaultValue = '', placeholder = '', options: { selectStart?: number; selectEnd?: number } = {}): Promise<string | null> {
         return new Promise((resolve, reject) => {
             this.resetDialogState();
             const overlay = (document.getElementById('dialog-overlay'));
@@ -125,7 +125,8 @@ export class DialogManager {
             overlay!.addEventListener('keydown', this._overlayKeydown);
 
             this.currentDialog = {
-                resolve: resolve,
+                // 本弹窗一定有 #dialog-input，confirmDialog() 只会递字符串进来，那个 true 分支是确认框的路径
+                resolve: resolve as (value: string | boolean | null) => void,
                 reject: reject
             };
         });
@@ -348,18 +349,18 @@ export class DialogManager {
         }
     }
 
-    showGotoLineDialog(): Promise<string | boolean | null> {
+    showGotoLineDialog(): Promise<string | null> {
         return this.showInputDialog(window.i18n.t('dialog.gotoLine'), '1', window.i18n.t('dialog.gotoLinePlaceholder'));
     }
 
-    showNewFileDialog(errorMessage = '', defaultName = 'untitled.cpp'): Promise<string | boolean | null> {
+    showNewFileDialog(errorMessage = '', defaultName = 'untitled.cpp'): Promise<string | null> {
         const title = errorMessage ? window.i18n.t('dialog.newFileDialogErrorTitle') : window.i18n.t('dialog.newFileDialogTitle');
         const placeholder = errorMessage ? window.i18n.t('dialog.newFileDialogError', { msg: errorMessage }) : window.i18n.t('dialog.newFileDialogPlaceholder');
         const initial = defaultName && typeof defaultName === 'string' ? defaultName : 'untitled.cpp';
         return this.showInputDialog(title, initial, placeholder);
     }
 
-    showNewFolderDialog(): Promise<string | boolean | null> {
+    showNewFolderDialog(): Promise<string | null> {
         return this.showInputDialog(window.i18n.t('dialog.newFolderDialogTitle'), 'new-folder', window.i18n.t('dialog.newFolderDialogPlaceholder'));
     }
 

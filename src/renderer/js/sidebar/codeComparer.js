@@ -2015,7 +2015,7 @@ class CodeComparer {
                 shouldExpand = action === 'expand';
             }
             else if (window.dialogManager?.showConfirmDialog) {
-                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('compare.expandConfirmTitle'), window.i18n.t('compare.expandConfirmMsgText', { size: sizeText }));
+                shouldExpand = await window.dialogManager.showConfirmDialog(window.i18n.t('compare.expandConfirmTitle'), window.i18n.t('compare.expandConfirmMsgText', { size: sizeText })) ?? false;
             }
             else {
                 shouldExpand = window.confirm(window.i18n.t('compare.expandConfirmMsgText', { size: sizeText }));

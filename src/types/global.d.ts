@@ -17,7 +17,6 @@ declare const DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
 declare const SidebarManager: typeof import('../js/sidebar.js');
 declare const TabManager: typeof import('../js/tabs.js');
 declare const IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
-declare const dialogManager: import('../js/dialog.js').DialogManager;
 // SampleTester 类为全局声明（sampleTester.ts script 形态），无需 ambient declare
 declare const CloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
@@ -130,7 +129,7 @@ interface Window {
   tabManager: InstanceType<typeof import('../js/tabs.js')>;
   titlebarManager: TitlebarManager;
   sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
-  dialogManager: import('../js/dialog.js').DialogManager;
+  dialogManager: DialogManager;
   browserManager: import('../js/browser-manager.js').BrowserManager;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
   cloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;

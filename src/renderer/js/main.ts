@@ -4645,10 +4645,10 @@ export class OICPPApp {
             clearBtn.className = 'file-history-clear-btn';
             clearBtn.textContent = window.i18n?.t?.('fileHistory.clearHistory');
             clearBtn.addEventListener('click', async () => {
-                if (!window.dialogManager || typeof window.dialogManager.showConfirm !== 'function') {
+                if (!window.dialogManager || typeof window.dialogManager.showConfirmDialog !== 'function') {
                     if (!confirm(window.i18n?.t?.('fileHistory.clearConfirm'))) return;
                 } else {
-                    const confirmed = await window.dialogManager.showConfirm(window.i18n?.t?.('fileHistory.clearConfirm'));
+                    const confirmed = await window.dialogManager.showConfirmDialog(window.i18n?.t?.('fileHistory.clearHistory'), window.i18n?.t?.('fileHistory.clearConfirm'));
                     if (!confirmed) return;
             }
                 await window.electronAPI.clearFileHistory();

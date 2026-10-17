@@ -1627,7 +1627,7 @@ class FileExplorer {
             let defaultName = await computeDefaultName();
 
             do {
-                fileName = await dialogManager.showNewFileDialog(errorMessage, defaultName);
+                fileName = await window.dialogManager.showNewFileDialog(errorMessage, defaultName);
                 if (!fileName) {
                     return;
                 }
@@ -1657,7 +1657,8 @@ class FileExplorer {
                 errorMessage = window.i18n.t('fileExplorer.fileExistsName', { name: fileName });
                 logWarn(errorMessage);
                 attempts++;
-                const m = fileName.match(/^(.*?)(\d+)(\.[^.]+)$/);
+                // 三个分组在这个正则里必定出现，写不成 tuple 就会因 noUncheckedIndexedAccess 全变 string | undefined
+                const m = fileName.match(/^(.*?)(\d+)(\.[^.]+)$/) as [string, string, string, string] | null;
                 if (m) {
                     defaultName = `${m[1]}${parseInt(m[2], 10) + 1}${m[3]}`;
                 } else {
@@ -1740,7 +1741,7 @@ class FileExplorer {
         }
 
         try {
-            const folderName = await dialogManager.showNewFolderDialog();
+            const folderName = await window.dialogManager.showNewFolderDialog();
             if (folderName) {
                 // Validate the folder name before sending to backend
                 const validation = this.validateFileName(folderName);
@@ -1795,7 +1796,7 @@ class FileExplorer {
             };
             const defaultName = await computeDefaultName();
 
-            let fileName = await dialogManager.showNewFileDialog('', defaultName);
+            let fileName = await window.dialogManager.showNewFileDialog('', defaultName);
             if (fileName) {
                 // Validate the file name before sending to backend
                 const validation = this.validateFileName(fileName);
@@ -1860,7 +1861,7 @@ class FileExplorer {
         logInfo('在文件夹中创建新文件夹:', parentFolder.name);
 
         try {
-            const folderName = await dialogManager.showNewFolderDialog();
+            const folderName = await window.dialogManager.showNewFolderDialog();
             if (folderName) {
                 // Validate the folder name before sending to backend
                 const validation = this.validateFileName(folderName);
