@@ -36,20 +36,24 @@
         }
     }
 
-    function getQuickAccess() {
+    function getQuickAccess(homeDir) {
         const list = [];
-        const home = (process.platform === 'win32' ? process.env.USERPROFILE : process.env.HOME) || '';
-        if (home) list.push({ name: _t('folderPicker.homeDir'), path: home.replace(/\\/g, '/') });
+        if (homeDir) list.push({ name: _t('folderPicker.homeDir'), path: norm(homeDir) });
         if (process.platform !== 'win32') list.push({ name: _t('folderPicker.rootDir'), path: '/' });
         return list;
     }
 
     window.folderPicker = {
-        show(opts = {}) {
+        async show(opts = {}) {
+            const homeDir = await (window.electronAPI?.getUserHome?.() || '');
             return new Promise(resolve => {
                 const theme = (window.oicppApp?.settings?.theme) || 'dark';
                 const isLightTheme = String(theme).toLowerCase().includes('light');
-                let cur = opts.startPath || window.oicppApp?.settings?.lastOpen || ((process.platform === 'win32') ? (process.env.USERPROFILE || 'C:/') : '/');
+                // norm 统一反斜杠为正斜杠、折叠重复分隔符：来自 startPath/lastOpen 的
+                // Windows 路径必须加 norm，否则 buildBreadcrumb 把 `C:\Users\foo` 切成
+                // 单个片段，面包屑只剩一级。同时 USERPROFILE 不再走 process.env（只暴露
+                // NODE_ENV/CI），改走已有的 getUserHome IPC。
+                let cur = norm(opts.startPath || window.oicppApp?.settings?.lastOpen || (process.platform === 'win32' ? (homeDir || 'C:') : '/'));
                 if (!cur) cur = '/';
                 const backdrop = E('div', 'folder-picker-backdrop');
                 const panel = E('div', 'folder-picker ' + (isLightTheme ? 'light' : ''));
@@ -72,7 +76,7 @@
                 const quick = E('div', 'folder-picker-quick');
                 quick.appendChild(E('div', 'folder-picker-quick-title', _t('folderPicker.quickAccess')));
                 const quickList = E('div', 'folder-picker-quick-list');
-                getQuickAccess().forEach(q => {
+                getQuickAccess(homeDir).forEach(q => {
                     const it = E('div', 'folder-picker-quick-item', q.name);
                     it.title = q.path;
                     it.onclick = () => { cur = q.path; reload(); };
