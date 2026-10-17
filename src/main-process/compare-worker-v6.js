@@ -100,7 +100,10 @@ function spawnProcess(exePath, args, cwd) {
         proc._done = false;
         proc._result = null;
         proc._collectors = [];
-        proc.on('close', (code) => { activeProcesses.delete(proc); proc._result = { exitCode: code, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
+        // close(code, signal)：子进程被信号杀死时 code 为 null，这是唯一没被归一化的退出状态。
+        // 下游 `code !== 0 && code !== null` 会把它当成成功，于是拿崩溃前截断的输出继续与
+        // 标准程序比对（恰好相同就误判成通过）。这里折算成 -1，与 error/超时分支一致。
+        proc.on('close', (code, signal) => { activeProcesses.delete(proc); proc._result = { exitCode: (typeof code === 'number' ? code : -1), signal: signal || null, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
         proc.on('error', (err) => { activeProcesses.delete(proc); proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
         resolve(proc);
     });
@@ -180,7 +183,7 @@ async function runJs(exePath, input, timeout, args, cwd) {
     if (input !== null && input !== undefined) await writeInput(proc, input);
     const r = await waitForResult(proc, timeout);
     const output = (r.exitCode === -1 || r.exitCode === -3) ? null : proc._collect();
-    return { code: r.exitCode, output, outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(), timeout: !!r.timeout, error: r.error, ms: Date.now() - t0 };
+    return { code: r.exitCode, output, outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(), timeout: !!r.timeout, error: r.error, signal: r.signal || null, ms: Date.now() - t0 };
 }
 
 function runFast(exePath, input, timeout) {
@@ -273,9 +276,9 @@ parentPort.on('message', async (msg) => {
                 genOut = await runGenerator(gen, genTimeout);
                 if (!running) break;
                 lastGenMs = genOut.ms || 0;
-                if (genOut.timeout || genOut.error || genOut.code !== 0) {
-                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error ? 'gen_error' : 'gen_exit'),
-                        genOut.error || ('generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
+                if (genOut.timeout || genOut.error || genOut.signal || genOut.code !== 0) {
+                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error || genOut.signal ? 'gen_error' : 'gen_exit'),
+                        genOut.error || (genOut.signal ? 'generator killed by ' + genOut.signal : 'generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
                     continue;
                 }
 
@@ -312,9 +315,11 @@ parentPort.on('message', async (msg) => {
 
                     const spawnExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
                     if (stdR.timeout) { fail(i, 'std_tle', 'std_timeout', 'standard program timed out', spawnExtra); continue; }
-                    if (stdR.error || (stdR.code !== 0 && stdR.code !== null)) { fail(i, 'std_re', stdR.error ? 'std_error' : 'std_exit', stdR.error || ('standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code }); continue; }
+                    // signal 分支要在退出码分支之前：被信号杀死时 exitCode 已被折算成 -1，
+                    // 只看退出码会把 SIGSEGV/SIGABRT 报成普通的「退出码 -1」
+                    if (stdR.error || stdR.signal || (stdR.code !== 0 && stdR.code !== null)) { fail(i, 'std_re', (stdR.error || stdR.signal) ? 'std_error' : 'std_exit', stdR.error || (stdR.signal ? 'standard program killed by ' + stdR.signal : 'standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code }); continue; }
                     if (testR.timeout) { fail(i, 'test_tle', 'test_timeout', 'test program timed out', spawnExtra); continue; }
-                    if (testR.error || (testR.code !== 0 && testR.code !== null)) { fail(i, 'test_re', testR.error ? 'test_error' : 'test_exit', testR.error || ('test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code }); continue; }
+                    if (testR.error || testR.signal || (testR.code !== 0 && testR.code !== null)) { fail(i, 'test_re', (testR.error || testR.signal) ? 'test_error' : 'test_exit', testR.error || (testR.signal ? 'test program killed by ' + testR.signal : 'test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code }); continue; }
                     if (stdR.outputTruncated || testR.outputTruncated) { fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', spawnExtra); continue; }
 
                     if (!outputsEqual(stdR.output, testR.output)) {
