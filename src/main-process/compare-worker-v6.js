@@ -1,3 +1,38 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
 /**
  * compare-worker-v6.js — V6 Native posix_spawn worker
  * 每个线程内完全同步: spawn+IO 在 C 层完成, 无事件循环开销.
@@ -5,10 +40,9 @@
  * 生成器始终走 child_process（支持 args/cwd，兼容 Python 生成器）；
  * std/test 优先 fastspawn，加载失败时回退 child_process。
  */
-const { parentPort } = require('worker_threads');
-const fs = require('fs');
-const path = require('path');
-
+const worker_threads_1 = require("worker_threads");
+const fs = __importStar(require("fs"));
+const path = __importStar(require("path"));
 // fastspawn.node 在打包配置里位于 asarUnpack，因此它不在 app.asar 内，而被搬到
 // app.asar.unpacked/。worker 里写死相对路径 require('../../fastspawn.node') 命中的是
 // app.asar 根目录，在打包后必然 MODULE_NOT_FOUND。逐个候选探测，开发态与打包态都能命中。
@@ -20,26 +54,26 @@ function loadFastspawn() {
     let lastError = null;
     for (const candidate of candidates) {
         try {
-            if (!fs.existsSync(candidate)) continue;
+            if (!fs.existsSync(candidate))
+                continue;
             return require(candidate);
-        } catch (error) {
+        }
+        catch (error) {
             lastError = error;
         }
     }
     throw lastError || new Error(`fastspawn.node not found (tried: ${candidates.join(', ')})`);
 }
-
 let fast = null;
 try {
     fast = loadFastspawn();
-} catch (e) {
-    // 告警是模块级的，同一个 worker 里只上报一次，避免每次对拍刷屏。
-    parentPort.postMessage({ type: 'fastspawn-load-warning', message: e.message });
 }
-
-const { spawn } = require('child_process');
-const { terminateProcessTree } = require('../utils/process-supervisor');
-
+catch (e) {
+    // 告警是模块级的，同一个 worker 里只上报一次，避免每次对拍刷屏。
+    worker_threads_1.parentPort.postMessage({ type: 'fastspawn-load-warning', message: e.message });
+}
+const child_process_1 = require("child_process");
+const process_supervisor_1 = require("../utils/process-supervisor");
 /**
  * 对拍工作进程的句柄：在标准 ChildProcess 上扩展了对拍自定义属性。
  * @typedef {{
@@ -57,14 +91,13 @@ const PROCESS_EXIT_GRACE_MS = 5000;
 // 回传给渲染层的诊断数据上限：截断时必须显式标记，否则导出的测试数据会被静默砍掉
 const MAX_CAPTURED_INPUT_BYTES = 1024 * 1024;
 const MAX_CAPTURED_OUTPUT_BYTES = 64 * 1024;
-
 function captureText(value, limit) {
-    if (value == null) return { text: '', truncated: false };
+    if (value == null)
+        return { text: '', truncated: false };
     const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
     const truncated = buf.length > limit;
     return { text: (truncated ? buf.subarray(0, limit) : buf).toString('utf8'), truncated };
 }
-
 function normalizeOutput(value) {
     return Buffer.from(value || '')
         .toString('utf8')
@@ -74,31 +107,31 @@ function normalizeOutput(value) {
         .join('\n')
         .replace(/\n+$/, '');
 }
-
 function outputsEqual(left, right) {
     return normalizeOutput(left) === normalizeOutput(right);
 }
-
 function spawnProcess(exePath, args, cwd) {
     return new Promise((resolve) => {
-        const proc = (/** @type {WorkerProc} */ (spawn(exePath, args || [], {
+        const proc = /** @type {WorkerProc} */ (0, child_process_1.spawn)(exePath, args || [], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
             detached: process.platform !== 'win32',
             cwd
-        })));
+        });
         activeProcesses.add(proc);
         const stdout = [], stderr = [];
         let outputBytes = 0;
         let outputTruncated = false;
         const append = (target, data) => {
-            if (outputTruncated) return;
+            if (outputTruncated)
+                return;
             const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
             const remaining = MAX_WORKER_OUTPUT_BYTES - outputBytes;
             if (remaining <= 0 || buffer.length > remaining) {
                 outputTruncated = true;
-                if (remaining > 0) target.push(buffer.subarray(0, remaining));
-                terminateProcessTree(proc);
+                if (remaining > 0)
+                    target.push(buffer.subarray(0, remaining));
+                (0, process_supervisor_1.terminateProcessTree)(proc);
                 return;
             }
             target.push(buffer);
@@ -112,22 +145,27 @@ function spawnProcess(exePath, args, cwd) {
         proc._done = false;
         proc._result = null;
         proc._collectors = [];
-        proc.on('close', (code) => { activeProcesses.delete(proc); proc._result = { exitCode: code, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
-        proc.on('error', (err) => { activeProcesses.delete(proc); proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
+        proc.on('close', (code) => { activeProcesses.delete(proc); proc._result = { exitCode: code, outputTruncated }; proc._done = true; for (const cb of proc._collectors)
+            cb(proc._result); proc._collectors = []; });
+        proc.on('error', (err) => { activeProcesses.delete(proc); proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors)
+            cb(proc._result); proc._collectors = []; });
         resolve(proc);
     });
 }
-
 function waitForResult(proc, timeout) {
-    if (proc._done) return Promise.resolve(proc._result);
+    if (proc._done)
+        return Promise.resolve(proc._result);
     return new Promise((resolve) => {
         let timer = null;
-        const cb = (result) => { if (timer) { clearTimeout(timer); timer = null; } resolve(result); };
+        const cb = (result) => { if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        } resolve(result); };
         proc._collectors.push(cb);
         if (timeout > 0) {
             timer = setTimeout(() => {
                 proc._collectors = proc._collectors.filter(c => c !== cb);
-                terminateProcessTree(proc);
+                (0, process_supervisor_1.terminateProcessTree)(proc);
                 // taskkill 返回后目标进程的映像尚未从系统卸载，此刻渲染层去删 exe 会拿到
                 // EPERM/EBUSY。超时是整条对拍里进程存活最久的那一个（退出最晚），所以这里
                 // 必须等到 'close' 才放行，且要有上限，不能让清理被一个赖着不走的进程卡死。
@@ -146,9 +184,7 @@ function waitForResult(proc, timeout) {
         }
     });
 }
-
-function killProc(proc) { terminateProcessTree(proc); }
-
+function killProc(proc) { (0, process_supervisor_1.terminateProcessTree)(proc); }
 function writeInput(proc, input) {
     return new Promise((resolve) => {
         // 子进程可能在读完输入前就退出（编译失败、std 先崩），此时 write 触发
@@ -157,25 +193,31 @@ function writeInput(proc, input) {
         // 必须在 write 之前挂上。
         try {
             proc.stdin.on('error', () => { resolve(false); });
-        } catch (_) { /* stdin 不可用时下面自然失败 */ }
+        }
+        catch (_) { /* stdin 不可用时下面自然失败 */ }
         try {
-            if (proc.stdin.destroyed || proc.stdin.writableEnded) { resolve(false); return; }
+            if (proc.stdin.destroyed || proc.stdin.writableEnded) {
+                resolve(false);
+                return;
+            }
             proc.stdin.write(input);
             proc.stdin.end();
             resolve(true);
-        } catch(_) { resolve(false); }
+        }
+        catch (_) {
+            resolve(false);
+        }
     });
 }
-
 async function runJs(exePath, input, timeout, args, cwd) {
     const t0 = Date.now();
     const proc = await spawnProcess(exePath, args, cwd);
-    if (input !== null && input !== undefined) await writeInput(proc, input);
+    if (input !== null && input !== undefined)
+        await writeInput(proc, input);
     const r = await waitForResult(proc, timeout);
     const output = (r.exitCode === -1 || r.exitCode === -3) ? null : proc._collect();
     return { code: r.exitCode, output, outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(), timeout: !!r.timeout, error: r.error, ms: Date.now() - t0 };
 }
-
 function runFast(exePath, input, timeout) {
     if (!fast) {
         return { code: -1, output: null, timeout: false, error: 'fastspawn module not loaded', ms: 0 };
@@ -193,7 +235,6 @@ function runFast(exePath, input, timeout) {
         ms: Date.now() - t0
     };
 }
-
 function runFastPair(stdPath, testPath, input, timeout) {
     if (!fast) {
         return { code1: -1, code2: -1, out1: null, out2: null, ms: 0, error: 'fastspawn module not loaded' };
@@ -210,37 +251,35 @@ function runFastPair(stdPath, testPath, input, timeout) {
         ms
     };
 }
-
 async function runGenerator(gen, timeout) {
     let exe = null, args = [], cwd = undefined;
     if (typeof gen === 'string') {
         exe = gen;
-    } else if (gen && typeof gen === 'object') {
+    }
+    else if (gen && typeof gen === 'object') {
         exe = gen.executablePath || gen.path || gen.exe || '';
         args = gen.args || [];
         cwd = gen.workingDirectory || gen.cwd || undefined;
     }
-    if (!exe) return { code: -2, error: 'missing generator executable', output: null, ms: 0 };
+    if (!exe)
+        return { code: -2, error: 'missing generator executable', output: null, ms: 0 };
     return await runJs(exe, null, timeout, args, cwd);
 }
-
 let running = false;
 const activeProcesses = new Set();
-
-parentPort.on('message', async (msg) => {
+worker_threads_1.parentPort.on('message', async (msg) => {
     if (msg.type === 'run-tests') {
         running = true;
         const { startIdx, count, gen, stdPath, testPath, timeout, generatorTimeout } = msg;
         const useFast = !!fast;
         const genTimeout = (Number.isFinite(generatorTimeout) && generatorTimeout > 0) ? generatorTimeout : 0;
         let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;
-
         // code 是给渲染层做 i18n 映射用的稳定标识，message 仅作技术细节，不再直接进 UI
         const fail = (i, kind, code, detail, extra = {}) => {
             const input = captureText(extra.rawInput, MAX_CAPTURED_INPUT_BYTES);
             const std = extra.rawStd !== undefined ? captureText(extra.rawStd, MAX_CAPTURED_OUTPUT_BYTES) : null;
             const test = extra.rawTest !== undefined ? captureText(extra.rawTest, MAX_CAPTURED_OUTPUT_BYTES) : null;
-            parentPort.postMessage({
+            worker_threads_1.parentPort.postMessage({
                 type: 'error',
                 testIndex: i,
                 kind,
@@ -258,72 +297,102 @@ parentPort.on('message', async (msg) => {
                 testOutputTruncated: test ? test.truncated : undefined
             });
         };
-
         for (let i = startIdx; i < startIdx + count && running; i++) {
             let genOut = null;
             const rawInput = () => (genOut ? genOut.output : null);
             try {
                 genOut = await runGenerator(gen, genTimeout);
-                if (!running) break;
+                if (!running)
+                    break;
                 lastGenMs = genOut.ms || 0;
                 if (genOut.timeout || genOut.error || genOut.code !== 0) {
-                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error ? 'gen_error' : 'gen_exit'),
-                        genOut.error || ('generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
+                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error ? 'gen_error' : 'gen_exit'), genOut.error || ('generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
                     continue;
                 }
-
                 if (useFast) {
-                    if (!running) break;
+                    if (!running)
+                        break;
                     const pair = runFastPair(stdPath, testPath, genOut.output, timeout);
                     lastStdMs = pair.ms;
                     lastTestMs = pair.ms;
-
                     const stdCode = pair.code1;
                     const testCode = pair.code2;
                     const stdOut = pair.out1;
                     const testOut = pair.out2;
                     const pairExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
-
-                    if (stdCode === -3) { fail(i, 'std_tle', 'std_timeout', 'standard program timed out', pairExtra); continue; }
-                    if (stdCode !== 0 && stdCode !== null) { fail(i, 'std_re', 'std_exit', 'standard program exit ' + stdCode, { ...pairExtra, exitCode: stdCode }); continue; }
-                    if (testCode === -3) { fail(i, 'test_tle', 'test_timeout', 'test program timed out', pairExtra); continue; }
-                    if (testCode !== 0 && testCode !== null) { fail(i, 'test_re', 'test_exit', 'test program exit ' + testCode, { ...pairExtra, exitCode: testCode }); continue; }
-                    if (pair.truncated1 || pair.truncated2) { fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', pairExtra); continue; }
-
+                    if (stdCode === -3) {
+                        fail(i, 'std_tle', 'std_timeout', 'standard program timed out', pairExtra);
+                        continue;
+                    }
+                    if (stdCode !== 0 && stdCode !== null) {
+                        fail(i, 'std_re', 'std_exit', 'standard program exit ' + stdCode, { ...pairExtra, exitCode: stdCode });
+                        continue;
+                    }
+                    if (testCode === -3) {
+                        fail(i, 'test_tle', 'test_timeout', 'test program timed out', pairExtra);
+                        continue;
+                    }
+                    if (testCode !== 0 && testCode !== null) {
+                        fail(i, 'test_re', 'test_exit', 'test program exit ' + testCode, { ...pairExtra, exitCode: testCode });
+                        continue;
+                    }
+                    if (pair.truncated1 || pair.truncated2) {
+                        fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', pairExtra);
+                        continue;
+                    }
                     if (!outputsEqual(stdOut, testOut)) {
                         fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...pairExtra, rawStd: stdOut, rawTest: testOut });
                         continue;
                     }
-                    parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
-                } else {
+                    worker_threads_1.parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
+                }
+                else {
                     const stdR = await runJs(stdPath, genOut.output, timeout);
-                    if (!running) break;
+                    if (!running)
+                        break;
                     lastStdMs = stdR.ms || 0;
                     const testR = await runJs(testPath, genOut.output, timeout);
-                    if (!running) break;
+                    if (!running)
+                        break;
                     lastTestMs = testR.ms || 0;
-
                     const spawnExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
-                    if (stdR.timeout) { fail(i, 'std_tle', 'std_timeout', 'standard program timed out', spawnExtra); continue; }
-                    if (stdR.error || (stdR.code !== 0 && stdR.code !== null)) { fail(i, 'std_re', stdR.error ? 'std_error' : 'std_exit', stdR.error || ('standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code }); continue; }
-                    if (testR.timeout) { fail(i, 'test_tle', 'test_timeout', 'test program timed out', spawnExtra); continue; }
-                    if (testR.error || (testR.code !== 0 && testR.code !== null)) { fail(i, 'test_re', testR.error ? 'test_error' : 'test_exit', testR.error || ('test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code }); continue; }
-                    if (stdR.outputTruncated || testR.outputTruncated) { fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', spawnExtra); continue; }
-
+                    if (stdR.timeout) {
+                        fail(i, 'std_tle', 'std_timeout', 'standard program timed out', spawnExtra);
+                        continue;
+                    }
+                    if (stdR.error || (stdR.code !== 0 && stdR.code !== null)) {
+                        fail(i, 'std_re', stdR.error ? 'std_error' : 'std_exit', stdR.error || ('standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code });
+                        continue;
+                    }
+                    if (testR.timeout) {
+                        fail(i, 'test_tle', 'test_timeout', 'test program timed out', spawnExtra);
+                        continue;
+                    }
+                    if (testR.error || (testR.code !== 0 && testR.code !== null)) {
+                        fail(i, 'test_re', testR.error ? 'test_error' : 'test_exit', testR.error || ('test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code });
+                        continue;
+                    }
+                    if (stdR.outputTruncated || testR.outputTruncated) {
+                        fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', spawnExtra);
+                        continue;
+                    }
                     if (!outputsEqual(stdR.output, testR.output)) {
                         fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...spawnExtra, rawStd: stdR.output, rawTest: testR.output });
                         continue;
                     }
-                    parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
+                    worker_threads_1.parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
                 }
-            } catch(e) {
+            }
+            catch (e) {
                 fail(i, 'exception', 'exception', e && e.message ? e.message : String(e), { rawInput: rawInput() });
             }
         }
-        parentPort.postMessage({ type: 'done' });
-    } else if (msg.type === 'stop') {
+        worker_threads_1.parentPort.postMessage({ type: 'done' });
+    }
+    else if (msg.type === 'stop') {
         running = false;
-        for (const proc of activeProcesses) killProc(proc);
+        for (const proc of activeProcesses)
+            killProc(proc);
         activeProcesses.clear();
     }
 });

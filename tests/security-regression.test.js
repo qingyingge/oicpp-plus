@@ -63,7 +63,7 @@ check('PDF message listener is disposed', tabsSource.includes('dispose()') && ta
 check('compiler settings listener binding is idempotent', /if \(this\._eventListenersBound\)\s*\{?\s*return;/.test(compilerSettingsSource));
 check('editor opacity uses cancellable preview updates', editorSettingsSource.includes('sendSettingsPreview({ windowOpacity })'));
 check('downloader releases probe response bodies', (downloaderSource.match(/\.body\.resume\(\)/g) || []).length >= 3);
-check('comparer tracks all children and observes stop between awaits', workerSource.includes('const activeProcesses = new Set()') && !workerSource.includes('currentProc') && (workerSource.match(/if \(!running\) break;/g) || []).length >= 3);
+check('comparer tracks all children and observes stop between awaits', workerSource.includes('const activeProcesses = new Set()') && !workerSource.includes('currentProc') && (workerSource.match(/if \(!running\)\s+break;/g) || []).length >= 3);
 check('uninstaller preserves foreign cpp associations', installerSource.includes('ReadRegStr $0 HKCR ".cpp" ""') && installerSource.includes('${If} $0 == "OICPPIDE.cpp"') && !installerSource.includes('DeleteRegKey HKCR ".cpp"'));
 check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') && Object.hasOwn(packageJson.devDependencies, 'sharp'));
 check('CI icon boundary matching is exact', ciSource.includes('/oicpp\\.ico(?=$|[^-])/'));

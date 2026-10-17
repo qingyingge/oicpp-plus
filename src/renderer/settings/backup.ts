@@ -1,10 +1,11 @@
 /**
  * 渲染层 备份/还原 设置管理。
  *
- * 以「脚本」形式参与构建（无 import/export）——在渲染层经 script 标签加载后挂到
- * window.BackupSettings；同时 tests/backup.test.js 用 require() 直接加载本文件
- * （Node 下 module 存在），因此文件尾用 guarded if/else 同时兼容两种宿主：
- * 有 module.exports 时走 CommonJS 导出，否则挂到 window。
+ * 全局脚本形态：由 backup.html 的 `<script src="backup.js">` 加载。文件内不得出现
+ * import/export（含 `export {};`），否则 tsc 会 emit
+ * `Object.defineProperty(exports, "__esModule", { value: true });`，而浏览器脚本标签下
+ * `exports` 未定义 → 整页在加载期就抛错。本文件不挂 window，
+ * 由文件尾的 DOMContentLoaded 监听自建实例。
  *
  * 所有对 window.i18n.t 的调用严格限定两参（key, params）。
  * 第三个参数会被静默丢弃，需兜底请用 `window.i18n?.t?.(key) || '文案'` 形式。
@@ -13,24 +14,30 @@
 /** 主进程下发的备份元信息 */
 type BackupInfo = { displayTime?: string; timestampRaw?: string; deviceName?: string; timeLabel?: string };
 
+/** IPC 通用成功/失败信封 */
+type BackupIpcResult = { success?: boolean; error?: string };
+
+/** 本页面实际从 getAllSettings 读到的字段 */
+type BackupLoadedSettings = { autoBackupSettings?: unknown; theme?: string };
+
 class BackupSettings {
     /** 当前设置项 */
-    private settings: {
+    private declare settings: {
         autoBackupSettings: boolean;
         theme: string;
     };
     /** 正在保存标志 */
-    private _saving: boolean;
+    private declare _saving: boolean;
     /** 最新备份状态 */
-    private _latestBackupState: { type: string; params: { timeLabel?: string; deviceName?: string } };
+    private declare _latestBackupState: { type: string; params?: BackupInfo };
 
     constructor() {
         this.settings = {
             autoBackupSettings: false,
-            theme: 'dark',
+            theme: 'dark'
         };
         this._saving = false;
-        this._latestBackupState = { type: 'unavailable', params: {} };
+        this._latestBackupState = { type: 'unavailable' };
     }
 
     /**
@@ -50,24 +57,24 @@ class BackupSettings {
         this.setupThemeListener();
         this.setupLanguageListener();
         this.updateUI();
-        this.renderLatestBackupInfo();
+        this.refreshLatestBackupInfo();
     }
 
     /** 最近信息 DOM 元素缓存 */
-    private latestInfoEl: HTMLElement | null = null;
+    private declare latestInfoEl: HTMLElement | null;
 
     /** 设置主题监听器 */
     private setupThemeListener(): void {
-        if (window.electronIPC && typeof window.electronIPC.on === 'function') {
+        if (window.electronIPC && window.electronIPC.on) {
             window.electronIPC.on('theme-changed', (_event: unknown, theme: string) => {
                 this.applyTheme(theme);
             });
         }
 
-        if (window.electronIPC && typeof window.electronIPC.on === 'function') {
-            window.electronIPC.on('settings-imported', (_event: unknown, allSettings: unknown) => {
-                if (allSettings && typeof allSettings === 'object' && 'autoBackupSettings' in allSettings && typeof (allSettings as { autoBackupSettings: unknown }).autoBackupSettings === 'boolean') {
-                    this.settings.autoBackupSettings = (allSettings as { autoBackupSettings: boolean }).autoBackupSettings;
+        if (window.electronIPC && window.electronIPC.on) {
+            window.electronIPC.on('settings-imported', (_event: unknown, allSettings: { autoBackupSettings?: boolean }) => {
+                if (allSettings && typeof allSettings.autoBackupSettings === 'boolean') {
+                    this.settings.autoBackupSettings = allSettings.autoBackupSettings;
                     this.updateUI();
                 }
             });
@@ -95,28 +102,28 @@ class BackupSettings {
     /** 设置事件监听器 */
     private setupEventListeners(): void {
         const saveBtn = document.getElementById('save-settings');
-        if (saveBtn instanceof HTMLButtonElement) {
+        if (saveBtn) {
             saveBtn.addEventListener('click', () => {
                 this.saveSettings();
             });
         }
 
         const cancelBtn = document.getElementById('cancel-settings');
-        if (cancelBtn instanceof HTMLButtonElement) {
+        if (cancelBtn) {
             cancelBtn.addEventListener('click', () => {
                 window.close();
             });
         }
 
         const backupBtn = document.getElementById('backup-now');
-        if (backupBtn instanceof HTMLButtonElement) {
+        if (backupBtn) {
             backupBtn.addEventListener('click', async () => {
                 await this.backupNow();
             });
         }
 
         const syncBtn = document.getElementById('sync-settings');
-        if (syncBtn instanceof HTMLButtonElement) {
+        if (syncBtn) {
             syncBtn.addEventListener('click', async () => {
                 await this.syncFromCloud();
             });
@@ -126,8 +133,8 @@ class BackupSettings {
     /** 加载设置 */
     private async loadSettings(): Promise<void> {
         try {
-            let allSettings: unknown = null;
-            if (window.electronAPI && typeof window.electronAPI.getAllSettings === 'function') {
+            let allSettings: BackupLoadedSettings | null = null;
+            if (window.electronAPI && window.electronAPI.getAllSettings) {
                 allSettings = await window.electronAPI.getAllSettings();
             } else if (typeof require !== 'undefined') {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -135,11 +142,10 @@ class BackupSettings {
                 allSettings = await ipcRenderer.invoke('get-all-settings');
             }
 
-            if (allSettings && typeof allSettings === 'object') {
-                const settingsObj = allSettings as { autoBackupSettings?: unknown; theme?: unknown };
-                this.settings.autoBackupSettings = settingsObj.autoBackupSettings === true;
-                if (typeof settingsObj.theme === 'string') {
-                    this.applyTheme(settingsObj.theme);
+            if (allSettings) {
+                this.settings.autoBackupSettings = allSettings.autoBackupSettings === true;
+                if (allSettings.theme) {
+                    this.applyTheme(allSettings.theme);
                 }
             }
         } catch (error) {
@@ -156,7 +162,7 @@ class BackupSettings {
     }
 
     /** 设置最新备份状态 */
-    private setLatestBackupState(type: string, params: { timeLabel?: string; deviceName?: string } = {}): void {
+    private setLatestBackupState(type: string, params: BackupInfo = {}): void {
         this._latestBackupState = { type, params };
         this.renderLatestBackupInfo();
     }
@@ -165,7 +171,7 @@ class BackupSettings {
     private renderLatestBackupInfo(): void {
         if (!this.latestInfoEl) return;
 
-        const { type, params } = this._latestBackupState;
+        const { type, params } = this._latestBackupState as { type: string; params: BackupInfo };
         // 严禁给 window.i18n.t 传第三个参数，见项目 i18n 规则
         switch (type) {
             case 'notLoggedIn':
@@ -181,7 +187,7 @@ class BackupSettings {
                 // params 参数必须精确匹配 t() 定义，不得多传/少传
                 this.latestInfoEl.textContent = window.i18n.t('backup.latestInfo', {
                     timeLabel: params.timeLabel || window.i18n.t('backup.unknownTime'),
-                    deviceName: params.deviceName || window.i18n.t('backup.unknownDevice'),
+                    deviceName: params.deviceName || window.i18n.t('backup.unknownDevice')
                 });
                 break;
             default:
@@ -189,11 +195,43 @@ class BackupSettings {
         }
     }
 
+    private async refreshLatestBackupInfo(): Promise<void> {
+        if (!this.latestInfoEl) return;
+        if (!window.electronAPI?.getSettingsBackupInfo) {
+            this.setLatestBackupState('unavailable');
+            return;
+        }
+
+        try {
+            const result = await window.electronAPI.getSettingsBackupInfo();
+            if (!result || !result.success) {
+                const error = result?.error || 'UNKNOWN';
+                if (error === 'NOT_LOGGED_IN') {
+                    this.setLatestBackupState('notLoggedIn');
+                } else if (error === 'NO_BACKUP') {
+                    this.setLatestBackupState('none');
+                } else {
+                    this.setLatestBackupState('failed');
+                }
+                return;
+            }
+
+            const info = result.info || {};
+            this.setLatestBackupState('info', {
+                timeLabel: info.displayTime || info.timestampRaw,
+                deviceName: info.deviceName
+            });
+        } catch (error) {
+            logError('获取最近备份信息失败:', error);
+            this.setLatestBackupState('failed');
+        }
+    }
+
     /** 收集当前设置 */
     private collectSettings(): { autoBackupSettings: boolean } {
         const autoBackupCheckbox = document.getElementById('auto-backup-settings');
         return {
-            autoBackupSettings: (autoBackupCheckbox instanceof HTMLInputElement) ? !!autoBackupCheckbox.checked : false,
+            autoBackupSettings: (autoBackupCheckbox instanceof HTMLInputElement) ? !!autoBackupCheckbox.checked : false
         };
     }
 
@@ -203,8 +241,8 @@ class BackupSettings {
         this._saving = true;
         try {
             const newSettings = this.collectSettings();
-            let result: unknown = null;
-            if (window.electronAPI && typeof window.electronAPI.updateSettings === 'function') {
+            let result: BackupIpcResult | null = null;
+            if (window.electronAPI && window.electronAPI.updateSettings) {
                 result = await window.electronAPI.updateSettings(newSettings);
             } else if (typeof require !== 'undefined') {
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -212,54 +250,49 @@ class BackupSettings {
                 result = await ipcRenderer.invoke('update-settings', newSettings);
             }
 
-            if (result && typeof result === 'object' && 'success' in result) {
-                const success = (result as { success: unknown }).success;
-                if (success) {
-                    this.settings.autoBackupSettings = newSettings.autoBackupSettings;
-                    this.showMessage(window.i18n.t('backup.saveSuccess'), 'success');
-                    if (newSettings.autoBackupSettings) {
-                        await this.backupNow(true);
-                    }
-                } else {
-                    const errorMsg: string = typeof result === 'object' && 'error' in result
-                        ? String((result as { error?: unknown }).error || '')
-                        : window.i18n.t('backup.unknownError');
-                    this.showMessage(window.i18n.t('backup.saveFail', { error: errorMsg }), 'error');
+            if (result && result.success) {
+                this.settings.autoBackupSettings = newSettings.autoBackupSettings;
+                this.showMessage(window.i18n.t('backup.saveSuccess'), 'success');
+                if (newSettings.autoBackupSettings) {
+                    await this.backupNow(true);
                 }
+            } else {
+                const errorMsg = result?.error || window.i18n.t('backup.unknownError');
+                this.showMessage(window.i18n.t('backup.saveFail', { error: errorMsg }), 'error');
             }
         } catch (error) {
             logError('保存备份设置失败:', error);
-            this.showMessage(window.i18n.t('backup.saveFailSimple', { error: String(error) }), 'error');
+            this.showMessage(window.i18n.t('backup.saveFailSimple', { error: (error as Error).message }), 'error');
         } finally {
             this._saving = false;
         }
     }
 
     /** 立即备份 */
-    private async backupNow(silent: boolean = false): Promise<boolean | undefined> {
+    private async backupNow(silent: boolean = false): Promise<boolean> {
         if (!window.electronAPI?.backupSettingsToCloud) {
             if (!silent) this.showMessage(window.i18n.t('backup.backupUnavailable'), 'error');
-            return;
+            return false;
         }
 
         const result = await window.electronAPI.backupSettingsToCloud();
-        if (!result || typeof result !== 'object' || !('success' in result) || !(result as { success: boolean }).success) {
-            const error: string = result?.error || 'UNKNOWN';
+        if (!result || !result.success) {
+            const error = result?.error;
             if (error === 'NOT_LOGGED_IN') {
                 this.showMessage(window.i18n.t('backup.loginFirst'), 'warning');
             } else if (error === 'NO_SETTINGS') {
                 if (!silent) this.showMessage(window.i18n.t('backup.nothingToBackup'), 'warning');
             } else {
-                const errorMsg: string = error || window.i18n.t('backup.unknownError');
+                const errorMsg = error || window.i18n.t('backup.unknownError');
                 if (!silent) this.showMessage(window.i18n.t('backup.backupFailSimple', { error: errorMsg }), 'error');
             }
-            return;
+            return false;
         }
 
         if (!silent) {
             this.showMessage(window.i18n.t('backup.backupSuccess'), 'success');
         }
-        this.renderLatestBackupInfo();
+        this.refreshLatestBackupInfo();
         return true;
     }
 
@@ -271,11 +304,9 @@ class BackupSettings {
         }
 
         const infoResult = await window.electronAPI.getSettingsBackupInfo();
-        if (!infoResult || typeof infoResult !== 'object' || !('success' in infoResult) || !(infoResult as { success: boolean }).success) {
+        if (!infoResult || !infoResult.success) {
             logInfo('获取云端备份信息失败:', infoResult);
-            const error: string = typeof infoResult === 'object' && infoResult !== null && 'error' in infoResult
-                ? String((infoResult as { error?: unknown }).error || 'UNKNOWN')
-                : 'UNKNOWN';
+            const error = infoResult?.error;
             if (error === 'NOT_LOGGED_IN') {
                 this.showMessage(window.i18n.t('backup.loginFirst'), 'warning');
             } else if (error === 'NO_BACKUP') {
@@ -286,13 +317,13 @@ class BackupSettings {
             return false;
         }
 
-        const info = (infoResult as { info?: BackupInfo }).info || {};
-        const timeLabel: string = String(info.displayTime || info.timestampRaw || window.i18n.t('backup.unknownTime'));
-        const deviceName: string = String(info.deviceName || window.i18n.t('backup.unknownDevice'));
+        const info = infoResult.info || {};
+        const timeLabel = info.displayTime || info.timestampRaw || window.i18n.t('backup.unknownTime');
+        const deviceName = info.deviceName || window.i18n.t('backup.unknownDevice');
         // 必须两参：key + params 对象，严禁第三实参
-        const confirmText: string = window.i18n.t('backup.syncConfirm', {
+        const confirmText = window.i18n.t('backup.syncConfirm', {
             time: this.escapeHtml(timeLabel),
-            device: this.escapeHtml(deviceName),
+            device: this.escapeHtml(deviceName)
         });
         const confirmed = await this.confirmDialog(window.i18n.t('backup.syncConfirmTitle'), confirmText);
         if (!confirmed) {
@@ -300,10 +331,8 @@ class BackupSettings {
         }
 
         const syncResult = await window.electronAPI.syncSettingsFromCloud();
-        if (!syncResult || typeof syncResult !== 'object' || !('success' in syncResult) || !(syncResult as { success: boolean }).success) {
-            const error: string = typeof syncResult === 'object' && syncResult !== null && 'error' in syncResult
-                ? String((syncResult as { error?: unknown }).error || '')
-                : '';
+        if (!syncResult || !syncResult.success) {
+            const error = syncResult?.error;
             if (error === 'NOT_LOGGED_IN') {
                 this.showMessage(window.i18n.t('backup.loginFirst'), 'warning');
             } else if (error === 'NO_BACKUP') {
@@ -323,17 +352,18 @@ class BackupSettings {
         await this.loadSettings();
         this.updateUI();
         this.showMessage(window.i18n.t('backup.syncSuccess'), 'success');
-        this.renderLatestBackupInfo();
+        this.refreshLatestBackupInfo();
         return true;
     }
 
     /** HTML 转义 */
     private escapeHtml(value: unknown): string {
         return String(value)
-            .replace(/&/g, '&')
-            .replace(/</g, '<')
-            .replace(/>/g, '>')
-            .replace(/"/g, '"')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     /** 确认对话框 */
@@ -394,16 +424,10 @@ class BackupSettings {
     }
 }
 
-// 导出 API
-const api = {
-    BackupSettings,
-};
-
-// 双模导出：Node/CJS 与 浏览器/ESM 兼容
-if (typeof module !== 'undefined' && (module as { exports?: unknown }).exports) {
-    (module as { exports: unknown }).exports = api;
-} else if (typeof window !== 'undefined') {
-    (window as unknown as { BackupSettings?: typeof BackupSettings }).BackupSettings = api.BackupSettings;
-}
-
-export {};
+window.addEventListener('DOMContentLoaded', async () => {
+    if (window.i18n && typeof window.i18n.init === 'function') {
+        await window.i18n.init();
+    }
+    const backupSettings = new BackupSettings();
+    await backupSettings.init();
+});

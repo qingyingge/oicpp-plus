@@ -1407,7 +1407,19 @@ function runFastspawnSyntaxCheck() {
 //  字符串 "null"）、dropEffect 外面新加的 `if (e.dataTransfer)`，以及 createPdfViewerContainer
 //  的 `= {}` 默认参数（两个调用点都传对象）。全部换成擦除型 `as` 断言，重发后 emit 只剩
 //  dataset 点号改方括号、JSDoc 注释擦除和 _welcomeVersionLabel 这条惰性 class 字段声明。
-const TS_ERROR_BASELINE = 368;
+// 368 → 286：把三处「已经写成 .ts 但没进 emit 白名单」的漏网文件收进白名单并清零。
+//  main-process/compare-worker-v6.ts、renderer/js/formatters/cppFormatter.ts、
+//  renderer/settings/backup.ts —— 上一批迁移留下的 .ts 里塞满了运行时兜底（`?? ''`、
+//  `?.`、新增判空 return、删掉 refreshLatestBackupInfo / escapeHtml 的转义表等），
+//  全部按 HEAD 的 .js 逐行改回，类型一律用擦除位（as / 形参标注 / interface / declare 字段）。
+//  校验口径：把 emit 产物与 `git show HEAD:<file>.js` 都去掉注释、折叠空白后做 token diff，
+//  backup.js 与 cppFormatter.js 只剩 "use strict";，compare-worker-v6.js 只剩模块转换的
+//  worker_threads_1 / child_process_1 / process_supervisor_1 改名与 (0, fn) 间接调用。
+//  backup.ts 的四个字段改成 declare，消掉 emit 里多出来的 `settings;` / `latestInfoEl = null;`。
+//  security-regression 里 `if (!running) break;` 的正则改成 `\s+break`，只放宽排版；
+//  断言的语义（三个 await 之间都要看 stop 标志、不出现 currentProc）没动。
+//  剩下的 286 全在 renderer/js/monaco-editor-manager.ts。
+const TS_ERROR_BASELINE = 286;
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
