@@ -3,7 +3,7 @@
 // 切片工具自身的回归测试。它现在被多个读源码的测试依赖，
 // 一旦它自己切错，那些文件会一起静默失真，所以先验证工具本身。
 
-const { arrowExpr, arrowProp, callbackBody, classMethod, funcDecl, toFn, toProviderFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, funcDecl, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -107,6 +107,37 @@ check('callbackBody 锚点查不到时返回空串', callbackBody(IPC, /ipcMain\
 check('callbackBody 对单行回调也成立',
     callbackBody(IPC, /ipcMain\.handle\('other'/) === '{ return 1; }');
 
+// callStatement：整条注册语句，配一个假 ipcMain 真执行一遍
+const stmt = callStatement(IPC, /^ipcMain\.handle\(\s*'check-file-exists'/m);
+check('callStatement 取到完整调用语句',
+    stmt.startsWith("ipcMain.handle('check-file-exists'") && stmt.endsWith('})'),
+    JSON.stringify(stmt.slice(-24)));
+check('callStatement 不含尾随分号', !stmt.endsWith(';'));
+check('callStatement 不吃到下一条注册',
+    !stmt.includes("'other'") && !stmt.includes('return 1;'));
+check('callStatement 锚点查不到时返回空串',
+    callStatement(IPC, /^ipcMain\.handle\(\s*'nope'/m) === '');
+const regs = [];
+new Function('ipcMain', 'fs', stmt)(
+    { handle: (ch, fn) => regs.push({ mode: 'handle', ch, fn }) },
+    { promises: { access: async () => { } } });
+check('callStatement 的产物可执行，注册方式与通道名成了可观测数据',
+    regs.length === 1 && regs[0].mode === 'handle' && regs[0].ch === 'check-file-exists',
+    JSON.stringify(regs.map((r) => `${r.mode}:${r.ch}`)));
+check('callStatement 抽出的 handler 是可直接调用的 async 函数',
+    typeof regs[0].fn === 'function' && regs[0].fn.constructor.name === 'AsyncFunction');
+check('callStatement 对单行注册也成立',
+    callStatement(IPC, /^ipcMain\.handle\(\s*'other'/m) === "ipcMain.handle('other', (event) => { return 1; })");
+// 锚点若从通道名开始，第一个左括号是回调自己的参数表，抽出来只有半条语句
+check('锚点必须落在被调方上：落在通道名上抽出的不是 ipcMain.… 调用',
+    callStatement(IPC, /'check-file-exists'/).startsWith('ipcMain') === false,
+    JSON.stringify(callStatement(IPC, /'check-file-exists'/).slice(0, 30)));
+// 注册语句常缩在某个函数里：^\s* 吃缩进后，第一个左括号仍是这条调用的括号
+const INDENTED = "function bind() {\n    ipcMain.handle('p', () => 1);\n}";
+const indentedStmt = callStatement(INDENTED, /^\s*ipcMain\.handle\(\s*'p'/m);
+check('callStatement 容忍整条注册的缩进',
+    indentedStmt.trim() === "ipcMain.handle('p', () => 1)", JSON.stringify(indentedStmt));
+
 // arrowExpr：连参数表一起配平，形参名不锁，产物可直接当表达式求值
 const NESTED = '    const normalize = (value) => {\n' +
     '        if (!value) { return ""; }\n' +
@@ -149,6 +180,10 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
         Array.isArray(provided) && provided[0] === 'M' && provided[1] === 'R',
         JSON.stringify(provided));
     check('toProviderFn 查不到时返回 undefined', toProviderFn(null) === undefined);
+
+    // 走 callbackBody 里那条 `if (!filePath) return false` 分支：实参真的传进去了
+    const handled = await regs[0].fn({}, '');
+    check('callStatement 抽出的 handler 实参照传、返回值拿得到', handled === false, String(handled));
 
     // 同一份代码只改排版（tsc printer 会做的事），切片不该变
     const REFLOW = [

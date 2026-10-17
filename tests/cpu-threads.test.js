@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { callbackBody, callStatement } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -42,11 +43,51 @@ try {
     cpuThreads.resetCpuThreadsCache();
 }
 
-check('P7 main routes get-cpu-threads through the cached helper',
-    /ipcMain\.handle\('get-cpu-threads',[\s\S]{0,120}getCpuThreads\(\)/.test(mainSource) &&
-    !/ipcMain\.handle\('get-cpu-threads',[\s\S]{0,200}os\.cpus\(\)/.test(mainSource));
-check('P7 main warms the cache after the window is created',
-    /createWindow\(\);[\s\S]{0,200}scheduleCpuThreadsWarmUp\(\)/.test(mainSource));
+// 注册语句抽出来配假 ipcMain 真执行一遍：注册方式、通道名、handler 都成了可观测数据，
+// 不再靠「handle 后面 120 个字符里有没有 getCpuThreads()」这种窗口正则。
+const cpuStmt = callStatement(mainSource, /^ipcMain\.handle\(\s*'get-cpu-threads'/m);
+check('注册语句抽取成功: get-cpu-threads', cpuStmt.length > 0, cpuStmt.slice(0, 60));
+
+const recorded = [];
+const ipcStub = {
+    handle: (ch, fn) => { recorded.push({ mode: 'handle', ch, fn }); },
+    on: (ch, fn) => { recorded.push({ mode: 'on', ch, fn }); }
+};
+let osCpusCalls = 0;
+const osStub = { cpus: () => { osCpusCalls++; return [{ model: 'stub' }]; } };
+let cachedCalls = 0;
+const SENTINEL = 99;
+new Function('ipcMain', 'os', 'getCpuThreads', cpuStmt)(
+    ipcStub, osStub, () => { cachedCalls++; return SENTINEL; });
+check('P7 get-cpu-threads 只注册 invoke 一条路径',
+    recorded.length === 1 && recorded[0].mode === 'handle' && recorded[0].ch === 'get-cpu-threads',
+    JSON.stringify(recorded.map((r) => `${r.mode}:${r.ch}`)));
+
+const routedValue = recorded.length === 1 ? recorded[0].fn() : undefined;
+check('P7 handler 走缓存 helper，一次都不碰 os.cpus()',
+    routedValue === SENTINEL && cachedCalls === 1 && osCpusCalls === 0,
+    JSON.stringify({ routedValue, cachedCalls, osCpusCalls }));
+
+// 预热时机：必须是 whenReady 回调里的顶层语句，且在 createWindow() 之后。
+// 只看同一层的调用（被挪进 setTimeout 回调算 depth+1），不锁缩进和空行。
+const readyBody = callbackBody(mainSource, /app\.whenReady\(\)\s*\.\s*then\(/);
+check('whenReady 回调体抽取成功', readyBody.length > 0);
+const topLevelAt = (needle) => {
+    let depth = 0;
+    for (let i = 0; i < readyBody.length; i++) {
+        const c = readyBody[i];
+        if (c === '{' || c === '(' || c === '[') depth++;
+        else if (c === '}' || c === ')' || c === ']') depth--;
+        else if (readyBody.startsWith(needle, i)) return { depth, at: i };
+    }
+    return null;
+};
+const madeWindow = topLevelAt('createWindow()');
+const warmedUp = topLevelAt('scheduleCpuThreadsWarmUp()');
+check('P7 缓存在建窗之后、whenReady 顶层预热（不能挪进延迟回调，也不能漏掉）',
+    madeWindow !== null && warmedUp !== null &&
+    madeWindow.depth === warmedUp.depth && madeWindow.at < warmedUp.at,
+    JSON.stringify({ madeWindow, warmedUp }));
 
 console.log(`cpu-threads regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);

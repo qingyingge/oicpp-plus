@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { classMethod } = require('./fixtures/source-extract');
+const { callStatement, classMethod } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -21,12 +21,58 @@ const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'src', 'preload.js'), 'utf8');
 
 // --- 静态契约：双份 handler 与遗留事件通道必须消失 -----------------------
+// 把 main 里所有 ipcMain 注册扫成「通道 → 注册方式」表，再按表比对：
+// 窗口正则会跟着排版漂，表里的一个通道只有一条注册方式这种事实不会。
+const scan = (src, re) => {
+    const table = new Map();
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(src))) {
+        const modes = table.get(m[2]) || [];
+        modes.push(m[1]);
+        table.set(m[2], modes);
+    }
+    return table;
+};
+const mainRegs = scan(mainSource, /ipcMain\s*\.\s*(on|once|handle)\s*\(\s*['"`]([^'"`]+)['"`]/g);
+const rendererRegs = scan(explorerSource, /\w+\s*\.\s*(on|once|removeListener)\s*\(\s*['"`]([^'"`]+)['"`]/g);
+const mainSends = scan(mainSource, /(\.send)\s*\(\s*['"`]([^'"`]+)['"`]/g);
+check(`通道注册表扫出来了（空表就是抽取失败，别真空通过）: main=${mainRegs.size}`, mainRegs.size > 0);
 check('P6 main keeps only the invoke read-directory handler',
-    !/ipcMain\.on\(\s*'read-directory'/.test(mainSource) &&
-    /ipcMain\.handle\(\s*'read-directory'/.test(mainSource));
+    JSON.stringify(mainRegs.get('read-directory') || null) === '["handle"]',
+    JSON.stringify(mainRegs.get('read-directory')));
 check('P6 directory-read reply channels are gone',
-    !mainSource.includes("'directory-read'") && !mainSource.includes("'directory-read-error'") &&
-    !explorerSource.includes("'directory-read'") && !explorerSource.includes("'directory-read-error'"));
+    !mainRegs.has('directory-read') && !mainRegs.has('directory-read-error') &&
+    !mainSends.has('directory-read') && !mainSends.has('directory-read-error') &&
+    !rendererRegs.has('directory-read') && !rendererRegs.has('directory-read-error'),
+    [...mainRegs.keys(), ...mainSends.keys()].filter((c) => c.includes('directory-read')).join(','));
+
+// 真把那条注册语句执行一遍：handler 拿到的第二个实参才是路径，异常要照原样抛回渲染层
+const readDirStmt = callStatement(mainSource, /^\s*ipcMain\.handle\(\s*'read-directory'/m);
+check('注册语句抽取成功: read-directory', readDirStmt.length > 0, readDirStmt.slice(0, 60));
+const dirHandlers = [];
+const dirStub = {
+    handle: (ch, fn) => { dirHandlers.push({ mode: 'handle', ch, fn }); },
+    on: (ch, fn) => { dirHandlers.push({ mode: 'on', ch, fn }); }
+};
+const readDirLogs = [];
+const ENTRIES = [{ name: 'a.cpp' }];
+const boom = new Error('EIO: read failed');
+const readDirArgs = [];
+new Function('ipcMain', 'readDirectory', 'logError', readDirStmt)(
+    dirStub,
+    (p) => {
+        readDirArgs.push(p);
+        return p === '/bad' ? Promise.reject(boom) : Promise.resolve(ENTRIES);
+    },
+    (...a) => { readDirLogs.push(a); });
+const readDirHandler = dirHandlers.length === 1 ? dirHandlers[0].fn : null;
+check('P6 抽出的语句确实只注册了一个 read-directory handler',
+    dirHandlers.length === 1 && dirHandlers[0].mode === 'handle' &&
+    dirHandlers[0].ch === 'read-directory',
+    JSON.stringify(dirHandlers.map((r) => `${r.mode}:${r.ch}`)));
+const readDirOk = readDirHandler ? readDirHandler({}, '/ws') : Promise.resolve('NO HANDLER');
+const readDirBad = readDirHandler ? readDirHandler({}, '/bad') : Promise.resolve('NO HANDLER');
 const whitelistBody = (name) => {
     const m = new RegExp(`${name}[^=]*=\\s*new Set\\(\\[([\\s\\S]*?)\\]\\)`).exec(preloadSource);
     return m ? m[1] : '';
@@ -76,6 +122,17 @@ const context = {
 vm.runInNewContext(`${explorerSource.slice(classStart, classEnd)}\nthis.__FileExplorer = FileExplorer;`, context);
 
 (async () => {
+    // read-directory handler 的行为：路径取第二个实参、结果原样返回、异常记日志后原样抛回
+    check('P6 read-directory handler 按 invoke 语义返回目录条目，且路径传给 readDirectory',
+        (await readDirOk) === ENTRIES && JSON.stringify(readDirArgs) === '["/ws","/bad"]',
+        JSON.stringify({ got: await readDirOk === ENTRIES, readDirArgs }));
+    let dirThrown = null;
+    try { await readDirBad; } catch (e) { dirThrown = e; }
+    check('P6 read-directory handler 不吞异常（渲染层要能看见失败），失败要记日志',
+        dirThrown !== null && String(dirThrown.message) === 'EIO: read failed' &&
+        readDirLogs.length === 1,
+        JSON.stringify({ err: String(dirThrown && dirThrown.message), logs: readDirLogs.length }));
+
     const explorer = Object.create(context.__FileExplorer.prototype);
     explorer._directoryReadRequests = new Map();
     explorer._refreshTimer = null;

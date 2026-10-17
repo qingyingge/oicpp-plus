@@ -58,6 +58,19 @@ function callbackBody(src, pattern) {
     return end < 0 ? '' : src.slice(open, end + 1);
 }
 
+// 一整条调用语句，含被调方和实参表：`ipcMain.handle('x', async (…) => { … })`。
+// 锚点的**起始位置必须落在被调方那一段上**（如 /^\s*ipcMain\.handle\(\s*'x'/m，
+// 行首缩进无所谓），因为 '(', m.index) 找到的第一个左括号就是这条调用的括号 ——
+// 若锚点从通道名开始，第一个括号会变成回调自己的参数表，配平出来的是半条语句。
+// 抽出来交给 vm 执行，「注册方式是 handle 还是 on」就从正则断言变成可观测行为。
+function callStatement(src, pattern) {
+    const m = pattern.exec(src);
+    if (!m) return '';
+    const open = src.indexOf('(', m.index);
+    const close = matchParen(src, open);
+    return close < 0 ? '' : src.slice(m.index, close + 1);
+}
+
 // 整个箭头函数表达式 `(params) => { ... }`：锚点只给到 `=>` 之前的位置，
 // 参数表由配平得到，不锁形参名 —— 用于把 `const f = (v) => { ... }` 直接 runInNewContext。
 function arrowExpr(src, pattern) {
@@ -126,4 +139,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { arrowExpr, classMethod, funcDecl, arrowProp, callbackBody, toFn, toProviderFn };
+module.exports = { arrowExpr, classMethod, funcDecl, arrowProp, callbackBody, callStatement, toFn, toProviderFn };
