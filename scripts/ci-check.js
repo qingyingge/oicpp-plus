@@ -1419,7 +1419,16 @@ function runFastspawnSyntaxCheck() {
 //  security-regression 里 `if (!running) break;` 的正则改成 `\s+break`，只放宽排版；
 //  断言的语义（三个 await 之间都要看 stop 标志、不出现 currentProc）没动。
 //  剩下的 286 全在 renderer/js/monaco-editor-manager.ts。
-const TS_ERROR_BASELINE = 286;
+// 286 → 0：最后一个文件清零，严格口径（noImplicitAny + strictNullChecks +
+//  noUncheckedIndexedAccess + noPropertyAccessFromIndexSignature + strictFunctionTypes）下全仓再无报错。
+// 手法只有擦除位：形参与返回值标注、交叉类型把编辑器实例上挂的运行时属性收成形状
+// （OicppCodeEditor / BreakpointEditor / IdentifiedSymbol / LspLocationLike 等）、as 断言、
+// 点号访问改方括号访问；缓存字段类型按真实用法修正（存的是 null 与带 token 的对象，不是字符串数组）。
+// 该文件仍留在 emit 白名单外：靠单独 emit 两个版本做多重集比对来证明运行期等价，
+// 期间回退了上一批遗留的四处改动（两处新增可选链、一处 !! 兜底、一处临时变量），
+// 并擦掉一处非空断言；白名单内文件的 emit 无漂移。
+const TS_ERROR_BASELINE = 0;
+
 function runTypecheckRatchet() {
   console.log(`\n${Y}[T3] TypeScript error-count ratchet${R}`);
   const tscBin = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');

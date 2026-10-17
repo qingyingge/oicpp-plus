@@ -52,6 +52,8 @@ interface HTMLElement {
   __oicppFileTreeEventsBound?: boolean;
   __oicppDragAndDropBound?: boolean;
   hasGlobalWheelZoomListener?: boolean;
+  hasWheelZoomListener?: boolean;
+  _wheelZoomHooked?: boolean;
   _input?: HTMLInputElement;
   _list?: HTMLDivElement;
   __hideTimer?: NodeJS.Timeout;

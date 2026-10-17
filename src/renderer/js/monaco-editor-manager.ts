@@ -46,9 +46,234 @@ interface LSPClient {
     _ready?: boolean;
 }
 
+interface LspDocumentSafety {
+    safe: boolean;
+    reason?: string;
+    line?: number;
+    elementSize?: number;
+    estimatedBytes?: number;
+}
+
+// clangd 原始 JSON 载荷（lspClient.request() 一律返回 unknown），仅供本地收窄使用
+type RawLspRange = { start: { line: number; character: number }; end: { line: number; character: number } };
+type RawLspLocation = {
+    uri?: string;
+    targetUri?: string;
+    range?: RawLspRange;
+    targetSelectionRange?: RawLspRange;
+    targetRange?: RawLspRange;
+    originSelectionRange?: RawLspRange;
+};
+type RawLspWorkspaceEdit = {
+    changes?: Record<string, Array<{ range: RawLspRange; newText: string }>>;
+};
+type RawLspCommand = { command?: string; title?: string; arguments?: unknown[] };
+type RawLspFileOperation = {
+    fileOperation?: string;
+    resource?: monaco.Uri | string;
+    oldResource?: monaco.Uri | string;
+    newResource?: monaco.Uri | string;
+    options?: { overwrite?: boolean; ignoreIfExists?: boolean; recursive?: boolean; ignoreIfNotExists?: boolean };
+};
+type RawLspTextEdit = { range?: unknown; newText?: unknown };
+type RawLspDocumentLink = { range?: unknown; target?: string; tooltip?: string };
+type RawLspSelectionRange = { range?: unknown; parent?: RawLspSelectionRange };
+type RawLspInlayHintLabelPart = {
+    value?: unknown;
+    label?: unknown;
+    tooltip?: unknown;
+    command?: RawLspCommand;
+    location?: { uri?: string; range?: unknown };
+};
+type RawLspInlayHint = {
+    position?: { line?: number; character?: number };
+    label?: unknown;
+    tooltip?: unknown;
+    textEdits?: unknown[];
+    kind?: number;
+    paddingLeft?: boolean;
+    paddingRight?: boolean;
+};
+type RawLspCompletionItem = {
+    label?: string;
+    kind?: number;
+    command?: RawLspCommand;
+    textEdit?: { range?: unknown; replace?: unknown; insert?: unknown; newText?: string };
+    textEditText?: string;
+    insertText?: string;
+    additionalTextEdits?: RawLspTextEdit[];
+    detail?: string;
+    sortText?: string;
+    filterText?: string;
+    documentation?: string | { value?: string };
+    tags?: unknown[];
+    preselect?: boolean;
+    deprecated?: boolean;
+    commitCharacters?: string[];
+    insertTextFormat?: number;
+    __oicppLspItem?: unknown;
+};
+
+// textDocument/documentSymbol 与 workspace/symbol 的原始返回项（clangd 形状）
+type RawLspDocumentSymbol = {
+    name?: string;
+    detail?: string;
+    kind?: number;
+    range?: RawLspRange;
+    selectionRange?: RawLspRange;
+    location?: { uri?: string; range?: RawLspRange };
+    children?: RawLspDocumentSymbol[];
+};
+type RawLspWorkspaceSymbol = RawLspDocumentSymbol & { containerName?: string };
+
+// 函数跳转面板的条目：既可能来自 LSP 的 documentSymbol/workspace/symbol，
+// 也可能来自本地正则解析（此时没有 location，只有 position）
+type FunctionPickerEntry = {
+    name: string;
+    detail?: string;
+    position: monaco.Position | null;
+    location?: { uri?: string; range?: RawLspRange };
+    returnType?: string;
+    params?: string;
+};
+
+// textDocument/publishDiagnostics 的原始载荷（clangd 形状），字段全部可选以便
+// 与 monaco 侧 marker 形状互转（lspDiagnosticMarkerKey 同时接受两者）
+type RawLspDiagnosticPosition = { line?: number; character?: number };
+type RawLspDiagnosticRange = { start?: RawLspDiagnosticPosition; end?: RawLspDiagnosticPosition };
+type RawLspDiagnosticRelated = {
+    message?: string;
+    location?: { uri?: string; range?: RawLspDiagnosticRange };
+};
+type RawLspDiagnostic = {
+    range?: RawLspDiagnosticRange;
+    severity?: number;
+    message?: string;
+    source?: string;
+    code?: string | number | { value?: string } | null;
+    tags?: number[];
+    relatedInformation?: RawLspDiagnosticRelated[];
+    startLineNumber?: number;
+    startColumn?: number;
+    endLineNumber?: number;
+    endColumn?: number;
+};
+// monaco IMarker/IMarkerData 在诊断转换里实际用到的字段
+type MonacoMarkerRelatedItem = {
+    resource?: { toString?: () => string } | null;
+    message?: string;
+    startLineNumber: number;
+    startColumn: number;
+    endLineNumber: number;
+    endColumn: number;
+};
+type MonacoMarkerLike = Omit<RawLspDiagnostic, 'relatedInformation'> & {
+    relatedInformation?: MonacoMarkerRelatedItem[];
+};
+// compile-manager / sampleTester / codeComparer 送进来的编译诊断行
+type CompilerDiagnosticInput = {
+    severity?: unknown;
+    line?: string | number;
+    column?: string | number;
+    message?: string;
+    raw?: string;
+    file?: string;
+};
+
+// lsp-utils 转换后的 monaco 侧 WorkspaceEdit 形状
+type MonacoLspEditItem = {
+    fileOperation?: string;
+    resource?: monaco.Uri | string;
+    oldResource?: monaco.Uri | string;
+    newResource?: monaco.Uri | string;
+    options?: { overwrite?: boolean; ignoreIfExists?: boolean; recursive?: boolean; ignoreIfNotExists?: boolean };
+    textEdit?: { range?: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }; text?: string };
+    versionId?: number;
+};
+type MonacoWorkspaceEdit = { edits: MonacoLspEditItem[] };
+
+// 代码在 monaco 公共 API 之外挂载的运行时属性（augmentation.d.ts 未覆盖的部分）
+type OicppTextModel = monaco.editor.ITextModel & {
+    __oicppIncludeCache?: { versionId: number | null; token: number; paths: string[] };
+    __oicppLocalCompletionCache?: { versionId: number | undefined; candidates: Array<{ label: string; count: number }> };
+    __oicppLspContentListener?: monaco.IDisposable;
+    __oicppLspDisposeListener?: monaco.IDisposable;
+    __oicppVirtualName?: string;
+};
+
+// identifySymbolAtPosition 的三种识别结果：外链 URL、#include 头文件、普通标识符。
+type IdentifiedSymbol =
+    | { kind: 'url'; url: string; range: monaco.Range; lineText: string }
+    | { kind: 'include'; path: string; isAngle: boolean; range: monaco.Range; lineText: string }
+    | { kind: 'symbol'; word: string; range: monaco.Range; lineText: string };
+
+// goToLspLocation 两种入参形状：clangd 原始 JSON，或已经换成 monaco 坐标的 range。
+type LspLocationRangeLike = {
+    start?: { line?: number; character?: number; lineNumber?: number; column?: number };
+    end?: { line?: number; character?: number; lineNumber?: number; column?: number };
+    startLineNumber?: number;
+    startColumn?: number;
+    endLineNumber?: number;
+    endColumn?: number;
+};
+type LspLocationLike = {
+    uri?: string | monaco.Uri;
+    range?: LspLocationRangeLike;
+    targetUri?: string | monaco.Uri;
+    targetRange?: LspLocationRangeLike;
+    targetSelectionRange?: LspLocationRangeLike;
+    originSelectionRange?: LspLocationRangeLike;
+};
+
+// #include 引用文本与解析选项
+type IncludeRef = { path?: string | null; isAngle?: boolean };
+type IncludeResolveOptions = {
+    baseDir?: string | null;
+    filePath?: string | null;
+    cacheKey?: string | null;
+    useCache?: boolean;
+    allowWorkspaceScan?: boolean;
+};
+
+// electronAPI.readDirectory 返回的目录项
+type FsEntry = { path?: string; name?: string; type?: string; ext?: string };
+type OicppCodeEditor = monaco.editor.IStandaloneCodeEditor & {
+    __oicppCtrlNavBound?: boolean;
+    __oicppMarkerWidgetInstalled?: boolean;
+    __oicppMarkerWidgetObserver?: MutationObserver;
+    __oicppSelectionGuardsBound?: boolean;
+    __oicppTryRedirectMarkerWidget?: ((marker: monaco.editor.IMarker) => boolean) | undefined;
+    getOverflowWidgetsDomNode?: () => HTMLElement | null;
+    isDisposed?: () => boolean;
+};
+
+// _initBreakpointSupport 在编辑器实例上挂的调试运行时属性：断点装饰 id、
+// 当前执行行装饰 id，以及调试面板要调的几个取值/高亮入口。
+type BreakpointEditor = OicppCodeEditor & {
+    __bpInited: boolean;
+    __breakpointDecos: string[];
+    __execDeco: string | null;
+    getBreakpoints: () => Array<{ file: string | null | undefined; line: number }>;
+    getBreakpointLines: () => number[];
+    highlightLine: (line: number) => void;
+    clearExecHighlight: () => void;
+};
+
 declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
+
+// pasteTextIntoInputTarget 运行时可能面对 contenteditable 元素或 <input>/<textarea>，
+// 这里取三者公共形状，调用点在边界处收窄（纯类型，无运行时代码）。
+interface InputTargetElement {
+    isContentEditable: boolean;
+    value: string;
+    focus: () => void;
+    dispatchEvent: (event: Event) => boolean;
+    setRangeText?: (text: string, start: number, end: number, selectMode?: string) => void;
+    selectionStart?: number | null;
+    selectionEnd?: number | null;
+}
 
 export class MonacoEditorManager {
     currentEditor: monaco.editor.IStandaloneCodeEditor | null;
@@ -56,10 +281,10 @@ export class MonacoEditorManager {
     isInitialized: boolean;
     currentFilePath: string | null;
     currentFileName: string | null;
-    tabIdToFilePath: Map<string, string>;
+    tabIdToFilePath: Map<string, string | null>;
     groupContainers: Map<string, HTMLElement>;
     tabIdToGroupId: Map<string, string>;
-    groupActiveTab: Map<string, string>;
+    groupActiveTab: Map<string, string | null>;
     tabIdToContainer: Map<string, HTMLElement>;
     diffEditors: Map<string, { originalModel: monaco.editor.ITextModel; modifiedModel: monaco.editor.ITextModel }>;
     markerOwner: string;
@@ -73,13 +298,13 @@ export class MonacoEditorManager {
     defaultKeybindings: Record<string, string>;
     keybindings: Record<string, string>;
     _keybindingParseCache: Map<string, unknown>;
-    _headerCache: string | null;
-    _includePathCache: Map<string, string[]>;
+    _headerCache: { root: string; files: Array<{ name?: string; path?: string }> } | null;
+    _includePathCache: Map<string, string | null>;
     _compilerIncludeDirsCache: { compilerPath: string | null; dirs: string[] };
     _compilerIncludeDirsPromise: Promise<string[]> | null;
     _includeCacheToken: number;
-    _includeRootsCache: Map<string, string[]>;
-    _fileIncludeCache: Map<string, string[]>;
+    _includeRootsCache: Map<string, { token: number; roots: string[] }> ;
+    _fileIncludeCache: Map<string, { token: number; includes: Array<{ path: string; isAngle: boolean }> }>;
     lineHeightSetting: number;
     syntaxColorsByTheme: Record<string, Record<string, string>>;
     syntaxStyles: Record<string, Record<string, string>>;
@@ -91,27 +316,27 @@ export class MonacoEditorManager {
     _lspSemanticTokenCache: WeakMap<monaco.editor.ITextModel, { data: Uint32Array; resultId: string | null }>;
     _lspDiagnosticsByModel: WeakMap<monaco.editor.ITextModel, Map<string, unknown>>;
     _lspDocuments: Map<monaco.editor.ITextModel, { uri: string; version: number; languageId: string; modelVersion: number | undefined }>;
-    _lspChangeTimers: Map<string, NodeJS.Timeout>;
-    _lspChangeInFlight: Set<string>;
-    _lspChangePromises: Map<string, Promise<void>>;
-    _lspChangePending: Set<string>;
+    _lspChangeTimers: Map<monaco.editor.ITextModel, NodeJS.Timeout>;
+    _lspChangeInFlight: Set<monaco.editor.ITextModel>;
+    _lspChangePromises: Map<monaco.editor.ITextModel, Promise<void>>;
+    _lspChangePending: Set<monaco.editor.ITextModel>;
     _lspReadyPromise: Promise<void | boolean> | null;
     _lspStartFailure: { at: number; error: Error } | null;
     _lspCompletionEnabled: boolean;
     _syntaxCheckEnabled: boolean;
     _lspCompilerPath: string | undefined;
     _lspProviders: Map<string, monaco.IDisposable>;
-    _lspInlayHintCache: WeakMap<monaco.editor.ITextModel, { version: number; result: { hints: monaco.languages.InlayHint[]; dispose: () => void } }>;
+    _lspInlayHintCache: WeakMap<monaco.editor.ITextModel, { version: number | undefined; result: monaco.languages.InlayHintList }>;
     _lspDiagnosticRetryTimers: Map<string, NodeJS.Timeout> | undefined;
-    _lspProvidersRegistered: boolean;
-    _lspDisposables: monaco.IDisposable[];
-    _cppSemanticHighlightingProviders: monaco.IDisposable[];
-    _cppSemanticHighlightingEnabled: boolean;
-    _lspConfigurationChangeTimer: NodeJS.Timeout | null;
-    _pendingLspConfigurationChange: boolean;
-    _lspReadyResolve: (() => void) | null;
-    _lspReadyReject: ((err: Error) => void) | null;
-    _lspInitializationPromise: Promise<void | boolean> | null;
+    _lspProvidersRegistered?: boolean;
+    _lspDisposables?: monaco.IDisposable[];
+    _cppSemanticHighlightingProviders?: monaco.IDisposable[];
+    _cppSemanticHighlightingEnabled?: boolean;
+    _lspConfigurationChangeTimer?: NodeJS.Timeout | null;
+    _pendingLspConfigurationChange?: boolean;
+    _lspReadyResolve?: (() => void) | null;
+    _lspReadyReject?: ((err: Error) => void) | null;
+    _lspInitializationPromise?: Promise<void | boolean> | null;
     _clangFormatProviders: Map<string, monaco.IDisposable>;
     _lspCommandArguments: Map<string, unknown>;
     _lspProvidersReady: boolean;
@@ -119,10 +344,10 @@ export class MonacoEditorManager {
     _lspGuardDetails: WeakMap<monaco.editor.ITextModel, unknown>;
     lspClient: LSPClient | null;
     _onMonacoContextMenuPasteCapture: ((event: Event) => void) | null;
-    _themesDefined: boolean;
-    _preprocessorKeywordSet: Set<string> | null;
-    _controlKeywordSet: Set<string> | null;
-    _typeKeywordRegex: RegExp | null;
+    _themesDefined?: boolean;
+    _preprocessorKeywordSet?: Set<string> | null;
+    _controlKeywordSet?: Set<string> | null;
+    _typeKeywordRegex?: RegExp | null;
 
     constructor() {
         this.currentEditor = null;
@@ -175,7 +400,7 @@ export class MonacoEditorManager {
         this._syntaxCheckEnabled = true;
         this._lspCompilerPath = undefined;
         this._lspProviders = new Map();
-        this._lspInlayHintCache = new WeakMap<monaco.editor.ITextModel, { version: number; result: { hints: monaco.languages.InlayHint[]; dispose: () => void } }>();
+        this._lspInlayHintCache = new WeakMap<monaco.editor.ITextModel, { version: number | undefined; result: monaco.languages.InlayHintList }>();
         this._clangFormatProviders = new Map();
         this._lspCommandArguments = new Map<string, unknown>();
         this._lspProvidersReady = false;
@@ -485,7 +710,7 @@ export class MonacoEditorManager {
         }, 500);
     }
 
-    async restartLspWithCompiler(newCompilerPath) {
+    async restartLspWithCompiler(newCompilerPath: string) {
         // 重启 clangd 以应用新的 --query-driver
         try {
             if (!this.lspClient) return;
@@ -545,8 +770,8 @@ export class MonacoEditorManager {
             // 经 ensureLspReady 重新发一次 lsp-start，与冷却的意图相反。
             // 显式重启入口（restartLspWithCompiler）自己会清 _lspStartFailure，
             // 不受这里影响。
-            this._lspStartFailure = { at: Date.now(), error: err };
-            logWarn('[LSP] 重启 clangd 失败:', err?.message || err);
+            this._lspStartFailure = { at: Date.now(), error: err as Error };
+            logWarn('[LSP] 重启 clangd 失败:', (err as Error)?.message || err);
         }
     }
 
@@ -567,12 +792,12 @@ export class MonacoEditorManager {
         }
     }
 
-    _reportLspGuardedModel(model, fileNameHint, safety) {
+    _reportLspGuardedModel(model: monaco.editor.ITextModel, fileNameHint: string | null, safety?: LspDocumentSafety | null) {
         if (!model || this._lspGuardedModels.has(model)) return;
 
         const filePath = model.__oicppFilePath || this.getModelFilePath(model) || '';
         const fileName = fileNameHint || filePath.split(/[\\/]/).pop() || window.i18n.t('panel.unknownFile');
-        const line = Number.isFinite(safety?.line) ? safety.line : null;
+        const line = Number.isFinite(safety?.line) ? (safety as LspDocumentSafety).line : null;
         const translationKey = 'lsp.largeArrayDisabled';
         let message = window.i18n?.t?.(translationKey, { fileName, line: line || '?' }) || '';
 
@@ -594,7 +819,7 @@ export class MonacoEditorManager {
             window.oicppApp?.updateLspStatusBar?.();
             setTimeout(() => window.oicppApp?.updateLspStatusBar?.(), 0);
         } catch (err) {
-            logWarn('[LSP] 无法显示超大数组保护提示:', err?.message || err);
+            logWarn('[LSP] 无法显示超大数组保护提示:', (err as Error)?.message || err);
         }
     }
 
@@ -642,7 +867,7 @@ export class MonacoEditorManager {
         // clangd 不可用时启动会失败，而 _ensureLspDocumentReady 被每个 LSP 特性请求
         // 调用，若每次都重试就会在启动/开文件关键路径上重复发 lsp-start（每次数十毫秒）。
         // 冷却期内直接复用上次的失败结果，不再产生多余 IPC。
-        if (this._lspStartFailure && (Date.now() - this._lspStartFailure!.at) < LSP_START_RETRY_COOLDOWN_MS) {
+        if (this._lspStartFailure && (Date.now() - this._lspStartFailure.at) < LSP_START_RETRY_COOLDOWN_MS) {
             logInfo('[LSP] 处于启动失败冷却期，跳过重复的 lsp-start 调用');
             throw this._lspStartFailure.error;
         }
@@ -673,7 +898,7 @@ export class MonacoEditorManager {
 
             logInfo('[LSP] 准备初始化 LSP, 工作区:', workspaceRoot || '(无)');
             try {
-                await this.lspClient.restart({
+                await (this.lspClient as LSPClient).restart({
                     workspaceRoot,
                     rootUri,
                     workspaceName,
@@ -681,8 +906,8 @@ export class MonacoEditorManager {
                     compilerPath
                 });
             } catch (startErr) {
-                logError('[LSP] LSP 启动失败:', startErr?.message || startErr);
-                this._lspStartFailure = { at: Date.now(), error: startErr };
+                logError('[LSP] LSP 启动失败:', (startErr as Error)?.message || startErr);
+                this._lspStartFailure = { at: Date.now(), error: startErr as Error };
                 this._lspReadyPromise = null;  // 冷却期后允许重试
                 throw startErr;
             }
@@ -732,22 +957,22 @@ export class MonacoEditorManager {
             logInfo('[LSP] 等待服务端能力返回后再注册提供器');
             return;
         }
-        const registered = [];
-        const failed = [];
-        const supports = (path, fallback = false) => (
+        const registered: string[] = [];
+        const failed: string[] = [];
+        const supports = (path: string, fallback = false) => (
             typeof this.lspClient?.supportsCapability === 'function'
                 ? this.lspClient.supportsCapability(path, fallback)
                 : fallback
         );
         // 逐个 provider 隔离异常：单项失败不再连坐后续所有能力
-        const register = (name, capability, fn) => {
+        const register = (name: string, capability: string, fn: () => void) => {
             if (!supports(capability)) return;
             try {
                 fn();
                 registered.push(name);
             } catch (err) {
                 failed.push(name);
-                logWarn('[LSP] 注册提供器失败 (' + name + '):', err?.message || err);
+                logWarn('[LSP] 注册提供器失败 (' + name + '):', (err as Error)?.message || err);
             }
         };
         this._registerLocalCompletionProvider();
@@ -777,7 +1002,7 @@ export class MonacoEditorManager {
 
     // 把「服务端没宣告」的能力显式列出来，避免日志只报成功、实际静默缺功能
     describeUnsupportedLspCapabilities() {
-        const checked = [
+        const checked: Array<[string, string]> = [
             ['补全', 'completionProvider'],
             ['签名帮助', 'signatureHelpProvider'],
             ['悬停', 'hoverProvider'],
@@ -806,11 +1031,11 @@ export class MonacoEditorManager {
     // 单槽缓存的键是 长度:首字符码:尾字符码，编辑过程中几乎必然失配，等于没有缓存；
     // 而真实开销在函数内部（3 次全文正则替换 + arrayPattern 扫描）。真正的重复计算来自
     // 调用方在同一轮 didChange 里算两遍，所以这里保持纯函数，由调用方复用结果。
-    assessLspDocumentSafety(text = '') {
+    assessLspDocumentSafety(text: unknown = ''): LspDocumentSafety {
         const source = typeof text === 'string' ? text : String(text ?? '');
         const maxArrayBytes = 1024 * 1024 * 1024;
-        const expressions = new Map();
-        const values = new Map();
+        const expressions = new Map<string, string>();
+        const values = new Map<string, number>();
 
         // Keep offsets stable while ignoring comments and string literals. This
         // prevents examples in comments/strings from enabling the guard while
@@ -821,10 +1046,10 @@ export class MonacoEditorManager {
 
         const tokenPattern = /\s*(0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?[uUlLzZ]*|[A-Za-z_]\w*|<<|>>|[()+\-*/%])/g;
 
-        const evaluateExpression = (expression, resolving = new Set()) => {
+        const evaluateExpression = (expression: string | undefined, resolving: Set<string> = new Set()): number | null => {
             if (typeof expression !== 'string' || !expression.trim()) return null;
 
-            const tokens = [];
+            const tokens: string[] = [];
             let offset = 0;
             let match;
             tokenPattern.lastIndex = 0;
@@ -832,13 +1057,13 @@ export class MonacoEditorManager {
                 if (match.index !== offset && expression.slice(offset, match.index).trim()) {
                     return null;
                 }
-                tokens.push(match[1]);
+                tokens.push(match[1] as string);
                 offset = tokenPattern.lastIndex;
             }
             if (expression.slice(offset).trim() || tokens.length === 0) return null;
 
             let index = 0;
-            const parsePrimary = () => {
+            const parsePrimary = (): number | null => {
                 const token = tokens[index];
                 if (!token) return null;
                 if (token === '(') {
@@ -862,7 +1087,7 @@ export class MonacoEditorManager {
                 }
                 return null;
             };
-            const parseUnary = () => {
+            const parseUnary = (): number | null => {
                 if (tokens[index] === '+') {
                     index++;
                     return parseUnary();
@@ -874,9 +1099,9 @@ export class MonacoEditorManager {
                 }
                 return parsePrimary();
             };
-            const parseMultiplicative = () => {
+            const parseMultiplicative = (): number | null => {
                 let value = parseUnary();
-                while (value !== null && ['*', '/', '%'].includes(tokens[index])) {
+                while (value !== null && ['*', '/', '%'].includes(tokens[index] as string)) {
                     const operator = tokens[index++];
                     const right = parseUnary();
                     if (right === null || (operator !== '*' && right === 0)) return null;
@@ -887,9 +1112,9 @@ export class MonacoEditorManager {
                 }
                 return value;
             };
-            const parseAdditive = () => {
+            const parseAdditive = (): number | null => {
                 let value = parseMultiplicative();
-                while (value !== null && ['+', '-'].includes(tokens[index])) {
+                while (value !== null && ['+', '-'].includes(tokens[index] as string)) {
                     const operator = tokens[index++];
                     const right = parseMultiplicative();
                     if (right === null) return null;
@@ -910,8 +1135,8 @@ export class MonacoEditorManager {
             if (name && expression) expressions.set(name, expression.trim());
         }
 
-        const resolveConstant = (name, resolving = new Set()) => {
-            if (values.has(name)) return values.get(name);
+        const resolveConstant = (name: string, resolving: Set<string> = new Set()): number | null => {
+            if (values.has(name)) return values.get(name) as number;
             if (!expressions.has(name) || resolving.has(name)) return null;
             const nextResolving = new Set(resolving);
             nextResolving.add(name);
@@ -920,7 +1145,7 @@ export class MonacoEditorManager {
             return value;
         };
 
-        const inferArrayElementSize = (declarationPrefix) => {
+        const inferArrayElementSize = (declarationPrefix: string): number => {
             const declaration = declarationPrefix.replace(/\s+/g, ' ').trim().toLowerCase();
             if (!declaration) return 8;
             if (declaration.includes('*') || declaration.includes('&')) return 8;
@@ -980,21 +1205,21 @@ export class MonacoEditorManager {
         return { safe: true };
     }
 
-    _bindLspModelLifecycle(model) {
+    _bindLspModelLifecycle(model: monaco.editor.ITextModel | null) {
         if (!model) return;
-        if (!model.__oicppLspContentListener && typeof model.onDidChangeContent === 'function') {
-            model.__oicppLspContentListener = model.onDidChangeContent(() => {
+        if (!(model as OicppTextModel).__oicppLspContentListener && typeof model.onDidChangeContent === 'function') {
+            (model as OicppTextModel).__oicppLspContentListener = model.onDidChangeContent(() => {
                 this.queueLspDidChange(model);
             });
         }
-        if (!model.__oicppLspDisposeListener && typeof model.onWillDispose === 'function') {
-            model.__oicppLspDisposeListener = model.onWillDispose(() => {
+        if (!(model as OicppTextModel).__oicppLspDisposeListener && typeof model.onWillDispose === 'function') {
+            (model as OicppTextModel).__oicppLspDisposeListener = model.onWillDispose(() => {
                 this.closeLspDocument(model);
             });
         }
     }
 
-    async _ensureLspDocumentReady(model) {
+    async _ensureLspDocumentReady(model: monaco.editor.ITextModel | null) {
 
         if (!model || !this.lspClient) return false;
         if (this._lspDocuments.has(model)) {
@@ -1009,7 +1234,7 @@ export class MonacoEditorManager {
         try {
             await this.ensureLspReady();
         } catch (lspErr) {
-            logWarn('[LSP] ensureLspReady 失败:', lspErr?.message || lspErr);
+            logWarn('[LSP] ensureLspReady 失败:', (lspErr as Error)?.message || lspErr);
             return false;
         }
         if (this._lspDocuments.has(model)) return true;
@@ -1023,14 +1248,14 @@ export class MonacoEditorManager {
         }
     }
 
-    _getLocalCompletionCandidates(model) {
+    _getLocalCompletionCandidates(model: monaco.editor.ITextModel | null): Array<{ label: string; count: number }> {
         const versionId = model?.getVersionId?.();
-        const cached = model?.__oicppLocalCompletionCache;
+        const cached = (model as OicppTextModel | null)?.__oicppLocalCompletionCache;
         if (cached && cached.versionId === versionId) {
             return cached.candidates;
         }
 
-        const counts = new Map();
+        const counts = new Map<string, number>();
         const text = model?.getValue?.() || '';
         const identifierPattern = /\b[A-Za-z_][A-Za-z0-9_]*\b/g;
         const ignored = new Set(['alignas', 'auto', 'bool', 'break', 'case', 'catch', 'char', 'class', 'const', 'continue', 'default', 'delete', 'do', 'double', 'else', 'enum', 'explicit', 'extern', 'false', 'float', 'for', 'friend', 'if', 'inline', 'int', 'long', 'namespace', 'new', 'nullptr', 'operator', 'private', 'protected', 'public', 'register', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'template', 'this', 'throw', 'true', 'try', 'typedef', 'typename', 'union', 'unsigned', 'using', 'virtual', 'void', 'volatile', 'while']);
@@ -1044,7 +1269,7 @@ export class MonacoEditorManager {
             .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
             .slice(0, 250)
             .map(([label, count]) => ({ label, count }));
-        if (model) model.__oicppLocalCompletionCache = { versionId, candidates };
+        if (model) (model as OicppTextModel).__oicppLocalCompletionCache = { versionId, candidates };
         return candidates;
     }
 
@@ -1067,9 +1292,9 @@ export class MonacoEditorManager {
                     const word = model.getWordUntilPosition(position);
                     const prefix = (word.word || '').toLowerCase();
                     const range = new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn);
-                    const seen = new Set();
-                    const suggestions = [];
-                    const add = (label, detail, count = 0, kind = monaco.languages.CompletionItemKind.Variable) => {
+                    const seen = new Set<string>();
+                    const suggestions: monaco.languages.CompletionItem[] = [];
+                    const add = (label: string, detail: string, count = 0, kind: monaco.languages.CompletionItemKind = monaco.languages.CompletionItemKind.Variable) => {
                         const normalized = String(label || '').trim();
                         if (!normalized || seen.has(normalized) || (prefix && !normalized.toLowerCase().includes(prefix))) return;
                         seen.add(normalized);
@@ -1090,44 +1315,26 @@ export class MonacoEditorManager {
         }
     }
 
-    registerLspCommand(command) {
+    registerLspCommand(command: RawLspCommand) {
         const id = String(command?.command || '').trim();
         if (!id || !this.lspClient || typeof monaco?.editor?.registerCommand !== 'function') return;
         this._lspCommandArguments.set(id, Array.isArray(command.arguments) ? command.arguments : []);
         if (this._lspProviders.has(`command:${id}`)) return;
         const disposable = monaco.editor.registerCommand(id, async () => {
             try {
-                await this.lspClient.request('workspace/executeCommand', {
+                await (this.lspClient as LSPClient).request('workspace/executeCommand', {
                     command: id,
                     arguments: this._lspCommandArguments.get(id) || []
                 });
             } catch (err) {
-                logWarn('[LSP] 执行代码操作失败:', id, err?.message || err);
+                logWarn('[LSP] 执行代码操作失败:', id, (err as Error)?.message || err);
             }
         });
         this._lspProviders.set(`command:${id}`, disposable);
     }
 
     /** @returns {import('monaco-editor').languages.CompletionItem & { deprecated?: unknown }} */
-    _mapLspCompletionItem(item: {
-        label?: string;
-        kind?: number;
-        command?: { command?: string; title?: string; arguments?: unknown[] };
-        textEdit?: { range?: unknown; replace?: unknown; insert?: unknown; newText?: string };
-        textEditText?: string;
-        insertText?: string;
-        additionalTextEdits?: Array<{ range?: unknown; newText?: string }>;
-        detail?: string;
-        sortText?: string;
-        filterText?: string;
-        documentation?: string | { value?: string };
-        tags?: unknown[];
-        preselect?: boolean;
-        deprecated?: boolean;
-        commitCharacters?: string[];
-        insertTextFormat?: number;
-        __oicppLspItem?: unknown;
-    }, options: {
+    _mapLspCompletionItem(item: RawLspCompletionItem, options: {
         kindMap?: Record<number, monaco.languages.CompletionItemKind>;
         wordRange?: monaco.Range | null;
         sortText?: string;
@@ -1142,7 +1349,7 @@ export class MonacoEditorManager {
             this.registerLspCommand(item.command);
         }
 
-        const kindMap = options.kindMap || {};
+        const kindMap: Record<number, monaco.languages.CompletionItemKind> = options.kindMap || {};
         const textEdit = item.textEdit || null;
         const rangeSource = textEdit?.range || textEdit?.replace || textEdit?.insert;
         const range = this.lspRangeToMonaco(rangeSource) || options.wordRange || null;
@@ -1150,14 +1357,14 @@ export class MonacoEditorManager {
         const additionalTextEdits: monaco.editor.ISingleEditOperation[] | undefined = Array.isArray(item.additionalTextEdits)
             ? item.additionalTextEdits
                 .map((edit) => ({
-                    range: this.lspRangeToMonaco(edit.range),
+                    range: this.lspRangeToMonaco(edit.range) as monaco.IRange,
                     text: typeof edit.newText === 'string' ? edit.newText : '',
                     forceMoveMarkers: false
                 }))
                 .filter((edit) => edit.range)
             : undefined;
 
-        let documentation;
+        let documentation: { value: string } | undefined;
         if (typeof item.documentation === 'string') {
             documentation = { value: item.documentation };
         } else if (item.documentation?.value) {
@@ -1166,7 +1373,7 @@ export class MonacoEditorManager {
 
         const suggestion: monaco.languages.CompletionItem = {
             label: rawLabel,
-            kind: kindMap[item.kind] ?? monaco.languages.CompletionItemKind.Text,
+            kind: kindMap[item.kind as number] ?? monaco.languages.CompletionItemKind.Text,
             insertText,
             detail: item.detail || undefined,
             sortText: options.sortText || item.sortText || rawLabel,
@@ -1181,7 +1388,7 @@ export class MonacoEditorManager {
             tags: Array.isArray(item.tags) ? item.tags as monaco.languages.CompletionItemTag[] : (item.deprecated === true ? [monaco.languages.CompletionItemTag.Deprecated] : undefined),
             preselect: item.preselect === true ? true : undefined,
             commitCharacters: Array.isArray(item.commitCharacters) ? item.commitCharacters : undefined,
-            range: range || undefined,
+            range: (range || undefined) as monaco.IRange,
             insertTextRules: item.insertTextFormat === 2 ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
             __oicppLspItem: item
         };
@@ -1224,7 +1431,7 @@ export class MonacoEditorManager {
 
             logInfo('[LSP] 注册自动补全提供器 (语言:', language, ')');
             
-            const lspComplete = async (model, position, context, token) => {
+            const lspComplete = async (model: monaco.editor.ITextModel, position: monaco.Position, context: monaco.languages.CompletionContext, token: monaco.CancellationToken) => {
                 if (!this._lspCompletionEnabled) {
                     return { suggestions: [] };
                 }
@@ -1264,7 +1471,7 @@ export class MonacoEditorManager {
                         position.lineNumber, word.endColumn
                     );
                     const prefix = (word.word || '').toLowerCase();
-                    const rankLspItem = (item, label) => {
+                    const rankLspItem = (item: RawLspCompletionItem, label: string) => {
                         const candidate = String(item.filterText || label || '').toLowerCase();
                         const matchRank = candidate === prefix ? '00' : (candidate.startsWith(prefix) ? '01' : '02');
                         const kind = Number(item.kind) || 0;
@@ -1277,12 +1484,12 @@ export class MonacoEditorManager {
                     };
 
                     const suggestions = items
-                        .map((item) => this._mapLspCompletionItem(item, {
+                        .map((item) => this._mapLspCompletionItem(item as RawLspCompletionItem, {
                             kindMap,
                             wordRange,
-                            sortText: rankLspItem(item, String(item?.label || ''))
+                            sortText: rankLspItem(item as RawLspCompletionItem, String((item as RawLspCompletionItem | null)?.label || ''))
                         }))
-                        .filter(Boolean);
+                        .filter(Boolean) as monaco.languages.CompletionItem[];
 
 
                     if (Array.isArray(this.userSnippets)) {
@@ -1313,12 +1520,12 @@ export class MonacoEditorManager {
                 } catch (err) {
                     if (token?.isCancellationRequested) return { suggestions: [] };
                     model.__oicppLspCompletionFallbackUntil = Date.now() + 1500;
-                    logWarn('[LSP] 补全失败:', err?.message || err);
+                    logWarn('[LSP] 补全失败:', (err as Error)?.message || err);
                     return { suggestions: [] };
                 }
             };
 
-            const resolveCompletionItem = async (item) => {
+            const resolveCompletionItem = async (item: monaco.languages.CompletionItem) => {
                 const original = item?.__oicppLspItem;
                 if (!original || !this.lspClient) return item;
                 const capabilities = this.lspClient.getServerCapabilities?.();
@@ -1327,9 +1534,9 @@ export class MonacoEditorManager {
                     const resolved = await this.lspClient.request('completionItem/resolve', original) as Record<string, unknown> | null;
                     if (!resolved) return item;
                     const merged = { ...(original as Record<string, unknown>), ...resolved };
-                    const mapped = this._mapLspCompletionItem(merged, {
+                    const mapped = this._mapLspCompletionItem(merged as unknown as RawLspCompletionItem, {
                         kindMap,
-                        wordRange: item.range,
+                        wordRange: item.range as monaco.Range | null,
                         sortText: item.sortText
                     });
                     if (!mapped) return item;
@@ -1358,17 +1565,17 @@ export class MonacoEditorManager {
         }
     }
 
-    lspMarkupToMonaco(value) {
+    lspMarkupToMonaco(value: unknown): string | { value: string } | undefined {
         if (typeof value === 'string') return value;
-        if (value?.value) return { value: value.value };
+        if ((value as { value?: string })?.value) return { value: (value as { value?: string }).value as string };
         return undefined;
     }
 
-    lspInlayHintToMonaco(hint) {
+    lspInlayHintToMonaco(hint: RawLspInlayHint | null | undefined): monaco.languages.InlayHint | null {
         if (!hint?.position) return null;
         const label = Array.isArray(hint.label)
             ? hint.label
-                .map((part) => {
+                .map((part: RawLspInlayHintLabelPart) => {
                     const text = String(part?.value ?? part?.label ?? '');
                     if (!text) return null;
                     const mapped: monaco.languages.InlayHintLabelPart = { label: text };
@@ -1384,22 +1591,22 @@ export class MonacoEditorManager {
                     if (part.location?.uri && part.location?.range) {
                         mapped.location = {
                             uri: monaco.Uri.parse(part.location.uri),
-                            range: this.lspRangeToMonaco(part.location.range)
+                            range: this.lspRangeToMonaco(part.location.range) as monaco.IRange
                         };
                     }
                     return mapped;
                 })
-                .filter(Boolean)
+                .filter(Boolean) as monaco.languages.InlayHintLabelPart[]
             : String(hint.label || '');
         if (!label || (Array.isArray(label) && label.length === 0)) return null;
 
         const textEdits = Array.isArray(hint.textEdits)
-            ? hint.textEdits
-                .map((edit) => ({
-                    range: this.lspRangeToMonaco(edit.range),
+            ? (hint.textEdits as RawLspTextEdit[])
+                .map((edit: RawLspTextEdit) => ({
+                    range: this.lspRangeToMonaco(edit.range) as monaco.IRange,
                     text: typeof edit.newText === 'string' ? edit.newText : ''
                 }))
-                .filter((edit) => edit.range)
+                .filter((edit) => edit.range) as monaco.languages.TextEdit[]
             : undefined;
         const start = hint.position;
         return {
@@ -1410,7 +1617,7 @@ export class MonacoEditorManager {
             label,
             tooltip: this.lspMarkupToMonaco(hint.tooltip),
             textEdits,
-            kind: monaco.languages.InlayHintKind?.[hint.kind] ?? hint.kind,
+            kind: (monaco.languages.InlayHintKind?.[hint.kind as number] ?? hint.kind) as unknown as monaco.languages.InlayHintKind,
             paddingLeft: hint.paddingLeft,
             paddingRight: hint.paddingRight,
             __oicppLspInlayHint: hint
@@ -1425,7 +1632,7 @@ export class MonacoEditorManager {
             const disposable = monaco.languages.registerInlayHintsProvider(language, {
                 displayName: 'clangd',
                 provideInlayHints: async (model, range, token) => {
-                    const empty = { hints: [], dispose: () => { } };
+                    const empty: monaco.languages.InlayHintList = { hints: [], dispose: () => { } };
                     try {
                         if (!model || model.isDisposed?.() || token?.isCancellationRequested) return empty;
 
@@ -1458,8 +1665,8 @@ export class MonacoEditorManager {
                         if (token?.isCancellationRequested) return null;
                         if (!model || model.isDisposed?.()) return empty;
                         if (!Array.isArray(result)) return empty;
-                        const hints = result.map((hint) => this.lspInlayHintToMonaco(hint)).filter(Boolean);
-                        const payload = {
+                        const hints = result.map((hint) => this.lspInlayHintToMonaco(hint as RawLspInlayHint)).filter(Boolean) as monaco.languages.InlayHint[];
+                        const payload: monaco.languages.InlayHintList = {
                             hints,
                             // 内容未变时这条结果依然有效，交给空实现即可；真正失效的情形由
                             // 版本号比对在上面拦掉。
@@ -1489,8 +1696,8 @@ export class MonacoEditorManager {
         }
     }
 
-    lspSelectionRangeToMonaco(selectionRange) {
-        const ranges = [];
+    lspSelectionRangeToMonaco(selectionRange: RawLspSelectionRange | null | undefined): monaco.languages.SelectionRange[] {
+        const ranges: monaco.languages.SelectionRange[] = [];
         let current = selectionRange;
         while (current) {
             const range = this.lspRangeToMonaco(current.range);
@@ -1571,7 +1778,7 @@ export class MonacoEditorManager {
                                         return null;
                                     }
                                 })
-                                .filter(Boolean)
+                                .filter(Boolean) as monaco.languages.ILink[]
                         };
                     } catch (_) {
                         return { links: [] };
@@ -1610,7 +1817,7 @@ export class MonacoEditorManager {
             activeParameter: 0,
             signatures: []
         };
-        const createSignatureHelpResult = (signatureHelp) => ({
+        const createSignatureHelpResult = (signatureHelp: monaco.languages.SignatureHelp) => ({
             value: signatureHelp,
             dispose() { }
         });
@@ -1645,8 +1852,8 @@ export class MonacoEditorManager {
                             return createSignatureHelpResult(emptySignatureHelp);
                         }
                         return createSignatureHelpResult({
-                            activeSignature: Number.isInteger(result.activeSignature) ? result.activeSignature : 0,
-                            activeParameter: Number.isInteger(result.activeParameter) ? result.activeParameter : 0,
+                            activeSignature: Number.isInteger(result.activeSignature) ? result.activeSignature as number : 0,
+                            activeParameter: Number.isInteger(result.activeParameter) ? result.activeParameter as number : 0,
                             signatures: result.signatures.map((sig) => ({
                                 label: sig.label || '',
                                 documentation: sig.documentation
@@ -1707,7 +1914,7 @@ export class MonacoEditorManager {
                         if (!model || model.isDisposed?.() || token?.isCancellationRequested) return null;
                         if (!result || !result.contents) return null;
 
-                        let contents = [];
+                        let contents: monaco.IMarkdownString[] = [];
                         if (typeof result.contents === 'string') {
                             contents = [{ value: result.contents }];
                         } else if (Array.isArray(result.contents)) {
@@ -1719,7 +1926,7 @@ export class MonacoEditorManager {
                         }
                         if (contents.length === 0) return null;
 
-                        let range = null;
+                        let range: monaco.Range | null = null;
                         if (result.range) {
                             range = new monaco.Range(
                                 (result.range.start.line || 0) + 1,
@@ -1728,7 +1935,7 @@ export class MonacoEditorManager {
                                 (result.range.end.character || 0) + 1
                             );
                         }
-                        return { contents, range };
+                        return { contents, range } as monaco.languages.Hover;
                     } catch (_) {
                         return null;
                     }
@@ -1779,7 +1986,7 @@ export class MonacoEditorManager {
                         const locations = Array.isArray(result) ? result : [result];
                         return locations
                             .map((loc) => this.lspLocationToMonaco(loc))
-                            .filter(Boolean);
+                            .filter(Boolean) as monaco.languages.Location[];
                     } catch (_) {
                         return null;
                     }
@@ -1789,19 +1996,19 @@ export class MonacoEditorManager {
         }
     }
 
-    lspRangeToMonaco(range) {
-        return window.OicppLspUtils?.toMonacoRange(range, monaco) || null;
+    lspRangeToMonaco(range: unknown): monaco.IRange | null {
+        return (window.OicppLspUtils?.toMonacoRange(range as RawLspRange | undefined, monaco) || null) as monaco.IRange | null;
     }
 
-    lspLocationToMonaco(location) {
-        return window.OicppLspUtils?.toMonacoLocation(location, monaco) || null;
+    lspLocationToMonaco(location: unknown): monaco.languages.Location | null {
+        return (window.OicppLspUtils?.toMonacoLocation(location as RawLspLocation | undefined, monaco) || null) as monaco.languages.Location | null;
     }
 
-    lspWorkspaceEditToMonaco(edit) {
-        return window.OicppLspUtils?.toMonacoWorkspaceEdit(edit, monaco);
+    lspWorkspaceEditToMonaco(edit: unknown): MonacoWorkspaceEdit | undefined {
+        return window.OicppLspUtils?.toMonacoWorkspaceEdit(edit as RawLspWorkspaceEdit | undefined, monaco) as unknown as MonacoWorkspaceEdit | undefined;
     }
 
-    lspUriToPath(resource) {
+    lspUriToPath(resource: monaco.Uri | string | null | undefined) {
         const uri = resource?.toString?.() || (typeof resource === 'string' ? resource : '');
         if (!uri || typeof monaco === 'undefined' || !monaco.Uri) return '';
         try {
@@ -1813,7 +2020,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async applyLspFileOperation(operation) {
+    async applyLspFileOperation(operation: RawLspFileOperation | null | undefined) {
         const api = window.electronAPI;
         if (!api || !operation?.fileOperation) return false;
         try {
@@ -1852,12 +2059,12 @@ export class MonacoEditorManager {
                 return result?.success !== false;
             }
         } catch (err) {
-            logWarn('[LSP] WorkspaceEdit 文件操作失败:', err?.message || err);
+            logWarn('[LSP] WorkspaceEdit 文件操作失败:', (err as Error)?.message || err);
         }
         return false;
     }
 
-    async ensureModelForLspUri(uri) {
+    async ensureModelForLspUri(uri: string) {
         const existing = this.findModelByLspUri(uri);
         if (existing) return { model: existing, created: false };
         if (typeof monaco === 'undefined' || !monaco.editor?.createModel || !monaco.Uri) {
@@ -1878,12 +2085,12 @@ export class MonacoEditorManager {
             model.__oicppFilePath = filePath;
             return { model, created: true };
         } catch (err) {
-            logWarn('[LSP] 为 WorkspaceEdit 打开文件失败:', err?.message || err);
+            logWarn('[LSP] 为 WorkspaceEdit 打开文件失败:', (err as Error)?.message || err);
             return { model: null, created: false };
         }
     }
 
-    async applyLspWorkspaceEdit(workspaceEdit) {
+    async applyLspWorkspaceEdit(workspaceEdit: MonacoWorkspaceEdit | undefined) {
         if (!workspaceEdit || !Array.isArray(workspaceEdit.edits) || workspaceEdit.edits.length === 0) {
             return { files: 0, edits: 0, skipped: 0, fileOperations: 0 };
         }
@@ -1916,7 +2123,7 @@ export class MonacoEditorManager {
                 try {
                     model.pushEditOperations([], modelEdits, () => null);
                     if (created) {
-                        const filePath = this.getModelFilePath(model);
+                        const filePath = this.getModelFilePath(model) as string;
                         const writeResult = await window.electronAPI.writeFile(filePath, model.getValue());
                         if (writeResult?.success === false || writeResult?.ok === false) {
                             throw new Error(writeResult?.error || 'write failed');
@@ -1932,7 +2139,7 @@ export class MonacoEditorManager {
                         }
                         try { model.dispose(); } catch (_) {}
                     } else {
-                        logWarn('[LSP] 应用 WorkspaceEdit 失败:', err?.message || err);
+                        logWarn('[LSP] 应用 WorkspaceEdit 失败:', (err as Error)?.message || err);
                     }
                 }
                 if (created && written) {
@@ -2014,14 +2221,14 @@ export class MonacoEditorManager {
                         }, token);
                         if (!Array.isArray(result)) return [];
 
-                        const toRange = (range) => new monaco.Range(
+                        const toRange = (range: RawLspRange) => new monaco.Range(
                             (range.start?.line || 0) + 1,
                             (range.start?.character || 0) + 1,
                             (range.end?.line || 0) + 1,
                             (range.end?.character || 0) + 1
                         );
 
-                        const kindMap = {
+                        const kindMap: Record<number, monaco.languages.SymbolKind> = {
                             1: monaco.languages.SymbolKind.File,
                             2: monaco.languages.SymbolKind.Module,
                             3: monaco.languages.SymbolKind.Namespace,
@@ -2050,11 +2257,11 @@ export class MonacoEditorManager {
                             26: monaco.languages.SymbolKind.TypeParameter
                         };
 
-                        const mapSymbol = (sym) => ({
+                        const mapSymbol = (sym: RawLspDocumentSymbol): monaco.languages.DocumentSymbol => ({
                             name: sym.name || '',
                             detail: sym.detail || '',
                             tags: [],
-                            kind: kindMap[sym.kind] || monaco.languages.SymbolKind.Variable,
+                            kind: kindMap[sym.kind as number] || monaco.languages.SymbolKind.Variable,
                             range: toRange(sym.range || sym.location?.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }),
                             selectionRange: toRange(sym.selectionRange || sym.range || { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }),
                             children: Array.isArray(sym.children) ? sym.children.filter(Boolean).map(mapSymbol) : []
@@ -2103,7 +2310,7 @@ export class MonacoEditorManager {
                         const locations = Array.isArray(result) ? result : [result];
                         return locations
                             .map((loc) => this.lspLocationToMonaco(loc))
-                            .filter(Boolean);
+                            .filter(Boolean) as monaco.languages.Location[];
                     } catch (_) {
                         return null;
                     }
@@ -2150,7 +2357,7 @@ export class MonacoEditorManager {
                                     )
                                 };
                             } catch (_) { return null; }
-                        }).filter(Boolean);
+                        }).filter(Boolean) as monaco.languages.Location[];
                     } catch (_) {
                         return [];
                     }
@@ -2184,7 +2391,7 @@ export class MonacoEditorManager {
                             newName
                         }, token);
                         const workspaceEdit = this.lspWorkspaceEditToMonaco(result);
-                        return workspaceEdit || null;
+                        return (workspaceEdit || null) as monaco.languages.WorkspaceEdit | null;
                     } catch (_) {
                         return null;
                     }
@@ -2211,7 +2418,7 @@ export class MonacoEditorManager {
                             text: content
                         }];
                     } catch (error) {
-                        logWarn('[clang-format] 文档格式化失败:', error?.message || error);
+                        logWarn('[clang-format] 文档格式化失败:', (error as Error)?.message || error);
                         return [];
                     }
                 }
@@ -2237,7 +2444,7 @@ export class MonacoEditorManager {
                         // undo 记录、光标/选区跳变，并让 Monaco 重排整个文档。
                         return this.buildMinimalFormatEdits(model, original, content);
                     } catch (error) {
-                        logWarn('[clang-format] 范围格式化失败:', error?.message || error);
+                        logWarn('[clang-format] 范围格式化失败:', (error as Error)?.message || error);
                         return [];
                     }
                 }
@@ -2289,9 +2496,9 @@ export class MonacoEditorManager {
                                 title: item.title || '',
                                 kind: item.kind || 'quickfix',
                                 diagnostics: Array.isArray(item.diagnostics)
-                                    ? item.diagnostics.map((diagnostic) => this.lspDiagnosticToMonacoMarker(diagnostic)).filter(Boolean)
+                                    ? item.diagnostics.map((diagnostic: RawLspDiagnostic) => this.lspDiagnosticToMonacoMarker(diagnostic)).filter(Boolean)
                                     : undefined,
-                                edit: item.edit ? this.lspWorkspaceEditToMonaco(item.edit) : undefined,
+                                edit: item.edit ? this.lspWorkspaceEditToMonaco(item.edit) as monaco.languages.WorkspaceEdit : undefined,
                                 isPreferred: item.isPreferred === true ? true : undefined,
                                 disabled: item.disabled,
                                 command: item.command ? {
@@ -2339,7 +2546,7 @@ export class MonacoEditorManager {
                         const locations = Array.isArray(result) ? result : [result];
                         return locations
                             .map((loc) => this.lspLocationToMonaco(loc))
-                            .filter(Boolean);
+                            .filter(Boolean) as monaco.languages.Location[];
                     } catch (_) {
                         return [];
                     }
@@ -2376,7 +2583,7 @@ export class MonacoEditorManager {
                         const locations = Array.isArray(result) ? result : [result];
                         return locations
                             .map((loc) => this.lspLocationToMonaco(loc))
-                            .filter(Boolean);
+                            .filter(Boolean) as monaco.languages.Location[];
                     } catch (_) {
                         return [];
                     }
@@ -2433,13 +2640,13 @@ export class MonacoEditorManager {
         if (typeof monaco === 'undefined' || !monaco.languages || typeof monaco.languages.registerWorkspaceSymbolProvider !== 'function') return;
         logInfo('[LSP] 注册工作区符号提供器');
         const disposable = monaco.languages.registerWorkspaceSymbolProvider({
-            provideWorkspaceSymbols: async (query, token) => {
+            provideWorkspaceSymbols: async (query: string, token: monaco.CancellationToken) => {
                 try {
                     if (!this.lspClient) return [];
                     const result = await this.lspClient.request('workspace/symbol', { query }, token);
                     if (!Array.isArray(result)) return [];
 
-                    const kindMap = {
+                    const kindMap: Record<number, monaco.languages.SymbolKind> = {
                         1: monaco.languages.SymbolKind.File,
                         2: monaco.languages.SymbolKind.Module,
                         3: monaco.languages.SymbolKind.Namespace,
@@ -2588,7 +2795,7 @@ export class MonacoEditorManager {
                         }
 
                         const foldingRangeKind = monaco.languages.FoldingRangeKind;
-                        const kindMap = {
+                        const kindMap: Record<number, monaco.languages.FoldingRangeKind> = {
                             1: foldingRangeKind.Comment,
                             2: foldingRangeKind.Imports,
                             3: foldingRangeKind.Region
@@ -2612,7 +2819,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async getDocumentUriForModel(model, filePathHint = null, fileNameHint = null) {
+    async getDocumentUriForModel(model: OicppTextModel | null | undefined, filePathHint: string | null = null, fileNameHint: string | null = null) {
         if (!model || typeof monaco === 'undefined' || !monaco.Uri) {
             return '';
         }
@@ -2649,7 +2856,7 @@ export class MonacoEditorManager {
         return fileUri;
     }
 
-    _buildCleanFileUri(filePath) {
+    _buildCleanFileUri(filePath: string) {
         const normalized = filePath.replace(/\\/g, '/');
         // Windows: file:///D:/path, Unix: file:///home/path
         if (/^[a-zA-Z]:/.test(normalized)) {
@@ -2658,7 +2865,7 @@ export class MonacoEditorManager {
         return 'file://' + (normalized.startsWith('/') ? '' : '/') + normalized;
     }
 
-    _normalizeLspUri(uri) {
+    _normalizeLspUri(uri: string) {
         if (typeof uri !== 'string' || !uri.includes('%')) {
             return uri;
         }
@@ -2682,7 +2889,7 @@ export class MonacoEditorManager {
         return decoded;
     }
 
-    async openLspDocument(model, filePathHint = null, fileNameHint = null) {
+    async openLspDocument(model: monaco.editor.ITextModel, filePathHint: string | null | undefined = null, fileNameHint: string | null | undefined = null) {
         try {
             if (!this.lspClient || !model) return;
 
@@ -2751,11 +2958,11 @@ export class MonacoEditorManager {
 
             this._bindLspModelLifecycle(model);
         } catch (err) {
-            logWarn('[LSP] 打开文档失败:', err?.message || err);
+            logWarn('[LSP] 打开文档失败:', (err as Error)?.message || err);
         }
     }
 
-    queueLspDidChange(model): void {
+    queueLspDidChange(model: monaco.editor.ITextModel): void {
         if (!model || model.isDisposed?.()) return;
         const existing = this._lspChangeTimers.get(model);
         if (existing) {
@@ -2790,7 +2997,7 @@ export class MonacoEditorManager {
         this._lspChangeTimers.set(model, timer);
     }
 
-    sendLspDidChange(model, safetyResult = null) {
+    sendLspDidChange(model: monaco.editor.ITextModel, safetyResult: LspDocumentSafety | null = null) {
         if (!model || model.isDisposed?.()) return Promise.resolve(false);
         const existing = this._lspChangePromises.get(model);
         if (existing) {
@@ -2810,7 +3017,7 @@ export class MonacoEditorManager {
         });
     }
 
-    async _sendLspDidChange(model, safetyResult = null): Promise<void> {
+    async _sendLspDidChange(model: monaco.editor.ITextModel, safetyResult: LspDocumentSafety | null = null): Promise<void> {
         if (!model || model.isDisposed?.()) return;
         const safety = safetyResult || this.assessLspDocumentSafety(model.getValue ? model.getValue() : '');
         if (!safety.safe) {
@@ -2845,14 +3052,14 @@ export class MonacoEditorManager {
             entry.modelVersion = modelVersion;
             return;
         } catch (err) {
-            logWarn('[LSP] 文档变更失败:', err?.message || err);
+            logWarn('[LSP] 文档变更失败:', (err as Error)?.message || err);
             return;
         } finally {
             this._lspChangeInFlight.delete(model);
         }
     }
 
-    async flushLspDocumentChanges(model) {
+    async flushLspDocumentChanges(model: monaco.editor.ITextModel | null | undefined) {
         if (!model || model.isDisposed?.() || !this._lspDocuments.has(model)) return false;
         const timer = this._lspChangeTimers.get(model);
         if (timer) {
@@ -2881,7 +3088,7 @@ export class MonacoEditorManager {
         return !!entry && (modelVersion === undefined || entry.modelVersion === modelVersion);
     }
 
-    async closeLspDocument(model) {
+    async closeLspDocument(model: monaco.editor.ITextModel | null | undefined) {
         try {
             if (!this.lspClient || !model) return;
             const entry = this._lspDocuments.get(model);
@@ -2901,26 +3108,26 @@ export class MonacoEditorManager {
             }
             this._lspDiagnosticsByModel.delete(model);
         } catch (err) {
-            logWarn('[LSP] 关闭文档失败:', err?.message || err);
+            logWarn('[LSP] 关闭文档失败:', (err as Error)?.message || err);
         }
     }
 
-    getLineHeightValue(fontSize, lineHeightSetting) {
-        const parsedLineHeight = parseInt(lineHeightSetting, 10);
+    getLineHeightValue(fontSize: string | number, lineHeightSetting: string | number) {
+        const parsedLineHeight = parseInt(lineHeightSetting as string, 10);
         if (!Number.isNaN(parsedLineHeight) && parsedLineHeight > 0) {
             return parsedLineHeight;
         }
-        const parsedFontSize = parseInt(fontSize, 10);
+        const parsedFontSize = parseInt(fontSize as string, 10);
         const safeFontSize = Number.isNaN(parsedFontSize) || parsedFontSize <= 0 ? 14 : parsedFontSize;
         return Math.round(safeFontSize * 1.4);
     }
 
-    normalizeThemeKey(theme) {
+    normalizeThemeKey(theme: unknown) {
         const raw = (typeof theme === 'string' && theme.trim()) ? theme.trim() : 'dark';
         return raw;
     }
 
-    resolveSyntaxTokenValue(raw, key, legacyKeys = []) {
+    resolveSyntaxTokenValue(raw: Record<string, unknown> | null | undefined, key: string, legacyKeys: string[] = []) {
         if (!raw || typeof raw !== 'object') {
             return undefined;
         }
@@ -2953,7 +3160,7 @@ export class MonacoEditorManager {
 
     getDefaultSyntaxColors(theme = 'dark') {
         const themeKey = this.normalizeThemeKey(theme);
-        const presets = {
+        const presets: Record<string, Record<string, string>> = {
             dark: {
                 keyword: '#c586c0',
                 string: '#ce9178',
@@ -3075,7 +3282,7 @@ export class MonacoEditorManager {
                 variable: '#f8f8f2'
             }
         };
-        return { ...(presets[themeKey] || presets.dark) };
+        return { ...(presets[themeKey] || presets['dark']) };
     }
 
     getDefaultSyntaxStyles() {
@@ -3083,11 +3290,11 @@ export class MonacoEditorManager {
         this.getSyntaxTokenKeys().forEach((key) => {
             styles[key] = { bold: false, italic: false };
         });
-        styles.comment.italic = true;
+        (styles['comment'] as { bold: boolean; italic: boolean }).italic = true;
         return styles;
     }
 
-    normalizeSyntaxColors(raw, theme = 'dark') {
+    normalizeSyntaxColors(raw: Record<string, unknown> | null | undefined, theme = 'dark') {
         const defaults = this.getDefaultSyntaxColors(theme);
         const normalized = { ...defaults };
         if (raw && typeof raw === 'object') {
@@ -3102,7 +3309,7 @@ export class MonacoEditorManager {
         return normalized;
     }
 
-    normalizeSyntaxStyles(raw) {
+    normalizeSyntaxStyles(raw: Record<string, unknown> | null | undefined) {
         const defaults = this.getDefaultSyntaxStyles();
         const normalized = JSON.parse(JSON.stringify(defaults));
         if (raw && typeof raw === 'object') {
@@ -3110,16 +3317,16 @@ export class MonacoEditorManager {
                 const legacyKeys = key === 'variable' ? ['localVariable', 'globalVariable'] : [];
                 const value = this.resolveSyntaxTokenValue(raw, key, legacyKeys);
                 if (value && typeof value === 'object') {
-                    normalized[key].bold = !!value.bold;
-                    normalized[key].italic = !!value.italic;
+                    normalized[key].bold = !!(value as { bold?: unknown; italic?: unknown }).bold;
+                    normalized[key].italic = !!(value as { bold?: unknown; italic?: unknown }).italic;
                 }
             });
         }
         return normalized;
     }
 
-    normalizeSyntaxColorsByTheme(raw) {
-        const normalized = {};
+    normalizeSyntaxColorsByTheme(raw: Record<string, unknown> | null | undefined) {
+        const normalized: Record<string, Record<string, string>> = {};
         if (!raw || typeof raw !== 'object') {
             return normalized;
         }
@@ -3128,12 +3335,12 @@ export class MonacoEditorManager {
                 return;
             }
             const key = this.normalizeThemeKey(themeKey);
-            normalized[key] = this.normalizeSyntaxColors(raw[themeKey], key);
+            normalized[key] = this.normalizeSyntaxColors(raw[themeKey] as Record<string, unknown>, key);
         });
         return normalized;
     }
 
-    toMonacoColorHex(color, fallback = 'C586C0') {
+    toMonacoColorHex(color: unknown, fallback = 'C586C0') {
         if (typeof color !== 'string') {
             return fallback;
         }
@@ -3144,7 +3351,7 @@ export class MonacoEditorManager {
         return normalized.slice(1).toUpperCase();
     }
 
-    toMonacoFontStyle(styleConfig) {
+    toMonacoFontStyle(styleConfig: { italic?: boolean; bold?: boolean } | null | undefined) {
         if (!styleConfig || typeof styleConfig !== 'object') {
             return '';
         }
@@ -3154,7 +3361,7 @@ export class MonacoEditorManager {
         return segments.join(' ');
     }
 
-    buildSyntaxColorRules(syntaxColors, syntaxStyles, theme = 'dark') {
+    buildSyntaxColorRules(syntaxColors: Record<string, unknown> | null | undefined, syntaxStyles: Record<string, unknown> | null | undefined, theme = 'dark') {
         const colors = this.normalizeSyntaxColors(syntaxColors, theme);
         const styles = this.normalizeSyntaxStyles(syntaxStyles);
         // 必须与 Monaco C++ 语言定义（monaco-editor/esm/vs/languages/definitions/cpp/cpp.js）
@@ -3169,7 +3376,7 @@ export class MonacoEditorManager {
             'auto', 'decltype', '__int8', '__int16', '__int32', '__int64'
         ];
 
-        const makeRule = (token, colorKey) => {
+        const makeRule = (token: string, colorKey: string) => {
             const rule: { token: string; foreground: string; fontStyle?: string } = {
                 token,
                 foreground: this.toMonacoColorHex(colors[colorKey])
@@ -3189,7 +3396,7 @@ export class MonacoEditorManager {
         // 因为规则虽然命中，取的却是「类型」槽的颜色。
         const cppTypeKeywordRules = cppBuiltinTypeKeywords.map((keyword) => ({
             token: `keyword.${keyword}`,
-            foreground: this.toMonacoColorHex(colors.keyword),
+            foreground: this.toMonacoColorHex(colors['keyword']),
             ...(this.toMonacoFontStyle(styles.keyword) ? { fontStyle: this.toMonacoFontStyle(styles.keyword) } : {})
         }));
         return [
@@ -3235,9 +3442,9 @@ export class MonacoEditorManager {
         ];
     }
 
-    buildSemanticTokenRules(colors, styles) {
+    buildSemanticTokenRules(colors: Record<string, string>, styles: Record<string, unknown> | null | undefined) {
         const styleMap = this.normalizeSyntaxStyles(styles);
-        const withStyle = (colorKey, styleKey) => {
+        const withStyle = (colorKey: string, styleKey: string) => {
             const base = colors[colorKey];
             if (!base) return undefined;
             const fontStyle = this.toMonacoFontStyle(styleMap[styleKey] || styleMap[colorKey]);
@@ -3295,7 +3502,7 @@ export class MonacoEditorManager {
                 : { token, ...value }));
     }
 
-    updatePreprocessorLineDecorations(editor, enabled, color) {
+    updatePreprocessorLineDecorations(editor: monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor, enabled: boolean | undefined, color: string | undefined) {
         if (!editor || typeof monaco === 'undefined') return;
         const target = (editor.getModifiedEditor ? editor.getModifiedEditor() : editor) as monaco.editor.IStandaloneCodeEditor;
         const model = target.getModel?.();
@@ -3305,7 +3512,7 @@ export class MonacoEditorManager {
         target.__unifiedPreprocessorColor = color || '#c586c0';
         const container = target.getDomNode?.()?.closest?.('.monaco-editor-container') as HTMLElement | null;
         if (container) {
-            container.style.setProperty('--oicpp-preprocessor-color', target.__unifiedPreprocessorColor);
+            container.style.setProperty('--oicpp-preprocessor-color', target.__unifiedPreprocessorColor as string);
         }
 
         const decorations = [];
@@ -3340,7 +3547,7 @@ export class MonacoEditorManager {
         }
     }
 
-    getThemeSyntaxOverride(theme, syntaxSettings: { syntaxColorsByTheme?: Record<string, Record<string, string>>; syntaxFontStyles?: Record<string, Record<string, string>>; syntaxColors?: Record<string, string> } = {}) {
+    getThemeSyntaxOverride(theme: string, syntaxSettings: { syntaxColorsByTheme?: Record<string, Record<string, string>>; syntaxFontStyles?: Record<string, Record<string, string>>; syntaxColors?: Record<string, string> } = {}) {
         const themeKey = this.normalizeThemeKey(theme);
         const hasColorByThemeInPayload = !!(syntaxSettings && syntaxSettings.syntaxColorsByTheme !== undefined);
         const hasGlobalStyleInPayload = !!(syntaxSettings && syntaxSettings.syntaxFontStyles !== undefined);
@@ -3369,14 +3576,14 @@ export class MonacoEditorManager {
         return { colors, styles };
     }
 
-    getBaseMonacoThemeName(theme) {
+    getBaseMonacoThemeName(theme: string) {
         const selectedTheme = this.normalizeThemeKey(theme);
         if (selectedTheme === 'light') return 'oicpp-light';
         if (selectedTheme === 'dark') return 'oicpp-dark';
         return `oicpp-${selectedTheme}`;
     }
 
-    resolveMonacoTheme(theme, syntaxSettings = {}) {
+    resolveMonacoTheme(theme: string, syntaxSettings = {}) {
         const baseTheme = this.getBaseMonacoThemeName(theme);
         if (typeof monaco === 'undefined' || !monaco.editor) {
             return baseTheme;
@@ -3395,7 +3602,7 @@ export class MonacoEditorManager {
                     // 语义 token 必须走 rules：Monaco 不读 semanticTokenColors 字段
                     ...this.buildSemanticTokenRules(normalized.colors, normalized.styles)
                 ],
-                colors: themePreset.colors || {}
+                colors: (themePreset.colors || {}) as monaco.editor.IColors
             });
             return customThemeName;
         } catch (err) {
@@ -3404,7 +3611,7 @@ export class MonacoEditorManager {
         }
     }
 
-    getThemePreset(theme) {
+    getThemePreset(theme: unknown) {
         const selectedTheme = (typeof theme === 'string' && theme.trim()) ? theme.trim() : 'dark';
         switch (selectedTheme) {
             case 'light':
@@ -3590,7 +3797,7 @@ export class MonacoEditorManager {
         }
     }
 
-    updateIndentGuideTone(themeName) {
+    updateIndentGuideTone(themeName: unknown) {
         if (typeof document === 'undefined') {
             return;
         }
@@ -3637,7 +3844,7 @@ export class MonacoEditorManager {
             const supportsDelta = typeof full === 'object' && full !== null && full.delta === true;
             const provider = {
                 getLegend: () => legend,
-                provideDocumentSemanticTokens: async (model, _lastResultId, cancellationToken) => {
+                provideDocumentSemanticTokens: async (model: monaco.editor.ITextModel, _lastResultId: string | null, cancellationToken: monaco.CancellationToken) => {
                     try {
                         if (!model || model.isDisposed?.() || cancellationToken?.isCancellationRequested) {
                             return null;
@@ -3694,8 +3901,8 @@ export class MonacoEditorManager {
                 releaseDocumentSemanticTokens: () => {}
             };
 
-            const cppDisposable = monaco.languages.registerDocumentSemanticTokensProvider('cpp', provider);
-            const cDisposable = monaco.languages.registerDocumentSemanticTokensProvider('c', provider);
+            const cppDisposable = monaco.languages.registerDocumentSemanticTokensProvider('cpp', provider as unknown as monaco.languages.DocumentSemanticTokensProvider);
+            const cDisposable = monaco.languages.registerDocumentSemanticTokensProvider('c', provider as unknown as monaco.languages.DocumentSemanticTokensProvider);
             this._lspSemanticProviders = [cppDisposable, cDisposable];
         } catch (error) {
             logWarn('注册 C/C++ 语义高亮提供器失败:', error);
@@ -3770,9 +3977,9 @@ export class MonacoEditorManager {
         ];
     }
 
-    normalizeKeybindings(raw) {
+    normalizeKeybindings(raw: Record<string, unknown> | null | undefined) {
         const defaults = this.getDefaultKeybindings();
-        const normalized = { ...defaults };
+        const normalized: Record<string, string> = { ...defaults };
         const editableKeys = new Set(this.getEditableKeybindingKeys());
         if (raw && typeof raw === 'object') {
             Object.keys(defaults).forEach((key) => {
@@ -3795,12 +4002,12 @@ export class MonacoEditorManager {
         }
     }
 
-    resolveKeybinding(action) {
+    resolveKeybinding(action: string) {
         if (!action) return null;
         return (this.keybindings && this.keybindings[action]) || this.defaultKeybindings[action] || null;
     }
 
-    parseKeybindingCombo(combo): { keyCode: number | null; ctrlOrCmd: boolean; shift: boolean; alt: boolean; keyLower: string; codeLower: string } | null {
+    parseKeybindingCombo(combo: unknown): { keyCode: number | null; ctrlOrCmd: boolean; shift: boolean; alt: boolean; keyLower: string; codeLower: string } | null {
         if (!combo || typeof combo !== 'string') return null;
         const cacheKey = `parse:${combo}`;
         if (this._keybindingParseCache?.has(cacheKey)) {
@@ -3817,24 +4024,24 @@ export class MonacoEditorManager {
             keyCode: null
         } as { keyCode: number | null; ctrlOrCmd: boolean; shift: boolean; alt: boolean; keyLower: string; codeLower: string };
 
-        const mapToMonacoKeyCode = (token) => {
+        const mapToMonacoKeyCode = (token: string) => {
             if (typeof monaco === 'undefined' || !monaco.KeyCode) return null;
             const upper = token.toUpperCase();
             if (upper.length === 1 && upper >= 'A' && upper <= 'Z') {
                 result.keyLower = upper.toLowerCase();
                 result.codeLower = `key${upper.toLowerCase()}`;
-                return monaco.KeyCode[`Key${upper}`];
+                return (monaco.KeyCode as unknown as Record<string, number>)[`Key${upper}`] as number;
             }
             if (/^[0-9]$/.test(token)) {
                 result.keyLower = token;
                 result.codeLower = `digit${token}`;
-                return monaco.KeyCode[`Digit${token}`];
+                return (monaco.KeyCode as unknown as Record<string, number>)[`Digit${token}`] as number;
             }
             if (/^F([1-9]|1[0-2])$/i.test(token)) {
                 const number = token.replace(/[^0-9]/g, '');
                 result.keyLower = `f${number}`;
                 result.codeLower = `f${number}`;
-                return monaco.KeyCode[`F${number}`];
+                return (monaco.KeyCode as unknown as Record<string, number>)[`F${number}`] as number;
             }
 
             const specialMap = {
@@ -3855,10 +4062,10 @@ export class MonacoEditorManager {
                 'PAGEUP': { code: monaco.KeyCode.PageUp, key: 'pageup' },
                 'PAGEDOWN': { code: monaco.KeyCode.PageDown, key: 'pagedown' }
             };
-            if (specialMap[upper]) {
-                result.keyLower = specialMap[upper].key;
-                result.codeLower = specialMap[upper].key;
-                return specialMap[upper].code;
+            if (specialMap[upper as keyof typeof specialMap]) {
+                result.keyLower = specialMap[upper as keyof typeof specialMap].key;
+                result.codeLower = specialMap[upper as keyof typeof specialMap].key;
+                return specialMap[upper as keyof typeof specialMap].code;
             }
             return null;
         };
@@ -3887,7 +4094,7 @@ export class MonacoEditorManager {
         return result;
     }
 
-    toMonacoKeybinding(action) {
+    toMonacoKeybinding(action: string) {
         const combo = this.resolveKeybinding(action);
         if (!combo) return null;
         const cacheKey = `monaco:${combo}`;
@@ -3907,7 +4114,7 @@ export class MonacoEditorManager {
         return code;
     }
 
-    doesEventMatchShortcut(event, action) {
+    doesEventMatchShortcut(event: KeyboardEvent, action: string) {
         const combo = this.resolveKeybinding(action);
         if (!combo) return false;
         const parsed = this.parseKeybindingCombo(combo);
@@ -3924,18 +4131,18 @@ export class MonacoEditorManager {
         return eventKeyLower === parsed.keyLower || eventCodeLower === parsed.codeLower || eventCodeLower === parsed.keyLower;
     }
 
-    isInputLikeTarget(target) {
+    isInputLikeTarget(target: Element | null | undefined) {
         if (!target || !target.tagName) return false;
         const tag = target.tagName.toLowerCase();
-        return tag === 'input' || tag === 'textarea' || target.isContentEditable;
+        return tag === 'input' || tag === 'textarea' || (target as HTMLElement).isContentEditable;
     }
 
-    isFindWidgetInputFocused(target = document.activeElement) {
+    isFindWidgetInputFocused(target: Element | null = document.activeElement) {
         if (!target || !this.isInputLikeTarget(target)) return false;
         return !!target.closest('.find-widget');
     }
 
-    pasteTextIntoInputTarget(target, text) {
+    pasteTextIntoInputTarget(target: InputTargetElement | null, text: string) {
         if (!target || typeof text !== 'string') return false;
         if (target.isContentEditable) {
             target.focus();
@@ -3960,8 +4167,8 @@ export class MonacoEditorManager {
         return false;
     }
 
-    isMonacoPasteMenuActionTarget(target, event = null) {
-        const nodes = [];
+    isMonacoPasteMenuActionTarget(target: EventTarget | null | undefined, event: Event | null = null) {
+        const nodes: EventTarget[] = [];
         if (target) nodes.push(target);
         if (event && typeof event.composedPath === 'function') {
             for (const node of event.composedPath()) {
@@ -3971,16 +4178,16 @@ export class MonacoEditorManager {
         }
 
         for (const node of nodes) {
-            if (!node || typeof node !== 'object' || typeof node.closest !== 'function') continue;
-            const actionItem = node.closest('.context-view .action-item, .context-view .action-menu-item, .monaco-menu .action-item, .monaco-menu .action-menu-item, [role="menuitem"]');
+            if (!node || typeof node !== 'object' || typeof (node as Element).closest !== 'function') continue;
+            const actionItem = (node as Element).closest('.context-view .action-item, .context-view .action-menu-item, .monaco-menu .action-item, .monaco-menu .action-menu-item, [role="menuitem"]');
             if (!actionItem) continue;
 
             const commandId = [
                 actionItem.getAttribute('data-command') || '',
                 actionItem.getAttribute('data-action') || '',
                 actionItem.getAttribute('id') || '',
-                actionItem.dataset?.command || '',
-                actionItem.dataset?.action || ''
+                (actionItem as HTMLElement).dataset?.['command'] || '',
+                (actionItem as HTMLElement).dataset?.['action'] || ''
             ].join(' ').toLowerCase();
 
             if (commandId.includes('clipboardpasteaction') || /\bpaste\b/.test(commandId)) {
@@ -4011,7 +4218,7 @@ export class MonacoEditorManager {
         if (this.isFindWidgetInputFocused(focusedTarget)) {
             try {
                 const text = await this.readFromClipboard();
-                if (typeof text === 'string' && this.pasteTextIntoInputTarget(focusedTarget, text)) {
+                if (typeof text === 'string' && this.pasteTextIntoInputTarget(focusedTarget as unknown as InputTargetElement, text)) {
                     logInfo('已将剪贴板内容粘贴到查找/替换输入框');
                     return true;
                 }
@@ -4060,7 +4267,7 @@ export class MonacoEditorManager {
             }]);
 
             const lines = text.split('\n');
-            const lastLineLength = lines[lines.length - 1].length;
+            const lastLineLength = (lines[lines.length - 1] as string).length;
             const newPosition = {
                 lineNumber: baseLineNumber + lines.length - 1,
                 column: lines.length === 1 ? baseColumn + lastLineLength : lastLineLength + 1
@@ -4075,7 +4282,7 @@ export class MonacoEditorManager {
         }
     }
 
-    handleMonacoContextMenuPasteCapture(event) {
+    handleMonacoContextMenuPasteCapture(event: Event | null) {
         if (!event || event.type !== 'click') return;
         if (!this.isMonacoPasteMenuActionTarget(event.target, event)) return;
 
@@ -4113,7 +4320,7 @@ export class MonacoEditorManager {
         this.loadKeybindingsFromSettings({});
     }
 
-    registerGroup(groupId, element) {
+    registerGroup(groupId: string, element: HTMLElement) {
         try {
             if (!groupId || !element) return;
             this.groupContainers.set(groupId, element);
@@ -4125,7 +4332,7 @@ export class MonacoEditorManager {
         }
     }
 
-    unregisterGroup(groupId) {
+    unregisterGroup(groupId: string) {
         try {
             if (!groupId) return;
             this.groupContainers.delete(groupId);
@@ -4135,7 +4342,7 @@ export class MonacoEditorManager {
         }
     }
 
-    getGroupContainer(groupId) {
+    getGroupContainer(groupId: string) {
         if (groupId && this.groupContainers.has(groupId)) {
             return this.groupContainers.get(groupId);
         }
@@ -4155,7 +4362,7 @@ export class MonacoEditorManager {
 
         const defaultArea = document.querySelector('.editor-area');
         if (defaultArea instanceof HTMLElement) {
-            const defaultId = defaultArea.dataset.groupId || 'group-1';
+            const defaultId = defaultArea.dataset['groupId'] || 'group-1';
             this.groupContainers.set(defaultId, defaultArea);
             if (!this.groupActiveTab.has(defaultId)) {
                 this.groupActiveTab.set(defaultId, null);
@@ -4166,7 +4373,7 @@ export class MonacoEditorManager {
         return null;
     }
 
-    moveEditorToGroup(tabId, targetGroupId) {
+    moveEditorToGroup(tabId: string, targetGroupId: string) {
         try {
             if (!tabId || !targetGroupId) return;
 
@@ -4218,7 +4425,7 @@ export class MonacoEditorManager {
         try {
             document.addEventListener('keydown', (e) => {
                 try {
-                    if (this.isInputLikeTarget(e.target)) return;
+                    if (this.isInputLikeTarget(e.target as Element | null)) return;
                     if (this.doesEventMatchShortcut(e, 'formatCode') && this.currentEditor) {
                         e.preventDefault();
                         e.stopPropagation();
@@ -4238,20 +4445,20 @@ export class MonacoEditorManager {
         }
     }
 
-    async openFile(filePath, content = '') {
+    async openFile(filePath: string, content = '') {
         try {
             this.currentFilePath = filePath;
             this.currentFileName = this.getFileNameFromPath(filePath);
             
             if (!this.currentEditor) {
-                const tabId = this.generateTabId(this.currentFileName, filePath);
-                await this.createNewEditor(tabId, this.currentFileName, content);
+                const tabId = this.generateTabId(this.currentFileName as string, filePath);
+                await this.createNewEditor(tabId, this.currentFileName as string, content);
             } else {
                 this.currentEditor.setValue(content);
                 this.currentEditor.filePath = filePath;
-                this.currentEditor.fileName = this.currentFileName;
+                this.currentEditor.fileName = this.currentFileName as string;
                 this.currentEditor.getFilePath = () => {
-                    return this.currentEditor.filePath || filePath;
+                    return (this.currentEditor as monaco.editor.IStandaloneCodeEditor).filePath || filePath;
                 };
                 try {
                     const model = this.currentEditor.getModel ? this.currentEditor.getModel() : null;
@@ -4271,7 +4478,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async createNewEditor(tabId, fileName, content = '', filePath = null, options: { groupId?: string; targetGroupId?: string; filePath?: string; fileName?: string; isTempFile?: boolean; isDirty?: boolean; content?: string; viewType?: string; viewerContainer?: HTMLElement; previewContainer?: HTMLElement; tabId?: string } = {}) {
+    async createNewEditor(tabId: string, fileName: string, content = '', filePath: string | null = null, options: { groupId?: string; targetGroupId?: string; filePath?: string; fileName?: string; isTempFile?: boolean; isDirty?: boolean; content?: string; viewType?: string; viewerContainer?: HTMLElement; previewContainer?: HTMLElement; tabId?: string } = {}) {
         try {
             const existingEditor = this.editors.get(tabId);
             if (existingEditor) {
@@ -4294,7 +4501,7 @@ export class MonacoEditorManager {
                     this.moveEditorToGroup(tabId, targetGroup);
                 }
 
-                this.updateMarkdownPreviewContextKey(existingEditor, existingEditor.filePath || filePath, existingEditor.fileName || fileName);
+                this.updateMarkdownPreviewContextKey(existingEditor as OicppCodeEditor, existingEditor.filePath || filePath, existingEditor.fileName || fileName);
                 
                 setTimeout(() => {
                     existingEditor.focus();
@@ -4325,8 +4532,8 @@ export class MonacoEditorManager {
             
             const monacoContainer = document.createElement('div');
             monacoContainer.className = 'monaco-editor-container';
-            monacoContainer.dataset.tabId = tabId; // 使用 tabId 关联容器
-            monacoContainer.dataset.groupId = groupId;
+            monacoContainer.dataset['tabId'] = tabId; // 使用 tabId 关联容器
+            monacoContainer.dataset['groupId'] = groupId;
             monacoContainer.style.width = '100%';
             monacoContainer.style.height = '100%';
             editorArea.appendChild(monacoContainer);
@@ -4342,7 +4549,7 @@ export class MonacoEditorManager {
                 try {
                     await this.ensureLspReady();
                 } catch (lspErr) {
-                    logWarn('[LSP] ensureLspReady 失败，编辑器将无 LSP 支持:', lspErr?.message || lspErr);
+                    logWarn('[LSP] ensureLspReady 失败，编辑器将无 LSP 支持:', (lspErr as Error)?.message || lspErr);
                 }
                 this.registerCppSemanticHighlightingProviders();
             }
@@ -4516,7 +4723,7 @@ export class MonacoEditorManager {
             this.updatePreprocessorLineDecorations(
                 editor,
                 unifiedPreprocessorColor,
-                syntaxOverride.colors.preprocessor
+                syntaxOverride.colors['preprocessor']
             );
             try {
                 monaco.editor.setTheme(monacoTheme);
@@ -4536,7 +4743,7 @@ export class MonacoEditorManager {
                     logWarn('[LSP] 无法获取编辑器模型，跳过 LSP 文档同步');
                 }
             } catch (err) {
-                logWarn('[LSP] 打开 LSP 文档失败 (文件:', fileName, '):', err?.message || err);
+                logWarn('[LSP] 打开 LSP 文档失败 (文件:', fileName, '):', (err as Error)?.message || err);
             }
 
             try {
@@ -4546,7 +4753,7 @@ export class MonacoEditorManager {
                     label: window.i18n.t('monaco.openMarkdownPreview'),
                     keybindings: markdownPreviewKey ? [markdownPreviewKey] : [],
                     precondition: 'oicppIsMarkdown',
-                    keybindingContext: null,
+                    keybindingContext: null as unknown as string,
                     contextMenuGroupId: 'navigation',
                     contextMenuOrder: 1.5,
                     run: function(ed) {
@@ -4593,7 +4800,7 @@ export class MonacoEditorManager {
                     logInfo('复制命令被触发 - 使用当前活动编辑器:', this.currentFileName);
                     const selection = activeEditor.getSelection();
                     if (selection && !selection.isEmpty()) {
-                        const selectedText = activeEditor.getModel().getValueInRange(selection);
+                        const selectedText = (activeEditor.getModel() as monaco.editor.ITextModel).getValueInRange(selection);
                         if (selectedText) {
                             this.copyToClipboard(selectedText);
                         }
@@ -4615,9 +4822,9 @@ export class MonacoEditorManager {
                     const startLine = Math.min(sel.startLineNumber, sel.endLineNumber);
                     const endLine = Math.max(sel.startLineNumber, sel.endLineNumber);
                     const model = ed.getModel();
-                    const maxCol = model.getLineMaxColumn(endLine);
+                    const maxCol = (model as monaco.editor.ITextModel).getLineMaxColumn(endLine);
                     const range = new monaco.Range(startLine, 1, endLine, maxCol);
-                    const isLastLine = endLine >= model.getLineCount();
+                    const isLastLine = endLine >= (model as monaco.editor.ITextModel).getLineCount();
                     const finalRange = isLastLine ? range : new monaco.Range(startLine, 1, endLine + 1, 1);
                     ed.executeEdits('delete-line', [{ range: finalRange, text: '' }]);
                 });
@@ -4674,7 +4881,7 @@ export class MonacoEditorManager {
                     const selection = activeEditor.getSelection();
                     
                     if (selection && !selection.isEmpty()) {
-                        const selectedText = activeEditor.getModel().getValueInRange(selection);
+                        const selectedText = (activeEditor.getModel() as monaco.editor.ITextModel).getValueInRange(selection);
                         if (selectedText) {
                             this.copyToClipboard(selectedText);
                             
@@ -4781,7 +4988,7 @@ export class MonacoEditorManager {
             } catch (_) {}
             
             
-            const isStructLikeDefinition = (model, braceLineNumber, requireBraceLineMatch = false, startLineNumber = braceLineNumber) => {
+            const isStructLikeDefinition = (model: monaco.editor.ITextModel, braceLineNumber: number, requireBraceLineMatch = false, startLineNumber = braceLineNumber) => {
                 try {
                     for (let line = startLineNumber, scanned = 0; line >= 1 && scanned < 200; line--, scanned++) {
                         const raw = model.getLineContent(line);
@@ -4814,7 +5021,7 @@ export class MonacoEditorManager {
                 return false;
             };
 
-            const tryAutoSemicolonAtLine = (model, lineNumber) => {
+            const tryAutoSemicolonAtLine = (model: monaco.editor.ITextModel, lineNumber: number) => {
                 try {
                     if (!lineNumber || lineNumber < 1 || lineNumber > model.getLineCount()) return false;
                     const lineText = model.getLineContent(lineNumber);
@@ -4832,7 +5039,7 @@ export class MonacoEditorManager {
                 return false;
             };
 
-            editor.onDidType((text) => {
+            (editor as Required<typeof editor>).onDidType((text) => {
                 try {
                     const model = editor.getModel();
                     if (!model) return;
@@ -4961,7 +5168,7 @@ export class MonacoEditorManager {
             }
 
             logInfo('Monaco编辑器创建成功:', fileName);
-            try { this._initBreakpointSupport(editor, monacoContainer, tabId); } catch (e) { logWarn('初始化断点支持失败:', e); }
+            try { this._initBreakpointSupport(editor as BreakpointEditor, monacoContainer, tabId); } catch (e) { logWarn('初始化断点支持失败:', e); }
             return editor;
         } catch (error) {
             logError('创建Monaco编辑器失败:', error);
@@ -5007,7 +5214,7 @@ export class MonacoEditorManager {
         return results;
     }
 
-    applyDiagnostics(diagnostics = []) {
+    applyDiagnostics(diagnostics: CompilerDiagnosticInput[] = []) {
         try {
             if (typeof monaco === 'undefined') return;
             const editor = this.getCurrentEditor();
@@ -5024,9 +5231,9 @@ export class MonacoEditorManager {
                 const severity = sev === 'warning'
                     ? monaco.MarkerSeverity.Warning
                     : (sev === 'note' ? monaco.MarkerSeverity.Info : monaco.MarkerSeverity.Error);
-                const parsedLine = parseInt(d?.line || 1, 10);
+                const parsedLine = parseInt((d?.line || 1) as string, 10);
                 const line = Math.min(lineCount, Math.max(1, Number.isFinite(parsedLine) ? parsedLine : 1));
-                const parsedColumn = parseInt(d?.column || 1, 10);
+                const parsedColumn = parseInt((d?.column || 1) as string, 10);
                 const col = Math.max(1, Number.isFinite(parsedColumn) ? parsedColumn : 1);
                 if (severity === monaco.MarkerSeverity.Error) {
                     errorLines.add(line);
@@ -5090,11 +5297,11 @@ export class MonacoEditorManager {
         }
     }
 
-    findModelByLspUri(uri) {
+    findModelByLspUri(uri: string) {
         try {
             if (typeof monaco === 'undefined' || !monaco.editor || !uri) return null;
             const isWin = !!(typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-            const normalizeFilePath = (rawUri) => {
+            const normalizeFilePath = (rawUri: string) => {
                 try {
                     let pathStr = rawUri;
                     if (pathStr.startsWith('file://')) {
@@ -5144,16 +5351,16 @@ export class MonacoEditorManager {
         }
     }
 
-    lspDiagnosticMarkerKey(diagnostic) {
+    lspDiagnosticMarkerKey(diagnostic: MonacoMarkerLike | null | undefined) {
         const start = diagnostic?.range?.start || {
             line: (diagnostic?.startLineNumber || 1) - 1,
             character: (diagnostic?.startColumn || 1) - 1
         };
         const end = diagnostic?.range?.end || {
-            line: (diagnostic?.endLineNumber || start.line + 1) - 1,
-            character: (diagnostic?.endColumn || start.character + 1) - 1
+            line: (diagnostic?.endLineNumber || (start.line as number) + 1) - 1,
+            character: (diagnostic?.endColumn || (start.character as number) + 1) - 1
         };
-        const code = typeof diagnostic?.code === 'object' ? diagnostic.code.value : diagnostic?.code;
+        const code = typeof diagnostic?.code === 'object' ? (diagnostic.code as { value?: string }).value : diagnostic?.code;
         return [
             start.line,
             start.character,
@@ -5165,8 +5372,8 @@ export class MonacoEditorManager {
         ].join('|');
     }
 
-    lspDiagnosticToMonacoMarker(diagnostic) {
-        const range = diagnostic?.range || {};
+    lspDiagnosticToMonacoMarker(diagnostic: RawLspDiagnostic | null | undefined): monaco.editor.IMarkerData {
+        const range: RawLspDiagnosticRange = diagnostic?.range || {};
         const start = range.start || { line: 0, character: 0 };
         const end = range.end || start;
         const severity = diagnostic?.severity === 2
@@ -5174,10 +5381,11 @@ export class MonacoEditorManager {
             : (diagnostic?.severity === 3
                 ? monaco.MarkerSeverity.Info
                 : (diagnostic?.severity === 4 ? monaco.MarkerSeverity.Hint : monaco.MarkerSeverity.Error));
-        const relatedInformation = Array.isArray(diagnostic?.relatedInformation)
+        //关联项里的空值只是跳过该条，运行期已由过滤器剔除
+        const relatedInformation: monaco.editor.IRelatedInformation[] | undefined = Array.isArray(diagnostic?.relatedInformation)
             ? diagnostic.relatedInformation
-                .map((item) => {
-                    const itemRange = item?.location?.range || {};
+                .map((item: RawLspDiagnosticRelated) => {
+                    const itemRange: RawLspDiagnosticRange = item?.location?.range || {};
                     const itemStart = itemRange.start || { line: 0, character: 0 };
                     const itemEnd = itemRange.end || itemStart;
                     if (!item?.location?.uri) return null;
@@ -5194,7 +5402,7 @@ export class MonacoEditorManager {
                         return null;
                     }
                 })
-                .filter(Boolean)
+                .filter(Boolean) as monaco.editor.IRelatedInformation[]
             : undefined;
         return {
             severity,
@@ -5206,11 +5414,11 @@ export class MonacoEditorManager {
             source: diagnostic?.source || 'clangd',
             code: diagnostic?.code === undefined || diagnostic?.code === null ? undefined : String(diagnostic.code),
             relatedInformation,
-            tags: Array.isArray(diagnostic?.tags) ? diagnostic.tags.slice() : undefined
+            tags: Array.isArray(diagnostic?.tags) ? diagnostic.tags.slice() as monaco.MarkerTag[] : undefined
         };
     }
 
-    monacoMarkerSeverityToLsp(severity) {
+    monacoMarkerSeverityToLsp(severity: number | undefined) {
         if (severity === monaco.MarkerSeverity.Error) return 1;
         if (severity === monaco.MarkerSeverity.Warning) return 2;
         if (severity === monaco.MarkerSeverity.Info) return 3;
@@ -5218,8 +5426,8 @@ export class MonacoEditorManager {
         return 1;
     }
 
-    monacoMarkerToLspDiagnostic(marker) {
-        const code = typeof marker?.code === 'object' ? marker.code.value : marker?.code;
+    monacoMarkerToLspDiagnostic(marker: MonacoMarkerLike | null | undefined) {
+        const code = typeof marker?.code === 'object' ? (marker.code as { value?: string }).value : marker?.code;
         return {
             range: {
                 start: {
@@ -5237,7 +5445,7 @@ export class MonacoEditorManager {
             code,
             tags: Array.isArray(marker?.tags) ? marker.tags.slice() : undefined,
             relatedInformation: Array.isArray(marker?.relatedInformation)
-                ? marker.relatedInformation.map((item) => ({
+                ? marker.relatedInformation.map((item: MonacoMarkerRelatedItem) => ({
                     location: {
                         uri: item.resource?.toString?.() || String(item.resource || ''),
                         range: {
@@ -5251,7 +5459,7 @@ export class MonacoEditorManager {
         };
     }
 
-    applyLspDiagnostics(uri, diagnostics = []) {
+    applyLspDiagnostics(uri: string, diagnostics: monaco.editor.IMarkerData[] = []) {
         try {
             if (typeof monaco === 'undefined' || !monaco.editor) return;
             if (!uri || typeof uri !== 'string') return;
@@ -5284,7 +5492,7 @@ export class MonacoEditorManager {
             logWarn('[LSP] applyLspDiagnostics 失败:', err);
         }
     }
-    _scheduleLspDiagnosticsRetry(uri, diagnostics, attempt = 1) {
+    _scheduleLspDiagnosticsRetry(uri: string, diagnostics: monaco.editor.IMarkerData[], attempt = 1) {
         const RETRY_DELAYS = [200, 500];
         if (!this._lspDiagnosticRetryTimers) {
             this._lspDiagnosticRetryTimers = new Map();
@@ -5301,7 +5509,7 @@ export class MonacoEditorManager {
             return;
         }
         const timer = setTimeout(() => {
-            this._lspDiagnosticRetryTimers.delete(uri);
+            (this._lspDiagnosticRetryTimers as Map<string, NodeJS.Timeout>).delete(uri);
             try {
                 if (this.findModelByLspUri(uri)) {
                     this.applyLspDiagnostics(uri, diagnostics);
@@ -5312,11 +5520,11 @@ export class MonacoEditorManager {
                 return;
             }
             this._scheduleLspDiagnosticsRetry(uri, diagnostics, attempt + 1);
-        }, RETRY_DELAYS[attempt - 1]);
+        }, (RETRY_DELAYS[attempt - 1] as number));
         this._lspDiagnosticRetryTimers.set(uri, timer);
     }
 
-    _installMarkerWidgetInterceptor(editor) {
+    _installMarkerWidgetInterceptor(editor: OicppCodeEditor) {
         try {
             if (!editor || editor.__oicppMarkerWidgetInstalled) return;
             const container = editor.getDomNode?.();
@@ -5340,7 +5548,7 @@ export class MonacoEditorManager {
                     logInfo('[MarkerWidget] 检测到 marker zone widget，准备拦截重定向');
                     const widget = markerWidget.closest('.zone-widget');
                     if (widget && widget.parentElement) {
-                        const closeBtn = widget.querySelector('.codicon-close');
+                        const closeBtn = widget.querySelector('.codicon-close') as HTMLElement | null;
                         if (closeBtn) {
                             closeBtn.click();
                         } else {
@@ -5388,7 +5596,7 @@ export class MonacoEditorManager {
         }
     }
 
-    clearLspDiagnostics(model) {
+    clearLspDiagnostics(model: monaco.editor.ITextModel | null | undefined) {
         try {
             if (typeof monaco === 'undefined' || !monaco.editor) return;
             if (!model) return;
@@ -5399,23 +5607,23 @@ export class MonacoEditorManager {
         }
     }
 
-    _initBreakpointSupport(editor, container, tabId) {
+    _initBreakpointSupport(editor: BreakpointEditor, container: HTMLElement, tabId: string) {
         if (!editor || editor.__bpInited) return;
         editor.__bpInited = true;
         editor.__breakpointDecos = [];
         editor.__execDeco = null;
 
-        const toggleAt = (line) => {
+        const toggleAt = (line: number | undefined) => {
             try {
-                if (!Number.isFinite(line) || line <= 0) return;
+                if (!Number.isFinite(line) || (line as number) <= 0) return;
                 const model = editor.getModel();
                 if (!model) return;
-                const idx = editor.__breakpointDecos.findIndex(id => {
+                const idx = editor.__breakpointDecos.findIndex((id: string) => {
                     const r = model.getDecorationRange(id);
                     return r && r.startLineNumber === line;
                 });
                 const file = editor.filePath || this.currentFilePath || editor.fileName;
-                const sendIPC = (channel, payload) => {
+                const sendIPC = (channel: string, payload: unknown) => {
                     try {
                         if (typeof require !== 'undefined' && window.app?.isDebugging) {
                             const { ipcRenderer } = require('electron');
@@ -5424,20 +5632,21 @@ export class MonacoEditorManager {
                     } catch (_) {}
                 };
                 if (idx >= 0) {
-                    const removeId = editor.__breakpointDecos[idx];
+                    const removeId = editor.__breakpointDecos[idx] as string;
                     editor.__breakpointDecos.splice(idx, 1);
                     editor.deltaDecorations([removeId], []);
                     sendIPC('debug-remove-breakpoint', { file, line });
                 } else {
                     const [newId] = editor.deltaDecorations([], [{
-                        range: new monaco.Range(line, 1, line, 1),
+                        range: new monaco.Range(line as number, 1, line as number, 1),
                         options: {
                             isWholeLine: true,
                             glyphMarginClassName: 'breakpoint-glyph',
-                            glyphMargin: true
+                            //新版类型把边栏装饰改成了对象，运行期仍按旧写法传布尔值
+                            glyphMargin: true as unknown as monaco.editor.IModelDecorationGlyphMarginOptions
                         }
                     }]);
-                    editor.__breakpointDecos.push(newId);
+                    editor.__breakpointDecos.push(newId as string);
                     sendIPC('debug-add-breakpoint', { file, line });
                 }
             } catch (e) { logWarn('切换断点失败:', e); }
@@ -5456,23 +5665,23 @@ export class MonacoEditorManager {
         });
 
         editor.getBreakpoints = () => {
-            const res = [];
+            const res: Array<{ file: string | null | undefined; line: number }> = [];
             try {
                 const model = editor.getModel();
                 const file = editor.filePath || editor.fileName;
                 for (const id of editor.__breakpointDecos) {
-                    const r = model.getDecorationRange(id);
+                    const r = (model as monaco.editor.ITextModel).getDecorationRange(id);
                     if (r) res.push({ file, line: r.startLineNumber });
                 }
             } catch (_) {}
             return res;
         };
         editor.getBreakpointLines = () => {
-            const res = [];
+            const res: number[] = [];
             try {
                 const model = editor.getModel();
                 for (const id of editor.__breakpointDecos) {
-                    const r = model.getDecorationRange(id);
+                    const r = (model as monaco.editor.ITextModel).getDecorationRange(id);
                     if (r) res.push(r.startLineNumber);
                 }
             } catch (_) {}
@@ -5487,7 +5696,7 @@ export class MonacoEditorManager {
                     options: { isWholeLine: true, className: 'debug-exec-line' }
                 }];
                 const [id] = editor.deltaDecorations(remove, add);
-                editor.__execDeco = id;
+                editor.__execDeco = id as string;
                 if (typeof editor.revealLineInCenterIfOutsideViewport === 'function') {
                     editor.revealLineInCenterIfOutsideViewport(line);
                 } else {
@@ -5517,18 +5726,18 @@ export class MonacoEditorManager {
         return null;
     }
 
-    getFileNameFromPath(filePath) {
+    getFileNameFromPath(filePath: string | null | undefined): string {
         if (!filePath) return 'untitled';
         const parts = filePath.split(/[\\/]/);
-        return parts[parts.length - 1];
+        return parts[parts.length - 1] as string;
     }
 
-    isMarkdownFile(filePathOrName) {
+    isMarkdownFile(filePathOrName: string | null | undefined) {
         if (!filePathOrName || typeof filePathOrName !== 'string') return false;
         return filePathOrName.toLowerCase().endsWith('.md');
     }
 
-    updateMarkdownPreviewContextKey(editor, filePath = null, fileName = null) {
+    updateMarkdownPreviewContextKey(editor: OicppCodeEditor | null, filePath: string | null | undefined = null, fileName: string | null | undefined = null) {
         if (!editor) return;
         const candidate = (typeof filePath === 'string' && filePath)
             ? filePath
@@ -5543,12 +5752,12 @@ export class MonacoEditorManager {
         } catch (_) { }
     }
 
-    getLanguageFromFileName(fileName) {
+    getLanguageFromFileName(fileName: string | null | undefined) {
         const normalizedFileName = String(fileName || '').trim();
         if (normalizedFileName && !normalizedFileName.includes('.')) {
             return 'cpp';
         }
-        const ext = normalizedFileName.split('.').pop().toLowerCase();
+        const ext = (normalizedFileName.split('.').pop() as string).toLowerCase();
         switch (ext) {
             case 'cpp':
             case 'cc':
@@ -5583,7 +5792,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async switchTab(tabId) {
+    async switchTab(tabId: string) {
         const groupId = this.tabIdToGroupId.get(tabId) || 'group-1';
         const editorArea = this.getGroupContainer(groupId);
         if (!editorArea) return;
@@ -5630,7 +5839,7 @@ export class MonacoEditorManager {
         }
     }
 
-    generateTabId(fileName, filePath) {
+    generateTabId(fileName: string | null | undefined, filePath: string | null | undefined) {
         try {
             if (filePath) {
                 const normalized = filePath.replace(/\\/g, '/');
@@ -5660,7 +5869,7 @@ export class MonacoEditorManager {
         } catch (_) { return fileName || 'untitled'; }
     }
 
-    updateTabFilePath(tabId, newPath) {
+    updateTabFilePath(tabId: string, newPath: string) {
         try {
             if (!tabId || !newPath) return;
             this.tabIdToFilePath.set(tabId, newPath);
@@ -5679,7 +5888,7 @@ export class MonacoEditorManager {
                         this.openLspDocument(model, newPath, ed.fileName);
                     }
                 } catch (_) {}
-                this.updateMarkdownPreviewContextKey(ed, newPath, ed.fileName);
+                this.updateMarkdownPreviewContextKey(ed as OicppCodeEditor, newPath, ed.fileName);
             }
             if (this.currentEditor === ed) {
                 this.currentFilePath = newPath;
@@ -5688,17 +5897,17 @@ export class MonacoEditorManager {
         } catch (e) { logWarn('updateTabFilePath 失败:', e); }
     }
 
-    getSelectedText(fileName) {
+    getSelectedText(fileName: string | null | undefined) {
         if (this.currentEditor) {
-            const selection = this.currentEditor.getSelection();
-            return this.currentEditor.getModel().getValueInRange(selection);
+            const selection = this.currentEditor.getSelection() as monaco.Selection;
+            return (this.currentEditor.getModel() as monaco.editor.ITextModel).getValueInRange(selection);
         }
         return '';
     }
 
-    insertText(fileName, text) {
+    insertText(fileName: string | null | undefined, text: string) {
         if (this.currentEditor) {
-            const position = this.currentEditor.getPosition();
+            const position = this.currentEditor.getPosition() as monaco.Position;
             this.currentEditor.executeEdits('insert-text', [{
                 range: new monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
                 text: text
@@ -5706,7 +5915,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async saveFile(fileName) {
+    async saveFile(fileName: string | null | undefined) {
         if (this.currentEditor) {
             const content = this.currentEditor.getValue();
             const filePath = this.currentEditor.filePath || this.currentFilePath;
@@ -5722,7 +5931,7 @@ export class MonacoEditorManager {
                     }
                 } catch (_) {}
                 window.electronIPC.send('save-file', filePath, content);
-                const handleFileSaved = (event, savedPath, error) => {
+                const handleFileSaved = (event: unknown, savedPath: string, error: unknown) => {
                     if (savedPath === filePath) {
                         if (error) {
                             logError('保存失败:', error);
@@ -5739,20 +5948,20 @@ export class MonacoEditorManager {
         }
     }
 
-    markFileSaved(filePath) {
+    markFileSaved(filePath: string) {
         if (window.tabManager) {
             const fileName = this.getFileNameFromPath(filePath);
             window.tabManager.markTabAsSaved(fileName);
         }
     }
 
-    cleanupEditor(tabId) {
+    cleanupEditor(tabId: string) {
         logInfo('清理编辑器:', tabId);
         
         const editor = this.editors.get(tabId);
         if (editor) {
             try {
-                const model = editor.getModel ? editor.getModel() : null;
+                const model = (editor.getModel ? editor.getModel() : null) as monaco.editor.ITextModel | null;
                 if (model) {
                     this.closeLspDocument(model);
                 }
@@ -5791,7 +6000,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async createDiffEditor(tabId, options: monaco.editor.CreateDiffEditorOptions = {}) {
+    async createDiffEditor(tabId: string, options: monaco.editor.CreateDiffEditorOptions = {}): Promise<monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor | null> {
         try {
             const existing = this.editors.get(tabId);
             if (existing && existing.__isDiffEditor) {
@@ -5809,8 +6018,8 @@ export class MonacoEditorManager {
 
             const container = document.createElement('div');
             container.className = 'monaco-editor-container diff-editor-container';
-            container.dataset.tabId = tabId;
-            container.dataset.groupId = groupId;
+            container.dataset['tabId'] = tabId;
+            container.dataset['groupId'] = groupId;
             container.style.width = '100%';
             container.style.height = '100%';
             editorArea.appendChild(container);
@@ -5821,7 +6030,7 @@ export class MonacoEditorManager {
             try {
                 await this.ensureLspReady();
             } catch (lspErr) {
-                logWarn('[LSP] ensureLspReady 失败，diff 编辑器将无 LSP 支持:', lspErr?.message || lspErr);
+                logWarn('[LSP] ensureLspReady 失败，diff 编辑器将无 LSP 支持:', (lspErr as Error)?.message || lspErr);
             }
             this.registerCppSemanticHighlightingProviders();
 
@@ -5903,7 +6112,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async showDiffEditor(tabId, options: monaco.editor.CreateDiffEditorOptions = {}) {
+    async showDiffEditor(tabId: string, options: monaco.editor.CreateDiffEditorOptions = {}): Promise<monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor | null> {
         try {
             const editor = this.editors.get(tabId);
             if (!editor || !editor.__isDiffEditor) {
@@ -5946,10 +6155,10 @@ export class MonacoEditorManager {
 
     updateSettings(settings: Record<string, unknown>) {
         if (settings && Object.prototype.hasOwnProperty.call(settings, 'syntaxColorsByTheme')) {
-            this.syntaxColorsByTheme = this.normalizeSyntaxColorsByTheme(settings.syntaxColorsByTheme);
+            this.syntaxColorsByTheme = this.normalizeSyntaxColorsByTheme(settings['syntaxColorsByTheme'] as Record<string, unknown> | null);
         }
         if (settings && Object.prototype.hasOwnProperty.call(settings, 'syntaxFontStyles')) {
-            this.syntaxStyles = this.normalizeSyntaxStyles(settings.syntaxFontStyles);
+            this.syntaxStyles = this.normalizeSyntaxStyles(settings['syntaxFontStyles'] as Record<string, unknown> | null);
         }
         this.updateFormatterSettings(settings);
         this.updateClangFormatSettings(settings);
@@ -5960,7 +6169,7 @@ export class MonacoEditorManager {
             if (settings['fontSize'] !== undefined) {
                 const fontSize = parseInt(String(settings['fontSize']), 10);
                 if (!Number.isNaN(fontSize)) {
-                    updateOptions.fontSize = fontSize;
+                    updateOptions['fontSize'] = fontSize;
                     targetFontSize = fontSize;
                 }
             } else {
@@ -5975,44 +6184,44 @@ export class MonacoEditorManager {
             }
 
             if (targetFontSize !== null || settings['lineHeight'] !== undefined) {
-                updateOptions.lineHeight = this.getLineHeightValue(targetFontSize, this.lineHeightSetting);
+                updateOptions['lineHeight'] = this.getLineHeightValue(targetFontSize as string | number, this.lineHeightSetting);
             }
             
             if (settings['fontFamily']) {
                 if (window.fontDetector) {
-                    updateOptions.fontFamily = window.fontDetector.validateFont(String(settings['fontFamily']));
+                    updateOptions['fontFamily'] = window.fontDetector.validateFont(String(settings['fontFamily']));
                 } else {
-                    updateOptions.fontFamily = String(settings['fontFamily']);
+                    updateOptions['fontFamily'] = String(settings['fontFamily']);
                 }
             } else if (settings['font']) {
                 if (window.fontDetector) {
-                    updateOptions.fontFamily = window.fontDetector.validateFont(String(settings['font']));
+                    updateOptions['fontFamily'] = window.fontDetector.validateFont(String(settings['font']));
                 } else {
-                    updateOptions.fontFamily = String(settings['font']);
+                    updateOptions['fontFamily'] = String(settings['font']);
                 }
             }
             
             if (settings['tabSize'] !== undefined) {
                 const parsedTabSize = parseInt(String(settings['tabSize']), 10);
                 if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
-                    updateOptions.tabSize = parsedTabSize;
+                    updateOptions['tabSize'] = parsedTabSize;
                 }
             }
             
             if (settings['wordWrap'] !== undefined) {
-                updateOptions.wordWrap = settings['wordWrap'] ? 'on' : 'off';
+                updateOptions['wordWrap'] = settings['wordWrap'] ? 'on' : 'off';
             }
             if (settings['foldingEnabled'] !== undefined) {
-                updateOptions.folding = !!settings['foldingEnabled'];
+                updateOptions['folding'] = !!settings['foldingEnabled'];
             }
             if (settings['stickyScrollEnabled'] !== undefined) {
-                updateOptions.stickyScroll = { enabled: !!settings['stickyScrollEnabled'] };
+                updateOptions['stickyScroll'] = { enabled: !!settings['stickyScrollEnabled'] };
             }
             if (settings['fontLigaturesEnabled'] !== undefined) {
-                updateOptions.fontLigatures = !!settings['fontLigaturesEnabled'];
+                updateOptions['fontLigatures'] = !!settings['fontLigaturesEnabled'];
             }
             if (settings['fontLigaturesEnabled'] !== undefined) {
-                updateOptions.fontLigatures = !!settings['fontLigaturesEnabled'];
+                updateOptions['fontLigatures'] = !!settings['fontLigaturesEnabled'];
             }
 
             if (settings['syntaxCheckEnabled'] !== undefined) {
@@ -6022,12 +6231,12 @@ export class MonacoEditorManager {
             if (settings['enableAutoCompletion'] !== undefined) {
                 const enabled = settings['enableAutoCompletion'] !== false;
                 this._lspCompletionEnabled = enabled;
-                updateOptions.quickSuggestions = enabled ? true : false;
-                updateOptions.suggestOnTriggerCharacters = enabled ? true : false;
-                updateOptions.wordBasedSuggestions = enabled ? 'currentDocument' : 'off';
-                updateOptions.tabCompletion = enabled ? 'on' : 'off';
-                updateOptions.acceptSuggestionOnEnter = enabled ? 'on' : 'off';
-                updateOptions.parameterHints = { enabled };
+                updateOptions['quickSuggestions'] = enabled ? true : false;
+                updateOptions['suggestOnTriggerCharacters'] = enabled ? true : false;
+                updateOptions['wordBasedSuggestions'] = enabled ? 'currentDocument' : 'off';
+                updateOptions['tabCompletion'] = enabled ? 'on' : 'off';
+                updateOptions['acceptSuggestionOnEnter'] = enabled ? 'on' : 'off';
+                updateOptions['parameterHints'] = { enabled };
 
                 if (!enabled) {
                     this.disableEnhancedCompletionProviders();
@@ -6041,8 +6250,8 @@ export class MonacoEditorManager {
                 if (this.currentEditor && this.currentEditor.layout) {
                     this.currentEditor.layout();
                     setTimeout(() => {
-                        this.currentEditor.layout();
-                        this.currentEditor.trigger('source', 'editor.action.fontZoomReset', null);
+                        (this.currentEditor as monaco.editor.IStandaloneCodeEditor).layout();
+                        (this.currentEditor as monaco.editor.IStandaloneCodeEditor).trigger('source', 'editor.action.fontZoomReset', null);
                     }, 50);
                 }
             }, 100);
@@ -6057,7 +6266,7 @@ export class MonacoEditorManager {
             return;
         }
         if (Object.prototype.hasOwnProperty.call(settings, 'formatterIndentStyle')) {
-            const style = String(settings.formatterIndentStyle || 'editor').trim().toLowerCase();
+            const style = String(settings['formatterIndentStyle'] || 'editor').trim().toLowerCase();
             this.formatterIndentStyle = ['editor', 'spaces', 'tabs'].includes(style) ? style : 'editor';
         }
     }
@@ -6081,18 +6290,18 @@ export class MonacoEditorManager {
         };
     }
 
-    normalizeClangFormatStyle(raw = null) {
+    normalizeClangFormatStyle(raw: Record<string, unknown> | null = null) {
         const defaults = this.getDefaultClangFormatStyle();
         const normalized = { ...defaults };
         if (!raw || typeof raw !== 'object') {
             return normalized;
         }
 
-        const toInt = (value, fallback) => {
-            const parsed = parseInt(value, 10);
+        const toInt = (value: unknown, fallback: number) => {
+            const parsed = parseInt(value as string, 10);
             return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
         };
-        const toBool = (value, fallback) => {
+        const toBool = (value: unknown, fallback: boolean) => {
             if (typeof value === 'boolean') return value;
             if (typeof value === 'string') {
                 const lowered = value.trim().toLowerCase();
@@ -6101,30 +6310,30 @@ export class MonacoEditorManager {
             }
             return fallback;
         };
-        const toEnum = (value, allowed, fallback) => {
+        const toEnum = (value: unknown, allowed: string[], fallback: string) => {
             const rawValue = String(value || '').trim();
             if (!rawValue) return fallback;
             const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
             return matched || fallback;
         };
 
-        normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-        normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-        normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-        normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-        normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-        normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-        normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-        normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-        normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-        normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-        normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-        normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
+        normalized.BasedOnStyle = toEnum(raw['BasedOnStyle'], ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
+        normalized.IndentWidth = toInt(raw['IndentWidth'], defaults.IndentWidth);
+        normalized.TabWidth = toInt(raw['TabWidth'], normalized.IndentWidth);
+        normalized.UseTab = toEnum(raw['UseTab'], ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
+        normalized.ColumnLimit = toInt(raw['ColumnLimit'], defaults.ColumnLimit);
+        normalized.BreakBeforeBraces = toEnum(raw['BreakBeforeBraces'], ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
+        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw['AllowShortIfStatementsOnASingleLine'], ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
+        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw['AllowShortFunctionsOnASingleLine'], ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
+        normalized.IndentCaseLabels = toBool(raw['IndentCaseLabels'], defaults.IndentCaseLabels);
+        normalized.PointerAlignment = toEnum(raw['PointerAlignment'], ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
+        normalized.SpaceBeforeParens = toEnum(raw['SpaceBeforeParens'], ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
+        normalized.SortIncludes = toBool(raw['SortIncludes'], defaults.SortIncludes);
+        normalized.AlignConsecutiveAssignments = toBool(raw['AlignConsecutiveAssignments'], defaults.AlignConsecutiveAssignments);
+        normalized.AlignConsecutiveDeclarations = toBool(raw['AlignConsecutiveDeclarations'], defaults.AlignConsecutiveDeclarations);
 
         if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-            const legacyStyle = String(raw.formatterIndentStyle || '').trim().toLowerCase();
+            const legacyStyle = String(raw['formatterIndentStyle'] || '').trim().toLowerCase();
             if (legacyStyle === 'tabs') {
                 normalized.UseTab = 'Always';
             } else if (legacyStyle === 'spaces') {
@@ -6144,17 +6353,17 @@ export class MonacoEditorManager {
         }
 
         if (Object.prototype.hasOwnProperty.call(settings, 'clangFormatRaw')) {
-            this.clangFormatRaw = typeof settings.clangFormatRaw === 'string' ? settings.clangFormatRaw : '';
+            this.clangFormatRaw = typeof settings['clangFormatRaw'] === 'string' ? settings['clangFormatRaw'] : '';
         }
 
-        const source = settings.clangFormatStyle || settings.clangFormat || settings.clangFormatSettings || null;
+        const source = settings['clangFormatStyle'] || settings['clangFormat'] || settings['clangFormatSettings'] || null;
         if (source && typeof source === 'object') {
-            this.clangFormatStyle = this.normalizeClangFormatStyle(source);
+            this.clangFormatStyle = this.normalizeClangFormatStyle(source as Record<string, unknown> | null);
             return;
         }
 
         if (Object.prototype.hasOwnProperty.call(settings, 'formatterIndentStyle')) {
-            const legacyStyle = String(settings.formatterIndentStyle || '').trim().toLowerCase();
+            const legacyStyle = String(settings['formatterIndentStyle'] || '').trim().toLowerCase();
             this.clangFormatStyle = this.normalizeClangFormatStyle({
                 ...this.getDefaultClangFormatStyle(),
                 UseTab: legacyStyle === 'tabs' ? 'Always' : 'Never'
@@ -6168,7 +6377,7 @@ export class MonacoEditorManager {
     }
     
     
-    async newFile(fileName) {
+    async newFile(fileName: string | null | undefined) {
         logInfo('MonacoEditorManager: 创建新文件:', fileName);
         
         if (!fileName) {
@@ -6214,7 +6423,7 @@ export class MonacoEditorManager {
         return fileName;
     }
 
-    addWheelZoomListenerToEditorArea(editor) {
+    addWheelZoomListenerToEditorArea(editor: monaco.editor.IStandaloneCodeEditor) {
     const editorArea = document.querySelector('.editor-groups');
         if (!(editorArea instanceof HTMLElement) || editorArea.hasGlobalWheelZoomListener) {
             return;
@@ -6252,7 +6461,7 @@ export class MonacoEditorManager {
                         document.documentElement.style.setProperty('--editor-font-size', newFontSize + 'px');
 
                         setTimeout(() => {
-                            this.currentEditor.layout();
+                            (this.currentEditor as monaco.editor.IStandaloneCodeEditor).layout();
                         }, 50);
                     } else {
                     }
@@ -6265,13 +6474,13 @@ export class MonacoEditorManager {
     editorArea.hasGlobalWheelZoomListener = true;
     }
 
-    addWheelZoomListener(editor, container) {        
+    addWheelZoomListener(editor: monaco.editor.IStandaloneCodeEditor, container: HTMLElement | null) {        
         if (!container || container.hasWheelZoomListener) {
             return; // 避免重复添加
         }
-        let wheelRAF = null;
+        let wheelRAF: number | null = null;
         let pendingDeltaY = 0;
-    const wheelHandler = (e) => {
+    const wheelHandler = (e: WheelEvent) => {
             if (e.ctrlKey) {
                 e.preventDefault(); 
                 pendingDeltaY += e.deltaY;
@@ -6331,7 +6540,7 @@ export class MonacoEditorManager {
                 if (settings['fontSize'] !== undefined) {
                     const fontSize = parseInt(String(settings['fontSize']), 10);
                     if (!Number.isNaN(fontSize)) {
-                        updateOptions.fontSize = fontSize;
+                        updateOptions['fontSize'] = fontSize;
                         targetFontSize = fontSize;
                     }
                 } else {
@@ -6346,33 +6555,33 @@ export class MonacoEditorManager {
                 }
 
                 if (targetFontSize !== null || settings['lineHeight'] !== undefined) {
-                    updateOptions.lineHeight = this.getLineHeightValue(targetFontSize, this.lineHeightSetting);
+                    updateOptions['lineHeight'] = this.getLineHeightValue(targetFontSize as string | number, this.lineHeightSetting);
                 }
                 if (settings['fontFamily'] || settings['font']) {
                     const fontToValidate = settings['fontFamily'] || settings['font'];
                     if (window.fontDetector) {
-                        updateOptions.fontFamily = window.fontDetector.validateFont(String(fontToValidate));
+                        updateOptions['fontFamily'] = window.fontDetector.validateFont(String(fontToValidate));
                     } else {
-                        updateOptions.fontFamily = String(fontToValidate);
+                        updateOptions['fontFamily'] = String(fontToValidate);
                     }
                 }
                 if (settings['tabSize'] !== undefined) {
                     const parsedTabSize = parseInt(String(settings['tabSize']), 10);
                     if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
-                        updateOptions.tabSize = parsedTabSize;
+                        updateOptions['tabSize'] = parsedTabSize;
                     }
                 }
                 if (settings['wordWrap'] !== undefined) {
-                    updateOptions.wordWrap = settings['wordWrap'] ? 'on' : 'off';
+                    updateOptions['wordWrap'] = settings['wordWrap'] ? 'on' : 'off';
                 }
                 if (settings['foldingEnabled'] !== undefined) {
-                    updateOptions.folding = !!settings['foldingEnabled'];
+                    updateOptions['folding'] = !!settings['foldingEnabled'];
                 }
                 if (settings['stickyScrollEnabled'] !== undefined) {
-                    updateOptions.stickyScroll = { enabled: !!settings['stickyScrollEnabled'] };
+                    updateOptions['stickyScroll'] = { enabled: !!settings['stickyScrollEnabled'] };
                 }
                 if (settings['fontLigaturesEnabled'] !== undefined) {
-                    updateOptions.fontLigatures = !!settings['fontLigaturesEnabled'];
+                    updateOptions['fontLigatures'] = !!settings['fontLigaturesEnabled'];
                 }
 
                 if (settings['syntaxCheckEnabled'] !== undefined) {
@@ -6382,12 +6591,12 @@ export class MonacoEditorManager {
                 if (settings['enableAutoCompletion'] !== undefined) {
                     const enabled = settings['enableAutoCompletion'] !== false;
                     this._lspCompletionEnabled = enabled;
-                    updateOptions.quickSuggestions = enabled ? true : false;
-                    updateOptions.suggestOnTriggerCharacters = enabled ? true : false;
-                    updateOptions.wordBasedSuggestions = enabled ? 'currentDocument' : 'off';
-                    updateOptions.tabCompletion = enabled ? 'on' : 'off';
-                    updateOptions.acceptSuggestionOnEnter = enabled ? 'on' : 'off';
-                    updateOptions.parameterHints = { enabled };
+                    updateOptions['quickSuggestions'] = enabled ? true : false;
+                    updateOptions['suggestOnTriggerCharacters'] = enabled ? true : false;
+                    updateOptions['wordBasedSuggestions'] = enabled ? 'currentDocument' : 'off';
+                    updateOptions['tabCompletion'] = enabled ? 'on' : 'off';
+                    updateOptions['acceptSuggestionOnEnter'] = enabled ? 'on' : 'off';
+                    updateOptions['parameterHints'] = { enabled };
                 }
 
                 
@@ -6395,7 +6604,7 @@ export class MonacoEditorManager {
                     editor.updateOptions(updateOptions); 
                     const editorContainer = (document.querySelector(`[data-tab-id="${fileName}"]`) as HTMLElement | null);
                     if (editorContainer) {
-                        this.addWheelZoomListener(editor, editorContainer);
+                        this.addWheelZoomListener(editor as monaco.editor.IStandaloneCodeEditor, editorContainer);
                     }
                     
                     setTimeout(() => {
@@ -6430,8 +6639,8 @@ export class MonacoEditorManager {
         
         if ((settings['theme'] !== undefined || settings['syntaxColorsByTheme'] !== undefined || settings['syntaxFontStyles'] !== undefined || settings['syntaxColors'] !== undefined) && typeof monaco !== 'undefined' && monaco.editor) {
             const fallbackTheme = document?.body?.getAttribute('data-theme') || 'dark';
-            const selectedTheme = settings.theme !== undefined ? settings.theme : fallbackTheme;
-            const resolvedTheme = this.resolveMonacoTheme(selectedTheme, settings);
+            const selectedTheme = settings['theme'] !== undefined ? settings['theme'] : fallbackTheme;
+            const resolvedTheme = this.resolveMonacoTheme(selectedTheme as string, settings);
             try {
                 monaco.editor.setTheme(resolvedTheme);
                 this.updateIndentGuideTone(resolvedTheme);
@@ -6441,28 +6650,28 @@ export class MonacoEditorManager {
         }
 
         if (settings && (
-            settings.unifiedPreprocessorColor !== undefined
-            || settings.theme !== undefined
-            || settings.syntaxColorsByTheme !== undefined
-            || settings.syntaxColors !== undefined
+            settings['unifiedPreprocessorColor'] !== undefined
+            || settings['theme'] !== undefined
+            || settings['syntaxColorsByTheme'] !== undefined
+            || settings['syntaxColors'] !== undefined
         )) {
-            if (settings.unifiedPreprocessorColor !== undefined) {
-                this.unifiedPreprocessorColor = !!settings.unifiedPreprocessorColor;
+            if (settings['unifiedPreprocessorColor'] !== undefined) {
+                this.unifiedPreprocessorColor = !!settings['unifiedPreprocessorColor'];
             }
-            const selectedTheme = settings.theme || document?.body?.getAttribute('data-theme') || 'dark';
-            const syntaxOverride = this.getThemeSyntaxOverride(selectedTheme, settings);
+            const selectedTheme = settings['theme'] || document?.body?.getAttribute('data-theme') || 'dark';
+            const syntaxOverride = this.getThemeSyntaxOverride(selectedTheme as string, settings);
             this.editors.forEach((value) => {
                 const editor = value?.getModifiedEditor ? value.getModifiedEditor() : value;
                 this.updatePreprocessorLineDecorations(
                     editor,
                     this.unifiedPreprocessorColor,
-                    syntaxOverride.colors.preprocessor
+                    syntaxOverride.colors['preprocessor']
                 );
             });
         }
     }
 
-    setSyntaxCheckEnabled(enabled) {
+    setSyntaxCheckEnabled(enabled: unknown) {
         const nextEnabled = enabled !== false;
         const changed = this._syntaxCheckEnabled !== nextEnabled;
         this._syntaxCheckEnabled = nextEnabled;
@@ -6487,7 +6696,7 @@ export class MonacoEditorManager {
                 } catch (_) { }
             }
         } catch (err) {
-            logWarn('[LSP] 清理语法检查标记失败:', err?.message || err);
+            logWarn('[LSP] 清理语法检查标记失败:', (err as Error)?.message || err);
         }
     }
 
@@ -6499,7 +6708,7 @@ export class MonacoEditorManager {
                 }
             }
         } catch (err) {
-            logWarn('[LSP] 刷新语法检查失败:', err?.message || err);
+            logWarn('[LSP] 刷新语法检查失败:', (err as Error)?.message || err);
         }
     }
 
@@ -6519,7 +6728,7 @@ export class MonacoEditorManager {
         this._lspChangePending.clear();
         this.clearAllLspDiagnostics();
         this.resetLspProviders();
-        logWarn('[LSP] clangd 已停止，将在下次请求时自动恢复', details.code ?? details.signal ?? '');
+        logWarn('[LSP] clangd 已停止，将在下次请求时自动恢复', details['code'] ?? details['signal'] ?? '');
     }
 
     resetLspProviders() {
@@ -6552,7 +6761,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async copyToClipboard(text) {
+    async copyToClipboard(text: string) {
         let success = false;
         
         if (!success && window.electronAPI && typeof window.electronAPI.clipboardWriteText === 'function') {
@@ -6669,12 +6878,12 @@ export class MonacoEditorManager {
         return text || '';
     }
 
-    async formatCode() {
+    async formatCode(): Promise<boolean | void> {
         if (this.currentEditor && this.currentEditor.getModel) {
             try {
                 logInfo('开始格式化代码...');
                 
-                const model = this.currentEditor.getModel();
+                const model = this.currentEditor.getModel() as monaco.editor.ITextModel;
                 const language = model.getLanguageId();
                 logInfo('当前文件语言:', language);
                 
@@ -6697,14 +6906,14 @@ export class MonacoEditorManager {
         }
     }
 
-    getClangFormatModelPath(model) {
+    getClangFormatModelPath(model: monaco.editor.ITextModel | null | undefined) {
         const uri = model?.uri;
         return uri?.scheme && uri.scheme !== 'file' ? '' : (uri?.fsPath || '');
     }
 
     // 以“共同前缀行 + 差异段 + 共同后缀行”的方式把格式化结果收敛成一次最小编辑，
     // 避免范围格式化退化成整文档替换。
-    buildMinimalFormatEdits(model, original, formatted) {
+    buildMinimalFormatEdits(model: monaco.editor.ITextModel, original: unknown, formatted: unknown) {
         if (typeof original !== 'string' || typeof formatted !== 'string') return [];
         if (original === formatted) return [];
 
@@ -6712,7 +6921,7 @@ export class MonacoEditorManager {
         // （DeriveLineEnding / UseCRLF 配置差异）。不剥的话每行都因尾部 \r
         // 不相等，prefix/suffix 双双归零，退化成整文档替换 ——
         // 恰好把本次修复要消除的巨型 undo、光标跳变和全文重排又放了回来。
-        const splitLines = (text) => text.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
+        const splitLines = (text: string) => text.split('\n').map((line: string) => (line.endsWith('\r') ? line.slice(0, -1) : line));
         const originalLines = splitLines(original);
         const formattedLines = splitLines(formatted);
 
@@ -6746,7 +6955,7 @@ export class MonacoEditorManager {
         }];
     }
 
-    async requestClangFormattedCode(model, range = null) {
+    async requestClangFormattedCode(model: monaco.editor.ITextModel | null, range: monaco.Range | null = null) {
         if (!model || model.isDisposed?.()) return null;
         if (!window.electronAPI?.formatCppCode) {
             throw new Error('clang-format bridge is unavailable');
@@ -6756,7 +6965,7 @@ export class MonacoEditorManager {
         const request: { content: string; filePath: string; style: Record<string, unknown>; styleRaw: string; fallbackStyle: string; startLine?: number; endLine?: number } = {
             content: model.getValue(),
             filePath: this.getClangFormatModelPath(model),
-            style: this.normalizeClangFormatStyle(this.clangFormatStyle),
+            style: this.normalizeClangFormatStyle(this.clangFormatStyle as Record<string, unknown>),
             styleRaw: this.clangFormatRaw,
             fallbackStyle: 'LLVM'
         };
@@ -6801,11 +7010,11 @@ export class MonacoEditorManager {
     }
 
     
-    registerEnhancedCompletionProvider(editor) {
+    registerEnhancedCompletionProvider(editor: monaco.editor.IStandaloneCodeEditor | null) {
         this.registerAllLspProviders();
     }
     
-    isInComment(model, position) {
+    isInComment(model: monaco.editor.ITextModel, position: monaco.IPosition) {
         const lineContent = model.getLineContent(position.lineNumber);
         const beforeCursor = lineContent.substring(0, position.column - 1);
         
@@ -6834,10 +7043,10 @@ export class MonacoEditorManager {
         return inMultiLineComment;
     }
 
-    parseFunctionsWithLocations(model) {
+    parseFunctionsWithLocations(model: monaco.editor.ITextModel) {
         const text = model.getValue();
         const regex = /(^|\n)\s*([\w:\<\>\~\*&\s]+?)\s+([A-Za-z_~][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*(?:const\s*)?(?:\{|;)/gm;
-        const list = [];
+        const list: FunctionPickerEntry[] = [];
         let m;
         while ((m = regex.exec(text)) !== null) {
             const signatureRet = (m[2] || '').trim();
@@ -6856,7 +7065,7 @@ export class MonacoEditorManager {
         return list;
     }
 
-    async getLspFunctionEntries(model) {
+    async getLspFunctionEntries(model: monaco.editor.ITextModel | null | undefined): Promise<FunctionPickerEntry[]> {
         if (!model || !this.lspClient) return [];
         try {
             const lspReady = await this._ensureLspDocumentReady(model);
@@ -6868,8 +7077,8 @@ export class MonacoEditorManager {
             });
             if (!Array.isArray(result)) return [];
 
-            const entries = [];
-            const visit = (symbols, container = '') => {
+            const entries: FunctionPickerEntry[] = [];
+            const visit = (symbols: RawLspDocumentSymbol[] | null | undefined, container = '') => {
                 for (const symbol of symbols || []) {
                     if (!symbol) continue;
                     const name = String(symbol.name || '').trim();
@@ -6893,19 +7102,19 @@ export class MonacoEditorManager {
                     }
                 }
             };
-            visit(result);
+            visit(result as RawLspDocumentSymbol[]);
             return entries;
         } catch (_) {
             return [];
         }
     }
 
-    async getLspWorkspaceFunctionEntries(query) {
+    async getLspWorkspaceFunctionEntries(query: string | null | undefined): Promise<FunctionPickerEntry[]> {
         if (!this.lspClient?._ready || !query) return [];
         try {
             const result = await this.lspClient.request('workspace/symbol', { query: String(query) });
             if (!Array.isArray(result)) return [];
-            return result
+            return (result as RawLspWorkspaceSymbol[])
                 .filter((symbol) => symbol && [6, 9, 12].includes(Number(symbol.kind)))
                 .filter((symbol) => symbol.location?.uri && symbol.location?.range)
                 .slice(0, 200)
@@ -6921,11 +7130,11 @@ export class MonacoEditorManager {
         }
     }
 
-    mergeFunctionPickerEntries(current, incoming) {
+    mergeFunctionPickerEntries(current: FunctionPickerEntry[] | null | undefined, incoming: FunctionPickerEntry[] | null | undefined): FunctionPickerEntry[] {
         const result = Array.isArray(current) ? current.slice() : [];
-        const getKey = (entry) => {
+        const getKey = (entry: FunctionPickerEntry) => {
             const locationUri = entry.location?.uri || '';
-            const start = entry.location?.range?.start || entry.position || {};
+            const start: { line?: number; lineNumber?: number; character?: number; column?: number } = entry.location?.range?.start || entry.position || {};
             const line = start.line ?? start.lineNumber ?? '';
             const column = start.character ?? start.column ?? '';
             return `${entry.name}|${locationUri}|${line}:${column}`;
@@ -6951,7 +7160,8 @@ export class MonacoEditorManager {
                 return;
             }
 
-            let overlay = (document.getElementById('oicpp-func-picker'));
+            //面板是复用的单例节点，判空交给下面的 if (!overlay) 分支
+            let overlay = (document.getElementById('oicpp-func-picker') as HTMLElement);
             if (!overlay) {
                 overlay = document.createElement('div');
                 overlay.id = 'oicpp-func-picker';
@@ -6994,8 +7204,8 @@ export class MonacoEditorManager {
                 overlay._input = input;
                 overlay._list = listEl;
 
-                let active = 0, filtered = [];
-                let workspaceSearchTimer = null;
+                let active = 0, filtered: FunctionPickerEntry[] = [];
+                let workspaceSearchTimer: NodeJS.Timeout | null = null;
                 const render = () => {
                     listEl.innerHTML = '';
                     filtered.forEach((f, idx) => {
@@ -7012,7 +7222,7 @@ export class MonacoEditorManager {
                         listEl.appendChild(row);
                     });
                 };
-                const choose = async (idx) => {
+                const choose = async (idx: number) => {
                     const item = filtered[idx];
                     if (!item) return;
                     if (item.location && await this.goToLspLocation(item.location)) {
@@ -7029,7 +7239,7 @@ export class MonacoEditorManager {
                     if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
                     document.removeEventListener('keydown', keyHandler, true);
                 };
-                const keyHandler = (e) => {
+                const keyHandler = (e: KeyboardEvent) => {
                     if (!document.body.contains(overlay)) return;
                     if (e.key === 'Escape') { e.preventDefault(); close(); }
                     if (e.key === 'Enter') { e.preventDefault(); choose(active); }
@@ -7058,8 +7268,8 @@ export class MonacoEditorManager {
                 render();
                 setTimeout(() => input.focus(), 0);
             } else {
-                const input = overlay._input;
-                const listEl = overlay._list;
+                const input = overlay._input as HTMLInputElement;
+                const listEl = overlay._list as HTMLDivElement;
                 let active = 0;
                 let filtered = funcs.slice();
                 const render = () => {
@@ -7078,7 +7288,7 @@ export class MonacoEditorManager {
                         listEl.appendChild(row);
                     });
                 };
-                const choose = async (idx) => {
+                const choose = async (idx: number) => {
                     const item = filtered[idx];
                     if (!item) return;
                     if (item.location && await this.goToLspLocation(item.location)) {
@@ -7100,7 +7310,7 @@ export class MonacoEditorManager {
         }
     }
 
-    goToFunctionPosition(position) {
+    goToFunctionPosition(position: monaco.Position) {
         try {
             const editor = this.currentEditor;
             if (!editor) return;
@@ -7115,7 +7325,7 @@ export class MonacoEditorManager {
             const editor = this.currentEditor;
             const model = editor?.getModel?.();
             if (!editor || !model) return;
-            const pos = editor.getPosition();
+            const pos = editor.getPosition() as monaco.Position;
             const word = model.getWordAtPosition(pos);
             const name = word?.word || '';
             if (!name) return;
@@ -7161,7 +7371,7 @@ export class MonacoEditorManager {
                         }
                     }
                 } catch (lspErr) {
-                    logWarn('[LSP] 重命名请求失败，回退到本地重命名:', lspErr?.message || lspErr);
+                    logWarn('[LSP] 重命名请求失败，回退到本地重命名:', (lspErr as Error)?.message || lspErr);
                 }
             }
 
@@ -7198,7 +7408,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async renameViaLsp(model, position, newName) {
+    async renameViaLsp(model: OicppTextModel | null, position: monaco.Position, newName: string) {
         try {
             if (!model || model.isDisposed?.() || !this.lspClient) return false;
             const lspReady = await this._ensureLspDocumentReady(model);
@@ -7231,12 +7441,12 @@ export class MonacoEditorManager {
             }
             return false;
         } catch (err) {
-            logWarn('[LSP] LSP 重命名失败，回退到本地重命名:', err?.message || err);
+            logWarn('[LSP] LSP 重命名失败，回退到本地重命名:', (err as Error)?.message || err);
             return false;
         }
     }
 
-    hasTextSelection(editor) {
+    hasTextSelection(editor: OicppCodeEditor | null | undefined) {
         try {
             const selection = editor?.getSelection?.();
             return !!selection && !selection.isEmpty();
@@ -7245,7 +7455,7 @@ export class MonacoEditorManager {
         }
     }
 
-    setupSelectionGuards(editor) {
+    setupSelectionGuards(editor: OicppCodeEditor | null) {
         try {
             if (!editor || editor.__oicppSelectionGuardsBound) return;
             editor.__oicppSelectionGuardsBound = true;
@@ -7267,14 +7477,14 @@ export class MonacoEditorManager {
         }
     }
 
-    setupCtrlClickNavigation(editor) {
+    setupCtrlClickNavigation(editor: OicppCodeEditor) {
         try {
             if (!editor || editor.__oicppCtrlNavBound) return;
             editor.__oicppCtrlNavBound = true;
             const domNode = typeof editor.getDomNode === 'function' ? editor.getDomNode() : null;
             const MouseTargetType = monaco?.editor?.MouseTargetType;
-            let hoverDecorations = [];
-            let hoverKey = null;
+            let hoverDecorations: string[] = [];
+            let hoverKey: string | null = null;
 
             const clearHover = () => {
                 try {
@@ -7357,7 +7567,7 @@ export class MonacoEditorManager {
         }
     }
 
-    getCtrlClickCandidate(editor, position) {
+    getCtrlClickCandidate(editor: OicppCodeEditor | null, position: monaco.IPosition | null | undefined) {
         try {
             if (!editor || !position) return null;
             const model = editor.getModel ? editor.getModel() : null;
@@ -7371,7 +7581,7 @@ export class MonacoEditorManager {
         }
     }
 
-    identifySymbolAtPosition(model, position): { kind: 'url'; url: string; range: monaco.Range; lineText: string } | { kind: 'include'; path: string; isAngle: boolean; range: monaco.Range; lineText: string } | { kind: 'symbol'; word: string; range: monaco.Range; lineText: string } | null {
+    identifySymbolAtPosition(model: OicppTextModel | null, position: monaco.IPosition | null | undefined): { kind: 'url'; url: string; range: monaco.Range; lineText: string } | { kind: 'include'; path: string; isAngle: boolean; range: monaco.Range; lineText: string } | { kind: 'symbol'; word: string; range: monaco.Range; lineText: string } | null {
         try {
             if (!model || !position) return null;
             const lineText = model.getLineContent(position.lineNumber) || '';
@@ -7381,7 +7591,7 @@ export class MonacoEditorManager {
             if (trimmedLine.startsWith('#')) {
                 const directiveMatch = trimmedLine.match(/^#\s*([A-Za-z_]+)/);
                 if (directiveMatch) {
-                    const directive = directiveMatch[1];
+                    const directive = directiveMatch[1] as string;
                     const directiveLower = directive.toLowerCase();
                     const leadingWhitespace = lineText.length - trimmedLine.length;
                     const directiveIndex = trimmedLine.indexOf(directive);
@@ -7400,7 +7610,7 @@ export class MonacoEditorManager {
             }
             const includeMatch = lineText.match(/#\s*include\s*([<"])([^>"]+)[>"]/);
             if (includeMatch) {
-                const header = includeMatch[2];
+                const header = includeMatch[2] as string;
                 const startIndex = lineText.indexOf(header);
                 if (startIndex >= 0) {
                     const startColumn = startIndex + 1;
@@ -7432,7 +7642,7 @@ export class MonacoEditorManager {
         }
     }
 
-    identifyUrlAtPosition(lineText, position): { kind: 'url'; url: string; range: monaco.Range; lineText: string } | null {
+    identifyUrlAtPosition(lineText: string | null | undefined, position: monaco.IPosition | null | undefined): { kind: 'url'; url: string; range: monaco.Range; lineText: string } | null {
         try {
             if (!lineText || !position || !Number.isFinite(position.column)) return null;
             const urlPattern = /\b(?:https?:\/\/|www\.)[^\s<>"'()\[\]{}]+/gi;
@@ -7463,7 +7673,7 @@ export class MonacoEditorManager {
         return null;
     }
 
-    normalizeExternalUrl(value) {
+    normalizeExternalUrl(value: unknown) {
         const text = String(value || '').trim();
         if (!text) return '';
 
@@ -7486,7 +7696,7 @@ export class MonacoEditorManager {
         return '';
     }
 
-    async openExternalUrl(url) {
+    async openExternalUrl(url: string | null | undefined) {
         const targetUrl = String(url || '').trim();
         if (!targetUrl) return;
 
@@ -7503,7 +7713,7 @@ export class MonacoEditorManager {
         }
     }
 
-    findDefinitionInModel(model, word, options = {}) {
+    findDefinitionInModel(model: OicppTextModel | null, word: string, options: { skipLine?: number | number[] } = {}) {
         try {
             if (!model || !word) return null;
             const lines = model.getLinesContent();
@@ -7526,7 +7736,7 @@ export class MonacoEditorManager {
         }
     }
 
-    findDefinitionInLines(lines, word, options: { skipLine?: number | number[] } = {}) {
+    findDefinitionInLines(lines: string[], word: string, options: { skipLine?: number | number[] } = {}) {
         try {
             if (!Array.isArray(lines) || !word) return null;
 
@@ -7587,7 +7797,7 @@ export class MonacoEditorManager {
         }
     }
 
-    findFallbackOccurrence(model, word, options: { skipLine?: number | number[] } = {}) {
+    findFallbackOccurrence(model: OicppTextModel | null, word: string, options: { skipLine?: number | number[] } = {}) {
         try {
             if (!model || !word) return null;
             const escaped = this.escapeRegExp(word);
@@ -7638,7 +7848,7 @@ export class MonacoEditorManager {
         }
     }
 
-    maskCommentsAndStrings(text) {
+    maskCommentsAndStrings(text: unknown) {
         if (typeof text !== 'string' || !text.length) return '';
         const chars = Array.from(text);
         let i = 0;
@@ -7718,8 +7928,8 @@ export class MonacoEditorManager {
         return chars.join('');
     }
 
-    buildLineOffsets(lines) {
-        const offsets = [];
+    buildLineOffsets(lines: string[]) {
+        const offsets: number[] = [];
         if (!Array.isArray(lines)) return offsets;
         let total = 0;
         for (const line of lines) {
@@ -7729,7 +7939,7 @@ export class MonacoEditorManager {
         return offsets;
     }
 
-    indexToLineColumn(index, offsets) {
+    indexToLineColumn(index: number, offsets: number[]) {
         if (!Array.isArray(offsets) || index < 0) return null;
         let low = 0;
         let high = offsets.length - 1;
@@ -7737,7 +7947,7 @@ export class MonacoEditorManager {
 
         while (low <= high) {
             const mid = (low + high) >> 1;
-            const offset = offsets[mid];
+            const offset = offsets[mid] as number;
             if (offset <= index) {
                 lineIndex = mid;
                 low = mid + 1;
@@ -7753,18 +7963,18 @@ export class MonacoEditorManager {
         };
     }
 
-    isIdentifierChar(ch) {
+    isIdentifierChar(ch: string | undefined) {
         if (!ch) return false;
         return /[0-9A-Za-z_]/.test(ch);
     }
 
-    isWordBoundary(text, index, length) {
+    isWordBoundary(text: string, index: number, length: number) {
         const prev = index > 0 ? text[index - 1] : '';
         const next = text[index + length] || '';
         return !this.isIdentifierChar(prev) && !this.isIdentifierChar(next);
     }
 
-    skipWhitespace(text, index) {
+    skipWhitespace(text: string, index: number) {
         let i = index || 0;
         while (i < text.length) {
             const ch = text[i];
@@ -7777,7 +7987,7 @@ export class MonacoEditorManager {
         return i;
     }
 
-    findMatchingParen(text, openIndex) {
+    findMatchingParen(text: string, openIndex: number) {
         if (!text || openIndex < 0 || text[openIndex] !== '(') return -1;
         let depth = 0;
         for (let i = openIndex; i < text.length; i++) {
@@ -7793,7 +8003,7 @@ export class MonacoEditorManager {
         return -1;
     }
 
-    findMatchingAngles(text, openIndex) {
+    findMatchingAngles(text: string, openIndex: number) {
         if (!text || openIndex < 0 || text[openIndex] !== '<') return -1;
         let depth = 0;
         for (let i = openIndex; i < text.length; i++) {
@@ -7809,7 +8019,7 @@ export class MonacoEditorManager {
         return -1;
     }
 
-    skipAttributes(text, index) {
+    skipAttributes(text: string, index: number) {
         if (!text || index < 0 || text[index] !== '[' || text[index + 1] !== '[') return index;
         let i = index + 2;
         while (i < text.length) {
@@ -7825,7 +8035,7 @@ export class MonacoEditorManager {
         return i;
     }
 
-    skipArrowReturnType(text, index) {
+    skipArrowReturnType(text: string, index: number) {
         let i = this.skipWhitespace(text, index);
         while (i < text.length) {
             const ch = text[i];
@@ -7849,7 +8059,7 @@ export class MonacoEditorManager {
         return i;
     }
 
-    skipTrailingQualifiers(text, index) {
+    skipTrailingQualifiers(text: string, index: number) {
         let i = this.skipWhitespace(text, index);
         while (i < text.length) {
             if (this.startsWithWord(text, i, 'const')) {
@@ -7914,7 +8124,7 @@ export class MonacoEditorManager {
         return i;
     }
 
-    startsWithWord(text, index, word) {
+    startsWithWord(text: string, index: number, word: string) {
         if (!text || typeof word !== 'string' || !word.length) return false;
         if (!text.startsWith(word, index)) return false;
         const before = index > 0 ? text[index - 1] : '';
@@ -7948,7 +8158,7 @@ export class MonacoEditorManager {
         return this._typeKeywordRegex;
     }
 
-    extractBeforeSegment(text, index) {
+    extractBeforeSegment(text: string, index: number) {
         const windowStart = Math.max(0, index - 400);
         const snippet = text.slice(windowStart, index);
         let delimiter = -1;
@@ -7959,7 +8169,7 @@ export class MonacoEditorManager {
         return snippet.slice(delimiter + 1).trim();
     }
 
-    hasTypeBefore(text, index) {
+    hasTypeBefore(text: string, index: number) {
         const segment = this.extractBeforeSegment(text, index);
         if (!segment) return false;
 
@@ -7973,7 +8183,7 @@ export class MonacoEditorManager {
 
         const identifierMatch = segment.match(/([A-Za-z_][A-Za-z0-9_:<>]*)\s*$/);
         if (identifierMatch) {
-            const candidate = identifierMatch[1];
+            const candidate = identifierMatch[1] as string;
             if (!this.getControlKeywordSet().has(candidate.toLowerCase())) {
                 return true;
             }
@@ -7989,7 +8199,7 @@ export class MonacoEditorManager {
             }
             const scopeIdentifierMatch = beforeScope.match(/([A-Za-z_][A-Za-z0-9_:<>]*)\s*$/);
             if (scopeIdentifierMatch) {
-                const scopeCandidate = scopeIdentifierMatch[1];
+                const scopeCandidate = scopeIdentifierMatch[1] as string;
                 if (!this.getControlKeywordSet().has(scopeCandidate.toLowerCase())) {
                     return true;
                 }
@@ -8006,7 +8216,7 @@ export class MonacoEditorManager {
         return false;
     }
 
-    prefixIndicatesCall(prefix, hasTypeContext) {
+    prefixIndicatesCall(prefix: string | null | undefined, hasTypeContext: boolean) {
         const trimmed = (prefix || '').trim();
         if (!trimmed) {
             return !hasTypeContext;
@@ -8023,7 +8233,7 @@ export class MonacoEditorManager {
         return false;
     }
 
-    classifyOccurrence(masked, index, wordLength, options: { skipTypedef?: boolean } = {}) {
+    classifyOccurrence(masked: string, index: number, wordLength: number, options: { skipTypedef?: boolean } = {}) {
         const lineStart = masked.lastIndexOf('\n', index - 1) + 1;
         const lineEndRaw = masked.indexOf('\n', index);
         const lineEnd = lineEndRaw === -1 ? masked.length : lineEndRaw;
@@ -8136,11 +8346,11 @@ export class MonacoEditorManager {
         return null;
     }
 
-    escapeRegExp(text) {
+    escapeRegExp(text: unknown) {
         return typeof text === 'string' ? text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
     }
 
-    async getIncludedFilePaths(model) {
+    async getIncludedFilePaths(model: OicppTextModel | null): Promise<string[]> {
         try {
             if (!model) return [];
             const versionId = typeof model.getVersionId === 'function' ? model.getVersionId() : null;
@@ -8155,7 +8365,7 @@ export class MonacoEditorManager {
                 return [];
             }
 
-            const includePaths = new Set();
+            const includePaths = new Set<string>();
             const modelFilePath = this.getModelFilePath(model);
             const modelDir = modelFilePath ? await this.safeDirname(modelFilePath) : null;
             for (const line of lines) {
@@ -8163,7 +8373,7 @@ export class MonacoEditorManager {
                 const regex = /#\s*include\s*([<"])([^>"]+)[>"]/g;
                 let match;
                 while ((match = regex.exec(line)) !== null) {
-                    const delimiter = match[1];
+                    const delimiter = match[1] as string;
                     const header = (match[2] || '').trim();
                     if (!header) continue;
                     let resolved = null;
@@ -8194,7 +8404,7 @@ export class MonacoEditorManager {
         }
     }
 
-    getTabIdByFilePath(filePath) {
+    getTabIdByFilePath(filePath: string | null | undefined) {
         if (!filePath || typeof filePath !== 'string') return null;
         try {
             for (const [tabId, storedPath] of this.tabIdToFilePath.entries()) {
@@ -8206,7 +8416,7 @@ export class MonacoEditorManager {
         return null;
     }
 
-    async findDefinitionInFile(word, filePath) {
+    async findDefinitionInFile(word: string, filePath: string) {
         try {
             if (!word || !filePath) return null;
             const tabId = this.getTabIdByFilePath(filePath);
@@ -8214,7 +8424,7 @@ export class MonacoEditorManager {
                 const editor = this.editors.get(tabId);
                 const model = editor?.getModel?.();
                 if (model) {
-                    const def = this.findDefinitionInModel(model, word);
+                    const def = this.findDefinitionInModel(model as monaco.editor.ITextModel, word);
                     if (def?.position) {
                         return { filePath, position: def.position };
                     }
@@ -8239,7 +8449,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async findDefinitionInIncludes(symbol, model, includePaths) {
+    async findDefinitionInIncludes(symbol: IdentifiedSymbol | null, model: OicppTextModel | null, includePaths: string[] | null | undefined) {
         try {
             if (!symbol || symbol.kind !== 'symbol') return null;
             const word = symbol.word;
@@ -8249,8 +8459,8 @@ export class MonacoEditorManager {
                 : await this.getIncludedFilePaths(model);
             if (!initialPaths || !initialPaths.length) return null;
 
-            const visited = new Set();
-            const queue = [];
+            const visited = new Set<string>();
+            const queue: Array<{ filePath: string; depth: number }> = [];
             const maxDepth = 5;
 
             for (const filePath of initialPaths) {
@@ -8259,7 +8469,7 @@ export class MonacoEditorManager {
             }
 
             while (queue.length) {
-                const { filePath, depth } = queue.shift();
+                const { filePath, depth } = queue.shift() as { filePath: string; depth: number };
                 if (!filePath || visited.has(filePath)) continue;
                 visited.add(filePath);
 
@@ -8300,7 +8510,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async requestLspLocations(method, model, position) {
+    async requestLspLocations(method: string, model: OicppTextModel | null, position: monaco.IPosition): Promise<RawLspLocation[]> {
         if (!method || !model || !this.lspClient) return [];
         try {
             const lspReady = await this._ensureLspDocumentReady(model);
@@ -8315,13 +8525,13 @@ export class MonacoEditorManager {
                 }
             });
             if (!result) return [];
-            return Array.isArray(result) ? result.filter(Boolean) : [result];
+            return (Array.isArray(result) ? result.filter(Boolean) : [result]) as RawLspLocation[];
         } catch (_) {
             return [];
         }
     }
 
-    async handleCtrlClickNavigation(editor, position) {
+    async handleCtrlClickNavigation(editor: OicppCodeEditor | null, position: monaco.IPosition) {
         try {
             if (!editor || (typeof editor.isDisposed === 'function' && editor.isDisposed())) {
                 return;
@@ -8365,7 +8575,7 @@ export class MonacoEditorManager {
 
             const local = this.findDefinitionInModel(model, symbol.word, { skipLine: position.lineNumber });
             if (local) {
-                this.goToMonacoPosition(editor, local.position);
+                this.goToMonacoPosition(editor as monaco.editor.IStandaloneCodeEditor, local.position);
                 return;
             }
 
@@ -8381,13 +8591,13 @@ export class MonacoEditorManager {
         }
     }
 
-    async goToLspLocation(location) {
+    async goToLspLocation(location: LspLocationLike | null | undefined) {
         try {
             if (!location || typeof monaco === 'undefined') return false;
-            let converted = location;
+            let converted: LspLocationLike | null = location;
             if (!location.range?.startLineNumber) {
                 const uriValue = typeof location.uri === 'string' ? location.uri : location.uri?.toString?.();
-                converted = this.lspLocationToMonaco({ ...location, uri: uriValue });
+                converted = this.lspLocationToMonaco({ ...location, uri: uriValue }) as LspLocationLike | null;
             }
             if (!converted?.uri || !converted.range) return false;
             const targetUri = converted.uri.toString();
@@ -8405,7 +8615,7 @@ export class MonacoEditorManager {
                 pathStr = pathStr.replace(/\//g, '\\');
             }
             if (!pathStr) return false;
-            const start = converted.range.start || {};
+            const start = (converted.range.start || {}) as { lineNumber?: number; column?: number };
             const position = new monaco.Position(
                 Number(start.lineNumber) || 1,
                 Number(start.column) || 1
@@ -8413,12 +8623,12 @@ export class MonacoEditorManager {
             await this.openFileAtPosition(pathStr, position);
             return true;
         } catch (err) {
-            logWarn('[LSP] 跳转到 LSP 位置失败:', err?.message || err);
+            logWarn('[LSP] 跳转到 LSP 位置失败:', (err as Error)?.message || err);
             return false;
         }
     }
 
-    async resolveSystemHeader(header) {
+    async resolveSystemHeader(header: string | null | undefined): Promise<string | null> {
         try {
             if (!header) return null;
             if (!(this._includePathCache instanceof Map)) {
@@ -8426,7 +8636,7 @@ export class MonacoEditorManager {
             }
             const cacheKey = `sys::${header}`;
             if (this._includePathCache.has(cacheKey)) {
-                return this._includePathCache.get(cacheKey);
+                return this._includePathCache.get(cacheKey) as string | null;
             }
 
             const includeDirs = await this.getCompilerIncludeDirs();
@@ -8446,7 +8656,7 @@ export class MonacoEditorManager {
                 return null;
             }
 
-            const candidateRoots = new Set();
+            const candidateRoots = new Set<string>();
             for (const dir of includeDirs) {
                 if (!dir) continue;
                 const roots = await this.getIncludeSearchRoots(dir);
@@ -8480,7 +8690,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async getCompilerIncludeDirs() {
+    async getCompilerIncludeDirs(): Promise<string[]> {
         try {
             const { compilerPath, compilerArgs } = await this.getCompilerSettingsSnapshot();
             if (!compilerPath) {
@@ -8516,11 +8726,11 @@ export class MonacoEditorManager {
         }
     }
 
-    async buildCompilerIncludeDirs(compilerPath, compilerArgs) {
+    async buildCompilerIncludeDirs(compilerPath: string, compilerArgs: unknown): Promise<string[]> {
         try {
-            const dirs = new Set();
-            const visited = new Set();
-            const addDir = async (dir) => {
+            const dirs = new Set<string>();
+            const visited = new Set<string>();
+            const addDir = async (dir: string | null | undefined) => {
                 if (!dir || typeof dir !== 'string') return;
                 if (visited.has(dir)) return;
                 visited.add(dir);
@@ -8550,7 +8760,7 @@ export class MonacoEditorManager {
                 await addDir(workspaceRoot);
             }
 
-            const gccRoots = [];
+            const gccRoots: Array<string | null> = [];
             if (rootDir) {
                 gccRoots.push(await this.joinPath(rootDir, 'lib', 'gcc'));
             }
@@ -8561,7 +8771,7 @@ export class MonacoEditorManager {
                 await this.collectGccIncludeDirs(gccRoot, addDir);
             }
 
-            const clangRoots = [];
+            const clangRoots: Array<string | null> = [];
             if (rootDir) {
                 clangRoots.push(await this.joinPath(rootDir, 'lib', 'clang'));
             }
@@ -8611,7 +8821,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async collectGccIncludeDirs(gccRoot, addDir) {
+    async collectGccIncludeDirs(gccRoot: string | null | undefined, addDir: (dir: string | null | undefined) => Promise<void>) {
         try {
             if (!gccRoot || typeof addDir !== 'function') return;
             if (!(await this.pathExists(gccRoot))) return;
@@ -8634,15 +8844,15 @@ export class MonacoEditorManager {
         }
     }
 
-    async extractIncludeDirsFromArgs(compilerArgs, compilerDir, rootDir, workspaceRoot) {
+    async extractIncludeDirsFromArgs(compilerArgs: unknown, compilerDir: string | null, rootDir: string | null, workspaceRoot: string): Promise<string[]> {
         try {
             if (!compilerArgs || typeof compilerArgs !== 'string') return [];
             const tokens = this.tokenizeCompilerArgs(compilerArgs);
             if (!tokens.length) return [];
-            const result = [];
+            const result: string[] = [];
             const baseCandidates = [compilerDir, rootDir, workspaceRoot].filter(Boolean);
 
-            const pushPath = async (rawPath) => {
+            const pushPath = async (rawPath: string | undefined) => {
                 const trimmed = this.stripQuotes(rawPath);
                 if (!trimmed) return;
                 if (this.isAbsolutePath(trimmed)) {
@@ -8661,7 +8871,7 @@ export class MonacoEditorManager {
             };
 
             for (let i = 0; i < tokens.length; i++) {
-                const token = tokens[i];
+                const token = tokens[i] as string;
                 if (token === '-I' || token === '-isystem') {
                     if (i + 1 < tokens.length) {
                         i++;
@@ -8686,7 +8896,7 @@ export class MonacoEditorManager {
         }
     }
 
-    tokenizeCompilerArgs(argString) {
+    tokenizeCompilerArgs(argString: unknown): string[] {
         if (typeof argString !== 'string' || !argString.trim()) return [];
         const matches = argString.match(/"[^"]+"|\S+/g);
         if (!Array.isArray(matches)) return [];
@@ -8696,13 +8906,13 @@ export class MonacoEditorManager {
     // 用户自定义的编译参数里，只有 -std= 真正影响 clangd 的语义（诊断/补全按 C++ 标准
     // 区分），其余（-O2、-lxxx 等）clangd 用不上也不需要；include/target 由主进程探测编译器
     // 后写进 compile_flags.txt，这里不再重复也不走那条早已失效的 fallbackFlags 通道。
-    buildRequestedCompileFlags(compilerArgs) {
+    buildRequestedCompileFlags(compilerArgs: unknown) {
         const tokens = this.tokenizeCompilerArgs(compilerArgs);
         const stdFlags = tokens.filter(token => /^-std=[A-Za-z0-9+]+$/.test(token));
         return stdFlags.length > 0 ? stdFlags : ['-std=c++17'];
     }
 
-    stripQuotes(value) {
+    stripQuotes(value: unknown) {
         if (typeof value !== 'string') return '';
         const trimmed = value.trim();
         if (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2) {
@@ -8711,16 +8921,16 @@ export class MonacoEditorManager {
         return trimmed;
     }
 
-    isAbsolutePath(p) {
+    isAbsolutePath(p: unknown) {
         if (typeof p !== 'string' || !p) return false;
         if (p.startsWith('/') || p.startsWith('\\')) return true;
         return /^[a-zA-Z]:[\\/]/.test(p);
     }
 
-    async joinPath(...segments) {
+    async joinPath(...segments: Array<string | null | undefined>): Promise<string | null> {
         try {
             if (!Array.isArray(segments)) return null;
-            const filtered = segments.filter(seg => typeof seg === 'string' && seg.length);
+            const filtered = segments.filter(seg => typeof seg === 'string' && seg.length) as string[];
             if (!filtered.length) return null;
             if (window.electronAPI?.pathJoin) {
                 return await window.electronAPI.pathJoin(...filtered);
@@ -8731,7 +8941,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async safeDirname(filePath) {
+    async safeDirname(filePath: string | null | undefined) {
         try {
             if (!filePath || typeof filePath !== 'string' || !window.electronAPI?.pathDirname) return null;
             return await window.electronAPI.pathDirname(filePath);
@@ -8740,7 +8950,7 @@ export class MonacoEditorManager {
         }
     }
 
-    getModelFilePath(model) {
+    getModelFilePath(model: OicppTextModel | null | undefined) {
         try {
             if (!model) return null;
             if (typeof model.__oicppFilePath === 'string' && model.__oicppFilePath.length) {
@@ -8749,7 +8959,7 @@ export class MonacoEditorManager {
             if (!(this.editors instanceof Map)) return null;
             for (const [tabId, editor] of this.editors.entries()) {
                 if (!editor || typeof editor.getModel !== 'function') continue;
-                const editorModel = editor.getModel();
+                const editorModel = editor.getModel() as monaco.editor.ITextModel | null;
                 if (editorModel !== model) continue;
                 const filePath = editor.filePath || this.tabIdToFilePath.get(tabId) || null;
                 if (filePath) {
@@ -8767,7 +8977,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async pathExists(filePath) {
+    async pathExists(filePath: string | null | undefined) {
         try {
             if (!filePath || typeof filePath !== 'string' || !window.electronAPI?.checkFileExists) return false;
             return !!(await window.electronAPI.checkFileExists(filePath));
@@ -8776,28 +8986,28 @@ export class MonacoEditorManager {
         }
     }
 
-    async readDirectorySafe(dirPath) {
+    async readDirectorySafe(dirPath: string | null | undefined): Promise<FsEntry[]> {
         try {
             if (!dirPath || typeof dirPath !== 'string' || !window.electronAPI?.readDirectory) return [];
             if (!(await this.pathExists(dirPath))) return [];
             const entries = await window.electronAPI.readDirectory(dirPath);
-            return Array.isArray(entries) ? entries : [];
+            return Array.isArray(entries) ? entries as FsEntry[] : [];
         } catch (_) {
             return [];
         }
     }
 
-    async listSubdirectories(dirPath) {
+    async listSubdirectories(dirPath: string | null | undefined): Promise<string[]> {
         try {
             const entries = await this.readDirectorySafe(dirPath);
             if (!Array.isArray(entries) || !entries.length) return [];
-            return entries.filter(item => item && item.type === 'folder' && typeof item.path === 'string').map(item => /** @type {string} */ (item.path));
+            return entries.filter(item => item && item.type === 'folder' && typeof item.path === 'string').map(item => item.path as string);
         } catch (_) {
             return [];
         }
     }
 
-    async tryResolveHeaderInDir(baseDir, parts) {
+    async tryResolveHeaderInDir(baseDir: string | null | undefined, parts: string[]) {
         try {
             if (!baseDir || !Array.isArray(parts) || !parts.length) return null;
             let current = baseDir;
@@ -8823,7 +9033,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async getIncludeSearchRoots(baseDir) {
+    async getIncludeSearchRoots(baseDir: string | null | undefined): Promise<string[]> {
         try {
             if (!baseDir || typeof baseDir !== 'string') return [];
             if (!(this._includeRootsCache instanceof Map)) {
@@ -8834,7 +9044,7 @@ export class MonacoEditorManager {
                 return cached.roots;
             }
 
-            const roots = new Set();
+            const roots = new Set<string>();
             if (await this.pathExists(baseDir)) {
                 roots.add(baseDir);
                 const immediate = await this.listSubdirectories(baseDir);
@@ -8865,18 +9075,18 @@ export class MonacoEditorManager {
         }
     }
 
-    async searchHeaderByFileName(root, targetName, parts) {
+    async searchHeaderByFileName(root: string | null | undefined, targetName: string | null | undefined, parts: string[]) {
         try {
             if (!root || !targetName) return null;
             const normalizedTarget = targetName.toLowerCase();
             const maxDepth = 4;
             const maxVisited = 200;
-            const visited = new Set();
-            const queue = [{ dir: root, depth: 0 }];
+            const visited = new Set<string>();
+            const queue: Array<{ dir: string | undefined; depth: number }> = [{ dir: root, depth: 0 }];
             let processed = 0;
 
             while (queue.length) {
-                const { dir, depth } = queue.shift();
+                const { dir, depth } = queue.shift() as { dir: string | undefined; depth: number };
                 if (!dir || visited.has(dir)) continue;
                 visited.add(dir);
                 processed += 1;
@@ -8934,7 +9144,7 @@ export class MonacoEditorManager {
                 return [];
             }
 
-            const includes = [];
+            const includes: Array<{ path: string; isAngle: boolean }> = [];
             const regex = /^\s*#\s*include\s*([<"])([^>"]+)[>"]/gm;
             let match;
             while ((match = regex.exec(content)) !== null) {
@@ -8966,11 +9176,11 @@ export class MonacoEditorManager {
             try {
                 const remote = await window.electronAPI.getSettings();
                 if (remote && typeof remote === 'object') {
-                    if (!result.compilerPath && typeof remote.compilerPath === 'string') {
-                        result.compilerPath = remote.compilerPath;
+                    if (!result.compilerPath && typeof remote['compilerPath'] === 'string') {
+                        result.compilerPath = remote['compilerPath'];
                     }
-                    if (!result.compilerArgs && typeof remote.compilerArgs === 'string') {
-                        result.compilerArgs = remote.compilerArgs;
+                    if (!result.compilerArgs && typeof remote['compilerArgs'] === 'string') {
+                        result.compilerArgs = remote['compilerArgs'];
                     }
                 }
             } catch (_) {}
@@ -8983,7 +9193,7 @@ export class MonacoEditorManager {
         return result;
     }
 
-    async resolveIncludeTarget(symbol, options = {}) {
+    async resolveIncludeTarget(symbol: IncludeRef | null | undefined, options: IncludeResolveOptions = {}): Promise<string | null> {
         try {
             if (!symbol || !symbol.path || symbol.isAngle) return null;
             const header = String(symbol.path || '').trim();
@@ -9005,7 +9215,7 @@ export class MonacoEditorManager {
                 }
             }
 
-            const candidates = new Set();
+            const candidates = new Set<string>();
             const preferredDir = baseDir || (filePathHint ? await this.safeDirname(filePathHint) : null);
             if (preferredDir) {
                 const direct = await this.joinPath(preferredDir, header);
@@ -9040,7 +9250,7 @@ export class MonacoEditorManager {
                 try {
                     const walkKey = `${root}::${header}`;
                     if (this._includePathCache.has(walkKey)) {
-                        return this._includePathCache.get(walkKey);
+                        return this._includePathCache.get(walkKey) as string | null;
                     }
                     const res = await window.electronAPI.walkDirectory(root, {
                         includeExts: ['.h', '.hpp', '.hh', '.hxx', '.c', '.cc', '.cpp', '.cxx'],
@@ -9073,7 +9283,7 @@ export class MonacoEditorManager {
         }
     }
 
-    async openFileAtPosition(filePath, position) {
+    async openFileAtPosition(filePath: string | null | undefined, position: monaco.Position | null) {
         try {
             if (!filePath) return;
             const fileName = this.getFileNameFromPath(filePath);
@@ -9118,7 +9328,7 @@ export class MonacoEditorManager {
 
             const destinationEditor = this.editors.get(tabId) || this.currentEditor || targetEditor;
             if (position && destinationEditor) {
-                this.goToMonacoPosition(destinationEditor, position);
+                this.goToMonacoPosition(destinationEditor as monaco.editor.IStandaloneCodeEditor, position);
             } else if (destinationEditor) {
                 destinationEditor.focus();
             }
@@ -9127,7 +9337,7 @@ export class MonacoEditorManager {
         }
     }
 
-    goToMonacoPosition(editor, position) {
+    goToMonacoPosition(editor: monaco.editor.IStandaloneCodeEditor | null, position: monaco.Position | null) {
         try {
             if (!editor || !position) return;
             editor.setPosition(position);
@@ -9142,17 +9352,17 @@ export class MonacoEditorManager {
         }
     }
     
-    parseFunctions(code) {
-        const functions = [];
+    parseFunctions(code: string) {
+        const functions: Array<{ name: string; returnType: string; params: string; description: string }> = [];
         const cleanCode = this.removeComments(code);
         
         const functionRegex = /(?:^|\n)\s*([\w:]+(?:\s*\*|\s*&)?)\s+([\w~]+)\s*\(([^)]*)\)\s*(?:const\s*)?(?:;|\{)/gm;
         
         let match;
         while ((match = functionRegex.exec(cleanCode)) !== null) {
-            const returnType = match[1].trim();
-            const name = match[2].trim();
-            const params = match[3].trim();
+            const returnType = (match[1] as string).trim();
+            const name = (match[2] as string).trim();
+            const params = (match[3] as string).trim();
             
             if (name && !['if', 'while', 'for', 'switch', 'catch'].includes(name)) {
                 functions.push({
@@ -9167,19 +9377,19 @@ export class MonacoEditorManager {
         return functions;
     }
     
-    parseStructsAndClasses(code) {
-        const structs = [];
+    parseStructsAndClasses(code: string) {
+        const structs: Array<{ type: string; name: string; members: string[]; description: string }> = [];
         const cleanCode = this.removeComments(code);
         
         const structRegex = /(struct|class)\s+([\w]+)\s*(?:[^{]*)?\{([^}]*)\}/gm;
         
         let match;
         while ((match = structRegex.exec(cleanCode)) !== null) {
-            const type = match[1];
-            const name = match[2];
-            const body = match[3];
+            const type = match[1] as string;
+            const name = match[2] as string;
+            const body = match[3] as string;
             
-            const members = [];
+            const members: string[] = [];
             const memberLines = body.split(';');
             memberLines.forEach(line => {
                 const trimmed = line.trim();
@@ -9199,7 +9409,7 @@ export class MonacoEditorManager {
         return structs;
     }
     
-    removeComments(code) {
+    removeComments(code: string) {
         let result = code.replace(/\/\/.*$/gm, '');
         result = result.replace(/\/\*[\s\S]*?\*\//g, '');
         return result;
