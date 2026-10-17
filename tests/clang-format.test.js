@@ -2,7 +2,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 const { EventEmitter } = require('events');
+const { classMethod } = require('./fixtures/source-extract');
 const {
     buildClangFormatArgs,
     formatCodeWithClangFormat,
@@ -35,6 +37,69 @@ class FakeChildProcess extends EventEmitter {
     kill() {
         this.killed = true;
     }
+}
+
+// 把 classMethod 抽出来的方法体（`name(params) { ... }`）在指定 vm 上下文里编译成
+// `function name(...)`。用 vm 而不是 new Function：new Function 造的函数作用域是
+// Node 的全局，注入不了「沙箱里不给 LSP 句柄」这种关键限制；vm 上下文能精确决定
+// 这段代码看得见什么，跑通了才证明它真的没依赖语言服务器。
+function compileMethod(source, name, ctx) {
+    const raw = classMethod(source, name);
+    if (!raw) return { raw, fn: undefined };
+    const s = raw.replace(/^\s+/, '');
+    const decl = /^(?:async\s+)?function\s/.test(s)
+        ? s
+        : (/^async\s+/.test(s) ? 'async function ' + s.replace(/^async\s+/, '') : 'function ' + s);
+    vm.runInContext(`${decl}\nthis.__compiled = ${name};`, ctx);
+    return { raw, fn: ctx.__compiled };
+}
+
+function makeFormatSandbox() {
+    const registrations = [];
+    const logCalls = { info: [], warn: [] };
+    const disposableOf = (kind, language) => ({
+        kind,
+        language,
+        disposeCount: 0,
+        dispose() { this.disposeCount++; }
+    });
+    const ctx = vm.createContext({
+        monaco: {
+            languages: {
+                registerDocumentFormattingEditProvider: (language, provider) => {
+                    registrations.push({ kind: 'full', language, provider });
+                    return disposableOf('full', language);
+                },
+                registerDocumentRangeFormattingEditProvider: (language, provider) => {
+                    registrations.push({ kind: 'range', language, provider });
+                    return disposableOf('range', language);
+                }
+            }
+        },
+        logInfo: (...a) => { logCalls.info.push(a.map(String)); },
+        logWarn: (...a) => { logCalls.warn.push(a.map(String)); },
+        Math, JSON, Set, Map, Array, Object, String, Number, Boolean, Error, RegExp, Promise
+        // 刻意不给 lsp / window / require / monaco.languages.* 之外的任何 LSP 句柄
+    });
+    return { ctx, registrations, logCalls };
+}
+
+function makeModel(lines, state = {}) {
+    const arr = Array.isArray(lines) ? lines.slice() : String(lines).split('\n');
+    const flags = { disposed: false, ...state };
+    return {
+        flags,
+        lines: arr,
+        getValue: () => arr.join('\n'),
+        isDisposed: () => flags.disposed,
+        getFullModelRange: () => ({
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: arr.length,
+            endColumn: (arr[arr.length - 1] || '').length + 1
+        }),
+        getLineMaxColumn: (lineNumber) => (arr[lineNumber - 1] || '').length + 1
+    };
 }
 
 (async () => {
@@ -239,9 +304,267 @@ class FakeChildProcess extends EventEmitter {
             `calls=${gone.seen.calls} r3=${r3} r4=${r4}`);
     }
 
-    check('standalone formatters register without waiting for clangd', rendererSource.includes('this._registerClangFormatDocumentFormattingProvider();') && rendererSource.includes('this._registerClangFormatDocumentRangeFormattingProvider();'));
-    check('renderer no longer delegates C/C++ formatting to clangd', !rendererSource.includes('textDocument/formatting') && !rendererSource.includes('textDocument/rangeFormatting'));
-    check('renderer never invokes the lossy local formatter fallback', !rendererSource.includes('window.cppFormatter.format('));
+    // -----------------------------------------------------------------------
+    // 渲染层的两个格式化提供器：真注册、真调用。
+    // 这三条原来是 includes() 读源码长相 —— 注册调用挪个分支、或者整条路径改成
+    // 等 clangd，字符串都还在，守卫真空。「不依赖 clangd」看着没有可调用对象，
+    // 其实可以这么证：沙箱里只给 monaco.languages 那两个注册函数，lsp / window /
+    // require 一个都不给，能算出编辑内容就说明这条路径不经过语言服务器。
+    // 「不回退到有损的本地 formatter」也一样：桥缺失时真抛出、provider 真空返回 []。
+    // -----------------------------------------------------------------------
+    {
+        const sandbox = makeFormatSandbox();
+        const full = compileMethod(rendererSource, '_registerClangFormatDocumentFormattingProvider', sandbox.ctx);
+        const rangeM = compileMethod(rendererSource, '_registerClangFormatDocumentRangeFormattingProvider', sandbox.ctx);
+        const minimal = compileMethod(rendererSource, 'buildMinimalFormatEdits', sandbox.ctx);
+        check('方法体抽取成功: 两个注册方法 + 最小改动计算',
+            !!(full.fn && rangeM.fn && minimal.fn),
+            JSON.stringify({ full: !!full.fn, range: !!rangeM.fn, minimal: !!minimal.fn }));
+
+        const bridge = { calls: [], reply: () => 'FORMATTED', onCall: null };
+        const manager = {
+            _clangFormatProviders: new Map(),
+            requestClangFormattedCode: (model, range) => {
+                bridge.calls.push({ model, range });
+                if (bridge.onCall) bridge.onCall(bridge.calls.length - 1);
+                const value = bridge.reply();
+                return value instanceof Promise ? value : Promise.resolve(value);
+            },
+            buildMinimalFormatEdits: (model, original, formatted) => minimal.fn.call(manager, model, original, formatted)
+        };
+        full.fn.call(manager);
+        rangeM.fn.call(manager);
+
+        const fullRegs = sandbox.registrations.filter((row) => row.kind === 'full');
+        const rangeRegs = sandbox.registrations.filter((row) => row.kind === 'range');
+        check('文档格式化与区域格式化各注册到 cpp 和 c',
+            fullRegs.length === 2 && rangeRegs.length === 2 &&
+            fullRegs.every((row) => row.language === 'cpp' || row.language === 'c') &&
+            rangeRegs.every((row) => row.language === 'cpp' || row.language === 'c'),
+            JSON.stringify(sandbox.registrations.map((row) => `${row.kind}:${row.language}`)));
+        check('disposable 按 <语言>:clang-format[-range] 记账（切主题重注册要用）',
+            [...manager._clangFormatProviders.keys()].sort().join(',') ===
+                'c:clang-format,c:clang-format-range,cpp:clang-format,cpp:clang-format-range',
+            [...manager._clangFormatProviders.keys()].sort().join(','));
+        check('注册时留了日志（排查「格式化不生效」时唯一的抓手）',
+            sandbox.logCalls.info.length === 2 &&
+            sandbox.logCalls.info.every((row) => row.join(' ').includes('注册文档格式化提供器')),
+            JSON.stringify(sandbox.logCalls.info));
+
+        {
+            const before = sandbox.registrations.length;
+            const infoBefore = sandbox.logCalls.info.length;
+            full.fn.call(manager);
+            rangeM.fn.call(manager);
+            check('重复注册被去重：provider 不会叠上去，也不重复记日志',
+                sandbox.registrations.length === before &&
+                manager._clangFormatProviders.size === 4 && sandbox.logCalls.info.length === infoBefore,
+                `新增注册 ${sandbox.registrations.length - before} 条`);
+        }
+
+        const cppFull = fullRegs.find((row) => row.language === 'cpp').provider;
+        const cppRange = rangeRegs.find((row) => row.language === 'cpp').provider;
+        const provideFull = cppFull && cppFull.provideDocumentFormattingEdits;
+        const provideRange = cppRange && cppRange.provideDocumentRangeFormattingEdits;
+        check('两个 provider 的接口方法都在',
+            typeof provideFull === 'function' && typeof provideRange === 'function',
+            `${typeof provideFull}/${typeof provideRange}`);
+        check('区域 provider 带 displayName（Monaco 的格式化选择器认这个）',
+            cppRange && cppRange.displayName === 'clang-format',
+            cppRange ? String(cppRange.displayName) : '没有 provider');
+
+        const LIVE = { isCancellationRequested: false };
+        const DEAD = { isCancellationRequested: true };
+
+        {
+            const model = makeModel(['int  main( ) { }']);
+            const edits = await provideFull(model, {}, LIVE);
+            check('整文档格式化产出一条编辑，正文来自桥',
+                Array.isArray(edits) && edits.length === 1 && edits[0].text === 'FORMATTED',
+                JSON.stringify(edits));
+            check('整文档格式化的 range 就是模型的完整范围（沙箱里没有 clangd，能算出来即证明没走 LSP）',
+                JSON.stringify(edits[0].range) === JSON.stringify(model.getFullModelRange()),
+                JSON.stringify(edits[0].range));
+        }
+
+        {
+            bridge.calls.length = 0;
+            check('model 缺失或已销毁时不发请求、返回空编辑',
+                (await provideFull(null, {}, LIVE)).length === 0 &&
+                (await provideFull(makeModel(['x'], { disposed: true }), {}, LIVE)).length === 0 &&
+                bridge.calls.length === 0,
+                `calls=${bridge.calls.length}`);
+
+            const r = await provideFull(makeModel(['x']), {}, DEAD);
+            check('token 已取消时直接返回空，不去 spawn clang-format',
+                r.length === 0 && bridge.calls.length === 0, JSON.stringify(r));
+
+            const lateCancel = makeModel(['x']);
+            bridge.onCall = () => { LIVE.isCancellationRequested = true; };
+            const r2 = await provideFull(lateCancel, {}, LIVE);
+            bridge.onCall = null;
+            LIVE.isCancellationRequested = false;
+            check('await 期间被取消：结果丢掉，不把过期正文写回编辑器',
+                r2.length === 0, JSON.stringify(r2));
+
+            const lateDispose = makeModel(['x']);
+            bridge.onCall = () => { lateDispose.flags.disposed = true; };
+            const r3 = await provideFull(lateDispose, {}, LIVE);
+            bridge.onCall = null;
+            check('await 期间文件被关掉：同样丢掉结果',
+                r3.length === 0, JSON.stringify(r3));
+
+            const stale = makeModel(['x']);
+            bridge.reply = () => null;
+            const r4 = await provideFull(stale, {}, LIVE);
+            bridge.reply = () => 'FORMATTED';
+            check('桥判定结果过期（返回 null）时不产出编辑',
+                r4.length === 0, JSON.stringify(r4));
+
+            bridge.reply = () => { throw new Error('clang-format 未找到：D:/x'); };
+            const r5 = await provideFull(makeModel(['x']), {}, LIVE);
+            bridge.reply = () => 'FORMATTED';
+            const lastWarn = sandbox.logCalls.warn[sandbox.logCalls.warn.length - 1] || [];
+            check('桥抛错时 provider 吞成空编辑并把原因记进日志',
+                r5.length === 0 && lastWarn.join(' ').includes('clang-format 未找到'),
+                JSON.stringify({ edits: r5, warn: lastWarn }));
+        }
+
+        {
+            bridge.calls.length = 0;
+            const model = makeModel(['line1', 'line2', 'line3']);
+            const range = { startLineNumber: 2, endLineNumber: 2 };
+            const edits = await provideRange(model, range, {}, LIVE);
+            check('区域格式化把 Monaco 给的 range 原样转给桥',
+                bridge.calls.length === 1 && bridge.calls[0].range === range,
+                JSON.stringify(bridge.calls[0] && bridge.calls[0].range));
+
+            bridge.calls.length = 0;
+            bridge.onCall = () => { model.lines[2] = 'line3-typed-by-user'; };
+            bridge.reply = () => 'line1\nLINE2\nline3';
+            const e2 = await provideRange(model, { startLineNumber: 2, endLineNumber: 2 }, {}, LIVE);
+            bridge.onCall = null;
+            bridge.reply = () => 'FORMATTED';
+            check('区域格式化只改写真正变了的那一行：await 期间用户改了第 3 行也不跟着重写',
+                e2.length === 1 && e2[0].text === 'LINE2' &&
+                e2[0].range.startLineNumber === 2 && e2[0].range.endLineNumber === 2,
+                JSON.stringify(e2));
+
+            model.lines[2] = 'line3';
+            bridge.calls.length = 0;
+            const rNull = await provideRange(model, range, {}, LIVE);
+            bridge.reply = () => null;
+            const rNull2 = await provideRange(model, range, {}, LIVE);
+            bridge.reply = () => 'FORMATTED';
+            check('区域格式化同样不吃过期结果', rNull.length === 1 && rNull2.length === 0,
+                JSON.stringify({ ok: rNull.length, stale: rNull2.length }));
+
+            const disposed = makeModel(['a', 'b'], { disposed: false });
+            bridge.onCall = () => { disposed.flags.disposed = true; };
+            const rD = await provideRange(disposed, range, {}, LIVE);
+            bridge.onCall = null;
+            check('await 期间文档销毁：区域格式化返回空', rD.length === 0, JSON.stringify(rD));
+
+            bridge.calls.length = 0;
+            const early = await provideRange(null, range, {}, LIVE);
+            const cancelled = await provideRange(makeModel(['a']), range, {}, DEAD);
+            check('空文档早退不抛；token 已取消时连请求都不发（不白等一次 clang-format spawn）',
+                early.length === 0 && cancelled.length === 0 && bridge.calls.length === 0,
+                JSON.stringify({ early, cancelled, calls: bridge.calls.length }));
+
+            bridge.reply = () => { throw new Error('范围格式化炸了'); };
+            const rT = await provideRange(makeModel(['a']), range, {}, LIVE);
+            bridge.reply = () => 'FORMATTED';
+            const warnT = sandbox.logCalls.warn[sandbox.logCalls.warn.length - 1] || [];
+            check('区域格式化失败也只返回空编辑并留日志',
+                rT.length === 0 && warnT.join(' ').includes('范围格式化炸了'),
+                JSON.stringify({ edits: rT, warn: warnT }));
+        }
+
+        // -----------------------------------------------------------------------
+        // buildMinimalFormatEdits 单独测：它是「只改写受影响行」这条修复的全部实现，
+        // 上面那些场景只覆盖了它被调用的那一路。
+        // -----------------------------------------------------------------------
+        {
+            const m = minimal.fn;
+            check('buildMinimalFormatEdits 抽取成功', typeof m === 'function');
+            check('正文没变就不产出编辑（避免空 undo 记录）',
+                m.call(manager, makeModel(['a', 'b']), 'a\nb', 'a\nb').length === 0);
+            {
+                // 行尾 \r 只让逐行比较相等，overall 字符串仍不等，所以走的是
+                // 「prefix 吃满、末尾零宽改写」这条路，而不是早退。锁的语义是
+                // 「不重写任何正文」—— 将来若改成直接返回 []，这条照样过。
+                const e = m.call(manager, makeModel(['a', 'b']), 'a\r\nb', 'a\nb');
+                check('只差行尾 \\r 时不重写任何正文（不剥 \r 就逐行不等，会退化成整篇替换）',
+                    e.length <= 1 && e.every((row) => row.text === ''), JSON.stringify(e));
+                const e2 = m.call(manager, makeModel(['a', 'b', 'c']), 'a\r\nb\r\nc', 'a\nb\nc');
+                check('逐行只差 \\r 时同样不重写正文',
+                    e2.every((row) => row.text === ''), JSON.stringify(e2));
+            }
+            check('非字符串输入直接返回空，不抛进 Monaco',
+                m.call(manager, makeModel(['a']), null, 'x').length === 0 &&
+                m.call(manager, makeModel(['a']), 'x', undefined).length === 0);
+            {
+                const e = m.call(manager, makeModel(['a', 'b', 'c']), 'a\nb\nc', 'a\nB\nc');
+                check('中间一行变了就只覆盖那一行，列从行首开始',
+                    e.length === 1 && e[0].text === 'B' &&
+                    e[0].range.startLineNumber === 2 && e[0].range.endLineNumber === 2 &&
+                    e[0].range.startColumn === 1, JSON.stringify(e));
+            }
+
+            {
+                const e = m.call(manager, makeModel(['a', 'b']), 'a\nb', 'a\nX\nb');
+                check('纯插入一行：改写区间收成第 2 行行首的零宽范围',
+                    e.length === 1 && e[0].range.startLineNumber === 2 &&
+                    e[0].range.endLineNumber === 2 && e[0].range.endColumn === 1 &&
+                    e[0].text === 'X', JSON.stringify(e));
+            }
+            {
+                const e = m.call(manager, makeModel(['a', 'b', 'c', 'd']), 'a\nb\nc\nd', 'a\nd');
+                check('删掉中间一大段：改写区间跟着缩',
+                    e.length === 1 && e[0].range.startLineNumber === 2 &&
+                    e[0].range.endLineNumber === 3 && e[0].text === '',
+                    JSON.stringify(e));
+            }
+            {
+                const e = m.call(manager, makeModel(['a', 'b']), 'a\nb', 'zz\nyy');
+                check('整篇重排时退化成全文替换（但至少仍是一条编辑）',
+                    e.length === 1 && e[0].range.startLineNumber === 1 &&
+                    e[0].range.endLineNumber === 2 && e[0].text === 'zz\nyy',
+                    JSON.stringify(e));
+            }
+            {
+                const e = m.call(manager, makeModel(['a', 'b', 'c', 'd']), 'a\nb\nc\nd', 'A\nb\nc\nD');
+                check('两处分散的改动合成一条编辑（Monaco 只记一次 undo）',
+                    e.length === 1 && e[0].range.startLineNumber === 1 &&
+                    e[0].range.endLineNumber === 4 && e[0].text === 'A\nb\nc\nD',
+                    JSON.stringify(e));
+            }
+            {
+                const e = m.call(manager, makeModel(['x', '  indented', 'y']),
+                    'x\n  indented\ny', 'x\n\tindented\ny');
+                check('缩进改动只重写那一行，endColumn 取该行最大列',
+                    e.length === 1 && e[0].range.startLineNumber === 2 &&
+                    e[0].text === '\tindented' &&
+                    e[0].range.endColumn === ('  indented'.length + 1),
+                    JSON.stringify(e));
+            }
+            {
+                const noMaxColumn = makeModel(['a', 'b']);
+                delete noMaxColumn.getLineMaxColumn;
+                const e = m.call(manager, noMaxColumn, 'a\nb', 'a\nB');
+                check('模型没有 getLineMaxColumn 时 endColumn 兜到 1，不抛',
+                    e.length === 1 && e[0].range.endColumn === 1, JSON.stringify(e));
+            }
+            {
+                const e = m.call(manager, makeModel(['a', 'b', 'c']), 'a\nb\nc', 'a\nb');
+                check('删掉末尾一行：改写区间落在被删的那一行上',
+                    e.length === 1 && e[0].range.startLineNumber === 3 &&
+                    e[0].range.endLineNumber === 3 && e[0].text === '',
+                    JSON.stringify(e));
+            }
+        }
+    }
 
     const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
     check('main process exposes the standalone formatter IPC', mainSource.includes("ipcMain.handle('format-cpp-code'"));
