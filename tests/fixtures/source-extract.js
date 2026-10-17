@@ -103,6 +103,30 @@ function compileMethod(ctx, methodSrc) {
     return ctx.__compiled;
 }
 
+// 整条 for 语句（for 头 + 配平的语句体）。
+// 用在「循环注册了哪些通道」这类断言上：把循环真跑一遍，比正则读数组字面量强 ——
+// 数组里加了条件判断、去重、拼前缀，正则看不出来，跑一遍立刻显形。
+// 锚点给到 `for (` 之前（如 /^\s*for \(const ch of \[/m）。
+function forStatement(src, pattern) {
+    const m = pattern.exec(src);
+    if (!m) return '';
+    const close = matchParen(src, src.indexOf('(', m.index));
+    if (close < 0) return '';
+    const end = matchBrace(src, src.indexOf('{', close));
+    return end < 0 ? '' : src.slice(m.index, end + 1);
+}
+
+// 整条对象字面量声明：`const NAME = { ... }`（含 const 关键字和配平的右括号）。
+// 守卫挂在对象方法里（如 preload 的 IPC 白名单包装器）时，只有拿到真对象才能测，
+// 再靠 includes 比长相就只能验证「这行字还在」。
+function objectConst(src, name) {
+    const m = new RegExp('^\\s*(?:const|let)\\s+' + name + '\\s*=\\s*\\{', 'm').exec(src);
+    if (!m) return '';
+    const open = src.indexOf('{', m.index + m[0].length - 1);
+    const end = matchBrace(src, open);
+    return end < 0 ? '' : src.slice(m.index, end + 1);
+}
+
 // 从「方法名/关键字起始位置」配平出整个方法（含签名）
 function fromName(src, start) {
     const close = matchParen(src, src.indexOf('(', start));
@@ -156,4 +180,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { arrowExpr, classMethod, compileMethod, funcDecl, arrowProp, callbackBody, callStatement, toFn, toProviderFn };
+module.exports = { arrowExpr, classMethod, compileMethod, forStatement, funcDecl, arrowProp, callbackBody, callStatement, objectConst, toFn, toProviderFn };

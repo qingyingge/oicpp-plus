@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, funcDecl, toFn, toProviderFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -265,6 +265,52 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
         await toFn(asyncRaw)(1) === 2, String(await toFn(asyncRaw)(1)));
     check('funcDecl 不会把 async 前的普通函数整段吞掉',
         funcDecl(TOP_ASYNC, 'plain') === 'function plain() { }', JSON.stringify(funcDecl(TOP_ASYNC, 'plain')));
+
+    // forStatement：整条 for（含 for 头），把「循环注册了什么」变成真跑一遍
+    const FOR_SRC = [
+        'const invalidate = () => { };',
+        'for (const ch of [\'a\', \'b\', \'c\']) {',
+        '    bus.on(ch, invalidate);',
+        '}',
+        'bus.on(\'tail\', invalidate);'
+    ].join('\n');
+    const forSrc = forStatement(FOR_SRC, /^\s*for \(const ch of \[/m);
+    check('forStatement 取到整条循环（for 头 + 配平语句体，不含后面的语句）',
+        forSrc.startsWith('for (') && forSrc.endsWith('}') && !forSrc.includes('tail'),
+        JSON.stringify(forSrc));
+    const seen = [];
+    const bus = { on: (ch, fn) => seen.push([ch, typeof fn]) };
+    new Function('bus', 'invalidate', forSrc)(bus, () => { });
+    check('forStatement 的产物可直接执行，注册到的通道就是数组里的三个',
+        JSON.stringify(seen) === '[["a","function"],["b","function"],["c","function"]]', JSON.stringify(seen));
+    const FOR_IN = '    for (const k of [1, 2]) {\n        out.push(k);\n    }\n';
+    check('forStatement 容忍整条循环的缩进',
+        forStatement(FOR_IN, /^\s*for \(const k of \[/m).startsWith('    for ('),
+        JSON.stringify(forStatement(FOR_IN, /^\s*for \(const k of \[/m)));
+    check('forStatement 锚点查不到时返回空串', forStatement(FOR_SRC, /^\s*for \(const nope/) === '');
+
+    // objectConst：`const NAME = { ... }` 整条声明，嵌套花括号不吃终点
+    const OBJ_SRC = [
+        'const other = 1;',
+        'const wrapper = {',
+        '    on: (ch) => {',
+        '        if (ALLOWED.has(ch)) { return real.on(ch); }',
+        '        return null;',
+        '    },',
+        '    once: (ch) => real.on(ch)',
+        '};',
+        'const tail = 2;'
+    ].join('\n');
+    const objSrc = objectConst(OBJ_SRC, 'wrapper');
+    check('objectConst 取到整条声明且终点落在配平的 } 上',
+        objSrc.startsWith('const wrapper = {') && objSrc.endsWith('}') &&
+        !objSrc.includes('tail'), JSON.stringify(objSrc.slice(-40)));
+    const forwarded = [];
+    const made = new Function('ALLOWED', 'real', `${objSrc}; return wrapper;`)(new Set(['x']), { on: (ch) => { forwarded.push(ch); return 'ok'; } });
+    check('objectConst 的产物是可用对象，方法里的守卫真跑得起来',
+        typeof made.on === 'function' && made.on('x') === 'ok' && forwarded.length === 1 &&
+        made.on('nope') === null && forwarded.length === 1, JSON.stringify(forwarded));
+    check('objectConst 查不到名字时返回空串', objectConst(OBJ_SRC, 'nope') === '');
 
     console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
     process.exit(failures ? 1 : 0);

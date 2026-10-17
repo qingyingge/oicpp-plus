@@ -9,11 +9,17 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
-const { callbackBody } = require('./fixtures/source-extract');
+const {
+    arrowExpr, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst
+} = require('./fixtures/source-extract');
 
 const root = path.resolve(__dirname, '..');
 let failures = 0;
 let total = 0;
+
+// 段落里排好的异步守卫，统一在文件尾的 async IIFE 里跑（check 本身是同步计数，
+// 汇总和 exit 都在最后一批 add 完之后再算）。
+const deferredChecks = [];
 
 const check = (name, fn) => {
     total++;
@@ -33,7 +39,7 @@ const check = (name, fn) => {
 // 用 VM 沙箱注入假 Worker，跑引擎的真实代码。
 // 归属校验的 bug 恰好落在「本轮消息是否被计入」这一行上，
 // 注入假 Worker 就能验证，不需要真实编译器 + testlib。
-const makeEngineWithFakeWorker = (progressCount) => {
+const makeEngineWithFakeWorker = (progressCount, opts = {}) => {
     const vm = require('vm');
     const { EventEmitter } = require('events');
     const engineSrc = fs.readFileSync(path.join(root, 'src/main-process/compare-engine-v2.js'), 'utf8');
@@ -49,6 +55,10 @@ const makeEngineWithFakeWorker = (progressCount) => {
             constructor() {
                 super();
                 this.pid = 1234;
+                if (opts.registry) opts.registry.push(this);
+                // manual：一条都不自动发，由测试自己控制消息时序（迟到消息场景要卡在
+                // 引擎已建 worker、尚未收到 done 的那个窗口上）
+                if (opts.manual) return;
                 setImmediate(() => {
                     for (let i = 1; i <= progressCount; i++) this.emit('message', { type: 'progress', testIndex: i });
                     this.emit('message', { type: 'done' });
@@ -126,18 +136,48 @@ const runEngineOnce = async (Ctor, progressCount) => {
 // 2. 归属校验必须真的能区分轮次
 // ---------------------------------------------------------------------------
 {
-    const engineSrc = fs.readFileSync(path.join(root, 'src/main-process/compare-engine-v2.js'), 'utf8');
+    // 归属校验原来靠三条正则比长相（isCurrentRun 的定义写法、settle/return 的排版、
+    // settle 是否紧挨 progress 分支）。改成真跑：起一轮、把 _runId 改成别的值，
+    // 再从同一个 worker 发一条「上一轮的迟到消息」，看它计不计入本轮、本轮会不会卡死。
+    deferredChecks.push(async () => {
+        const workers = [];
+        const Ctor = makeEngineWithFakeWorker(0, { manual: true, registry: workers });
+        const engine = new Ctor();
+        const progress = [];
+        engine.on('progress', (p) => progress.push(p));
+        let outcome = 'PENDING';
+        const finished = engine.start({
+            totalTests: 3, threadCount: 1,
+            generator: 'g.exe', stdExe: 'a.exe', testExe: 'b.exe',
+            timeLimit: 0, generatorTimeout: 0
+        }).then(() => { outcome = 'RESOLVED'; }, () => { outcome = 'REJECTED'; });
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
 
-    check('isCurrentRun 在 worker 消息处理前被检查', () => {
-        assert.ok(/const isCurrentRun = \(\) => this\._runId === runId;/.test(engineSrc));
-        assert.ok(/if \(!isCurrentRun\(\)\)\s*\{\s*settle\(\);\s*return;\s*\}/.test(engineSrc),
-            '迟到消息必须先 settle 再 return，否则本轮进度会被丢弃');
-    });
+        const worker = workers[0];
+        check('迟到消息场景搭起来了：引擎已建 worker 且消息可注入',
+            () => assert.ok(worker && typeof worker.emit === 'function', `worker=${String(worker)}`));
+        if (!worker) return;
 
-    check('迟到消息分支不会被误当成当前轮的 progress/error', () => {
-        // settle 之后直接 return：若误落到 progress 分支，本轮 _completed 会被污染
-        const branch = /if \(!isCurrentRun\(\)\)\s*\{\s*settle\(\);\s*return;\s*\}\s*\n\s*if \(msg\.type === 'progress'\)/.test(engineSrc);
-        assert.ok(branch, 'settle 必须在 progress 分支之前');
+        engine._runId = 4242;                       // 下一条消息就成了「上一轮迟到的」
+        const completedBefore = engine._completed;
+        worker.emit('message', { type: 'progress', testIndex: 1 });
+        worker.emit('message', { type: 'progress', testIndex: 2 });
+        await new Promise((resolve) => setImmediate(resolve));
+
+        check('上一轮的 progress 一条都不计入本轮（_completed 与事件都不动）', () => {
+            assert.strictEqual(progress.length, 0, `迟到消息漏进了本轮：${JSON.stringify(progress)}`);
+            assert.strictEqual(engine._completed, completedBefore,
+                `_completed 从 ${completedBefore} 变成 ${engine._completed}`);
+        });
+        const raced = await Promise.race([
+            finished,
+            new Promise((resolve) => setTimeout(() => resolve('TIMEOUT'), 1500))
+        ]);
+        check('迟到分支先 settle 再 return（本轮不会永远挂在未完成的 promise 上）', () => {
+            assert.notStrictEqual(raced, 'TIMEOUT', '迟到消息没触发 settle，start() 的 promise 永远悬着');
+            assert.notStrictEqual(outcome, 'PENDING', `settle 落地异常：${outcome}`);
+        });
     });
 }
 
@@ -147,17 +187,111 @@ const runEngineOnce = async (Ctor, progressCount) => {
 {
     const cmSrc = fs.readFileSync(path.join(root, 'src/renderer/js/compile-manager.js'), 'utf8');
 
-    check('compileCurrentFile 明确返回是否启动（false = 被重入拒绝）', () => {
-        assert.ok(/if \(this\.isCompiling\) \{[\s\S]{0,600}?return false;/.test(cmSrc));
-        assert.ok(/handleCompileError\(error\.message\);\s*\}\s*\n\s*return true;/.test(cmSrc));
-    });
+    // compileCurrentFile 的重入分支与 compileAndRun 的标志位复位，原来是三条正则，
+    // 其中一条还是「旧写法 `if (!this.isCompiling)` 不许出现」的负向文本断言 ——
+    // 那种断言只要有人把旧写法换个排版就能绕过。改成把两个方法真跑一遍。
+    deferredChecks.push(async () => {
+        const vm = require('vm');
+        const compileSrc = classMethod(cmSrc, 'compileCurrentFile');
+        const andRunSrc = classMethod(cmSrc, 'compileAndRun');
+        check('方法体抽取成功: compileCurrentFile / compileAndRun', () => {
+            // classMethod 的锚点含行首缩进，抽出来带着那 4 个空格，比前先 trim
+            assert.ok(compileSrc.trim().startsWith('async compileCurrentFile'), String(compileSrc).slice(0, 30));
+            assert.ok(andRunSrc.trim().startsWith('async compileAndRun'), String(andRunSrc).slice(0, 30));
+        });
 
-    check('compileAndRun 依据返回值复位 shouldRunAfterCompile', () => {
-        // 旧写法 `if (!this.isCompiling) reset` 在重入时不成立（isCompiling 恰为 true），
-        // 标志位会残留到下一次编译完成，把「编译」意外变成「编译并运行」
-        assert.ok(/const started = await this\.compileCurrentFile\(\);\s*\n\s*if \(started === false\)\s*this.shouldRunAfterCompile = false;/.test(cmSrc));
-        assert.ok(!/await this\.compileCurrentFile\(\);\s*\n\s*if \(!this\.isCompiling\)/.test(cmSrc),
-            '仍有旧的复位条件，重入时不会生效');
+        const errs = [];
+        const ctx = vm.createContext({
+            window: {
+                i18n: { t: (k) => k },
+                editorManager: { getCurrentEditor: () => ({ filePath: '/ws/a.cpp', getValue: () => 'int main() { return 0; }' }) },
+                // 越过守卫后真正下发编译时，给一个永不 resolve 的 IPC：测试只看守卫前后的同步副作用
+                electronAPI: { compileFile: () => new Promise(() => { }) }
+            },
+            logInfo: () => { }, logWarn: () => { }, logError: (m) => { errs.push(String(m)); },
+            monaco: undefined, console, setTimeout, clearTimeout,
+            Date, JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Map, Set
+        });
+        const compile = compileMethod(ctx, compileSrc);
+        const andRun = compileMethod(ctx, andRunSrc);
+        check('两个方法编译成可调用函数', () => {
+            assert.strictEqual(typeof compile, 'function');
+            assert.strictEqual(typeof andRun, 'function');
+        });
+        if (!compile || !andRun) return;
+
+        const mkSelf = (over = {}) => {
+            const base = {
+                calls: [],
+                isCompiling: true,
+                shouldRunAfterCompile: false,
+                settings: { compilerPath: '/usr/bin/g++', compilerArgs: '-std=c++17 -O2' },
+                autoSaveCurrentFile: async () => { base.calls.push('autoSave'); },
+                loadSettings: async () => { base.calls.push('loadSettings'); },
+                getExecutablePath: (p) => String(p).replace(/\.cpp$/, '.out'),
+                appendOutput: (text, level) => { base.calls.push(`appendOutput:${level}`); },
+                showMessage: (text, level) => { base.calls.push(`showMessage:${level}`); },
+                getCurrentPlatform: () => Promise.resolve('linux')
+            };
+            Object.assign(base, over);
+            // 没桩到的方法一律记一笔名字再返回 undefined：断言直接读 calls，
+            // 既不用为每个副作用单独写桩，也不会因为漏桩而提前抛错、把守卫跑空。
+            return new Proxy(base, {
+                get: (t, k) => (k in t ? t[k]
+                    : (typeof k === 'string' ? ((...a) => { t.calls.push(k); }) : undefined))
+            });
+        };
+        const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+        const busy = mkSelf();
+        const busyResult = await compile.call(busy);
+        check('重入时 compileCurrentFile 明确 return false（不能是 undefined）', () => {
+            assert.strictEqual(busyResult, false, `实际返回 ${String(busyResult)}`);
+        });
+        check('重入只提示 already-running，不启动第二次编译（面板/状态/清屏一个都不碰）', () => {
+            assert.ok(busy.calls.includes('appendOutput:warning'), JSON.stringify(busy.calls));
+            for (const forbidden of ['showOutput', 'setStatus', 'clearOutput']) {
+                assert.ok(!busy.calls.includes(forbidden), `重入还顺手做了 ${forbidden}：${JSON.stringify(busy.calls)}`);
+            }
+            assert.strictEqual(busy.isCompiling, true);
+        });
+        check('守卫前确实读完了自动保存与设置（重入分支不是空跑）', () => {
+            assert.deepStrictEqual(busy.calls.slice(0, 2), ['autoSave', 'loadSettings'], JSON.stringify(busy.calls));
+        });
+
+        const idle = mkSelf({ isCompiling: false });
+        compile.call(idle).catch(() => { });
+        await tick();
+        await tick();
+        check('对照组：没在编译时确实越过重入守卫（置起 isCompiling 并打开输出面板）', () => {
+            assert.strictEqual(idle.isCompiling, true, '没越过守卫？');
+            assert.ok(idle.calls.includes('showOutput'), JSON.stringify(idle.calls));
+            assert.ok(!idle.calls.some((c) => String(c).startsWith('appendOutput:warning')), JSON.stringify(idle.calls));
+        });
+
+        const mkCase = (ret) => {
+            const s = mkSelf();
+            s.compileCurrentFile = async () => { s.calls.push('compileCurrentFile'); return ret; };
+            return s;
+        };
+        const rejected = mkCase(false);
+        await andRun.call(rejected);
+        check('compileAndRun 在编译被重入拒绝时复位 shouldRunAfterCompile', () => {
+            assert.strictEqual(rejected.shouldRunAfterCompile, false,
+                '标志位残留到下一次编译完成，会把「编译」意外变成「编译并运行」');
+        });
+        const started = mkCase(true);
+        await andRun.call(started);
+        check('compileAndRun 编译真启动时保留 shouldRunAfterCompile（跑完要接着运行）', () => {
+            assert.strictEqual(started.shouldRunAfterCompile, true, JSON.stringify(started.calls));
+        });
+        const threw = mkSelf();
+        threw.compileCurrentFile = async () => { throw new Error('编译器不在'); };
+        await andRun.call(threw);
+        check('compileAndRun 抛错也复位标志位并记一条 logError', () => {
+            assert.strictEqual(threw.shouldRunAfterCompile, false);
+            assert.ok(errs.length >= 1, JSON.stringify(errs));
+        });
     });
 
     check('编译输出换行：t() || 兜底 链整体被括号包裹', () => {
@@ -267,24 +401,117 @@ const runEngineOnce = async (Ctor, progressCount) => {
 // ---------------------------------------------------------------------------
 {
     const preloadSrc = fs.readFileSync(path.join(root, 'src/preload.js'), 'utf8');
-    check('settings-applied / apply-settings-preview 也让缓存失效', () => {
-        const m = /for \(const ch of \[([^\]]+)\]\) \{\s*\n\s*ipcRenderer\.on\(ch, invalidateSettingsCache\)/.exec(preloadSrc);
-        assert.ok(m, '未找到缓存失效的通道列表');
-        for (const ch of ['settings-changed', 'settings-reset', 'settings-imported', 'settings-applied', 'apply-settings-preview']) {
-            assert.ok(m[1].includes(`'${ch}'`), `${ch} 未纳入失效列表`);
-        }
-    });
-    check('在途请求不在失效后回填旧快照', () => {
-        assert.ok(/const generation = settingsCacheGeneration;/.test(preloadSrc));
-        assert.ok(/if \(generation === settingsCacheGeneration\) \{/.test(preloadSrc),
-            '必须比对代数后才回填，否则写入前的旧值会被重新缓存');
-    });
-    check('compare-warning 在事件白名单里', () => {
-        const m = /const ALLOWED_EVENT_CHANNELS = new Set\(\[([\s\S]*?)\]\);/.exec(preloadSrc);
-        assert.ok(m, '未找到 ALLOWED_EVENT_CHANNELS');
+    // 三条正则守卫（缓存失效数组字面量、代数比较的写法、白名单 Set 的字面量）
+    // 全部换成把真代码跑起来：循环真注册、getAllSettings 真缓存、包装器真拦人。
+    deferredChecks.push(async () => {
+        const vm = require('vm');
+        const pieces = {
+            loop: forStatement(preloadSrc, /^\s*for \(const ch of \[/m),
+            invalidate: funcDecl(preloadSrc, 'invalidateSettingsCache'),
+            getAll: funcDecl(preloadSrc, 'getAllSettings'),
+            // cloneSettings 是 `const NAME = (value) => {...}`，不是函数声明：
+            // 用 arrowExpr 取箭头本体，再自己拼回 const 声明。
+            clone: (() => {
+                const expr = arrowExpr(preloadSrc, /const cloneSettings = /);
+                return expr ? `const cloneSettings = ${expr}` : '';
+            })(),
+            ttl: (/^const SETTINGS_CACHE_TTL_MS = \d+;/m.exec(preloadSrc) || [''])[0],
+            eventSet: callStatement(preloadSrc, /^const ALLOWED_EVENT_CHANNELS = new Set\(/m),
+            wrapper: objectConst(preloadSrc, 'safeIpcRenderer')
+        };
+        check('preload 七段片段全部抽取成功', () => {
+            for (const [name, text] of Object.entries(pieces)) {
+                assert.ok(text.length > 0, `未抽到 ${name}`);
+            }
+        });
+        if (Object.values(pieces).some((t) => !t)) return;
+
+        let listeners = [];
+        let blocked = [];
+        let invokeCalls = 0;
+        let resolvers = [];
+        const ctx = vm.createContext({
+            ipcRenderer: {
+                on: (ch, fn) => { listeners.push([ch, fn]); },
+                once: (ch, fn) => { listeners.push(['once:' + ch, fn]); },
+                send: () => { },
+                invoke: () => {
+                    invokeCalls++;
+                    return new Promise((resolve) => {
+                        resolvers.push(() => resolve({ compilerPath: `快照${invokeCalls}` }));
+                    });
+                },
+                removeListener: () => { }, removeAllListeners: () => { }
+            },
+            console: { warn: (m) => { blocked.push(String(m)); }, log: () => { }, error: () => { } },
+            JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Set, Map, Date
+        });
+        // 这几个模块级状态在真实源码里是 let/const；沙箱用同名声明补齐 ——
+        // 同一个 context 的后续脚本共享这份词法绑定（和多个 <script> 一样）。
+        // SEND/INVOKE 两个名单不是本段要测的东西，给最小桩。
+        vm.runInContext('let settingsCache = null, settingsCacheTime = 0, settingsCacheInflight = null, settingsCacheGeneration = 0;\n'
+            + "const SETTINGS_MUTATING_CHANNELS = new Set(['update-settings']);\n"
+            + 'const ALLOWED_SEND_CHANNELS = new Set();\n'
+            + "const ALLOWED_INVOKE_CHANNELS = new Set(['get-all-settings']);\n", ctx);
+        vm.runInContext([pieces.ttl, pieces.invalidate, pieces.clone, pieces.getAll,
+            pieces.eventSet, pieces.wrapper, pieces.loop].join('\n') + '\n', ctx);
+        // const 声明只落进 context 的词法环境，挂在 ctx 上看不到；再跑一条脚本把它们递出来。
+        vm.runInContext('this.__api = { safeIpcRenderer, getAllSettings, invalidateSettingsCache, ALLOWED_EVENT_CHANNELS };', ctx);
+        const api = ctx.__api;
+
+        check('广播失效循环真注册了 5 个通道，回调就是 invalidateSettingsCache 本体', () => {
+            assert.deepStrictEqual(listeners.map((l) => l[0]),
+                ['settings-changed', 'settings-reset', 'settings-imported', 'settings-applied', 'apply-settings-preview'],
+                JSON.stringify(listeners.map((l) => l[0])));
+            assert.ok(listeners.every((l) => l[1] === api.invalidateSettingsCache),
+                '注册的回调不是失效函数本体，改完设置缓存不会掉');
+        });
+
+        const a = api.getAllSettings();
+        const b = api.getAllSettings();
+        resolvers.shift()();
+        await Promise.all([a, b]);
+        api.getAllSettings();                       // TTL 内第二次读
+        check('TTL 内命中缓存、在途请求共用同一次 invoke（否则下面几条都是空跑）', () => {
+            assert.strictEqual(invokeCalls, 1, `invoke 了 ${invokeCalls} 次，缓存/去重没生效`);
+        });
+
+        api.invalidateSettingsCache();
+        const d = api.getAllSettings();
+        check('invalidateSettingsCache 之后必须重新拉一次', () => {
+            assert.strictEqual(invokeCalls, 2, `invoke 仍是 ${invokeCalls} 次，缓存没被失效掉`);
+        });
+        resolvers.shift()();
+        await d;
+
+        // 核心场景：读取在途 + 期间发生写入 → 这个响应是写入**前**的快照，不许回填
+        api.invalidateSettingsCache();              // 清掉 d 的结果，保证下一条真的在途
+        const inflight = api.getAllSettings();      // invoke #3
+        api.invalidateSettingsCache();              // 期间用户改了设置
+        resolvers.shift()();
+        await inflight;
+        api.getAllSettings();                       // 必须再拉一次
+        check('在途请求不把写入前的旧快照回填进缓存（代数比对生效）', () => {
+            assert.strictEqual(invokeCalls, 4, `invoke 停在 ${invokeCalls} 次：旧快照被重新缓存，改完设置读到更旧的值`);
+        });
+        resolvers.shift()();
+
+        // H8 事件白名单：跑真包装器，不读 Set 的字面量
+        listeners = []; blocked = [];
+        const handler = () => { };
         for (const ch of ['compare-progress', 'compare-error', 'compare-complete', 'compare-warning']) {
-            assert.ok(m[1].includes(`'${ch}'`), `${ch} 不在白名单，主进程发的消息会被静默丢弃`);
+            api.safeIpcRenderer.on(ch, handler);
         }
+        api.safeIpcRenderer.once('debug-started', handler);
+        api.safeIpcRenderer.on('web-contents-inspector', handler);
+        check('compare-* 四个通道都穿得过事件白名单，once 同样放行', () => {
+            assert.deepStrictEqual(listeners.map((l) => l[0]),
+                ['compare-progress', 'compare-error', 'compare-complete', 'compare-warning', 'once:debug-started'],
+                JSON.stringify(listeners.map((l) => l[0])));
+        });
+        check('名单外的通道被拦下并警告一次（渲染进程窃听不到任意 IPC 事件）', () => {
+            assert.strictEqual(blocked.length, 1, JSON.stringify({ listeners, blocked }));
+        });
     });
 }
 
@@ -339,6 +566,11 @@ const runEngineOnce = async (Ctor, progressCount) => {
         assert.strictEqual(b.progress.length, 0, `对照组本应复现 bug，却收到 ${b.progress.length} 条 progress`);
     });
 
+    for (const run of deferredChecks) await run();
+
     console.log(`\n${total - failures}/${total} assertions passed`);
     process.exit(failures === 0 ? 0 : 1);
-})();
+})().catch((error) => {
+    console.log(`[FAIL] 异步守卫自身跑通 | ${String((error && error.stack) || error)}`);
+    process.exit(1);
+});
