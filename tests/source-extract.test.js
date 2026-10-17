@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst, toFn, toProviderFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst, scalarConst, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -311,6 +311,27 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
         typeof made.on === 'function' && made.on('x') === 'ok' && forwarded.length === 1 &&
         made.on('nope') === null && forwarded.length === 1, JSON.stringify(forwarded));
     check('objectConst 查不到名字时返回空串', objectConst(OBJ_SRC, 'nope') === '');
+
+    // scalarConst：整条标量声明。终点收在深度 0 的第一个 ; 上，
+    // 括号里的 > 0 / ? : 都不算终点；返回值去掉行首缩进（缩进不带信息，留着只会让断言锁空格）。
+    const SCALAR_SRC = [
+        '    const genTimeout = (Number.isFinite(generatorTimeout) && generatorTimeout > 0) ? generatorTimeout : 0;',
+        'const MAX_BYTES = 1024 * 1024;',
+        'const tail = 2;'
+    ].join('\n');
+    const genDecl = scalarConst(SCALAR_SRC, 'genTimeout');
+    check('scalarConst 剥掉缩进、取到整条三元声明，不越界到下一条',
+        genDecl.startsWith('const genTimeout') && genDecl.endsWith(';') && !genDecl.includes('MAX_BYTES'),
+        JSON.stringify(genDecl));
+    const normalizeGen = new Function('generatorTimeout', `${genDecl} return genTimeout;`);
+    check('scalarConst 的产物可直接求值：0 / 负数 / NaN 归零，正数原样',
+        normalizeGen(0) === 0 && normalizeGen(-1) === 0 && normalizeGen(NaN) === 0 && normalizeGen(1500) === 1500,
+        [0, -1, NaN, 1500].map(normalizeGen).join(','));
+    check('scalarConst 收在行尾分号，不吞掉后一条声明',
+        scalarConst(SCALAR_SRC, 'MAX_BYTES') === 'const MAX_BYTES = 1024 * 1024;');
+    check('scalarConst 不把前缀同名的另一条声明当成目标',
+        scalarConst('const genTimeoutMs = 5;\nconst genTimeout = 6;', 'genTimeout') === 'const genTimeout = 6;');
+    check('scalarConst 查不到名字时返回空串', scalarConst(SCALAR_SRC, 'nope') === '');
 
     console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
     process.exit(failures ? 1 : 0);

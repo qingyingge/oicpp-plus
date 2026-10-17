@@ -36,49 +36,10 @@ const check = (name, fn) => {
 // 1. _runCounter 必须初始化，且轮次严格递增
 // ---------------------------------------------------------------------------
 
-// 用 VM 沙箱注入假 Worker，跑引擎的真实代码。
+// 用 VM 沙箱注入假 Worker，跑引擎的真实代码（假件见 fixtures/fake-compare-engine.js）。
 // 归属校验的 bug 恰好落在「本轮消息是否被计入」这一行上，
 // 注入假 Worker 就能验证，不需要真实编译器 + testlib。
-const makeEngineWithFakeWorker = (progressCount, opts = {}) => {
-    const vm = require('vm');
-    const { EventEmitter } = require('events');
-    const engineSrc = fs.readFileSync(path.join(root, 'src/main-process/compare-engine-v2.js'), 'utf8');
-    const sandbox = {
-        //编译产物用这个对象挂模块标记，真实环境里由模块包装器提供，沙箱必须补上这个绑定
-        require, module: { exports: {} }, exports: {}, console,
-        setTimeout, clearTimeout, Promise, EventEmitter,
-        os: { cpus: () => [{ length: 4 }] },
-        path,
-        __dirname: path.join(root, 'src', 'main-process'),
-        fs: { existsSync: () => true, mkdirSync: () => {}, rmSync: () => {} },
-        Worker: class FakeWorker extends EventEmitter {
-            constructor() {
-                super();
-                this.pid = 1234;
-                if (opts.registry) opts.registry.push(this);
-                // manual：一条都不自动发，由测试自己控制消息时序（迟到消息场景要卡在
-                // 引擎已建 worker、尚未收到 done 的那个窗口上）
-                if (opts.manual) return;
-                setImmediate(() => {
-                    for (let i = 1; i <= progressCount; i++) this.emit('message', { type: 'progress', testIndex: i });
-                    this.emit('message', { type: 'done' });
-                });
-            }
-            postMessage() { }
-            terminate() { return Promise.resolve(); }
-            removeAllListeners() { return this; }
-        }
-    };
-    vm.createContext(sandbox);
-    //剥掉原生引入改用沙箱假件，产物里同一件事换成命名空间对象，两种形态都要接住否则假件失效
-    vm.runInContext(engineSrc
-        .replace(/^const \{ EventEmitter \} = require\('events'\);$/m, '')
-        .replace(/^const \{ Worker \} = require\('worker_threads'\);$/m, '')
-        .replace(/^const events_1 = require\("events"\);$/m, 'const events_1 = { EventEmitter };')
-        .replace(/^const worker_threads_1 = require\("worker_threads"\);$/m, 'const worker_threads_1 = { Worker };'),
-    sandbox, { filename: 'compare-engine-v2.js' });
-    return sandbox.module.exports.CompareEngineV2;
-};
+const { makeEngineWithFakeWorker } = require('./fixtures/fake-compare-engine');
 
 const runEngineOnce = async (Ctor, progressCount) => {
     const engine = new Ctor();

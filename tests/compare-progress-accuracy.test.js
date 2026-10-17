@@ -5,7 +5,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { classMethod, toFn } = require('./fixtures/source-extract');
+const vm = require('vm');
+const { arrowExpr, classMethod, funcDecl, scalarConst, toFn } = require('./fixtures/source-extract');
+const { runEngine, pick } = require('./fixtures/fake-compare-engine');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -16,7 +18,6 @@ const check = (name, condition, extra = '') => {
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
 const comparerSource = read('src', 'renderer', 'js', 'sidebar', 'codeComparer.js');
-const engineSource = read('src', 'main-process', 'compare-engine-v2.js');
 const workerSource = read('src', 'main-process', 'compare-worker-v6.js');
 const mainSource = read('src', 'main.js');
 const preloadSource = read('src', 'preload.js');
@@ -81,12 +82,12 @@ check('legacy engine records executed groups including generation failures',
 check('legacy engine completion summary uses executed count',
     /const successfulTests = executed - failedGenerations;/.test(comparerSource)
     && !/successfulTests = task\.state\.totalTests - failedGenerations/.test(comparerSource));
-check('engine complete event no longer carries an English warning string',
-    !/tests failed/.test(engineSource));
-check('engine complete event reports completed and failed counts',
-    /emit\('complete', \{\s*total: this\._total, completed: this\._completed, failed: this\._errors/.test(engineSource));
-check('engine stopped event also reports total/completed/failed',
-    /emit\('stopped', \{ total: this\._total, completed: this\._completed, failed: this\._errors \}\)/.test(engineSource));
+// 引擎事件载荷（complete / stopped / incomplete_run）改成真跑：
+// fixtures/fake-compare-engine.js 用 vm 注入假 Worker，跑 compare-engine-v2.js 的本体，
+// 按 worker 真实上报的 progress/error 消息收事件。原先锁的是
+// `/emit\('complete', \{ total: this\._total, completed: this\._completed/` 这类字面量 ——
+// 载荷少一个字段、或者把英文告警串拼回 message 里，正则都照样绿；
+// 而计数算错、停止时发成 complete，同样是绿。见文件尾 engineBehaviour()。
 
 // ---- 手动停止后仍要能看到完成数 ----
 
@@ -159,21 +160,13 @@ check('error group label is hidden when there is no real test index',
     && /:\s*'';\s*\}/.test(comparerSource));
 
 // ---- 导出/差异数据不得被静默截断 ----
+//
+// 截断链路 worker → engine → renderer 的前两环改成真跑（见文件尾 workerBehaviour /
+// engineBehaviour）：worker 侧抽 fail 闭包 + captureText 真调，看实际回传的
+// 正文长度与三个 truncated 标记；引擎侧注入带标记的 worker 消息，看渲染层收到的载荷。
+// 原来锁的是 /MAX_CAPTURED_INPUT_BYTES = 1024 \* 1024/ 和 /inputTruncated: input\.truncated/
+// 这类字面量 —— 上限改回 200 字节、或者把标记错配到别的字段上，只要那行字还在就照样绿。
 
-check('worker captures input well beyond the old 2000 byte cap',
-    /MAX_CAPTURED_INPUT_BYTES = 1024 \* 1024/.test(workerSource));
-check('worker captures program output well beyond the old 200 byte cap',
-    /MAX_CAPTURED_OUTPUT_BYTES = 64 \* 1024/.test(workerSource));
-check('worker reports explicit truncation flags instead of silent clipping',
-    /inputTruncated: input\.truncated/.test(workerSource)
-    && /stdOutputTruncated: std \? std\.truncated/.test(workerSource)
-    && /testOutputTruncated: test \? test\.truncated/.test(workerSource));
-check('no residual 200/2000 byte toString clipping in the worker',
-    !/toString\('utf8', 0, 200\)/.test(workerSource) && !/toString\('utf8', 0, 2000\)/.test(workerSource));
-check('engine forwards truncation flags to the renderer',
-    /inputTruncated: !!msg\.inputTruncated/.test(engineSource)
-    && /stdOutputTruncated: !!msg\.stdOutputTruncated/.test(engineSource)
-    && /testOutputTruncated: !!msg\.testOutputTruncated/.test(engineSource));
 check('renderer persists truncation flags on the error result',
     /inputTruncated: !!error\.inputTruncated/.test(comparerSource)
     && /stdOutputTruncated: !!error\.stdOutputTruncated/.test(comparerSource));
@@ -218,22 +211,17 @@ check('output_limit gets its own localized title',
     /errType === 'output_limit'\)[\s\S]{0,120}?compare\.errorOutputLimit/.test(comparerSource));
 
 // ---- 0 = 不限时的语义在两条引擎路径上一致 ----
+//
+// 归一化改成真跑：引擎侧看它**实际下发给 worker 的 postMessage 载荷**（engineBehaviour），
+// worker 侧把 `const genTimeout = ...` 那条语句抽出来求值（workerBehaviour）。
+// 原来锁的是 `/Number\.isFinite\(config\.timeLimit\) && ... : 0/` 整串三元表达式 ——
+// 把 `> 0` 写成 `>= 0`、或者退回 `|| 5000` 兜底，只要字面量还在就照样绿。
 
-check('engine no longer coerces a zero time limit into 5000ms',
-    !/config\.timeLimit \|\| 5000/.test(engineSource) && !/config\.generatorTimeout \|\| 5000/.test(engineSource));
-check('engine normalizes non-positive limits to 0 (unlimited)',
-    /Number\.isFinite\(config\.timeLimit\) && config\.timeLimit > 0\) \? config\.timeLimit : 0/.test(engineSource)
-    && /Number\.isFinite\(config\.generatorTimeout\) && config\.generatorTimeout > 0\) \? config\.generatorTimeout : 0/.test(engineSource));
-check('worker honors a zero generator timeout as unlimited',
-    /Number\.isFinite\(generatorTimeout\) && generatorTimeout > 0\) \? generatorTimeout : 0/.test(workerSource)
-    && !/generatorTimeout \|\| 5000/.test(workerSource));
 check('renderer explicitly sends generatorTimeout for the new engine',
     /generatorTimeout: 0,/.test(comparerSource));
 
 // ---- 英文错误信息不得直接进 UI ----
 
-check('worker emits a stable code alongside the human message',
-    /code,/.test(workerSource) && /kind,/.test(workerSource));
 check('renderer maps engine codes to localized strings',
     /getEngineErrorMessage\(error\)/.test(comparerSource) && /compare\.fastspawnFallback/.test(comparerSource));
 check('raw technical detail is appended after the localized message, not instead of it',
@@ -430,6 +418,213 @@ check('preload exposes the warning channel',
 check('renderer treats engine warnings as non-fatal',
     /onCompareWarning\(\(data\) => \{\s*logWarn/.test(comparerSource));
 
+// ---- 引擎事件载荷：跑真引擎 + 假 Worker ----
+//
+// 断言对象是 CompareEngineV2 处理 worker 消息后**实际发出的事件**，
+// 不是 compare-engine-v2.js 里的字面量。放在末尾异步段里跑。
+
+const engineBehaviour = async () => {
+    const run = await runEngine({
+        config: { totalTests: 3 },
+        messages: [
+            { type: 'progress', testIndex: 1 },
+            { type: 'error', testIndex: 1, kind: 'std_re', code: 'std_exit', message: 'boom' },
+            { type: 'progress', testIndex: 2 },
+            { type: 'error', testIndex: 2, kind: 'output_limit', code: 'output_limit', message: 'too much' },
+            { type: 'progress', testIndex: 3 }
+        ]
+    });
+    const complete = pick(run.events, 'complete');
+    check('一轮跑完只发一次 complete，不发 stopped',
+        complete.length === 1 && pick(run.events, 'stopped').length === 0,
+        JSON.stringify(run.events.map((e) => e.type)));
+    const done = complete[0] || {};
+    check('complete 载荷是真实的 total/completed/failed 计数（3 组跑完、其中 2 组出错）',
+        done.total === 3 && done.completed === 3 && done.failed === 2, JSON.stringify(done));
+    // 原 bug 的形态就是在这条载荷里拼一句 "N tests failed"：文案必须由渲染层按 code 组装
+    check('complete 载荷只有三个数字，没夹任何英文文案',
+        Object.keys(done).length === 3 && Object.values(done).every((v) => typeof v === 'number'),
+        JSON.stringify(done));
+
+    // 半途停止：状态机走 stopping，收尾必须发 stopped 而不是 complete
+    const stoppedRun = await runEngine({
+        config: { totalTests: 5 },
+        messages: [
+            { type: 'progress', testIndex: 1 },
+            { type: 'error', testIndex: 2, kind: 'test_re', code: 'test_exit' }
+        ],
+        stop: true
+    });
+    const stopped = pick(stoppedRun.events, 'stopped');
+    check('手动停止时发的是 stopped，不再补发 complete',
+        stopped.length === 1 && pick(stoppedRun.events, 'complete').length === 0,
+        JSON.stringify(stoppedRun.events.map((e) => e.type)));
+    check('stopped 载荷同样带三个计数，UI 停止后还能看到完成数',
+        stopped[0]?.total === 5 && stopped[0]?.completed === 1 && stopped[0]?.failed === 1,
+        JSON.stringify(stopped[0]));
+
+    // worker 提前收工：完成数少于计划数，必须以告警形式暴露缺口
+    const gap = await runEngine({ config: { totalTests: 4 }, messages: [{ type: 'progress', testIndex: 1 }] });
+    const incomplete = pick(gap.events, 'warning').find((w) => w.type === 'incomplete_run');
+    check('跑不满计划数时发 incomplete_run 告警，而不是谎称全跑完',
+        incomplete !== undefined, JSON.stringify(pick(gap.events, 'warning')));
+    check('缺口告警给的是 completed/total/missing 三个计数，message 留空串',
+        incomplete?.completed === 1 && incomplete?.total === 4 && incomplete?.missing === 3
+        && incomplete?.message === '', JSON.stringify(incomplete));
+    // 缺口那一轮的 complete 才是最容易充数的地方：拿计划数当完成数，UI 就显示 4/4 + 100%
+    const gapDone = pick(gap.events, 'complete')[0] || {};
+    check('缺口那轮的 completed 是真实执行数 1，不是计划数 4',
+        gapDone.completed === 1 && gapDone.total === 4, JSON.stringify(gapDone));
+
+    const full = await runEngine({
+        config: { totalTests: 2 },
+        messages: [{ type: 'progress', testIndex: 1 }, { type: 'progress', testIndex: 2 }]
+    });
+    check('全部跑完时不该有 incomplete_run 告警',
+        pick(full.events, 'warning').every((w) => w.type !== 'incomplete_run'),
+        JSON.stringify(pick(full.events, 'warning')));
+
+    // 截断标记的引擎一环：worker 消息里的标记必须逐字段落到渲染层收到的载荷上
+    const forwarded = await runEngine({
+        config: { totalTests: 2 },
+        messages: [{
+            type: 'error', testIndex: 1, kind: 'std_re', code: 'std_exit', message: 'x',
+            input: 'IN', inputTruncated: true, stdOutputTruncated: 0
+        }, {
+            // 一条什么都没带的错误：兜底路径必须落成空串，不能漏 undefined 给渲染层拼
+            type: 'error', testIndex: 2, kind: 'engine', code: 'engine'
+        }]
+    });
+    const err = pick(forwarded.events, 'error').find((e) => e.testNumber === 1);
+    const bare = pick(forwarded.events, 'error').find((e) => e.testNumber === 2);
+    check('worker 的三个截断标记逐一透传，且按布尔收窄（0 → false，缺省 → false）',
+        err?.inputTruncated === true && err?.stdOutputTruncated === false
+        && err?.testOutputTruncated === false, JSON.stringify(err));
+    check('引擎把 worker 的 kind 落成 type、code 原样带上（渲染层靠 code 映射译文）',
+        err?.type === 'std_re' && err?.code === 'std_exit', JSON.stringify(err));
+    check('缺失的输出字段兜空串，不留 undefined（拼字符串不会写出 "undefined"）',
+        err?.input === 'IN' && err?.stdOutput === '' && err?.testOutput === '', JSON.stringify(err));
+    check('一条都不带的错误消息，三个输出字段全是空串',
+        bare?.input === '' && bare?.stdOutput === '' && bare?.testOutput === '',
+        JSON.stringify(bare));
+
+    // 超时归一化：看引擎真正下发给 worker 的那条 run-tests 消息
+    const postFor = async (config) => (await runEngine({ config })).posts[0];
+    const unlimited = await postFor({ totalTests: 3, timeLimit: 0, generatorTimeout: 0 });
+    check('0 = 不限时：下发给 worker 的 timeout/generatorTimeout 原样是 0，不是 5000',
+        unlimited?.timeout === 0 && unlimited?.generatorTimeout === 0, JSON.stringify(unlimited));
+    const junk = await postFor({ totalTests: 3, timeLimit: -1, generatorTimeout: NaN });
+    check('负数 / NaN 的时限归一成 0，不带着非法值下发给 worker',
+        junk?.timeout === 0 && junk?.generatorTimeout === 0, JSON.stringify(junk));
+    const finite = await postFor({ totalTests: 3, timeLimit: 2000, generatorTimeout: 300 });
+    check('正数时限原样下发（归一化不许把好值也吃掉）',
+        finite?.timeout === 2000 && finite?.generatorTimeout === 300, JSON.stringify(finite));
+    check('下发载荷里 executable 路径与本批范围都在（配置校验之外不擅自加工）',
+        finite?.stdPath === 'a.exe' && finite?.testPath === 'b.exe'
+        && finite?.startIdx === 1 && finite?.count === 3, JSON.stringify(finite));
+};
+
+// ---- worker 的诊断载荷：抽 fail 闭包真跑 ----
+//
+// fail 是 worker 里把「原始输入/输出 + 是否超限」打包成 error 消息的唯一出口。
+// 它依赖 captureText 和两个上限常量，三样都从源码抽出来进同一个沙箱，
+// 于是「上限是多少字节」「标记跟没跟着字段」都变成返回值，而不是源码字面量。
+
+const workerBehaviour = async () => {
+    const failSrc = arrowExpr(workerSource, /const fail\s*=\s*/);
+    const captureSrc = funcDecl(workerSource, 'captureText');
+    const capInSrc = scalarConst(workerSource, 'MAX_CAPTURED_INPUT_BYTES');
+    const capOutSrc = scalarConst(workerSource, 'MAX_CAPTURED_OUTPUT_BYTES');
+    check('worker 侧片段抽取成功（fail 闭包 / captureText / 两条上限常量）',
+        failSrc.startsWith('(') && captureSrc.startsWith('function')
+        && capInSrc.startsWith('const MAX_CAPTURED_INPUT_BYTES')
+        && capOutSrc.startsWith('const MAX_CAPTURED_OUTPUT_BYTES'),
+        JSON.stringify({ fail: failSrc.slice(0, 12), capture: captureSrc.slice(0, 12), capIn: capInSrc, capOut: capOutSrc }));
+
+    const ctx = vm.createContext({ posts: [], Buffer, String, Number, Math, Array, Object, JSON });
+    vm.runInContext([
+        capInSrc, capOutSrc, captureSrc,
+        'let lastGenMs = 11, lastStdMs = 22, lastTestMs = 33;',
+        'const worker_threads_1 = { parentPort: { postMessage: (m) => posts.push(m) } };',
+        'const fail = ' + failSrc,
+        'this.__fail = fail;',
+        'this.__caps = { input: MAX_CAPTURED_INPUT_BYTES, output: MAX_CAPTURED_OUTPUT_BYTES };'
+    ].join('\n'), ctx, { filename: 'compare-worker-v6.js' });
+    const caps = ctx.__caps;
+    const fail = (...args) => { ctx.posts.length = 0; ctx.__fail(...args); return ctx.posts[0] || {}; };
+
+    check('上限按字节计，且回传给渲染层的诊断数据不许退回 200/2000 那一档',
+        caps.input >= 1024 * 1024 && caps.output >= 64 * 1024, JSON.stringify(caps));
+    check('输入正好等于上限时不算截断（判定是 > 而不是 >=）',
+        fail(1, 'std_re', 'std_exit', 'd', { rawInput: 'x'.repeat(caps.input) }).inputTruncated === false,
+        JSON.stringify(caps));
+    check('输入超上限 1 字节才截断，正文切到上限长度且标记为 true',
+        (() => {
+            const m = fail(1, 'std_re', 'std_exit', 'd', { rawInput: 'x'.repeat(caps.input + 1) });
+            return m.inputTruncated === true && m.input.length === caps.input;
+        })());
+    check('2000 字节的输出原样保留、不截断（旧缺陷形态）',
+        (() => {
+            const m = fail(1, 'std_re', 'std_exit', 'd', { rawStd: 'z'.repeat(2000) });
+            return m.stdOutput.length === 2000 && m.stdOutputTruncated === false;
+        })());
+    check('200000 字节的输出被截断，但必须带标记（宁可截断也不静默砍）',
+        (() => {
+            const m = fail(1, 'std_re', 'std_exit', 'd', { rawStd: 'z'.repeat(200000) });
+            return m.stdOutput.length === caps.output && m.stdOutputTruncated === true;
+        })());
+    check('输出走自己那条上限：刚好 64 KiB 级别不截断',
+        (() => {
+            const m = fail(1, 'std_re', 'std_exit', 'd', { rawStd: 'y'.repeat(caps.output) });
+            return m.stdOutputTruncated === false && m.stdOutput.length === caps.output;
+        })());
+    check('超上限的输出同样被截断并置标记（标记不是只有 input 那一侧会动）',
+        (() => {
+            const m = fail(1, 'std_re', 'std_exit', 'd',
+                { rawStd: 'y'.repeat(caps.output + 1), rawTest: 't'.repeat(caps.output + 1) });
+            return m.stdOutputTruncated === true && m.testOutputTruncated === true
+                && m.stdOutput.length === caps.output && m.testOutput.length === caps.output;
+        })());
+    check('Buffer 输入同样按字节判定（不是拿 length 属性猜字符数）',
+        fail(1, 'std_re', 'std_exit', 'd', { rawInput: Buffer.alloc(caps.input + 1, 0x61) }).inputTruncated === true);
+
+    const gen = fail(7, 'generator', 'gen_exit', 'gen boom', { rawInput: 'IN', exitCode: 3 });
+    check('kind/code/testIndex/exitCode 一起回传，message 只当技术细节',
+        gen.kind === 'generator' && gen.code === 'gen_exit' && gen.testIndex === 7
+        && gen.exitCode === 3 && gen.message === 'gen boom', JSON.stringify(gen));
+    check('只给 rawInput 时 std/test 两侧都是 undefined（缺失 ≠ 空串，也 ≠ 未截断）',
+        gen.stdOutput === undefined && gen.stdOutputTruncated === undefined
+        && gen.testOutput === undefined && gen.testOutputTruncated === undefined,
+        JSON.stringify(gen));
+    check('三个截断标记各跟各的字段：三端都给就三端都是未截断的正文',
+        (() => {
+            const m = fail(1, 'test_re', 'test_exit', 'd', { rawInput: 'a', rawStd: 'b', rawTest: 'c' });
+            return m.input === 'a' && m.stdOutput === 'b' && m.testOutput === 'c'
+                && m.inputTruncated === false && m.stdOutputTruncated === false && m.testOutputTruncated === false;
+        })(), JSON.stringify(fail(1, 'test_re', 'test_exit', 'd', { rawInput: 'a', rawStd: 'b', rawTest: 'c' })));
+    check('detail 为 null 时 message 落成空串，不是字面量 "null"',
+        fail(1, 'engine', 'engine', null).message === '');
+    check('耗时字段按 includeStdMs/includeTestMs 才带，缺省是 undefined 而不是 0',
+        (() => {
+            const bare = fail(1, 'std_tle', 'std_timeout', 'd', {});
+            const withMs = fail(1, 'std_tle', 'std_timeout', 'd', { includeStdMs: true, includeTestMs: true });
+            return bare.stdMs === undefined && bare.testMs === undefined && bare.genMs === 11
+                && withMs.stdMs === 22 && withMs.testMs === 33;
+        })());
+
+    // 生成器超时的归一化语句：唯一自由标识符是内建 Number，两侧语义一致，直接求值即可
+    const genTimeoutSrc = scalarConst(workerSource, 'genTimeout');
+    check('worker 的生成器超时归一化语句抽取成功',
+        genTimeoutSrc.startsWith('const genTimeout') && genTimeoutSrc.includes('generatorTimeout'),
+        genTimeoutSrc);
+    const normalizeGenTimeout = new Function('generatorTimeout', genTimeoutSrc + ' return genTimeout;');
+    check('worker 侧 0 / 负数 / NaN 的生成器超时都归一成不限时（不再被 || 5000 兜底）',
+        normalizeGenTimeout(0) === 0 && normalizeGenTimeout(-1) === 0
+        && normalizeGenTimeout(NaN) === 0 && normalizeGenTimeout('x') === 0,
+        [0, -1, NaN, 'x'].map(normalizeGenTimeout).join(','));
+    check('worker 侧正数生成器超时原样生效', normalizeGenTimeout(1500) === 1500);
+};
+
 // ---- 导出真跑一遍：截断标记必须逐字段跟着数据走 ----
 //
 // exportResults 是 async，放在文件末尾的异步段里跑（前面的同步断言已经把 failures 累加好了）。
@@ -437,6 +632,8 @@ check('renderer treats engine warnings as non-fatal',
 // 把两个 flag 对调、或者让 null 输出写成 'null'、取消选择时照样落盘，全都照样绿。
 
 (async () => {
+    await engineBehaviour();
+    await workerBehaviour();
     const NOTICE = '⟪导出数据不完整⟫';
     const realWindow = global.window;
     const realLogError = global.logError;

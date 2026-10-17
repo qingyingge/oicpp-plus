@@ -103,6 +103,24 @@ function compileMethod(ctx, methodSrc) {
     return ctx.__compiled;
 }
 
+// 整条标量 const/let 声明：`const NAME = <expr>;`
+// 用途是把 `const genTimeout = (Number.isFinite(x) && x > 0) ? x : 0;` 这类
+// **写在语句里的归一化逻辑**抽出来真跑一遍，而不是正则比字面量。
+// 终点取深度 0 上的第一个 ';'（没有分号就收到行尾）：只适用于单行初值，
+// 对象/函数体的 '{' 会把深度带起来，所以不会被半路截断 —— 那种形态请用 objectConst/arrowExpr。
+function scalarConst(src, name) {
+    const m = new RegExp('^\\s*(?:const|let)\\s+' + name + '\\s*=\\s*', 'm').exec(src);
+    if (!m) return '';
+    let d = 0;
+    for (let i = m.index + m[0].length; i < src.length; i++) {
+        const c = src[i];
+        if (c === '(' || c === '[' || c === '{') d++;
+        else if (c === ')' || c === ']' || c === '}') d--;
+        else if ((c === ';' || c === '\n') && d === 0) return src.slice(m.index, i + 1).trim();
+    }
+    return '';
+}
+
 // 整条 for 语句（for 头 + 配平的语句体）。
 // 用在「循环注册了哪些通道」这类断言上：把循环真跑一遍，比正则读数组字面量强 ——
 // 数组里加了条件判断、去重、拼前缀，正则看不出来，跑一遍立刻显形。
@@ -180,4 +198,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { arrowExpr, classMethod, compileMethod, forStatement, funcDecl, arrowProp, callbackBody, callStatement, objectConst, toFn, toProviderFn };
+module.exports = { arrowExpr, classMethod, compileMethod, forStatement, funcDecl, objectConst, scalarConst, arrowProp, callbackBody, callStatement, toFn, toProviderFn };
