@@ -5109,7 +5109,7 @@ function setupIPC() {
 
     ipcMain.handle('walk-directory', async (event, dirPath, options = {}) => {
         const {
-            includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py'],
+            includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py', '.pdf'],
             excludeGlobs = ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode', '.dsym'],
             maxFiles = 5000
         } = options || {};
