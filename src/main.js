@@ -5904,6 +5904,11 @@ function setupIPC() {
                 resolve(errorResult);
             });
 
+            // 被测程序先退出时写 stdin 会触发 EPIPE，这条流没有 error 监听会冒泡成
+            // uncaughtException（run-interactive 的两个 stdin 同样处理）
+            childProcess.stdin.on('error', (stdinError) => {
+                try { logWarn('[运行程序] 写入 stdin 失败:', stdinError?.message || stdinError); } catch (_) { }
+            });
             if (input !== undefined && input !== null && input !== '') {
                 childProcess.stdin.write(input);
             }
