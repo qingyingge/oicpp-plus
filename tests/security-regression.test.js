@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, funcDecl, ifStatement, setMembers } = require('./fixtures/source-extract');
+const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, funcDecl, ifStatement, scalarConst, setMembers } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -112,6 +112,21 @@ const remoteRows = (() => {
         push('上游返回非 JSON 时 data 归 null，状态码原样回报，不谎报 ok',
             bodyText.ok && bodyText.value.status === 500 && bodyText.value.data === null
             && bodyText.value.ok === false, JSON.stringify(bodyText.value));
+        // 「拿到空回包」和「回包是 JSON 的 null」都必须原样回报 null data：
+        // 一旦有人给它兜个 {} / {empty:true}，上层 `if (!data)` 的空判就永远不成立。
+        const empties = await Promise.all([
+            (async () => {
+                ctx.axios.get = (url, opt) => { calls.push(['get', url, opt]); return Promise.resolve({ status: 204, data: null }); };
+                return settle({ path: allowedPath });
+            })(),
+            (async () => {
+                ctx.axios.get = (url, opt) => { calls.push(['get', url, opt]); return Promise.resolve({ status: 200, data: 'null' }); };
+                return settle({ path: allowedPath });
+            })()
+        ]);
+        push('上游回包为空或为 JSON null 时 data 保持 null，不伪造占位对象',
+            empties.every((r) => r.ok && r.value.data === null),
+            JSON.stringify(empties.map((r) => r.value)));
         return rows;
     })().then((r) => r, (e) => [{ name: '远程接口代理守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
 })();
@@ -163,9 +178,214 @@ check('run-program 在 invoke 白名单里', (invokeChannels || []).includes('ru
         && rv === 'rv', JSON.stringify({ sent, rv }));
 }
 
-check('GDB breakpoint snapshot API exists', gdbSource.includes('getBreakpoints()'));
-check('GDB command timeout is implemented', gdbSource.includes('MI_COMMAND_TIMEOUT_MS'));
-check('GDB uses structured MI2 records', gdbSource.includes('--interpreter=mi2') && gdbSource.includes('GdbMiStream'));
+// ---- GDB / MI ----
+//
+// 原来三条是 `gdbSource.includes('getBreakpoints()')` 这类「这行字还在吗」：
+// 快照不再拷值、超时没接到命令上、MI 流退化成按字节切 —— 全都照样绿。
+// 现在 MI 解析直接 require 真模块跑（它是纯函数模块，无副作用），
+// _miRequest / getBreakpoints 抽方法体在 vm 里真调，启动参数抽 const 求值。
+{
+    const gdbMi = require(path.join(root, 'src', 'gdb-mi.js'));
+    check('MI 解析模块可加载且导出流式解析器',
+        typeof gdbMi.GdbMiStream === 'function' && typeof gdbMi.parseMiRecord === 'function');
+    const sink = [];
+    const stream = new gdbMi.GdbMiStream((record) => sink.push(record));
+    stream.push('1^done,bg-pid=42\n=breakpoint-cre');
+    stream.push('ated,bkpt=1\n');
+    check('MI 流按行切记录：跨 chunk 的半行等下一块补齐，不拆成两条垃圾',
+        sink.length === 2 && sink[0].type === 'result' && sink[0].status === 'done'
+        && sink[0].fields['bg-pid'] === '42' && sink[1].type === 'notify' && sink[1].name === 'breakpoint-created',
+        JSON.stringify(sink.map((r) => [r.type, r.status || r.name])));
+    sink.length = 0;
+    stream.push('2*stopped,reason="exited-normally"\r\n\r\n');
+    stream.flush();
+    check('CRLF 收尾、空行跳过，flush 不重复派发已完成的整行',
+        sink.length === 1 && sink[0].type === 'exec' && sink[0].name === 'stopped'
+        && sink[0].fields.reason === 'exited-normally', JSON.stringify(sink.map((r) => r.type)));
+    sink.length = 0;
+    stream.push('没有 MI 标记的一行输出\n');
+    check('认不出的行归 unknown 交回上层，不静默丢弃也不抛',
+        sink.length === 1 && sink[0].type === 'unknown', JSON.stringify(sink.map((r) => r.type)));
+    sink.length = 0;
+    stream.maxBufferBytes = 32;
+    stream.push(`${'x'.repeat(60)}\n`);
+    check('MI 缓冲超上限时丢头部留尾部并回报 warning，而不是无限攒',
+        sink.some((r) => r.type === 'warning' && /buffer/i.test(r.message || ''))
+        && sink.some((r) => r.type === 'unknown' && r.raw.length === 31),
+        JSON.stringify(sink.map((r) => [r.type, r.raw && r.raw.length])));
+    const bigSink = [];
+    const bigStream = new gdbMi.GdbMiStream((record) => bigSink.push(record));
+    check('MI 缓冲默认带正数上限（不设上限就是一直攒到 OOM）',
+        Number.isFinite(bigStream.maxBufferBytes) && bigStream.maxBufferBytes > 0, String(bigStream.maxBufferBytes));
+    bigStream.push(`~${'a'.repeat(1024 * 1024 + 8)}\n`);
+    check('超过单条记录上限的行转成 parse-error 交回上层，不抛出把 stdout 监听打断',
+        bigSink.length === 1 && bigSink[0].type === 'parse-error' && /size limit/.test(bigSink[0].message || ''),
+        JSON.stringify(bigSink.map((r) => [r.type, r.message])));
+}
+
+// _miRequest 的超时与在途登记：这是「GDB 卡住时 UI 不会永远等」的唯一保证，
+// 用假 setTimeout 把定时器接出来， firing 之后再看 reject 的原文。
+const miRows = (() => {
+    const rows = [];
+    const push = (name, cond, extra = '') => rows.push({ name, cond, extra });
+    const miSource = read('src/gdb-mi-debugger.js');
+    const argsSrc = scalarConst(miSource, 'args');
+    push('gdb 启动参数声明抽取成功', argsSrc.startsWith('const args'), JSON.stringify(argsSrc.slice(0, 40)));
+    const miArgs = argsSrc.startsWith('const args') ? new Function(`${argsSrc}; return args;`)() : [];
+    push('gdb 以 mi2 解释器启动，并关掉隐式配置与启动脚本',
+        miArgs.includes('--interpreter=mi2') && miArgs.includes('-q') && miArgs.includes('-nx'),
+        JSON.stringify(miArgs));
+    const timeoutSrc = scalarConst(miSource, 'MI_COMMAND_TIMEOUT_MS');
+    const defaultTimeout = timeoutSrc.startsWith('const MI_COMMAND_TIMEOUT_MS')
+        ? new Function(`${timeoutSrc}; return MI_COMMAND_TIMEOUT_MS;`)() : NaN;
+    push('MI 命令默认超时是正的有限数（写成 0 就是永不超时）',
+        typeof defaultTimeout === 'number' && Number.isFinite(defaultTimeout) && defaultTimeout > 0,
+        JSON.stringify({ timeoutSrc, defaultTimeout }));
+
+    const timers = [];
+    const ctx = vm.createContext({
+        MI_COMMAND_TIMEOUT_MS: defaultTimeout,
+        Map, Set, Number, String, Object, Error, RegExp, Promise, JSON, Math, Boolean,
+        setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length - 1; },
+        clearTimeout: () => { }
+    });
+    const reqSrc = classMethod(miSource, '_miRequest');
+    const miRequest = compileMethod(ctx, reqSrc);
+    push('方法体抽取成功: _miRequest', typeof miRequest === 'function', String(reqSrc).slice(0, 30));
+    if (typeof miRequest !== 'function') return Promise.resolve(rows);
+
+    let self;
+    const mkSelf = (opts = {}) => {
+        const s = {
+            gdbProcess: opts.noProcess ? null : {},
+            _nextMiToken: 1,
+            _miPending: new Map(),
+            _inferiorRunning: !!opts.running,
+            _written: [],
+            _settled: [],
+            _writeMi: (line) => { if (opts.writeThrows) throw new Error('pipe closed'); s._written.push(line); },
+            _settleMi: (entry, error, result) => {
+                s._settled.push({ token: entry.token, message: error ? error.message : null });
+                entry.settled = true;
+                if (error) entry.reject(error); else entry.resolve(result);
+            }
+        };
+        self = s;
+        return s;
+    };
+    const ask = (command, options) => miRequest.call(self, command, options || {});
+    // 定时器可能因为变异根本没挂上：fire 不做断言，只负责「有就敲一下」，
+    // 让缺失定时器落到具体那条断言上失败，而不是整批 TypeError 崩掉。
+    const fire = (i) => { if (timers[i]) timers[i].fn(); };
+    // 请求挂住不能把整批守卫拖死：给一次微任务之外的落地窗口，超时未结算就当失败暴露，
+    // 否则「永不 resolve」在变异测试里会伪装成一条绿色断言。
+    const STILL_PENDING = Symbol('still-pending');
+    const settle = async (p) => {
+        try {
+            const value = await Promise.race([p, new Promise((resolve) => setImmediate(() => resolve(STILL_PENDING)))]);
+            return value === STILL_PENDING ? { ok: false, message: '<请求仍未结算>' } : { ok: true, value };
+        } catch (e) { return { ok: false, message: String(e && e.message) }; }
+    };
+
+    return (async () => {
+        mkSelf();
+        const first = ask('-break-insert main');
+        push('命令带自增 token 写出，并登记为在途请求、挂上默认超时的定时器',
+            self._written.length === 1 && self._written[0] === '1-break-insert main'
+            && self._miPending.size === 1 && timers.length === 1 && timers[0].ms === defaultTimeout,
+            JSON.stringify({ written: self._written, pending: self._miPending.size, ms: timers.map((t) => t.ms) }));
+        ask('-break-insert other');
+        push('token 逐条自增，不会两条命令共用一个回包标记',
+            self._written[1] === '2-break-insert other', JSON.stringify(self._written));
+
+        mkSelf({ noProcess: true });
+        timers.length = 0;
+        const dead = await settle(ask('-break-insert main'));
+        push('GDB 进程没起来时直接 reject，不登记在途、不写管道、不挂定时器',
+            !dead.ok && dead.message === 'GDB process is not running'
+            && self._written.length === 0 && self._miPending.size === 0 && timers.length === 0,
+            JSON.stringify({ dead, timers: timers.length }));
+
+        mkSelf();
+        timers.length = 0;
+        ask('-break-insert main', { timeoutMs: 500 });
+        push('显式 timeoutMs 覆盖默认值',
+            timers.length === 1 && timers[0].ms === 500, JSON.stringify(timers.map((t) => t.ms)));
+        mkSelf();
+        timers.length = 0;
+        ask('-break-insert main', { timeoutMs: NaN });
+        push('NaN 超时退回默认值，不是「没有超时」',
+            timers.length === 1 && timers[0].ms === defaultTimeout, JSON.stringify(timers.map((t) => t.ms)));
+        mkSelf();
+        timers.length = 0;
+        ask('-break-insert main', { timeoutMs: '500' });
+        push('字符串超时不算显式值，同样退回默认值',
+            timers.length === 1 && timers[0].ms === defaultTimeout, JSON.stringify(timers.map((t) => t.ms)));
+        mkSelf();
+        timers.length = 0;
+        ask('-break-insert main', { timeoutMs: 0 });
+        push('显式 0 是「这条命令不限时」：不挂定时器，但请求照样登记在途',
+            timers.length === 0 && self._miPending.size === 1,
+            JSON.stringify({ timers: timers.length, pending: self._miPending.size }));
+
+        mkSelf();
+        timers.length = 0;
+        const timedOut = ask('-exec-continue');
+        self._inferiorRunning = true;
+        fire(0);
+        const rejected = await settle(timedOut);
+        push('exec 命令超时先补发 interrupt 再判超时，挂住的 inferior 不会被丢下',
+            self._written.length === 2 && self._written[1] === '0-exec-interrupt --all'
+            && self._miPending.size === 0 && !rejected.ok && /timed out/.test(rejected.message),
+            JSON.stringify({ written: self._written, pending: self._miPending.size, rejected }));
+        fire(0);
+        push('同一请求只结算一次：定时器再响也不重复 reject、不重复写 interrupt',
+            self._written.length === 2 && self._settled.length === 1,
+            JSON.stringify({ written: self._written.length, settled: self._settled.length }));
+
+        mkSelf();
+        timers.length = 0;
+        const idlePending = ask('-exec-continue');
+        fire(0);
+        const idleOut = await settle(idlePending);
+        push('inferior 本来就没在跑时不补发 interrupt（不会凭空打断一次会话）',
+            self._written.length === 1 && self._settled.length === 1 && !idleOut.ok,
+            JSON.stringify({ written: self._written, settled: self._settled }));
+
+        mkSelf();
+        timers.length = 0;
+        const plainPending = ask('-break-insert main');
+        self._inferiorRunning = true;
+        fire(0);
+        const plainTimedOut = await settle(plainPending);
+        push('程序正在跑时，非 exec 命令超时也不发 interrupt（断点操作卡住不该把被测程序打断）',
+            self._written.length === 1 && self._settled.length === 1
+            && /timed out/.test((self._settled[0] || {}).message) && !plainTimedOut.ok,
+            JSON.stringify({ written: self._written, settled: self._settled, plainTimedOut }));
+
+        mkSelf({ writeThrows: true });
+        const broken = await settle(ask('-break-insert main'));
+        push('写管道失败时立刻 reject 并清掉在途（不留永不完成的 promise）',
+            !broken.ok && broken.message === 'pipe closed' && self._miPending.size === 0,
+            JSON.stringify({ broken, pending: self._miPending.size }));
+
+        const gb = compileMethod(ctx, classMethod(miSource, 'getBreakpoints'));
+        push('方法体抽取成功: getBreakpoints', typeof gb === 'function');
+        if (typeof gb === 'function') {
+            const owner = { _breakpoints: [{ number: 1, file: 'a.cpp' }, { number: 2, file: 'b.cpp' }] };
+            const snap = gb.call(owner);
+            snap[0].file = 'mutated';
+            push('断点快照逐条拷贝：UI 改快照不污染调试器内部状态',
+                snap.length === 2 && snap[0] !== owner._breakpoints[0] && owner._breakpoints[0].file === 'a.cpp',
+                JSON.stringify({ internal: owner._breakpoints[0].file, snapshot: snap[0].file }));
+            owner._breakpoints.push({ number: 3, file: 'c.cpp' });
+            push('快照是当时的值而非内部数组引用；无断点时返回空数组',
+                snap.length === 2 && gb.call({ _breakpoints: [] }).length === 0, JSON.stringify(snap.length));
+        }
+        return rows;
+    })().catch((e) => [{ name: 'MI 命令守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
+})();
+
 check('comparer rejects truncated output', workerSource.includes('output_limit') && workerSource.includes('MAX_WORKER_OUTPUT_BYTES'));
 check('comparer uses one output normalization policy', workerSource.includes('function outputsEqual'));
 check('workflows do not depend on the Node 22-only system CA flag', !workflows.includes('--use-system-ca'));
@@ -395,7 +615,7 @@ check('CI secret detections fail the build', ciSource.includes("fail(`potential 
 
 // 同步断言先跑完，再补上假 DOM 那批（它们是 promise，微任务里才落地）。
 // 汇总必须等这一批落地后才能数 failures，否则 exitCode 会停在 0。
-Promise.all([deferredRows, remoteRows])
+Promise.all([deferredRows, remoteRows, miRows])
     .then((batches) => { for (const rows of batches) for (const row of rows) check(row.name, row.cond, row.extra); })
     .then(() => {
         console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
