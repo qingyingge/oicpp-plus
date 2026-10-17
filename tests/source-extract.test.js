@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst, scalarConst, toFn, toProviderFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -345,6 +345,46 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
     check('scalarConst 不把前缀同名的另一条声明当成目标',
         scalarConst('const genTimeoutMs = 5;\nconst genTimeout = 6;', 'genTimeout') === 'const genTimeout = 6;');
     check('scalarConst 查不到名字时返回空串', scalarConst(SCALAR_SRC, 'nope') === '');
+
+    // ifStatement：整条 if（条件 + 配平的语句块）。安全拦截常写成一个 if + throw，
+    // 正则比这种长相一改版就碎，抽出来真跑才看得见「命中条件」和「命中后做了什么」。
+    const IF_SRC = [
+        'function guard(p) {',
+        '    if (/^\\s*(?:cmd\\s+\\/c|pwsh)/i.test(p)) {',
+        '        throw new Error(\'shell disabled\');',
+        '    }',
+        '    return run(p);',
+        '}'
+    ].join('\n');
+    const ifSrc = ifStatement(IF_SRC, /^\s*if \(\/\^\\s\*\(\?:cmd/m);
+    check('ifStatement 取到整条 if：条件里的正则括号不骗过配平，语句块后不越界',
+        ifSrc.startsWith('if (') && ifSrc.endsWith('}') && !ifSrc.includes('return run'), JSON.stringify(ifSrc));
+    const runGuard = new Function('p', `${ifSrc} return 'ok';`);
+    const threw = (p) => { try { runGuard(p); return false; } catch (_) { return true; } };
+    check('ifStatement 的产物真跑得起来：命中条件抛出，没命中原样走完',
+        threw('cmd /c dir') && threw('CMD /C dir') && !threw('./main.exe'),
+        JSON.stringify([threw('cmd /c dir'), threw('CMD /C dir'), threw('./main.exe')]));
+    check('ifStatement 锚点查不到时返回空串', ifStatement(IF_SRC, /^\s*if \(\/nope/) === '');
+    check('ifStatement 不认无花括号的单语句 if（宁可不抽，也不猜区间）',
+        ifStatement('if (x) return 1;\nfunction y() { }', /^\s*if \(x\)/m) === '');
+
+    // setMembers：整条 `const NAME = new Set([...])` 的成员表，白名单的保护力全在成员上。
+    const SET_SRC = [
+        "const ALLOWED_A = new Set([",
+        "    'x-y', 'q]', '带中文',",
+        "    'last',",
+        "]);",
+        "const ALLOWED_B = new Set(['oops', process.env.EVIL]);"
+    ].join('\n');
+    check('setMembers 求值出全部成员，字符串里的 ] 不截断',
+        JSON.stringify(setMembers(SET_SRC, 'ALLOWED_A')) === '["x-y","q]","带中文","last"]',
+        JSON.stringify(setMembers(SET_SRC, 'ALLOWED_A')));
+    check('setMembers 遇到非字符串成员返回 null（静默漏成员比抽取失败危险）',
+        setMembers(SET_SRC, 'ALLOWED_B') === null, String(setMembers(SET_SRC, 'ALLOWED_B')));
+    check('setMembers 查不到名字时返回 null', setMembers(SET_SRC, 'ALLOWED_NOPE') === null);
+    check('setMembers 认得 new Set( [ ... ] ) 之间的空白',
+        JSON.stringify(setMembers('const S = new Set( [ \'a\'] );', 'S')) === '["a"]',
+        String(setMembers('const S = new Set( [ \'a\'] );', 'S')));
 
     console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
     process.exit(failures ? 1 : 0);

@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { callStatement, classMethod, compileMethod, arrowExpr, funcDecl } = require('./fixtures/source-extract');
+const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, funcDecl, ifStatement, setMembers } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -31,7 +31,91 @@ const workflows = ['build.yml', 'build-windows-test.yml', 'build-dmg-test.yml']
     .map((name) => read(path.join('.github', 'workflows', name)))
     .join('\n');
 
-check('cloud compilation endpoint is no longer allowlisted', !mainSource.includes("'/api/cloudCompilation'") && !mainSource.includes("'/api/getCloudCompilationResult'"));
+// ---- 远程 API 代理 ----
+// 原来这条守卫是 `!mainSource.includes("'/api/cloudCompilation'")`：把白名单里的
+// 单引号换成反引号、或者以别的形式把那项加回去，都可能看不见。白名单的保护力全在
+// 「集合里有哪些成员」和「拦截发生在发请求之前」，所以这里抽真集合 + 抽整个
+// fetch-remote-json 回调，在 vm 里真调一遍，顺便数 axios 被调了几次。
+const remotePaths = setMembers(mainSource, 'ALLOWED_REMOTE_API_PATHS');
+check('远程接口白名单抽取成功', Array.isArray(remotePaths) && remotePaths.length > 0, JSON.stringify(remotePaths));
+check('云编译接口不在远程接口白名单里',
+    Array.isArray(remotePaths)
+    && !remotePaths.includes('/api/cloudCompilation') && !remotePaths.includes('/api/getCloudCompilationResult'),
+    JSON.stringify(remotePaths || null));
+const remoteRows = (() => {
+    const rows = [];
+    const push = (name, cond, extra = '') => rows.push({ name, cond, extra });
+    const body = callbackBody(mainSource, /ipcMain\.handle\(\s*'fetch-remote-json'/);
+    push('远程接口代理回调抽取成功', body.startsWith('{'), body.slice(0, 30));
+    if (!body.startsWith('{') || !Array.isArray(remotePaths)) return Promise.resolve(rows);
+    const calls = [];
+    const ctx = vm.createContext({
+        ALLOWED_REMOTE_API_PATHS: new Set(remotePaths),
+        REMOTE_API_ORIGIN: 'https://remote.invalid',
+        t: (key, params) => params ? `${key}|${JSON.stringify(params)}` : key,
+        logError: () => { },
+        JSON, String, Number, Object, Array, Error, RegExp, Promise,
+        axios: {
+            get: (url, opt) => { calls.push(['get', url, opt]); return Promise.resolve({ status: 200, statusText: 'OK', data: { rows: 1 } }); },
+            post: (url, data, opt) => { calls.push(['post', url, opt]); return Promise.resolve({ status: 200, statusText: 'OK', data: {} }); }
+        }
+    });
+    const handler = vm.runInContext(`(async (_event, spec) => ${body})`, ctx);
+    const settle = async (spec) => {
+        try { return { ok: true, value: await handler(null, spec) }; }
+        catch (e) { return { ok: false, message: String(e && e.message) }; }
+    };
+    const allowedPath = remotePaths[0];
+    return (async () => {
+        calls.length = 0;
+        const denied = await settle({ path: '/api/cloudCompilation' });
+        push('白名单外的接口直接拒绝，且一次请求都不发（拒绝原因带上被拒路径）',
+            !denied.ok && calls.length === 0
+            && denied.message === 'error.remoteApiNotAllowed|{"path":"/api/cloudCompilation"}',
+            JSON.stringify({ denied, calls: calls.length }));
+        calls.length = 0;
+        const badSpec = await Promise.all([
+            settle(null), settle('/api/x'), settle({}), settle({ path: '' }), settle({ path: 42 })
+        ]);
+        push('spec 形状不对（null / 字符串 / 缺 path / 空 / 非字符串）一律拒绝且不发请求',
+            badSpec.every((r) => !r.ok && r.message === 'error.invalidRequestParams') && calls.length === 0,
+            JSON.stringify(badSpec.map((r) => [r.ok, r.message])));
+        calls.length = 0;
+        const ok = await settle({ path: allowedPath });
+        push('白名单内走 GET，URL 拼在代理域下、带 15s 超时',
+            ok.ok && calls.length === 1 && calls[0][0] === 'get'
+            && calls[0][1] === `https://remote.invalid${allowedPath}` && calls[0][2].timeout === 15000,
+            JSON.stringify(calls[0]));
+        calls.length = 0;
+        const q = await settle({ path: `${allowedPath}?page=2` });
+        push('鉴权只看 ? 之前的路径，query 原样带给上游',
+            q.ok && calls.length === 1 && calls[0][1] === `https://remote.invalid${allowedPath}?page=2`,
+            JSON.stringify(calls[0] && calls[0][1]));
+        calls.length = 0;
+        const tricks = await Promise.all([
+            settle({ path: allowedPath.toUpperCase() }),
+            settle({ path: `${allowedPath}/../cloudCompilation` }),
+            settle({ path: '//cloudCompilation' }),
+            settle({ path: `${allowedPath} ` })
+        ]);
+        push('大小写 / .. / 前缀 // / 尾空格都不构成放行（严格全等匹配）',
+            tricks.every((r) => !r.ok) && calls.length === 0, JSON.stringify(tricks.map((r) => r.ok)));
+        calls.length = 0;
+        const post = await settle({ path: allowedPath, method: 'post' });
+        push('非 GET 方法拒绝，且不发请求', !post.ok && calls.length === 0,
+            JSON.stringify({ post, calls: calls.length }));
+        calls.length = 0;
+        const bodyText = await (async () => {
+            ctx.axios.get = (url) => { calls.push(['get', url, {}]); return Promise.resolve({ status: 500, data: 'not json {' }); };
+            return settle({ path: allowedPath });
+        })();
+        push('上游返回非 JSON 时 data 归 null，状态码原样回报，不谎报 ok',
+            bodyText.ok && bodyText.value.status === 500 && bodyText.value.data === null
+            && bodyText.value.ok === false, JSON.stringify(bodyText.value));
+        return rows;
+    })().then((r) => r, (e) => [{ name: '远程接口代理守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
+})();
+
 // 云编译入口在读取源码前就被禁用。断言只认语义（方法体仅提示禁用），
 // 不锁死 t() 的调用语法——调用形式已按 AGENTS.md 规范统一为 window.i18n.t，
 // 锁死字面量会在无安全影响的纯重构上误报。
@@ -42,8 +126,43 @@ check('cloud compilation endpoint is no longer allowlisted', !mainSource.include
     check('cloud compiler method is disabled before reading source',
         /cloudCompile\.disabled/.test(body) && !/getActiveFile|readFile|currentContent|electronAPI/.test(body));
 }
-check('run-program rejects shell command strings', !mainSource.includes("executablePath.startsWith('cmd /c ')") && mainSource.includes('Shell command strings are disabled'));
-check('run-program is routed through the invoke whitelist', preloadSource.includes("'run-program'") && preloadSource.includes("safeIpcRenderer.invoke('run-program'"));
+// ---- run-program：shell 串拦截 + 走不走 invoke 白名单 ----
+//
+// 原来两条都是比源码字面量。拦截逻辑就一个 `if (/regex/) throw`，
+// 抽出来真跑一遍，正则退化（漏了 pwsh、掉了 i 标志、把 \/c 写成 /c）立刻显形，
+// 而 `mainSource.includes('Shell command strings are disabled')` 对这些都无感。
+{
+    const shellIf = ifStatement(mainSource, /^\s*if \(\/\^\\s\*\(\?:cmd/m);
+    check('run-program 的 shell 串拦截语句抽取成功', shellIf.startsWith('if ('), JSON.stringify(shellIf.slice(0, 46)));
+    const guard = new Function('executablePath', `${shellIf} return 'pass';`);
+    const rejects = (p) => { try { guard(p); return false; } catch (_) { return true; } };
+    const SHELL_FORMS = ['cmd /c dir', 'CMD.EXE /c dir', '  cmd /c x',
+        'powershell -command "x"', 'PowerShell.EXE -Command x', 'pwsh -Command x'];
+    check('cmd / powershell / pwsh 包装串一律拒绝（大小写与前置空白都算）',
+        SHELL_FORMS.every(rejects), JSON.stringify(SHELL_FORMS.filter((p) => !rejects(p))));
+    const PLAIN_EXES = ['./main.exe', 'C:\\MinGW\\bin\\g++.exe', 'commander /c x', '/bin/ls'];
+    check('普通可执行文件路径不误伤（拦截只认开头的 shell 包装）',
+        PLAIN_EXES.every((p) => !rejects(p)), JSON.stringify(PLAIN_EXES.filter(rejects)));
+}
+// preload 侧：通道名在不在白名单里问真集合，参数转发顺序抽出来真调一次。
+const invokeChannels = setMembers(preloadSource, 'ALLOWED_INVOKE_CHANNELS');
+check('invoke 通道白名单抽取成功', Array.isArray(invokeChannels) && invokeChannels.length > 0,
+    JSON.stringify(invokeChannels || null).slice(0, 40));
+check('run-program 在 invoke 白名单里', (invokeChannels || []).includes('run-program'),
+    String((invokeChannels || []).length));
+{
+    const bridge = (/^\s*runProgram:\s*((?:async\s*)?\([^)]*\)\s*=>.*)$/m.exec(preloadSource)?.[1] || '')
+        .replace(/,\s*$/, '');
+    check('runProgram 桥接抽取成功', bridge.startsWith('('), JSON.stringify(bridge.slice(0, 40)));
+    const sent = [];
+    const runProgram = new Function('safeIpcRenderer', `return (${bridge});`)(
+        { invoke: (channel, ...args) => { sent.push([channel, ...args]); return 'rv'; } });
+    const rv = runProgram('./main.exe', 'stdin', 2000, 256);
+    check('runProgram 把四个参数按原顺序转给 run-program 通道，返回值原样透传',
+        sent.length === 1 && JSON.stringify(sent[0]) === JSON.stringify(['run-program', './main.exe', 'stdin', 2000, 256])
+        && rv === 'rv', JSON.stringify({ sent, rv }));
+}
+
 check('GDB breakpoint snapshot API exists', gdbSource.includes('getBreakpoints()'));
 check('GDB command timeout is implemented', gdbSource.includes('MI_COMMAND_TIMEOUT_MS'));
 check('GDB uses structured MI2 records', gdbSource.includes('--interpreter=mi2') && gdbSource.includes('GdbMiStream'));
@@ -276,8 +395,8 @@ check('CI secret detections fail the build', ciSource.includes("fail(`potential 
 
 // 同步断言先跑完，再补上假 DOM 那批（它们是 promise，微任务里才落地）。
 // 汇总必须等这一批落地后才能数 failures，否则 exitCode 会停在 0。
-deferredRows
-    .then((rows) => { for (const row of rows) check(row.name, row.cond, row.extra); })
+Promise.all([deferredRows, remoteRows])
+    .then((batches) => { for (const rows of batches) for (const row of rows) check(row.name, row.cond, row.extra); })
     .then(() => {
         console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
         process.exitCode = failures ? 1 : 0;

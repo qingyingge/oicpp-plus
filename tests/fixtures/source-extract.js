@@ -149,6 +149,61 @@ function objectConst(src, name) {
     return src.slice(start, end + 1);
 }
 
+// 整条 if 语句（条件 + 配平的语句块）。
+// 用在「拦截逻辑就写在一个 if 里」的形态：把 if 真跑一遍，命中条件与命中后的动作
+// 都是可观测点，不用再比 `if (/^\\s*\\(?:cmd/` 这种一看就随排版碎掉的长相。
+// 锚点必须落在 `if` 关键字上；只认带花括号的语句块，条件和 `{` 之间除了空白还有别的东西
+// （例如无括号单语句 if、或 `if (x) return y; else {`）一律返回 ''，不猜区间。
+// 行首缩进剥掉（和 scalarConst 一致），抽出来的语句要拼进函数正文。
+function ifStatement(src, pattern) {
+    const m = pattern.exec(src);
+    if (!m) return '';
+    const close = matchParen(src, src.indexOf('(', m.index));
+    if (close < 0) return '';
+    const open = src.indexOf('{', close);
+    if (open < 0 || src.slice(close + 1, open).trim() !== '') return '';
+    const end = matchBrace(src, open);
+    return end < 0 ? '' : src.slice(m.index, end + 1).replace(/^\s+/, '');
+}
+
+// 整条 `const NAME = new Set([ '...', ... ])` 的成员表。
+// 白名单的保护力全在「集合里有哪些成员」上：拿字面量比长相，把单引号写成反引号、
+// 或者往里塞一个被禁通道，正则都可能看不见。这里把数组字面量真求值成字符串数组。
+// 成员不全是字符串字面量（拼了变量、条件展开）就返回 null —— 宁可抽取失败，
+// 也不静默漏掉成员，否则否定断言又会变成真空通过。
+function setMembers(src, name) {
+    const m = new RegExp('^\\s*(?:const|let)\\s+' + name + '\\s*=\\s*new\\s+Set\\s*\\(\\s*\\[', 'm').exec(src);
+    if (!m) return null;
+    const open = src.lastIndexOf('[', m.index + m[0].length);
+    const close = matchBracket(src, open);
+    if (close < 0) return null;
+    let list;
+    try { list = new Function('return (' + src.slice(open, close + 1) + ');')(); }
+    catch (_) { return null; }
+    if (!Array.isArray(list) || list.some((v) => typeof v !== 'string')) return null;
+    return list;
+}
+
+// 从 open 这个 '[' 配平到成对的 ']'，返回其下标；不配对返回 -1。
+// 字符串字面量里的括号不参与计数（通道名里带 ']' 就切错了）。
+function matchBracket(src, open) {
+    if (open < 0) return -1;
+    let d = 0;
+    let q = null;
+    for (let i = open; i < src.length; i++) {
+        const c = src[i];
+        if (q) {
+            if (c === '\\') i++;
+            else if (c === q) q = null;
+            continue;
+        }
+        if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+        if (c === '[') d++;
+        else if (c === ']') { d--; if (d === 0) return i; }
+    }
+    return -1;
+}
+
 // 从「方法名/关键字起始位置」配平出整个方法（含签名）
 function fromName(src, start) {
     const close = matchParen(src, src.indexOf('(', start));
@@ -202,4 +257,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { arrowExpr, classMethod, compileMethod, forStatement, funcDecl, objectConst, scalarConst, arrowProp, callbackBody, callStatement, toFn, toProviderFn };
+module.exports = { arrowExpr, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, arrowProp, callbackBody, callStatement, toFn, toProviderFn };
