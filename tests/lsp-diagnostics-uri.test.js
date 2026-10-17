@@ -241,30 +241,157 @@ global.clearTimeout = realClearTimeout;
 
 // ---------------------------------------------------------------------------
 // saveAllFiles: 按 filePath 去重，且标记覆盖同文件的所有 uniqueKey
+//
+// 原来是把 tabs.js 里这段方法体切出来做正则：起点锁 `'    async saveAllFiles() {'`
+// 的缩进，终点锁 `'\n    openFileDialog()'` —— 靠邻居方法名和它的缩进定位收尾，
+// 中间插个方法或重排就切错；`window.electronAPI.saveFile(` 计数还会被注释里的字面量骗过。
+// 改成真调这个方法，看它实际发了几次保存、标记了哪些 tab。
 // ---------------------------------------------------------------------------
 
-const saveAllStart = tabsSrc.indexOf('    async saveAllFiles() {');
-const saveAllEnd = tabsSrc.indexOf('\n    openFileDialog()', saveAllStart);
-if (saveAllStart < 0 || saveAllEnd < 0) throw new Error('saveAllFiles not found');
-const saveAllSrc = tabsSrc.slice(saveAllStart, saveAllEnd);
+function tabsMethod(name) {
+    const m = new RegExp('^\\s{4}(?:async\\s+)?' + name + '\\s*\\(', 'm').exec(tabsSrc);
+    if (!m) return '';
+    let i = tabsSrc.indexOf('(', m.index), p = 0;
+    for (; i < tabsSrc.length; i++) {
+        if (tabsSrc[i] === '(') p++;
+        else if (tabsSrc[i] === ')') { p--; if (p === 0) break; }
+    }
+    let d = 0;
+    for (i = tabsSrc.indexOf('{', i); i < tabsSrc.length; i++) {
+        if (tabsSrc[i] === '{') d++;
+        else if (tabsSrc[i] === '}') { d--; if (d === 0) return tabsSrc.slice(m.index, i + 1); }
+    }
+    return '';
+}
 
-check('saveAllFiles 按 filePath 归并，不再按 uniqueKey 逐个直接保存',
-    /byFilePath = new Map\(\)/.test(saveAllSrc) &&
-    /for \(const \[filePath, \{ content, uniqueKeys \}\] of byFilePath\.entries\(\)\)/.test(saveAllSrc) &&
-    // 旧的 bug 形态：tasks.push 在遍历 tabs 的循环体内按 filePath 逐个发起
-    !/for \(const \[uniqueKey, tab\] of this\.tabs\.entries\(\)\)[\s\S]{0,900}?tasks\.push\(/.test(saveAllSrc));
+function toFn(src) {
+    if (!src) return undefined;
+    const s = src.replace(/^\s+/, '');
+    const isAsync = /^async\s+/.test(s);
+    return new Function('return (' + (isAsync ? 'async function ' : 'function ') +
+        s.replace(/^async\s+/, '') + ')')();
+}
 
-check('每个 filePath 只发起一次 saveFile',
-    (saveAllSrc.match(/window\.electronAPI\.saveFile\(/g) || []).length === 1);
+const saveAllSrc = tabsMethod('saveAllFiles');
+check('方法体抽取成功: saveAllFiles', saveAllSrc.length > 0);
 
-check('去重时保留同文件的全部 uniqueKey',
-    /uniqueKeys\.push\(uniqueKey\)/.test(saveAllSrc));
+const realWin = global.window;
 
-check('保存成功后标记覆盖全部关联 uniqueKey',
-    /uniqueKeys\.forEach\(\(key\) => this\.markTabAsSavedByUniqueKey\(key\)\)/.test(saveAllSrc));
+(async () => {
+    // mode: 'api' 正常桥 | 'none' 无 saveFile | 'reject' 保存失败
+    const make = ({ tabs, mode = 'api', contentOf = () => 'body' } = {}) => {
+        const seen = { saved: [], marked: [], warns: [] };
+        const manager = {
+            tabs: tabs instanceof Map ? tabs : new Map(tabs || []),
+            isDiscardCloseInProgress: () => false,
+            getTabContentForSave: (tab) => contentOf(tab),
+            markTabAsSavedByUniqueKey: (key) => seen.marked.push(key),
+            saveAllFiles: toFn(saveAllSrc)
+        };
+        global.window = {
+            logWarn: (...a) => seen.warns.push(a.join(' ')),
+            electronAPI: mode === 'none' ? {} : {
+                saveFile: async (path, content) => {
+                    seen.saved.push({ path, content });
+                    if (mode === 'reject') throw new Error('disk full');
+                    return true;
+                }
+            }
+        };
+        return { manager, seen };
+    };
 
-check('无 electronAPI.saveFile 时也标记全部 uniqueKey',
-    (saveAllSrc.match(/uniqueKeys\.forEach\(\(key\) => this\.markTabAsSavedByUniqueKey\(key\)\)/g) || []).length === 2);
+    const tab = (filePath, extra = {}) => ({ filePath, fileName: 'a.cpp', viewType: 'code', ...extra });
 
-console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
-process.exit(failures ? 1 : 0);
+    {
+        // 同一文件开在两个分栏：这正是原 bug 的现场 —— 按 uniqueKey 遍历会发两次保存
+        const { manager, seen } = make({
+            tabs: [['k1', tab('D:/p/a.cpp')], ['k2', tab('D:/p/a.cpp')]],
+            contentOf: (t) => (t && t.first ? 'FIRST' : 'SECOND')
+        });
+        manager.tabs.get('k1').first = true;
+        await manager.saveAllFiles();
+        check('同文件多标签只发一次 saveFile', seen.saved.length === 1,
+            `实际 ${seen.saved.length} 次: ${JSON.stringify(seen.saved)}`);
+        check('内容取首个可用的标签页', seen.saved[0]?.content === 'FIRST',
+            String(seen.saved[0]?.content));
+        check('两个 uniqueKey 都被标记为已保存',
+            seen.marked.length === 2 && seen.marked.includes('k1') && seen.marked.includes('k2'),
+            seen.marked.join(','));
+        check('同文件多标签会留一条提示', seen.warns.join(' | ').includes('只保存一次'),
+            seen.warns.join(' | '));
+    }
+
+    {
+        // 去重不能跨文件误合并：两个不同路径必须各存一次
+        const { manager, seen } = make({ tabs: [['k1', tab('D:/p/a.cpp')], ['k2', tab('D:/p/b.cpp')]] });
+        await manager.saveAllFiles();
+        check('不同 filePath 各保存一次，不会被误合并',
+            seen.saved.length === 2 && seen.marked.length === 2,
+            `saved=${seen.saved.length} marked=${seen.marked.join(',')}`);
+    }
+
+    {
+        // 没有 saveFile 桥时，tab 也不能一直挂着未保存的圆点
+        const { manager, seen } = make({ tabs: [['k1', tab('D:/p/a.cpp')], ['k2', tab('D:/p/a.cpp')]], mode: 'none' });
+        await manager.saveAllFiles();
+        check('无 saveFile API 时不发请求', seen.saved.length === 0, String(seen.saved.length));
+        check('无 saveFile API 时仍标记全部 uniqueKey',
+            seen.marked.length === 2 && seen.marked.includes('k1') && seen.marked.includes('k2'),
+            seen.marked.join(','));
+    }
+
+    {
+        // 保存失败不能标记成已保存：磁盘没写进去，界面却显示干净，下次关闭就静默丢改动
+        const { manager, seen } = make({ tabs: [['k1', tab('D:/p/a.cpp')]], mode: 'reject' });
+        await manager.saveAllFiles();
+        check('saveFile 失败时不标记为已保存', seen.saved.length === 1 && seen.marked.length === 0,
+            `saved=${seen.saved.length} marked=${seen.marked.join(',')}`);
+        check('saveFile 失败会被记一笔日志', /保存文件失败/.test(seen.warns.join(' | ')),
+            seen.warns.join(' | '));
+    }
+
+    {
+        // 三类跳过得各自孤立验证：预览类跳过靠 viewType，路径缺失靠 filePath，
+        // 内容不可得靠 typeof content —— 若统一返回非字符串，前两类会被第三类顺手挡掉，
+        // 看起来绿着，其实 viewType 那条守卫删了也测不出来。
+        const { manager, seen } = make({
+            tabs: [
+                ['p1', tab('D:/p/x.pdf', { viewType: 'pdf' })],
+                ['m1', tab('D:/p/y.md', { viewType: 'markdown-preview' })],
+                ['n1', tab(undefined)],
+                ['c1', tab('D:/p/c.cpp', { noContent: true })],
+                ['ok', tab('D:/p/a.cpp')]
+            ],
+            // 除 c1 外都能拿到字符串内容
+            contentOf: (t) => (t && t.noContent ? undefined : 'body')
+        });
+        await manager.saveAllFiles();
+        check('pdf 与 markdown 预览不参与保存也不被标记（靠 viewType，不是靠取不到内容）',
+            seen.saved.length === 1 && seen.saved[0].path === 'D:/p/a.cpp' &&
+            !seen.marked.includes('p1') && !seen.marked.includes('m1'),
+            `saved=${JSON.stringify(seen.saved)} marked=${seen.marked.join(',')}`);
+        check('无 filePath 的标签被跳过', !seen.marked.includes('n1'), seen.marked.join(','));
+        check('内容拿不到字符串的标签被跳过',
+            !seen.marked.includes('c1') && !seen.saved.some((s) => /c\.cpp/.test(s.path)),
+            `saved=${JSON.stringify(seen.saved.map((s) => s.path))} marked=${seen.marked.join(',')}`);
+        check('正常标签照常保存并标记',
+            seen.saved.length === 1 && seen.marked.length === 1 && seen.marked[0] === 'ok',
+            `marked=${seen.marked.join(',')}`);
+    }
+
+    {
+        // 正在「放弃并关闭」的流程里不能顺手把文件写回去
+        const { manager, seen } = make({ tabs: [['k1', tab('D:/p/a.cpp')]] });
+        manager.isDiscardCloseInProgress = () => true;
+        await manager.saveAllFiles();
+        check('关闭流程进行中时一个文件都不保存',
+            seen.saved.length === 0 && seen.marked.length === 0,
+            `saved=${seen.saved.length} marked=${seen.marked.join(',')}`);
+    }
+
+    global.window = realWin;
+
+    console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
+    process.exit(failures ? 1 : 0);
+})();
