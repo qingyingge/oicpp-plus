@@ -6886,6 +6886,7 @@ function setupIPC() {
             let downloadCompleted = false;
             let progressWindow = null;
             let downloader = null;
+            let tempFile = '';
 
             try {
                 logInfo('[testlib下载] 创建进度窗口...');
@@ -7016,6 +7017,14 @@ function setupIPC() {
                             if (downloader) {
                                 downloader.cancel();
                             }
+                            try {
+                                if (tempFile && fs.existsSync(tempFile)) {
+                                    fs.unlinkSync(tempFile);
+                                    logInfo('[testlib下载] 已清理部分下载文件:', tempFile);
+                                }
+                            } catch (cleanupError) {
+                                logWarn('[testlib下载] 清理部分下载文件失败:', cleanupError.message);
+                            }
                             resolve({ success: false, error: '用户取消下载' });
                             progressWindow.destroy();
                             return;
@@ -7096,7 +7105,7 @@ function setupIPC() {
                     fileExtension = urlParts[urlParts.length - 1].toLowerCase();
                 }
                 if (!/^[a-z0-9]+$/.test(fileExtension)) throw new Error(t('error.unknownDownloadFileType'));
-                const tempFile = path.join(testlibsDir, `${version}.${fileExtension}`);
+                tempFile = path.join(testlibsDir, `${version}.${fileExtension}`);
 
                 downloader = new MultiThreadDownloader({
                     maxConcurrency: 16,
@@ -7179,6 +7188,19 @@ function setupIPC() {
 
             } catch (error) {
                 downloadCompleted = true;
+
+                try {
+                    if (tempFile && fs.existsSync(tempFile)) {
+                        fs.unlinkSync(tempFile);
+                        logInfo('[testlib下载] 已清理临时下载文件:', tempFile);
+                    }
+                    if (fs.existsSync(versionDir)) {
+                        fs.rmSync(versionDir, { recursive: true, force: true });
+                        logInfo('[testlib下载] 已清理未完成的版本目录:', versionDir);
+                    }
+                } catch (cleanupError) {
+                    logWarn('[testlib下载] 清理残留文件失败:', cleanupError.message);
+                }
 
                 const isCancelled = isDownloadCancelled(error);
                 const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: error.message });
