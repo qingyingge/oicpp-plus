@@ -736,6 +736,7 @@
     "clickToUnfilter": "Click to clear filter",
     "runSample": "Run this sample",
     "deleteSample": "Delete sample",
+    "runningBusy": "A sample is running; please delete later",
     "importPreview": "Import Preview",
     "importSettings": "Import Settings",
     "selectZip": "Select Sample Archive",

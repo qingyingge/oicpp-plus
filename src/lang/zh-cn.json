@@ -715,6 +715,7 @@
     "clickToUnfilter": "点击取消筛选",
     "runSample": "运行此样例",
     "deleteSample": "删除样例",
+    "runningBusy": "有样例正在运行，请稍后再删除",
     "importPreview": "导入样例预览",
     "importSettings": "导入设置",
     "selectZip": "选择样例压缩包",

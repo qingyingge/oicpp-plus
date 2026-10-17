@@ -1588,6 +1588,14 @@ class SampleTester {
     }
 
     async deleteSample(id) {
+        // 运行期间禁止删除：deleteSample 会 splice this.samples 并把全部样例 id 重编（index+1），
+        // 而 runSample/runAllSamples 持有同一数组引用并按 sample.id 回写结果，删除会导致索引错位、
+        // 结果写错行、甚至并行 worker 越界。等所有样例跑完再删除。
+        if ((this._runningSampleIds?.size ?? 0) > 0 || this._runningAllSamples) {
+            window.alert?.(window.i18n.t('tester.runningBusy'));
+            return;
+        }
+
         this.isOperating = true;
 
         try {
