@@ -822,7 +822,7 @@ class IntegratedTerminalManager {
         }
 
         try {
-            session.pty.kill();
+            terminateProcessTree(session.pty);
         } catch (_) {}
         this.sessions.delete(terminalId);
         return true;
