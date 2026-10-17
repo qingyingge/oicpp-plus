@@ -113,8 +113,132 @@ class FakeChildProcess extends EventEmitter {
 
     const root = path.resolve(__dirname, '..');
     const rendererSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'monaco-editor-manager.js'), 'utf8');
-    check('renderer formats C/C++ through the standalone bridge', rendererSource.includes('window.electronAPI.formatCppCode(request)'));
-    check('renderer forwards the raw user style without lossy parsing', rendererSource.includes('styleRaw: this.clangFormatRaw'));
+
+    // 这两条原来是 includes() 读源码长相：
+    //   'window.electronAPI.formatCppCode(request)'  —— 点号↔方括号改写会静默失配
+    //   'styleRaw: this.clangFormatRaw'              —— 属性写法一变就失配
+    // 改成真调 requestClangFormattedCode，直接看它把什么样的请求交给了桥。
+    function toFn(src) {
+        if (!src) return undefined;
+        const s = src.replace(/^\s+/, '');
+        const isAsync = /^async\s+/.test(s);
+        return new Function('return (' + (isAsync ? 'async function ' : 'function ') +
+            s.replace(/^async\s+/, '') + ')')();
+    }
+    function classMethod(name) {
+        const m = new RegExp('^\\s{4}(?:async\\s+)?' + name + '\\s*\\(', 'm').exec(rendererSource);
+        if (!m) return '';
+        let i = rendererSource.indexOf('(', m.index), p = 0;
+        for (; i < rendererSource.length; i++) {
+            if (rendererSource[i] === '(') p++;
+            else if (rendererSource[i] === ')') { p--; if (p === 0) break; }
+        }
+        let d = 0;
+        for (i = rendererSource.indexOf('{', i); i < rendererSource.length; i++) {
+            if (rendererSource[i] === '{') d++;
+            else if (rendererSource[i] === '}') { d--; if (d === 0) return rendererSource.slice(m.index, i + 1); }
+        }
+        return '';
+    }
+    const bridgeSrc = classMethod('requestClangFormattedCode');
+    check('方法体抽取成功: requestClangFormattedCode', bridgeSrc.length > 0);
+
+    const RAW_STYLE = '{ BasedOnStyle:  LLVM,  IndentWidth: 7 }';  // 双空格+乱序，正是 lossy 解析会吃掉的东西
+    function makeBridge({ noBridge = false, reply, onRequest } = {}) {
+        const seen = { calls: 0, requests: [] };
+        const state = { version: 3, disposed: false };
+        const manager = {
+            clangFormatStyle: 'Google',
+            clangFormatRaw: RAW_STYLE,
+            getClangFormatModelPath: () => 'D:/proj/a.cpp',
+            normalizeClangFormatStyle: (s) => 'normalized:' + s,
+            requestClangFormattedCode: toFn(bridgeSrc)
+        };
+        const model = {
+            getValue: () => 'int  main( )  { }',
+            isDisposed: () => state.disposed,
+            getVersionId: () => state.version
+        };
+        global.window = noBridge ? {} : {
+            electronAPI: {
+                formatCppCode: async (req) => {
+                    seen.calls++;
+                    seen.requests.push({ ...req });
+                    if (onRequest) onRequest(state, req);
+                    return reply === undefined ? { ok: true, content: 'FORMATTED' } :
+                        (typeof reply === 'function' ? reply(state) : reply);
+                }
+            }
+        };
+        return { manager, model, seen, state };
+    }
+
+    {
+        const { manager, model, seen } = makeBridge();
+        const out = await manager.requestClangFormattedCode(model);
+        check('格式化走独立桥，且只发一次请求', out === 'FORMATTED' && seen.calls === 1,
+            `calls=${seen.calls} out=${out}`);
+        const req = seen.requests[0] || {};
+        check('styleRaw 原样透传用户写法（不做 lossy 解析）', req.styleRaw === RAW_STYLE,
+            JSON.stringify(req.styleRaw));
+        check('style 走归一化、content 取整文档、filePath 取自模型路径',
+            req.style === 'normalized:Google' && req.content === 'int  main( )  { }' &&
+            req.filePath === 'D:/proj/a.cpp', JSON.stringify({ style: req.style, filePath: req.filePath }));
+        check('未给 range 时不带行号，请求的是整文档格式化',
+            !('startLine' in req) && !('endLine' in req), JSON.stringify(req));
+        check('保留兜底风格字段', req.fallbackStyle === 'LLVM', String(req.fallbackStyle));
+    }
+
+    {
+        const { manager, model, seen } = makeBridge();
+        await manager.requestClangFormattedCode(model, { startLineNumber: 2, endLineNumber: 5 });
+        check('给 range 时只带首末行，桥自己做局部格式化',
+            seen.requests[0].startLine === 2 && seen.requests[0].endLine === 5,
+            JSON.stringify(seen.requests[0]));
+    }
+
+    {
+        // 桥不可用必须抛，不能悄悄退回有损的本地 formatter —— 这是 :120 那条
+        // 「不调 window.cppFormatter.format」真正想守的东西，用行为表达更硬
+        const { manager, model, seen } = makeBridge({ noBridge: true });
+        let err = null;
+        try { await manager.requestClangFormattedCode(model); } catch (e) { err = e; }
+        check('桥缺失时抛错而不是回退到有损的本地格式化',
+            err && /bridge is unavailable/.test(err.message) && seen.calls === 0,
+            err ? err.message : '没抛');
+
+        const bad = makeBridge({ reply: { ok: false, error: 'clang-format 未找到：D:/x' } });
+        let err2 = null;
+        try { await bad.manager.requestClangFormattedCode(bad.model); } catch (e) { err2 = e; }
+        check('桥返回失败时把原始原因抛出去，不吞成通用文案',
+            err2 && /clang-format 未找到/.test(err2.message), err2 ? err2.message : '没抛');
+
+        const noContent = makeBridge({ reply: { ok: true, content: 42 } });
+        let err3 = null;
+        try { await noContent.manager.requestClangFormattedCode(noContent.model); } catch (e) { err3 = e; }
+        check('桥回来的不是字符串时抛错，不把脏数据写进编辑器',
+            !!err3, err3 ? err3.message : '没抛');
+    }
+
+    {
+        // 过期结果不能吃：await 期间用户又敲了字 / 关了文件
+        const changed = makeBridge({ onRequest: (state) => { state.version += 1; } });
+        const r1 = await changed.manager.requestClangFormattedCode(changed.model);
+        check('await 期间文档版本变了就丢弃结果', r1 === null, String(r1));
+
+        const disposed = makeBridge({ onRequest: (state) => { state.disposed = true; } });
+        const r2 = await disposed.manager.requestClangFormattedCode(disposed.model);
+        check('await 期间文档销毁了就丢弃结果', r2 === null, String(r2));
+
+        const gone = makeBridge();
+        const r3 = await gone.manager.requestClangFormattedCode(null);
+        gone.state.disposed = true;
+        const r4 = await gone.manager.requestClangFormattedCode(gone.model);
+        check('model 缺失或已销毁时根本不发请求',
+            gone.seen.calls === 0 && r3 === null && r4 === null,
+            `calls=${gone.seen.calls} r3=${r3} r4=${r4}`);
+    }
+
     check('standalone formatters register without waiting for clangd', rendererSource.includes('this._registerClangFormatDocumentFormattingProvider();') && rendererSource.includes('this._registerClangFormatDocumentRangeFormattingProvider();'));
     check('renderer no longer delegates C/C++ formatting to clangd', !rendererSource.includes('textDocument/formatting') && !rendererSource.includes('textDocument/rangeFormatting'));
     check('renderer never invokes the lossy local formatter fallback', !rendererSource.includes('window.cppFormatter.format('));
