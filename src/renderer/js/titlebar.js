@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.TitlebarManager = void 0;
 class TitlebarManager {
     titlebar;
     currentTitle;
@@ -275,7 +273,6 @@ class TitlebarManager {
         }
     }
 }
-exports.TitlebarManager = TitlebarManager;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = TitlebarManager;
 }

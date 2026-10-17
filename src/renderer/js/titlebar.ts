@@ -1,7 +1,7 @@
 declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;
 
-export class TitlebarManager {
+class TitlebarManager {
     titlebar: Element | null;
     currentTitle: string;
     isMaximized: boolean;

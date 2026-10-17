@@ -14,7 +14,6 @@ declare const OICPPApp: typeof import('../js/main.js');
 declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
 declare const CompilerManager: typeof import('../js/compile-manager.js');
 declare const DebugPanel: import('../js/sidebar/debugPanel.js').DebugPanel;
-declare const TitlebarManager: typeof import('../js/titlebar.js');
 declare const SidebarManager: typeof import('../js/sidebar.js');
 declare const TabManager: typeof import('../js/tabs.js');
 declare const IntegratedTerminalPanel: import('../js/terminal-panel.js').IntegratedTerminalPanel;
@@ -129,7 +128,7 @@ interface Window {
   };
   // 渲染层各 manager 单例（window.X = ... 在各自文件里赋值；类经文件尾 guarded module.exports 可被 typeof import 引用）
   tabManager: InstanceType<typeof import('../js/tabs.js')>;
-  titlebarManager: InstanceType<typeof import('../js/titlebar.js')>;
+  titlebarManager: TitlebarManager;
   sidebarManager: InstanceType<typeof import('../js/sidebar.js')>;
   dialogManager: import('../js/dialog.js').DialogManager;
   browserManager: import('../js/browser-manager.js').BrowserManager;
@@ -173,7 +172,7 @@ interface Window {
   queryLocalFonts?: (options?: unknown) => Promise<Array<{ family: string; fullName: string; postscriptName: string; style: string }>>;
   TemplatesSettings: typeof import('../settings/templates.js').TemplatesSettings;
   debugUI?: unknown;
-  TitlebarManager: typeof import('../js/titlebar.js');
+  TitlebarManager: typeof TitlebarManager;
   SidebarManager: typeof import('../js/sidebar.js');
   CloudSyncPanel: import('../js/sidebar/cloudSync.js').CloudSyncPanel;
   CodeComparer: typeof import('../js/sidebar/codeComparer.js');

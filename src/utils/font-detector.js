@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.FontDetector = void 0;
 class FontDetector {
     testString;
     testSize;
@@ -348,7 +346,6 @@ class FontDetector {
         return availableFonts;
     }
 }
-exports.FontDetector = FontDetector;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = FontDetector;
 }

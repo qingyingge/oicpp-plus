@@ -1,4 +1,4 @@
-export class FontDetector {
+class FontDetector {
     testString: string;
     testSize: string;
     fallbackFont: string;
@@ -383,11 +383,9 @@ export class FontDetector {
 declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;
 
-declare global {
-    interface Window {
-        FontDetector: typeof FontDetector;
-        fontDetector: FontDetector;
-    }
+interface Window {
+    FontDetector: typeof FontDetector;
+    fontDetector: FontDetector;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
