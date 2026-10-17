@@ -1,13 +1,16 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const { EventEmitter } = require('events');
 const {
     arrowProp: extractArrowProp,
+    callbackBody,
     classMethod: extractMethod,
     funcDecl,
+    scalarConst,
     toFn,
     toProviderFn: buildProviderFn
 } = require('./fixtures/source-extract');
@@ -17,8 +20,15 @@ const check = (name, condition, extra = '') => {
     console.log(`${condition ? '[PASS]' : '[FAIL]'} ${name}${extra ? ' | ' + extra : ''}`);
     if (!condition) failures++;
 };
+// 本文件全是 async 链路：某一环的 promise 永不结算时，事件循环会直接排空、
+// 进程以 0 退出，runner 数到前半截的 [PASS] 就判过 —— 尾巴上整段断言静默蒸发。
+// （exit 监听里改不了退出码，所以用一条不 unref 的定时器把「跑不完」顶成失败。）
+const watchdog = setTimeout(() => {
+    console.log('[FAIL] 测试主体 20s 没跑到收尾（中途有 promise 永不结算，后面的断言一条都没跑）');
+    process.exit(1);
+}, 20000);
 
-function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
+function loadManagerClass(spawnImpl = undefined, mainWindow = null, overrides = {}) {
     const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
     const start = source.indexOf('class ClangdLspManager');
     const end = source.indexOf('\nconst clangdLspManager', start);
@@ -54,6 +64,9 @@ function loadManagerClass(spawnImpl = undefined, mainWindow = null) {
         compilerInfoCache: new Map(),
         clangdCompileFlags: require(path.join(__dirname, '..', 'src', 'utils', 'clangd-compile-flags.js'))
     };
+    // 覆盖桩：让 start() 这条链路能按需替换 clangdCompileFlags / queryCompilerInfo / 日志，
+    // 断言才能落在「真传了什么参数」上，而不是比源码长相。
+    Object.assign(context, overrides);
     vm.runInNewContext(`${classSource}\nthis.__ClangdLspManager = ClangdLspManager;`, context);
     return context.__ClangdLspManager;
 }
@@ -349,14 +362,121 @@ class FakeProc extends EventEmitter {
         }
     }
 
-    // M52: fallbackFlags 死链路已删除，编译参数改由 compile_flags.txt 承载
-    check('M52: fallbackFlags no longer leaves the main process',
-        !/return \{ ok: true, clangdPath, args, fallbackFlags \}/.test(mainSource) &&
-        !mainSource.includes('addStdCxxIncludeBundle') &&
-        !mainSource.includes('collectStdCxxIncludeDirs'));
-    check('M52: compile flags are written into the private LSP dir',
-        mainSource.includes('clangdCompileFlags.writeCompileFlagsFile') &&
-        mainSource.includes('--compile-commands-dir=${compileCommandsDir}'));
+    // M52: clangd 启动参数与 compile_flags.txt。
+    // 原来两条守卫比的是源码长相：includes('clangdCompileFlags.writeCompileFlagsFile')、
+    // 字面量 '--compile-commands-dir=${compileCommandsDir}'、以及「return {…fallbackFlags} 这行不存在」。
+    // 参数拼到别处、或给 fallbackFlags 换个键名带回渲染层，守卫都不会红。
+    // 现在跑真 start()：只看回过来的 args 里到底有什么、写标志文件那步被喂了什么、spawn 怎么起的。
+    {
+        const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'lsp-m52-'));
+        const binDir = path.join(ws, 'bin');
+        fs.mkdirSync(binDir, { recursive: true });
+        const compiler = path.join(binDir, 'g++.exe');
+        fs.writeFileSync(compiler, '');
+        const flagsDir = path.join(ws, 'lspPrivate');
+        const probed = { includePaths: ['/opt/mingw/include', 'C:\\mingw\\lib\\gcc'], target: 'x86_64-w64-mingw32' };
+        const seen = { flagCalls: [], warns: [], spawns: [] };
+        const mkManager = (probe = async () => probed, extraOverrides = {}) => {
+            const proc = new FakeProc();
+            const stubs = {
+                logInfo: () => { },
+                logWarn: (...a) => { seen.warns.push(a.map(String).join(' ')); },
+                logError: () => { },
+                queryCompilerInfo: probe,
+                clangdCompileFlags: {
+                    writeCompileFlagsFile: (spec) => {
+                        seen.flagCalls.push(spec);
+                        return { ok: true, dir: flagsDir, filePath: path.join(flagsDir, 'compile_flags.txt'), written: true };
+                    }
+                }
+            };
+            const Mgr = loadManagerClass(
+                (cmd, args, opts) => { seen.spawns.push([cmd, args, opts]); return proc; },
+                null,
+                Object.assign(stubs, extraOverrides));
+            return { m: new Mgr(), proc };
+        };
+        const reset = () => { seen.flagCalls.length = 0; seen.warns.length = 0; seen.spawns.length = 0; };
+
+        const first = mkManager();
+        const started = await first.m.start({ compilerPath: compiler, workspaceRoot: ws, rootUri: `file://${ws}`, clangdArgs: ['--log=verbose', '', null] });
+        check('M52: clangd 真起进程并回参数',
+            started.ok === true && Array.isArray(started.args) && seen.spawns.length === 1, JSON.stringify(started.args));
+        check('M52: 探测到的 include 与 target 原样交给写标志文件那一步',
+            seen.flagCalls.length === 1
+            && JSON.stringify(seen.flagCalls[0].includePaths) === JSON.stringify(probed.includePaths)
+            && seen.flagCalls[0].target === probed.target
+            && seen.flagCalls[0].workspaceRoot === ws,
+            JSON.stringify(seen.flagCalls[0] || null));
+        check('M52: compile-commands-dir 用的是写标志文件返回的私有目录，不是工作区本身',
+            started.args.includes(`--compile-commands-dir=${flagsDir}`) && !started.args.includes(`--compile-commands-dir=${ws}`),
+            JSON.stringify(started.args));
+        check('M52: query-driver 用正斜杠并把驱动名打成通配',
+            started.args.includes(`--query-driver=${binDir.replace(/\\/g, '/')}/g++*`),
+            JSON.stringify(started.args.filter((a) => a.startsWith('--query-driver'))));
+        check('M52: 用户附加参数剔掉空值后按原样带上，排在内置参数之后',
+            started.args.includes('--log=verbose') && started.args.every(Boolean)
+            && started.args.indexOf('--log=verbose') > started.args.indexOf('--background-index'),
+            JSON.stringify(started.args.filter((a) => a.startsWith('--log'))));
+        check('M52: 渲染层拿不到 fallbackFlags（返回值没这个键，参数里也没有 fallback 字样）',
+            !Object.hasOwn(started, 'fallbackFlags') && started.args.every((a) => !/fallback/i.test(a)),
+            JSON.stringify(Object.keys(started)));
+        check('M52: spawn 的 cwd 落到工作区，detached 只在非 win32',
+            seen.spawns[0][2].cwd === ws && seen.spawns[0][2].detached === (process.platform !== 'win32'),
+            JSON.stringify(seen.spawns[0][2]));
+        check('M52: 工作区带 rootUri 时登记 workspaceFolders',
+            JSON.stringify(first.m.workspaceFolders) === JSON.stringify([{ uri: `file://${ws}`, name: path.basename(ws) }]),
+            JSON.stringify(first.m.workspaceFolders));
+        await first.m.stop();
+
+        reset();
+        const noWs = mkManager();
+        const noWorkspace = await noWs.m.start({ compilerPath: compiler });
+        check('M52: 没有工作区就不发 compile-commands-dir（写标志文件那步拿到空 workspaceRoot）',
+            noWorkspace.ok === true && noWorkspace.args.every((a) => !a.startsWith('--compile-commands-dir'))
+            && seen.flagCalls[0].workspaceRoot === '',
+            JSON.stringify(noWorkspace.args));
+        await noWs.m.stop();
+
+        reset();
+        const badPath = mkManager();
+        const badCompiler = await badPath.m.start({ compilerPath: path.join(ws, 'nope.exe'), workspaceRoot: ws });
+        check('M52: 编译器路径不存在时跳过 query-driver 并留下告警',
+            badCompiler.ok === true && badCompiler.args.every((a) => !a.startsWith('--query-driver'))
+            && seen.warns.some((w) => /query-driver/.test(w)),
+            JSON.stringify({ warns: seen.warns }));
+        await badPath.m.stop();
+
+        // Windows 风格的编译器路径：--query-driver 必须先做反斜杠归一。
+        // 少了这一步，POSIX 的 path.dirname 会把 "C:\devkit\bin\g++.exe" 整串当成文件名，
+        // 拼出来的 glob 是 "./C:\devkit\bin\g++*" —— clangd 拿去匹配不到任何驱动，
+        // 而且只在装了 mingw 但工作区在别的机器这种组合下才暴露。
+        reset();
+        const winCompiler = 'C:\\devkit\\bin\\g++.exe';
+        const winPath = mkManager(async () => probed, {
+            fs: Object.assign(Object.create(fs), { existsSync: (p) => p === winCompiler || fs.existsSync(p) })
+        });
+        const winStarted = await winPath.m.start({ compilerPath: winCompiler, workspaceRoot: ws });
+        const winDrivers = winStarted.args.filter((a) => a.startsWith('--query-driver'));
+        check('M52: 反斜杠编译器路径归一成 POSIX 分隔符的 glob',
+            winStarted.ok === true && winDrivers.length === 1
+            && winDrivers[0] === '--query-driver=C:/devkit/bin/g++*'
+            && winDrivers.every((a) => !a.includes('\\')),
+            JSON.stringify(winDrivers));
+        await winPath.m.stop();
+
+        reset();
+        const brokenProbe = mkManager(async () => { throw new Error('compiler probe failed'); });
+        const boomed = await brokenProbe.m.start({ compilerPath: compiler, workspaceRoot: ws });
+        check('M52: 探测编译器信息失败不拦启动，compile-commands-dir 退回工作区',
+            boomed.ok === true && boomed.args.includes(`--compile-commands-dir=${ws}`)
+            && seen.warns.some((w) => /查询编译器信息/.test(w)),
+            JSON.stringify({ args: boomed.args, warns: seen.warns }));
+        await brokenProbe.m.stop();
+        fs.rmSync(ws, { recursive: true, force: true });
+    }
+    check('M52: 已删除的 std-cxx include 拼装链没有被重新引回',
+        !mainSource.includes('addStdCxxIncludeBundle') && !mainSource.includes('collectStdCxxIncludeDirs'));
 
     // -----------------------------------------------------------------------
     // P3 / L35 / M56
@@ -751,12 +871,121 @@ class FakeProc extends EventEmitter {
             Object.assign(global, saved);
         }
     }
-    check('L36: identical format requests are merged and cached',
-        mainSource.includes('clangFormatInFlight') && mainSource.includes('clangFormatResultCache') &&
-        mainSource.includes('cacheClangFormatResult'));
+    // L36: 相同格式化请求合并 + 有限缓存。
+    // 原来这条只比三个标识符名在不在（clangFormatInFlight / clangFormatResultCache /
+    // cacheClangFormatResult）：缓存写成只 set 不读、并发各起各的进程，名字都还全乎。
+    // 现在抽真 handler + 真缓存声明 + 真淘汰函数，在 vm 里数「到底起几次 clang-format」。
+    {
+        const body = callbackBody(mainSource, /ipcMain\.handle\(\s*'format-cpp-code',\s*async\s*\(_event,\s*request\s*=\s*\{\}\)\s*=>/);
+        const decls = [
+            scalarConst(mainSource, 'clangFormatInFlight'),
+            scalarConst(mainSource, 'clangFormatResultCache'),
+            scalarConst(mainSource, 'CLANG_FORMAT_RESULT_CACHE_LIMIT'),
+            funcDecl(mainSource, 'cacheClangFormatResult')
+        ];
+        check('format-cpp-code handler 与缓存三件套抽取成功',
+            body.startsWith('{') && decls.every((s) => s.length > 0),
+            JSON.stringify({ body: body.slice(0, 14), decls: decls.map((s) => s.slice(0, 16)) }));
+        const mkFormat = ({ exePath = () => '/fake/bin/clang-format', run = null } = {}) => {
+            const calls = [];
+            const ctx = vm.createContext({
+                JSON, String, Number, Object, Array, Error, Promise, Map, Set, Buffer,
+                path: require('path'),
+                resolveClangFormatExecutablePath: exePath,
+                describeClangFormatSearchPaths: () => '<search paths>',
+                getClangFormatExecutableName: () => 'clang-format.exe',
+                getUserClangdRoot: () => '/fake/clangd',
+                logError: () => { },
+                formatCodeWithClangFormat: async (spec) => {
+                    calls.push(spec);
+                    return run ? run(spec, calls.length) : { content: `F${calls.length}` };
+                }
+            });
+            vm.runInContext(decls.join('\n') + `
+this.__handler = async (_event, request = {}) => ${body};
+this.__peek = () => ({ cache: clangFormatResultCache.size, pending: clangFormatInFlight.size, limit: CLANG_FORMAT_RESULT_CACHE_LIMIT });
+`, ctx);
+            return { ctx, calls, handler: ctx.__handler, peek: ctx.__peek };
+        };
 
+        const idle = mkFormat();
+        check('L36: 正常路径确实把参数交给 clang-format（合并缓存没把第一次调用也吞掉）',
+            (await idle.handler(null, { content: 'int main(){}' })).ok === true && idle.calls.length === 1,
+            JSON.stringify(idle.calls[0]));
+        const noExe = mkFormat({ exePath: () => null });
+        const failed = await noExe.handler(null, { content: 'int main(){}' });
+        check('L36: 缺可执行文件的错误里带上搜索路径（只回「失败」等于没法定位）',
+            failed.ok === false && noExe.calls.length === 0
+            && /<search paths>/.test(failed.error || '') && /clang-format\.exe/.test(failed.error || ''),
+            JSON.stringify(failed.error));
+
+        const gate = (() => {
+            let release;
+            const wait = new Promise((resolve) => { release = resolve; });
+            return { wait, release };
+        })();
+        const merged = mkFormat({ run: async () => { await gate.wait; return { content: 'FORMATTED' }; } });
+        // 两路请求必须同时在「等 clang-format」这个状态里，才谈得上合并；
+        // 所以先把 promise 发出去、让两路都跑到合并点，再放行闸门 ——
+        // 先 await Promise.all 再 release 是自己把自己吊死。
+        const bothPromise = Promise.all([
+            merged.handler(null, { content: 'int main(){}', filePath: '/a.cpp' }),
+            merged.handler(null, { content: 'int main(){}', filePath: '/a.cpp' })
+        ]);
+        await new Promise((resolve) => setImmediate(resolve));
+        gate.release();
+        const both = await bothPromise;
+        check('L36: 并发同请求合并成一次 clang-format，两路都拿到带 ok 的完整信封',
+            merged.calls.length === 1 && both.every((r) => r.ok === true && r.content === 'FORMATTED'),
+            JSON.stringify({ calls: merged.calls.length, both }));
+        check('L36: 合并结束后在途表被清空（不清就永远等在一个已完成的 promise 上）',
+            merged.peek().pending === 0, JSON.stringify(merged.peek()));
+
+        const reused = mkFormat();
+        const r1 = await reused.handler(null, { content: 'int main(){}', style: 'file' });
+        const r2 = await reused.handler(null, { content: 'int main(){}', style: 'file' });
+        check('L36: 同样的请求第二次直接吃缓存，不再起进程',
+            reused.calls.length === 1 && r1.content === 'F1' && r2.content === 'F1',
+            JSON.stringify({ calls: reused.calls.length, r1, r2 }));
+        await reused.handler(null, { content: 'int main(){}', style: 'google' });
+        check('L36: style 变化算不同请求（缓存键漏掉 style 会把两种风格返回成同一份）',
+            reused.calls.length === 2, String(reused.calls.length));
+        await reused.handler(null, { content: 'int other(){}', style: 'file' });
+        check('L36: 内容变化算不同请求', reused.calls.length === 3, String(reused.calls.length));
+        check('L36: 交给 clang-format 的是原样参数（content/style/fallbackStyle 一个都不该丢）',
+            reused.calls[0].content === 'int main(){}' && reused.calls[0].filePath === undefined
+            && reused.calls[1].style === 'google' && reused.calls[0].style === 'file',
+            JSON.stringify(reused.calls.map((c) => [c.content, c.style])));
+
+        const boom = mkFormat({ run: async () => { throw new Error('clang-format crashed'); } });
+        const crash1 = await boom.handler(null, { content: 'x' });
+        const crash2 = await boom.handler(null, { content: 'x' });
+        check('L36: clang-format 抛错回 ok:false 带原因，且失败不进缓存',
+            crash1.ok === false && /crashed/.test(crash1.error || '') && boom.calls.length === 2,
+            JSON.stringify({ calls: boom.calls.length, crash1, crash2 }));
+        check('L36: 失败之后在途表与结果缓存都是空的（留残链就再也格式化不了）',
+            boom.peek().pending === 0 && boom.peek().cache === 0, JSON.stringify(boom.peek()));
+
+        const evict = mkFormat();
+        const limit = evict.peek().limit;
+        for (let i = 0; i < limit + 2; i++) await evict.handler(null, { content: `c${i}` });
+        check('L36: 结果缓存有上限并按上限淘汰最旧的（写成无界缓存就是无限吃内存）',
+            evict.peek().cache === limit && Number.isFinite(limit) && limit > 0,
+            JSON.stringify(evict.peek()));
+        const before = evict.calls.length;
+        await evict.handler(null, { content: 'c0' });
+        check('L36: 被淘汰的最旧条目会重新起进程，而窗口内的最新条目仍命中缓存',
+            evict.calls.length === before + 1, JSON.stringify({ before, after: evict.calls.length }));
+        const freshIdx = evict.calls.length - 1;
+        await evict.handler(null, { content: `c${limit + 1}` });
+        check('L36: 仍在窗口内的请求不重复起进程',
+            evict.calls.length === freshIdx + 1, JSON.stringify({ size: evict.calls.length }));
+    }
+
+    clearTimeout(watchdog);
     console.log(`[INFO] lsp-main-audit completed: ${failures ? failures + ' failure(s)' : 'all executable contracts passed'}`);    process.exitCode = failures ? 1 : 0;
 })().catch((error) => {
+    clearTimeout(watchdog);
     console.log(`[FAIL] lsp-main-audit unexpected error | ${error?.stack || error?.message || error}`);
     process.exitCode = 1;
 });
