@@ -4169,6 +4169,8 @@ function setupIPC() {
                 cacheClangFormatResult(cacheKey, cached);
                 return cached;
             }
+            // 在途表里存的必须是给渲染层的完整信封：等待合并的那一路直接
+            // return await pending，拿到的是服务的裸结果，缺 ok 会被判成失败。
             const runPromise = formatCodeWithClangFormat({
                 executablePath,
                 content: request.content,
@@ -4178,12 +4180,14 @@ function setupIPC() {
                 fallbackStyle: request.fallbackStyle,
                 startLine: request.startLine,
                 endLine: request.endLine
+            }).then((result: { content: string }) => {
+                const reply = { ok: true, content: result.content };
+                cacheClangFormatResult(cacheKey, reply);
+                return reply;
             });
             clangFormatInFlight.set(cacheKey, runPromise);
             try {
-                const result = await runPromise;
-                cacheClangFormatResult(cacheKey, { ok: true, content: result.content });
-                return { ok: true, content: result.content };
+                return await runPromise;
             } finally {
                 if (clangFormatInFlight.get(cacheKey) === runPromise) {
                     clangFormatInFlight.delete(cacheKey);
