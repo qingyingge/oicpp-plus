@@ -5226,6 +5226,14 @@ function setupIPC() {
                 }
             }
             assertSafeIoPath(newPath);
+            // 重命名会把源文件搬离工作区，所以目标也必须留在工作区内。绝对路径分支
+            // 直接采用未校验的 newName，没有这道边界时渲染层可把文件搬到任意位置。
+            const renameTargetResolved = path.resolve(newPath);
+            if (!isPathInsideTempRoots(renameTargetResolved)
+                && !(currentExternalWorkspacePath && isPathInsideDir(renameTargetResolved, currentExternalWorkspacePath))) {
+                logWarn('[主进程] 拒绝重命名到工作区之外的路径:', renameTargetResolved);
+                throw new Error(t('error.outsideWorkspace'));
+            }
             fs.renameSync(oldPath, newPath);
             try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('file-renamed', oldPath, newPath, null); } catch (_) { }
             return { success: true, filePath: newPath };
