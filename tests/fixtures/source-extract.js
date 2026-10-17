@@ -184,6 +184,27 @@ function setMembers(src, name) {
     return list;
 }
 
+// 整段**裸块语句** `{ ... }`（含首尾花括号）。
+// CI 脚本里的每个检查项都是一个裸块（`{ const re = …; for (…) … }`），
+// 它既不是函数也不是方法，只能按锚点找到块首再配平。抽出来在 vm 里带着桩真跑一遍，
+// 「这条检查到底会不会报」就成了可观测行为 —— 在测试里重抄一份实现会跟着源码漂移，
+// 比字面量则只锁得住「这行还在」。
+// 锚点给到块**之前**的标题行（如 /I8\] Hardcoded CJK ratchet/）：
+// 从锚点往后找第一条只含 `{` 的行 —— 标题行里的模板串 `${R}` 也带花括号，
+// 直接 indexOf('{') 会从那半个插值开始配平。
+// 找不到独立成行的 `{`、或块内花括号不配平（字符串/正则里有裸 `}`）都返回 ''，不猜区间。
+function bracedBlock(src, pattern) {
+    const m = pattern.exec(src);
+    if (!m) return '';
+    const openRe = /\r?\n[ \t]*\{[ \t]*\r?\n/g;
+    openRe.lastIndex = m.index + m[0].length;
+    const lm = openRe.exec(src);
+    if (!lm) return '';
+    const open = lm.index + lm[0].indexOf('{');
+    const end = matchBrace(src, open);
+    return end < 0 ? '' : src.slice(open, end + 1);
+}
+
 // 从 open 这个 '[' 配平到成对的 ']'，返回其下标；不配对返回 -1。
 // 字符串字面量里的括号不参与计数（通道名里带 ']' 就切错了）。
 function matchBracket(src, open) {
@@ -257,4 +278,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { arrowExpr, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, arrowProp, callbackBody, callStatement, toFn, toProviderFn };
+module.exports = { arrowExpr, arrowProp, bracedBlock, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn };

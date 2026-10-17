@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, arrowProp, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, bracedBlock, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -367,6 +367,34 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
     check('ifStatement 锚点查不到时返回空串', ifStatement(IF_SRC, /^\s*if \(\/nope/) === '');
     check('ifStatement 不认无花括号的单语句 if（宁可不抽，也不猜区间）',
         ifStatement('if (x) return 1;\nfunction y() { }', /^\s*if \(x\)/m) === '');
+
+    // bracedBlock：整段裸块语句。CI 的每个检查项都是这种形态，锚点行里通常还带
+    // `${R}` 这类模板插值 —— 直接 indexOf('{') 会从半个插值开始配平，所以块首必须独立成行。
+    const BLOCK_SRC = [
+        'console.log(`${Y}[I8] some ratchet${R}`);',
+        '{',
+        '  let hits = 0;',
+        '  for (const line of lines) {',
+        '    if (/[\\u4e00-\\u9fff]/.test(line)) { hits++; }',
+        '  }',
+        '  report(hits);',
+        '}',
+        'report(-1);'
+    ].join('\n');
+    const blockSrc = bracedBlock(BLOCK_SRC, /I8\] some ratchet/);
+    check('bracedBlock 跳过锚点行里的 ${R}，取到独立成行的块首与配平的块尾',
+        blockSrc.startsWith('{') && blockSrc.endsWith('}') && !blockSrc.includes('report(-1)'),
+        JSON.stringify(blockSrc.slice(0, 24)));
+    const blockRuns = () => {
+        const seen = [];
+        vm.runInNewContext(`${blockSrc}`, { lines: ['中文', 'ascii', '中文'], report: (n) => seen.push(n) });
+        return seen;
+    };
+    check('bracedBlock 的产物整块跑得起来：块内 const 不外泄，统计口径是真跑出来的',
+        JSON.stringify(blockRuns()) === '[2]', JSON.stringify(blockRuns()));
+    check('bracedBlock 锚点查不到时返回空串', bracedBlock(BLOCK_SRC, /nope ratchet/) === '');
+    check('bracedBlock 不认 `if (…) {` 这类不独立成行的块（宁可不抽，也不猜区间）',
+        bracedBlock('mark();\nif (x) { y(); }', /mark\(\)/) === '');
 
     // setMembers：整条 `const NAME = new Set([...])` 的成员表，白名单的保护力全在成员上。
     const SET_SRC = [
