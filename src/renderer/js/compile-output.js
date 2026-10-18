@@ -100,9 +100,9 @@ class CompileOutputManager {
             }
         }, 350); // 等待动画完成
     }
-    setStatus(status, command = '') {
+    setStatus(status, type = 'ready', command = '') {
         if (this.statusText) {
-            const indicator = this.getStatusIndicator(status);
+            const indicator = this.getStatusIndicator(type);
             this.statusText.innerHTML = `${indicator}${status}`;
         }
         if (this.commandText && command) {
@@ -110,21 +110,8 @@ class CompileOutputManager {
             this.currentCommand = command;
         }
     }
-    getStatusIndicator(status) {
-        let className = 'ready';
-        const compilingHint = window.i18n.t('compileOutput.compiling');
-        const successHint = window.i18n.t('compileOutput.successSimple');
-        const failHint = window.i18n.t('compileOutput.failSimple');
-        if (status.includes(compilingHint)) {
-            className = 'compiling';
-        }
-        else if (status.includes(successHint) || status.includes('成功')) {
-            className = 'success';
-        }
-        else if (status.includes(failHint) || status.includes('失败') || status.includes('错误')) {
-            className = 'error';
-        }
-        return `<span class="compile-status-indicator ${className}"></span>`;
+    getStatusIndicator(type) {
+        return `<span class="compile-status-indicator ${type}"></span>`;
     }
     addMessage(message, type = 'info') {
         if (!this.messagesContainer)
@@ -152,14 +139,14 @@ class CompileOutputManager {
     startCompile(command) {
         this.show();
         this.clearMessages();
-        this.setStatus(window.i18n.t('compileOutput.compiling'), command);
+        this.setStatus(window.i18n.t('compileOutput.compiling'), 'compiling', command);
         this.startTime = Date.now();
         this.addMessage(window.i18n.t('compileOutput.startCompile', { command }), 'info');
     }
     onCompileSuccess(output = '', warnings = []) {
         const endTime = Date.now();
         const duration = this.startTime ? ((endTime - this.startTime) / 1000).toFixed(2) : '0.00';
-        this.setStatus(window.i18n.t('compileOutput.success', { time: duration }));
+        this.setStatus(window.i18n.t('compileOutput.success', { time: duration }), 'success');
         if (output && output.trim()) {
             this.addMessage(window.i18n.t('compileOutput.successOutput'), 'info');
             this.addMessage(output, 'info');
@@ -175,7 +162,7 @@ class CompileOutputManager {
     onCompileError(error, output = '') {
         const endTime = Date.now();
         const duration = this.startTime ? ((endTime - this.startTime) / 1000).toFixed(2) : '0.00';
-        this.setStatus(window.i18n.t('compileOutput.fail', { time: duration }));
+        this.setStatus(window.i18n.t('compileOutput.fail', { time: duration }), 'error');
         this.addMessage(window.i18n.t('compileOutput.failSimple') + ':', 'error');
         if (output && output.trim()) {
             this.addMessage(window.i18n.t('compileOutput.failOutput'), 'info');

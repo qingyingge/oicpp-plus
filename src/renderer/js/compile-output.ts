@@ -10,6 +10,11 @@ declare global {
     }
 }
 
+// 状态灯的语义档位：调用方点名是哪一档，指示灯只认这个。
+// 不要再从 status 文案里反推（M57）—— 判定一旦建立在「展示给用户的字」上，
+// 翻译润色一次就静默失配一次，而且 en 界面上那三个中文兜底恒为 false。
+type CompileStatusKind = 'compiling' | 'success' | 'error' | 'ready';
+
 export class CompileOutputManager {
     panel: HTMLElement | null;
     statusText: HTMLElement | null;
@@ -125,9 +130,9 @@ export class CompileOutputManager {
         }, 350); // 等待动画完成
     }
 
-    setStatus(status: string, command = ''): void {
+    setStatus(status: string, type: CompileStatusKind = 'ready', command = ''): void {
         if (this.statusText) {
-            const indicator = this.getStatusIndicator(status);
+            const indicator = this.getStatusIndicator(type);
             this.statusText.innerHTML = `${indicator}${status}`;
         }
 
@@ -137,21 +142,8 @@ export class CompileOutputManager {
         }
     }
 
-    getStatusIndicator(status: string): string {
-        let className = 'ready';
-
-        const compilingHint = window.i18n.t('compileOutput.compiling');
-        const successHint = window.i18n.t('compileOutput.successSimple');
-        const failHint = window.i18n.t('compileOutput.failSimple');
-        if (status.includes(compilingHint)) {
-            className = 'compiling';
-        } else if (status.includes(successHint) || status.includes('成功')) {
-            className = 'success';
-        } else if (status.includes(failHint) || status.includes('失败') || status.includes('错误')) {
-            className = 'error';
-        }
-
-        return `<span class="compile-status-indicator ${className}"></span>`;
+    getStatusIndicator(type: CompileStatusKind): string {
+        return `<span class="compile-status-indicator ${type}"></span>`;
     }
 
     addMessage(message: string, type = 'info'): void {
@@ -186,7 +178,7 @@ export class CompileOutputManager {
     startCompile(command: string): void {
         this.show();
         this.clearMessages();
-        this.setStatus(window.i18n.t('compileOutput.compiling'), command);
+        this.setStatus(window.i18n.t('compileOutput.compiling'), 'compiling', command);
         this.startTime = Date.now();
 
         this.addMessage(window.i18n.t('compileOutput.startCompile', { command }), 'info');
@@ -196,7 +188,7 @@ export class CompileOutputManager {
         const endTime = Date.now();
         const duration = this.startTime ? ((endTime - this.startTime) / 1000).toFixed(2) : '0.00';
 
-        this.setStatus(window.i18n.t('compileOutput.success', { time: duration }));
+        this.setStatus(window.i18n.t('compileOutput.success', { time: duration }), 'success');
 
         if (output && output.trim()) {
             this.addMessage(window.i18n.t('compileOutput.successOutput'), 'info');
@@ -217,7 +209,7 @@ export class CompileOutputManager {
         const endTime = Date.now();
         const duration = this.startTime ? ((endTime - this.startTime) / 1000).toFixed(2) : '0.00';
 
-        this.setStatus(window.i18n.t('compileOutput.fail', { time: duration }));
+        this.setStatus(window.i18n.t('compileOutput.fail', { time: duration }), 'error');
 
         this.addMessage(window.i18n.t('compileOutput.failSimple') + ':', 'error');
 
