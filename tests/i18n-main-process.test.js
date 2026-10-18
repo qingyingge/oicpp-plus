@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { execFileSync } = require('child_process');
 const { funcDecl, ifStatement } = require('./fixtures/source-extract');
 const { loadLocales } = require('./fixtures/ci-block-runner');
 
@@ -141,10 +142,59 @@ const enMain = en.main || {};
     const still = migrated.filter((s) => userVisibleLines.some((l) => l.includes(s)));
     check('迁移过的中文不再出现在用户可见代码里', still.length === 0, still.join(','));
 
-    // 代表性的调用点确实走 t()
-    for (const key of ['main.loggedOut', 'main.debugStepOver', 'main.saveAsTitle',
-        'main.backgroundDownloadTitle', 'main.updatedTo', 'main.exitCode']) {
-        check(`main.js 使用了 t('${key}')`, mainSource.includes(`t('${key}'`));
+    // 代表性的调用点确实走 t()，并且**渲染得出来**。
+    // 原来这 6 条是 mainSource.includes(`t('${key}'`)：只查「这行字面量还在」。
+    // 而集成 i18next 那天起 src/lang 的 init 就是坏的 —— i18next 把带连字符的语言码
+    // 规范化成 zh-CN（languageUtils.formatLanguageCode），resources 里的键却按设置值
+    // 写成 zh-cn，两边对不上，中文模式下每条 t() 都掉进 parseMissingKeyHandler 原样
+    // 吐裸键名，6 条字面量守卫一条都没红。改成把真模块起一个子进程跑一遍，
+    // 期望值另从语言包 JSON 取：i18n 一坏，期望（真译文）和实际（裸键名）立刻分叉。
+    const usedKeys = new Set([...mainSource.matchAll(/t\(\s*(['"])(main\.[A-Za-z]+)\1/g)].map((m) => m[2]));
+    const RENDERED = ['main.loggedOut', 'main.debugStepOver', 'main.saveAsTitle',
+        'main.backgroundDownloadTitle', 'main.updatedTo', 'main.exitCode'];
+    for (const key of RENDERED) {
+        check(`main.js 的调用点用到 ${key}（按引号风格/换行解析，不锁字面量）`,
+            usedKeys.has(key), usedKeys.has(key) ? '' : `解析到的 ${usedKeys.size} 个键里没有它`);
+    }
+    {
+        const langEntry = path.join(ROOT, 'src', 'lang');
+        const probe = execFileSync(process.execPath, ['-e', `
+            const L = require(${JSON.stringify(langEntry)});
+            const out = { order: [] };
+            (async () => {
+                await L.setLanguage('zh-cn');
+                out.order.push(L.getCurrentLanguage());
+                out.zh = {};
+                for (const k of ${JSON.stringify(RENDERED)}) {
+                    out.zh[k] = L.t(k, { version: '9.9.9', status: '7' });
+                }
+                await L.setLanguage('en');
+                out.order.push(L.getCurrentLanguage());
+                out.en = {};
+                for (const k of ${JSON.stringify(RENDERED)}) {
+                    out.en[k] = L.t(k, { version: '9.9.9', status: '7' });
+                }
+                console.log(JSON.stringify(out));
+            })();
+        `], { encoding: 'utf8', timeout: 30000 });
+        const rendered = JSON.parse(probe.trim().split('\n').pop());
+        const keys = RENDERED;
+        // 期望值自己按语言包模板插值，不走 i18next：两条独立来源对得上才算数
+        const fill = (text) => String(text).replace(/\{version\}/g, '9.9.9').replace(/\{status\}/g, '7');
+        const short = (k) => k.slice('main.'.length);
+        check('zh-cn 下每条 main.* 都渲染成语言包里的译文，不是裸键名',
+            keys.every((k) => rendered.zh[k] === fill(zhMain[short(k)])),
+            JSON.stringify(rendered.zh));
+        check('en 下同样命中 en.json（切语言真换了资源袋）',
+            keys.every((k) => rendered.en[k] === fill(enMain[short(k)])),
+            JSON.stringify(rendered.en));
+        // 语言码对外仍必须是 'zh-cn'：设置页、getAvailableLanguages、渲染层都按这个字面量比
+        check('setLanguage 之后 getCurrentLanguage 仍是小写 zh-cn（规范化不许改出去）',
+            rendered.order.join('/') === 'zh-cn/en', rendered.order.join('/'));
+        check('单花括号插值生效：{version} 被替换而不是留在文案里',
+            /9\.9\.9/.test(rendered.zh['main.updatedTo'])
+            && !/\{version\}/.test(rendered.zh['main.updatedTo']),
+            rendered.zh['main.updatedTo']);
     }
 
     // 带参数的调用点必须传 params（形参个数不匹配是最易翻车处）
