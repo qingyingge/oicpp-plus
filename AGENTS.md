@@ -88,7 +88,7 @@ xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-san
 
 HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` / `data-i18n-aria-label`（另支持 `data-i18n-args` 传插值参数），由 `src/renderer/js/i18n.js:242 _applyToDOM` 统一覆盖。**行内中文只是 JS 加载前的默认值，保留即可**，I8 不计入这类行。
 
-主进程语言切换：启动时 `src/main.js:2802`（`createWindow` 内）`setLanguage`、设置变更时 `src/main.js:8163` `setLanguage` + `createMenuBar()`，无状态，`t()` 直接调即可。
+主进程语言切换：启动时 `src/main.js:2960`（`createWindow` 内）`setLanguage`、设置变更时统一走 `applyLanguageChange()`（`src/main.js:8576`，内部 `await setLanguage` → `createMenuBar()` → 广播 `language-changed`），无状态，`t()` 直接调即可。**任何改动 `settings.language` 的入口都必须调用它**（`update-settings` handler、`updateSettings()`、`resetSettings()`、`importSettings()`、云端同步），否则语言只在下次开窗口时生效。
 
 改完必须跑 `pnpm run ci`（I1~I8 + 回归测试）。
 

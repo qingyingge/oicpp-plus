@@ -79,6 +79,7 @@ class OICPPApp {
             }
             
             this.setupEventListeners();
+            this.setupLanguageChangeRefresh();
             this.updatePlatformSpecificMenu();
             this.setupIPC();
             await this.initAccountMenu();
@@ -110,6 +111,39 @@ class OICPPApp {
         } catch (error) {
             logError('OICPP-Plus App 初始化失败', error);
         }
+    }
+
+    /**
+     * 语言切换后刷新那些由 JS 直接写文案、data-i18n 覆盖不到的常驻控件：
+     * 状态栏（LSP / 错误警告）、账号菜单、调试继续按钮标题。
+     *
+     * 这些刷新必须是幂等重入既有渲染函数，不能像 highlightContinueButton()
+     * 那样的带副作用调用（脉冲动画 + 5s 定时器）。
+     */
+    setupLanguageChangeRefresh() {
+        document.addEventListener('i18n-language-changed', () => {
+            // 延后一拍：i18n 先 _notifyListeners() 再同步跑 _applyToDOM()，
+            // 而状态栏两项带 data-i18n-title，同步执行会被覆写回静态文案。
+            setTimeout(() => {
+                try {
+                    this.updateLspStatusBar();
+                    this.updateMarkerStatusBar();
+                    this.updateAccountMenu();
+                    this.refreshDebugButtonTranslations();
+                } catch (_) { }
+            }, 0);
+        });
+    }
+
+    /**
+     * 只刷新继续按钮的标题，不重放高亮动画。
+     */
+    refreshDebugButtonTranslations() {
+        const continueBtn = document.getElementById('debug-continue');
+        if (!continueBtn) return;
+        continueBtn.title = continueBtn.style.animation
+            ? window.i18n.t('debug.clickToStartRun')
+            : window.i18n.t('debug.continueTitle');
     }
 
     setupEventListeners() {

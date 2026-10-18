@@ -3887,6 +3887,7 @@ function setupIPC() {
                 incomingSettings.compilerArgs = normalizeCompilerArgsForPlatform(incomingSettings.compilerArgs);
             }
 
+            const prevLanguage = settings.language;
             settings = { ...settings, ...incomingSettings };
             
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -3900,6 +3901,8 @@ function setupIPC() {
             if (incomingSettings && Object.prototype.hasOwnProperty.call(incomingSettings, 'keybindings')) {
                 createMenuBar();
             }
+            // 语言是所有设置页保存时的公共字段，必须走这里广播，否则只写盘不生效
+            await applyLanguageChange(settings.language, prevLanguage);
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.webContents.send('settings-applied', settings);
             }
@@ -8559,10 +8562,49 @@ function recoverSettingsFromBackup() {
     }
 }
 
-function updateSettings(settingsType, newSettings) {
+/**
+ * 切换应用语言：更新 i18next 实例、重建菜单栏，并把变更广播给主窗口与所有
+ * 设置子窗口。
+ *
+ * 所有设置页（编辑器 / 编译器 / 模板 / 备份）保存时走的都是 `update-settings`
+ * handler；若那里只写 settings.json 而不调用本函数，语言就只在「下次打开
+ * 窗口」时才生效，主窗口、设置窗口和菜单栏都不会变。
+ *
+ * @param {string} langCode 新语言代码
+ * @param {string} prevLang 切换前的语言代码；相同则不重复广播
+ */
+async function applyLanguageChange(langCode, prevLang) {
+    if (!langCode || langCode === prevLang) return;
+    // 整体兜底：本函数可能被同步调用方（importSettings）以 fire-and-forget
+    // 方式调用，绝不能抛出未处理的 Promise rejection
+    try {
+        // lang/index.js 的 setLanguage 返回 i18next.changeLanguage 的 Promise，
+        // 必须 await：否则紧随其后的 createMenuBar() 会用旧语言重建菜单。
+        await setLanguage(langCode);
+        createMenuBar();
+        const targets = [
+            mainWindow,
+            editorSettingsWindow,
+            compilerSettingsWindow,
+            codeTemplatesWindow,
+            backupSettingsWindow
+        ];
+        for (const win of targets) {
+            if (win && !win.isDestroyed()) {
+                win.webContents.send('language-changed', langCode);
+            }
+        }
+        logInfo('语言已切换:', prevLang, '->', langCode);
+    } catch (error) {
+        logError('切换语言失败:', error);
+    }
+}
+
+async function updateSettings(settingsType, newSettings) {
     try {
 
         const validKeys = SETTINGS_WRITABLE_KEYS;
+        const prevLanguage = settings.language;
 
         for (const key in newSettings) {
             if (validKeys.includes(key)) {
@@ -8588,12 +8630,7 @@ function updateSettings(settingsType, newSettings) {
             createMenuBar();
         }
 
-        if (newSettings && typeof newSettings.language === 'string') {
-            setLanguage(newSettings.language);
-            createMenuBar();
-        }
-
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('settings-changed', null, settings);
         }
 
@@ -8601,33 +8638,22 @@ function updateSettings(settingsType, newSettings) {
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.setBackgroundColor(getThemeBackgroundColor(newSettings.theme));
             }
-            if (compilerSettingsWindow) {
+            if (compilerSettingsWindow && !compilerSettingsWindow.isDestroyed()) {
                 compilerSettingsWindow.webContents.send('theme-changed', newSettings.theme);
             }
-            if (editorSettingsWindow) {
+            if (editorSettingsWindow && !editorSettingsWindow.isDestroyed()) {
                 editorSettingsWindow.webContents.send('theme-changed', newSettings.theme);
             }
-            if (codeTemplatesWindow) {
+            if (codeTemplatesWindow && !codeTemplatesWindow.isDestroyed()) {
                 codeTemplatesWindow.webContents.send('theme-changed', newSettings.theme);
             }
-            if (backupSettingsWindow) {
+            if (backupSettingsWindow && !backupSettingsWindow.isDestroyed()) {
                 backupSettingsWindow.webContents.send('theme-changed', newSettings.theme);
             }
         }
 
-        if (newSettings.language) {
-            if (editorSettingsWindow) {
-                editorSettingsWindow.webContents.send('language-changed', newSettings.language);
-            }
-            if (compilerSettingsWindow) {
-                compilerSettingsWindow.webContents.send('language-changed', newSettings.language);
-            }
-            if (codeTemplatesWindow) {
-                codeTemplatesWindow.webContents.send('language-changed', newSettings.language);
-            }
-            if (backupSettingsWindow) {
-                backupSettingsWindow.webContents.send('language-changed', newSettings.language);
-            }
+        if (typeof newSettings.language === 'string') {
+            await applyLanguageChange(newSettings.language, prevLanguage);
         }
 
         logInfo('设置已更新:', settings);
@@ -8648,10 +8674,11 @@ function getResettableSettingsKeys() {
     ];
 }
 
-function resetSettings(settingsType = null) {
+async function resetSettings(settingsType = null) {
     try {
         const defaultSettings = getDefaultSettings();
         const resettableKeys = getResettableSettingsKeys();
+        const prevLanguage = settings.language;
 
         for (const key of resettableKeys) {
             if (Object.prototype.hasOwnProperty.call(defaultSettings, key)) {
@@ -8663,10 +8690,13 @@ function resetSettings(settingsType = null) {
 
         saveSettings();
 
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
 
             mainWindow.webContents.send('settings-reset', settings);
         }
+
+        // 'language' 在可重置键里，重置会改回默认语言，必须同步广播
+        await applyLanguageChange(settings.language, prevLanguage);
 
         logInfo('所有设置已重置为默认值');
         return { success: true, settings };
@@ -8705,6 +8735,7 @@ function importSettings(filePath) {
             throw new Error(t('error.invalidSettingsFormat'));
         }
 
+        const prevLanguage = settings.language;
         const validKeys = ['compilerPath', 'compilerArgs', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'runAllSamples'];
         const defaultSettings = getDefaultSettings();
 
@@ -8720,9 +8751,12 @@ function importSettings(filePath) {
 
         saveSettings();
 
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('settings-imported', settings);
         }
+
+        // 导入文件里带 language 时必须同步广播，否则界面停留在旧语言
+        applyLanguageChange(settings.language, prevLanguage);
 
         logInfo('设置已导入自:', filePath);
         return { success: true, settings: settings };
@@ -10512,6 +10546,7 @@ async function syncSettingsFromCloud() {
     const prevSuppress = suppressAutoBackup;
     suppressAutoBackup = true;
     try {
+        const prevLanguage = settings.language;
         settings = mergeSettingsPreservingLocal(parsed);
         normalizeSettingsRuntimeShape(settings);
         saveSettings();
@@ -10522,6 +10557,7 @@ async function syncSettingsFromCloud() {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('settings-applied', settings);
         }
+        await applyLanguageChange(settings.language, prevLanguage);
     } finally {
         suppressAutoBackup = prevSuppress;
     }

@@ -43,7 +43,36 @@ class IntegratedTerminalPanel {
 
         this.bindEvents();
         await this.refreshFeatureStatus();
+        // 标签文案与空状态是 JS 直接写的，data-i18n 覆盖不到。延后一拍执行，
+        // 避开 i18n 的 _applyToDOM()（它在 _notifyListeners() 之后同步跑）。
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.refreshTranslations(), 0);
+        });
         this.initialized = true;
+    }
+
+    /**
+     * 语言切换后重建 JS 写入的译文：终端标签页与空状态提示。
+     * 终端回滚缓冲里的历史文本无法改写，属预期行为。
+     */
+    refreshTranslations() {
+        try {
+            if (this.tabs) {
+                this.tabs.querySelectorAll('.integrated-terminal-tab').forEach((tab) => {
+                    const counter = Number(tab.dataset.terminalCounter);
+                    const label = tab.querySelector('.terminal-tab-label');
+                    // t() 取不到键时返回键名本身，不需要再写 || 兜底（I5 会拦）
+                    if (label && Number.isFinite(counter)) {
+                        label.textContent = window.i18n.t('terminal.tabLabel', { counter });
+                    }
+                    const close = tab.querySelector('.terminal-tab-close');
+                    if (close) {
+                        close.setAttribute('aria-label', window.i18n.t('terminal.closeTerminal'));
+                    }
+                });
+            }
+            this.renderEmptyState();
+        } catch (_) { }
     }
 
     bindEvents() {
@@ -321,6 +350,8 @@ class IntegratedTerminalPanel {
         tab.type = 'button';
         tab.className = 'integrated-terminal-tab pending';
         tab.dataset.terminalId = tabId;
+        // 记录序号，供语言切换后重建标签（标签文案里带 counter）
+        tab.dataset.terminalCounter = String(this.counter);
         const tabLabel = window.i18n?.t?.('terminal.tabLabel', { counter: this.counter });
         const closeLabel = window.i18n?.t?.('terminal.closeTerminal');
         tab.innerHTML = `<span class="terminal-tab-label">${tabLabel}</span><span class="terminal-tab-close" aria-label="${closeLabel}">×</span>`;

@@ -1468,6 +1468,30 @@ class TabManager {
 
         this.initializeEditorManagerReference();
         this.bindExternalFileWatcher();
+
+        // 欢迎页文案全部由 t() 写入 innerHTML（无 data-i18n），语言切换需整体重建
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.refreshWelcomeTranslations(), 0);
+        });
+    }
+
+    /**
+     * 语言切换后重渲染欢迎页。整页文案都来自 t()，所以重建 innerHTML 是完整做法；
+     * 随后必须重跑最近文件列表，否则刚异步填入的内容会被清空。
+     */
+    refreshWelcomeTranslations() {
+        const container = document.getElementById('welcome-container');
+        if (!container || container.style.display === 'none') {
+            return;
+        }
+        try {
+            container.innerHTML = this.getWelcomePageContent();
+            if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
+                window.uiIcons.hydrate(container);
+            }
+            this.setupWelcomeEventListeners(container);
+            this.loadRecentFiles(container);
+        } catch (_) { }
     }
 
     initializeEditorManagerReference() {

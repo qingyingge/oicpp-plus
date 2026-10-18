@@ -13,6 +13,12 @@ class TitlebarManager {
         this.applyPlatformLayout();
         this.setupWindowControls();
         this.setupElectronEvents();
+        // 最大化/还原按钮的 title 是 JS 直接写的。必须延后一拍：i18n 在
+        // _notifyListeners() 之后才跑 _applyToDOM()，而本按钮带
+        // data-i18n-title，同步执行会被覆写成静态的「最大化」。
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.updateMaximizeButton(), 0);
+        });
         logInfo('标题栏管理器已初始化');
     }
 
