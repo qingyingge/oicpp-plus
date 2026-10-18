@@ -21,18 +21,35 @@ const normalizePlatform = (raw) => {
     return value || process.platform;
 };
 
-const version = readArg('version', process.env.CLANG_FORMAT_VERSION || '23.1.2');
-const tag = readArg('tag', process.env.CLANG_FORMAT_TAG || `llvmorg-${version}`);
+// 点名过的项要能区分「用户点了」和「用了内置默认」：Intel mac 的回退只看这两项，
+// 只要点过 version 或 tag 里的任何一个就不再擅自换版本。
+const pinnedVersion = readArg('version', process.env.CLANG_FORMAT_VERSION || '');
+const pinnedTag = readArg('tag', process.env.CLANG_FORMAT_TAG || '');
+// 只点 tag 不点 version 时，版本号从 tag 里推 —— 资产名和 releaseTag 必须来自同一次选择，
+// 否则拿 llvmorg-20.1.0 去配 LLVM-23.1.2-... 的资产名，找不着资产又拼出个 404 的直链。
+const version = pinnedVersion || (pinnedTag ? pinnedTag.replace(/^llvmorg-/i, '') : '23.1.2');
+const tag = pinnedTag || `llvmorg-${version}`;
 const repo = readArg('repo', process.env.CLANG_FORMAT_REPO || 'llvm/llvm-project');
 const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANG_FORMAT_PLATFORM || process.platform));
 const architecture = String(readArg('arch', process.env.OICPP_CLANG_FORMAT_ARCH || process.arch)).toLowerCase();
-const usesIntelMacFallback = platform === 'darwin' && architecture === 'x64'
-    && !args.includes('--version') && !process.env.CLANG_FORMAT_VERSION;
+const isIntelMac = platform === 'darwin' && architecture === 'x64';
+const usesIntelMacFallback = isIntelMac && !pinnedVersion && !pinnedTag;
 const assetVersion = usesIntelMacFallback ? '19.1.7' : version;
 const releaseTag = usesIntelMacFallback ? 'llvmorg-19.1.7' : tag;
+if (usesIntelMacFallback) {
+    console.warn(`[clang-format] x86_64 macOS 且没有点名版本：取上游最后一个 Intel macOS 包 19.1.7（默认的 ${version} 没有这个资产）`);
+}
+if (isIntelMac && !usesIntelMacFallback && releaseTag !== 'llvmorg-19.1.7') {
+    console.warn(`[clang-format] 按你点名的 ${releaseTag} / ${assetVersion} 取，不再自动换成 19.1.7 —— 上游从 20 起不发 x86_64 macOS 包，取不到是预期结果`);
+}
 const outputRoot = path.resolve(readArg('output', process.env.CLANG_FORMAT_OUTPUT || path.join(__dirname, '..', 'build', 'clang-format')));
 const directUrl = readArg('url', process.env.CLANG_FORMAT_DOWNLOAD_URL || '');
 const expectedDigest = String(readArg('digest', process.env.CLANG_FORMAT_SHA256 || '')).replace(/^sha256:/i, '').toLowerCase();
+// 校验值是给「你以为要下的那个包」上的锁。回退把包换成另一份时，这把锁要么永远对不上
+// （下载到一半才失败，报个和真实原因无关的 checksum 错），要么被悄悄摘掉（装了没验过的东西）。
+// 两个都不能接受，所以在这里当场拒掉，并把怎么解写进报错。给了 --url 就不算冲突：
+// 那时候下的是你指定的那个文件，回退只改了本地临时文件名。
+const digestConflictsWithFallback = usesIntelMacFallback && !!expectedDigest && !directUrl;
 const skipSslVerify = process.env.NODE_ENV === 'development' && process.env.OICPP_SKIP_SSL_VERIFY === '1';
 const tempRoot = path.join(outputRoot, '_download');
 const { requestJson, ensureDownload } = createReleaseDownloader({
@@ -155,6 +172,10 @@ const selectReleaseAsset = async (token) => {
 };
 
 const main = async () => {
+    if (digestConflictsWithFallback) {
+        throw new Error(`指定的 sha256 属于 ${version} 的包，但 x86_64 macOS 会回退到 19.1.7 —— 二者不可能同时对上。`
+            + `请改成 --tag llvmorg-19.1.7 --digest <19.1.7 的 sha256>，或去掉 --digest 改用 Release API 自带的资产校验值`);
+    }
     if (skipSslVerify) {
         console.warn('[clang-format] SSL certificate verification disabled (OICPP_SKIP_SSL_VERIFY=1)');
     }

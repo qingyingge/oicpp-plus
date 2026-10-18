@@ -90,7 +90,8 @@ function extractDownloaderBlock(source) {
 
 const DOWNLOADER_BINDINGS = [
     'args', 'readArg', 'normalizePlatform', 'version', 'tag', 'repo', 'platform',
-    'architecture', 'usesIntelMacFallback', 'assetVersion', 'releaseTag', 'outputRoot',
+    'architecture', 'isIntelMac', 'usesIntelMacFallback', 'assetVersion', 'releaseTag',
+    'digestConflictsWithFallback', 'outputRoot',
     'directUrl', 'expectedDigest', 'skipSslVerify', 'tempRoot', 'assetNames',
     'ensureDir', 'run7z', 'extractFromZip', 'extractFromXz', 'findFile',
     'getAssetName', 'selectReleaseAsset', 'main'
@@ -1805,6 +1806,58 @@ function makeModel(lines, state = {}) {
                 arm.usesIntelMacFallback === false && arm.assetVersion === '23.1.2' &&
                 lin.usesIntelMacFallback === false && lin.assetVersion === '23.1.2',
                 JSON.stringify({ arm: arm.assetVersion, lin: lin.assetVersion }));
+
+            // 点名 tag 也是点名：原来只看 version，--tag llvmorg-20.1.0 会被悄悄换成
+            // llvmorg-19.1.7，下回来的东西和你要的不是一个，日志还写着装好了。
+            const tagArg = mac({ arch: 'x64', argv: ['--tag', 'llvmorg-20.1.0'] });
+            const tagEnv = mac({ arch: 'x64', env: { CLANG_FORMAT_TAG: 'llvmorg-20.1.0' } });
+            check('点名 tag（参数或环境变量）同样停止回退，releaseTag 就是点的那个',
+                tagArg.usesIntelMacFallback === false && tagArg.releaseTag === 'llvmorg-20.1.0' &&
+                tagEnv.usesIntelMacFallback === false && tagEnv.releaseTag === 'llvmorg-20.1.0',
+                JSON.stringify({ byArg: tagArg.releaseTag, byEnv: tagEnv.releaseTag }));
+            check('只点 tag 时版本号从 tag 里推，资产名和 releaseTag 必须出自同一次选择',
+                tagArg.version === '20.1.0' && tagArg.assetVersion === '20.1.0' &&
+                tagArg.assetNames['darwin-x64'] === 'LLVM-20.1.0-macOS-x86_64.tar.xz',
+                JSON.stringify({ version: tagArg.version, asset: tagArg.assetNames['darwin-x64'], tag: tagArg.releaseTag }));
+
+            const loud = (o) => makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'x64', ...o });
+            check('回退真的发生了要留一条话：默认版本被换成另一个包，不能静默',
+                loud().logs.warn.join(' ').includes('19.1.7'),
+                JSON.stringify(loud().logs.warn));
+            check('按点名去取时也要说清「不会被换掉」，取不到是上游没这个包，不是脚本出错',
+                loud({ argv: ['--tag', 'llvmorg-20.1.0'] }).logs.warn.join(' ').includes('llvmorg-20.1.0'),
+                JSON.stringify(loud({ argv: ['--tag', 'llvmorg-20.1.0'] }).logs.warn));
+            check('arm64 mac 不该被这两条 Intel 专属提示刷屏',
+                makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'arm64' })
+                    .logs.warn.join(' ').length === 0,
+                JSON.stringify(makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'arm64' }).logs.warn));
+
+            // 回退 + 自定义 sha256 是一对矛盾：锁是给原来那个包上的。
+            // 悄悄摘掉等于装没验过的东西，硬留着等于下载到一半报个和真实原因无关的 checksum 错，
+            // 所以必须在下任何字节之前当场拒掉。
+            const clash = loud({ env: { CLANG_FORMAT_SHA256: 'sha256:BEEF' } });
+            let clashErr = null;
+            try { await clash.main(); } catch (e) { clashErr = e; }
+            check('回退会换包时，用户钉的 sha256 让下载当场拒掉，而不是摘掉校验或必然 mismatch',
+                clash.dl.digestConflictsWithFallback === true && !!clashErr
+                && /sha256/.test(clashErr.message) && /19\.1\.7/.test(clashErr.message),
+                clashErr && clashErr.message);
+            check('这条拒绝发生在任何磁盘/网络动作之前',
+                clash.downloadCalls.length === 0 && clash.requestJsonCalls.length === 0
+                && clash.fsOps.length === 0,
+                JSON.stringify({ dl: clash.downloadCalls, api: clash.requestJsonCalls, fs: clash.fsOps }));
+            const urlRun = loud({ env: { CLANG_FORMAT_SHA256: 'sha256:BEEF' }, argv: ['--url', 'https://mirror/a.tar.xz'] });
+            check('给了 --url 就不算冲突：下的是你指定的文件，校验值就该跟着它，回退只改临时文件名',
+                urlRun.dl.digestConflictsWithFallback === false && urlRun.dl.expectedDigest === 'beef',
+                JSON.stringify({ conflict: urlRun.dl.digestConflictsWithFallback, digest: urlRun.dl.expectedDigest }));
+            const pinnedOurs = loud({ env: { CLANG_FORMAT_SHA256: 'sha256:BEEF', CLANG_FORMAT_TAG: 'llvmorg-19.1.7' } });
+            check('点名 19.1.7 再配它自己的 sha256 是正常用法，不许被这条拒绝挡住',
+                pinnedOurs.dl.digestConflictsWithFallback === false && pinnedOurs.dl.releaseTag === 'llvmorg-19.1.7',
+                JSON.stringify({ conflict: pinnedOurs.dl.digestConflictsWithFallback, tag: pinnedOurs.dl.releaseTag }));
+            const noDigest = loud({});
+            check('没钉 sha256 时照旧走回退，用 Release API 自带的资产校验值',
+                noDigest.dl.digestConflictsWithFallback === false && noDigest.dl.usesIntelMacFallback === true,
+                JSON.stringify({ conflict: noDigest.dl.digestConflictsWithFallback }));
         }
 
         {
