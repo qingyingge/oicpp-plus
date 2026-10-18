@@ -11,7 +11,7 @@ const path = require('path');
 const assert = require('assert');
 const vm = require('vm');
 const {
-    arrowExpr, blockByIndent, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst
+    arrowExpr, blockByIndent, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst, scalarConst
 } = require('./fixtures/source-extract');
 const { loadLocales, runCiBlock } = require('./fixtures/ci-block-runner');
 
@@ -22,6 +22,14 @@ let total = 0;
 // 段落里排好的异步守卫，统一在文件尾的 async IIFE 里跑（check 本身是同步计数，
 // 汇总和 exit 都在最后一批 add 完之后再算）。
 const deferredChecks = [];
+
+// 异步段里任何一条 promise 永不结算，event loop 就排空、进程以 0 退出：
+// runner 数到前半截的 [PASS] 判过，尾巴上整段断言静默蒸发（实测「在途去重失效」
+// 这种变异就是这么活下来的）。用一条不 unref 的定时器把「跑不完」顶成失败。
+const watchdog = setTimeout(() => {
+    console.log('[FAIL] 测试主体 20s 没跑到收尾（中途有 promise 永不结算，后面的断言一条都没跑）');
+    process.exit(1);
+}, 20000);
 
 const check = (name, fn) => {
     total++;
@@ -530,7 +538,9 @@ const runEngineOnce = async (Ctor, progressCount) => {
                 const expr = arrowExpr(preloadSrc, /const cloneSettings = /);
                 return expr ? `const cloneSettings = ${expr}` : '';
             })(),
-            ttl: (/^const SETTINGS_CACHE_TTL_MS = \d+;/m.exec(preloadSrc) || [''])[0],
+            // TTL 是配置值，但抽取按括号配平取整条声明：`const|let`、缩进、`=` 两边空格、
+            // 初值里的括号都不锁长相；值再从沙箱里读回来，用假时钟把「过期」跑出来。
+            ttl: scalarConst(preloadSrc, 'SETTINGS_CACHE_TTL_MS'),
             eventSet: callStatement(preloadSrc, /^const ALLOWED_EVENT_CHANNELS = new Set\(/m),
             wrapper: objectConst(preloadSrc, 'safeIpcRenderer')
         };
@@ -545,7 +555,16 @@ const runEngineOnce = async (Ctor, progressCount) => {
         let blocked = [];
         let invokeCalls = 0;
         let resolvers = [];
+        // 假时钟：TTL 这条配置只有能推动时间才测得出「过期」，用真实 Date 就得睡 1 秒。
+        const clock = { now: 0 };
+        // 一次性结算全部在途请求：手写 shift()() 只结第一个，去重一旦失效，
+        // 后面的 promise 永不结算，整个 async 段就地挂死（挂死不是失败，是静默放行）。
+        const flush = () => { for (const settle of resolvers.splice(0, resolvers.length)) settle(); };
         const ctx = vm.createContext({
+            Date: { now: () => clock.now },
+            // 变异测试用的旁路：源码里正常没人读它。有它才能测出「源码混用真假时钟」——
+            // 真 Date.now() 在沙箱里永远比假时钟走得快，缓存看起来会「一直在过期」。
+            __src_Date_now: () => Date.now(),
             ipcRenderer: {
                 on: (ch, fn) => { listeners.push([ch, fn]); },
                 once: (ch, fn) => { listeners.push(['once:' + ch, fn]); },
@@ -559,7 +578,9 @@ const runEngineOnce = async (Ctor, progressCount) => {
                 removeListener: () => { }, removeAllListeners: () => { }
             },
             console: { warn: (m) => { blocked.push(String(m)); }, log: () => { }, error: () => { } },
-            JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Set, Map, Date
+            // 不要再在后面补一份 `Date` 简写：同名键后写覆盖前写，真 Date 一来
+            // 上面那个假时钟就废了，TTL 那两条会静默退化成「永远命中缓存」。
+            JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Set, Map
         });
         // 这几个模块级状态在真实源码里是 let/const；沙箱用同名声明补齐 ——
         // 同一个 context 的后续脚本共享这份词法绑定（和多个 <script> 一样）。
@@ -571,8 +592,13 @@ const runEngineOnce = async (Ctor, progressCount) => {
         vm.runInContext([pieces.ttl, pieces.invalidate, pieces.clone, pieces.getAll,
             pieces.eventSet, pieces.wrapper, pieces.loop].join('\n') + '\n', ctx);
         // const 声明只落进 context 的词法环境，挂在 ctx 上看不到；再跑一条脚本把它们递出来。
-        vm.runInContext('this.__api = { safeIpcRenderer, getAllSettings, invalidateSettingsCache, ALLOWED_EVENT_CHANNELS };', ctx);
+        vm.runInContext('this.__api = { safeIpcRenderer, getAllSettings, invalidateSettingsCache, ALLOWED_EVENT_CHANNELS, ttl: SETTINGS_CACHE_TTL_MS };', ctx);
         const api = ctx.__api;
+        // TTL 的值不写死在测试里：从沙箱读回来，再用它推时钟，测的是「这条配置真在承重」
+        const TTL = Number(api.ttl);
+        check('缓存 TTL 配置被真跑读成一个正数', () => {
+            assert.ok(Number.isFinite(TTL) && TTL > 0, `TTL 读回来是 ${api.ttl}，假时钟推不动`);
+        });
 
         check('广播失效循环真注册了 5 个通道，回调就是 invalidateSettingsCache 本体', () => {
             assert.deepStrictEqual(listeners.map((l) => l[0]),
@@ -584,7 +610,7 @@ const runEngineOnce = async (Ctor, progressCount) => {
 
         const a = api.getAllSettings();
         const b = api.getAllSettings();
-        resolvers.shift()();
+        flush();
         await Promise.all([a, b]);
         api.getAllSettings();                       // TTL 内第二次读
         check('TTL 内命中缓存、在途请求共用同一次 invoke（否则下面几条都是空跑）', () => {
@@ -596,20 +622,47 @@ const runEngineOnce = async (Ctor, progressCount) => {
         check('invalidateSettingsCache 之后必须重新拉一次', () => {
             assert.strictEqual(invokeCalls, 2, `invoke 仍是 ${invokeCalls} 次，缓存没被失效掉`);
         });
-        resolvers.shift()();
+        flush();
         await d;
 
+        // TTL 用假时钟推：把阈值缩到 0（永远过期）或放到 Infinity（永不过期）都会在这里红，
+        // 而原来的正则只锁得住「这行字面上还写着 1000」。
+        const cachedBeforeTtl = invokeCalls;
+        clock.now += TTL - 1;
+        api.getAllSettings();
+        check('差 1ms 到 TTL：这次读必须命中缓存，不再 invoke', () => {
+            assert.strictEqual(invokeCalls, cachedBeforeTtl,
+                `多拉了 ${invokeCalls - cachedBeforeTtl} 次，TTL 内不该回源`);
+        });
+        clock.now += 1;
+        const afterTtl = api.getAllSettings();
+        check('时间走到 TTL 整点：缓存必须判过期重新拉（边界是 < 不是 <=）', () => {
+            assert.strictEqual(invokeCalls, cachedBeforeTtl + 1,
+                `invoke 停在 ${invokeCalls} 次，TTL 到了还在吃缓存`);
+        });
+        flush();
+        await afterTtl;
+        // 上面这次重新拉把时间戳刷新在 TTL 处；再往前推 TTL-1 必须还在 TTL 内。
+        // 少了这条，「时间戳钉死在第一次写入」这种缓存永不失效的写法能一路混过去。
+        clock.now += TTL - 1;
+        api.getAllSettings();
+        check('重新拉取后 TTL 从头计时（时间戳跟着每次写入刷新）', () => {
+            assert.strictEqual(invokeCalls, cachedBeforeTtl + 1,
+                `多拉了 ${invokeCalls - cachedBeforeTtl - 1} 次，刚写入的缓存没被当成新的`);
+        });
+
         // 核心场景：读取在途 + 期间发生写入 → 这个响应是写入**前**的快照，不许回填
-        api.invalidateSettingsCache();              // 清掉 d 的结果，保证下一条真的在途
-        const inflight = api.getAllSettings();      // invoke #3
+        api.invalidateSettingsCache();              // 清掉上面的结果，保证下一条真的在途
+        const inflight = api.getAllSettings();      // invoke
         api.invalidateSettingsCache();              // 期间用户改了设置
-        resolvers.shift()();
+        flush();
         await inflight;
         api.getAllSettings();                       // 必须再拉一次
         check('在途请求不把写入前的旧快照回填进缓存（代数比对生效）', () => {
-            assert.strictEqual(invokeCalls, 4, `invoke 停在 ${invokeCalls} 次：旧快照被重新缓存，改完设置读到更旧的值`);
+            assert.strictEqual(invokeCalls, cachedBeforeTtl + 3,
+                `invoke 停在 ${invokeCalls} 次：旧快照被重新缓存，改完设置读到更旧的值`);
         });
-        resolvers.shift()();
+        flush();
 
         // H8 事件白名单：跑真包装器，不读 Set 的字面量
         listeners = []; blocked = [];
@@ -683,9 +736,11 @@ const runEngineOnce = async (Ctor, progressCount) => {
 
     for (const run of deferredChecks) await run();
 
+    clearTimeout(watchdog);
     console.log(`\n${total - failures}/${total} assertions passed`);
     process.exit(failures === 0 ? 0 : 1);
 })().catch((error) => {
     console.log(`[FAIL] 异步守卫自身跑通 | ${String((error && error.stack) || error)}`);
+    clearTimeout(watchdog);
     process.exit(1);
 });
