@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { classMethod, compileMethod } = require('./fixtures/source-extract');
+const { loadLocales } = require('./fixtures/ci-block-runner');
 
 const root = path.resolve(__dirname, '..');
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -314,7 +315,11 @@ if (report) {
     // L1: 移除死代码 debugProcess/debugSession
     const l1 = report.find((i) => i.id === 'L1');
     if (l1) {
-        check('L1 debugProcess/debugSession removed', !/let debugProcess\b|let debugSession\b/.test(mainSource));
+        // 这条**故意留在文本层**：死代码没有用户可见行为，把「不存在」换成真跑就是自证。
+        // 但口径从只认 `let` 放宽到任意声明关键字 —— 原来写成 `var debugProcess` 就能绕过。
+        // `debugSessionRootDir` 这类仍在用的名字靠 `\b` 排除，不是靠锁 `let`。
+        check('L1 debugProcess/debugSession 两个死变量没以任何声明形式回来',
+            !/(?:let|var|const)\s+debug(?:Process|Session)\b/.test(mainSource));
     }
 
     // L9: 移除 templates.html 死代码 tab 切换脚本
@@ -332,10 +337,146 @@ if (report) {
     // L28: compiler.js testlib-path 元素空值保护
     const l28 = report.find((i) => i.id === 'L28');
     if (l28) {
-        const testBlock = /async testTestlib\(\) \{[\s\S]*?if \(!testlibPathInput\)/.exec(compilerSource);
-        const setBlock = /async setTestlibPath\(path\) \{[\s\S]*?if \(testlibPathInput\)/.exec(compilerSource);
-        check('L28 testTestlib null-checks #testlib-path', !!(testBlock && testBlock[0].includes('if (!testlibPathInput)')));
-        check('L28 setTestlibPath null-checks #testlib-path', !!(setBlock && setBlock[0].includes('if (testlibPathInput)')));
+        // 原来是两条「从方法名一路贪婪捞到那行 if，再在捞出来的片段里比字面量」：
+        // 锚点锁 `async testTestlib() {` 的排版和那行 if 的写法，tsc 一重排就断；
+        // 更要紧的是它只证明「源码里写过这句」，删掉守卫后界面会不会炸，它一句都没说。
+        // 现在把三个方法整段抽出来在假 DOM 里真跑 —— 元素不存在就是不存在，跑出来看。
+        const methods = {
+            testTestlib: classMethod(compilerSource, 'testTestlib'),
+            setTestlibPath: classMethod(compilerSource, 'setTestlibPath'),
+            updateUI: classMethod(compilerSource, 'updateUI')
+        };
+        check('L28 三个方法体整段抽取成功（真跑的必须是源码里那三段）',
+            Object.values(methods).every((m) => m.length > 150),
+            JSON.stringify(Object.fromEntries(Object.entries(methods).map(([k, m]) => [k, m.length]))));
+
+        const packs = loadLocales();
+        const zh = packs['zh-cn'];
+        // 每个元素套一层 Proxy：「把同样的值又写了一遍」和「压根没写」必须能在断言里区分开。
+        const mkRec = (proto) => {
+            const writes = [];
+            const target = { ...proto };
+            return new Proxy(target, {
+                set: (o, k, v) => { writes.push([String(k), String(v)]); o[k] = v; return true; },
+                get: (o, k) => (k === '__writes' ? writes : o[k])
+            });
+        };
+        const runCase = async (name, present, args = [], values = {}, lang = 'zh-cn') => {
+            const pack = packs[lang];
+            const els = {};
+            const classes = [];
+            const renders = [];
+            const saved = [];
+            const apiCalls = [];
+            const popupOption = mkRec({ disabled: null });
+            const hint = mkRec({ textContent: null });
+            for (const id of present) {
+                if (id === 'run-mode') {
+                    els[id] = mkRec({ value: '', querySelector: () => popupOption, parentElement: { querySelector: () => hint } });
+                } else if (id === 'testlib-test-result') {
+                    els[id] = mkRec({
+                        textContent: null,
+                        classList: { remove: () => { }, add: (c) => classes.push(c) }
+                    });
+                } else {
+                    els[id] = mkRec({ value: values[id] === undefined ? '' : values[id] });
+                }
+            }
+            const ctx = vm.createContext({
+                document: { getElementById: (id) => els[id] || null, querySelector: () => null },
+                window: {
+                    i18n: { t: (k) => pack[k] },
+                    electronAPI: {
+                        testTestlib: (p) => { apiCalls.push(['testTestlib', p]); return Promise.resolve({ success: true }); },
+                        saveSetting: (k, v) => { saved.push([k, v]); return Promise.resolve(); }
+                    }
+                },
+                Object, Array, String, Number, Boolean, Math, JSON, Error, Promise, RegExp,
+                logError: () => { }, logWarn: () => { }, logInfo: () => { }
+            });
+            try {
+                for (const [m, s] of Object.entries(methods)) {
+                    const fn = compileMethod(ctx, s);
+                    if (!fn) return { missing: m };
+                    ctx.__fns = { ...ctx.__fns, [m]: fn };
+                }
+                const self = {
+                    settings: {
+                        compilerPath: '/usr/bin/g++', pythonInterpreterPath: '/usr/bin/python3',
+                        compilerArgs: '-O2', runMode: 'popup', testlibPath: '/from-settings.txt'
+                    },
+                    isIntegratedOnlyPlatform: false
+                };
+                await ctx.__fns[name].apply(self, args);
+                return {
+                    writes: Object.fromEntries(Object.entries(els).map(([k, v]) => [k, v.__writes])),
+                    extra: { popupOption: popupOption.__writes, hint: hint.__writes },
+                    classes, saved, apiCalls
+                };
+            } catch (error) {
+                return { threw: String((error && error.message) || error) };
+            }
+        };
+        const TL = 'testlib-path';
+        const RESULT = 'testlib-test-result';
+        const ALL_INPUTS = ['compiler-path', 'python-interpreter-path', 'compiler-options', 'run-mode', TL];
+        deferredChecks = deferredChecks.then(async (rows) => {
+            const more = [];
+            const add = (name, cond, extra) => more.push({ name, cond, extra: extra === undefined ? '' : JSON.stringify(extra) });
+
+            const gone = await runCase('testTestlib', [RESULT]);
+            add('L28 testTestlib：#testlib-path 不存在时不炸，且整条流程都不往下走',
+                !gone.threw && !gone.missing && gone.apiCalls.length === 0
+                    && gone.classes.length === 0 && gone.writes[RESULT].length === 0, gone);
+            const empty = await runCase('testTestlib', [TL, RESULT]);
+            add('L28 testTestlib：对照组 —— 元素在但值为空，提示走 i18n 取真译文并打上 is-error',
+                !empty.threw && empty.apiCalls.length === 0
+                    && JSON.stringify(empty.writes[RESULT]) === JSON.stringify([['textContent', zh['compiler.setTestlibPathFirst']]])
+                    && JSON.stringify(empty.classes) === JSON.stringify(['is-error']), empty);
+            const filled = await runCase('testTestlib', [TL, RESULT], [], { [TL]: '/my.txt' });
+            add('L28 testTestlib：对照组 —— 有值才真去调 electronAPI 并渲染成功态',
+                !filled.threw
+                    && JSON.stringify(filled.apiCalls) === JSON.stringify([['testTestlib', '/my.txt']])
+                    && JSON.stringify(filled.classes) === JSON.stringify(['is-testing', 'is-success'])
+                    && JSON.stringify(filled.writes[RESULT]) === JSON.stringify([
+                        ['textContent', zh['compiler.testingTestlib']],
+                        ['textContent', zh['compiler.testlibSuccess']]]), filled);
+
+            const emptyEn = await runCase('testTestlib', [TL, RESULT], [], {}, 'en');
+            const filledEn = await runCase('testTestlib', [TL, RESULT], [], { [TL]: '/my.txt' }, 'en');
+            // 只跑 zh-cn 分不出「走 i18n」和「硬编码同一句中文」—— 两者渲染结果逐字相同。
+            // 换 en 包再跑一遍才有效：译文跟着语言包变，硬编码的字面量不会。
+            add('L28 testTestlib：换 en 包这两句都跟着变译文（证明文案真从语言包取，不是硬编码中文）',
+                !emptyEn.threw && !filledEn.threw
+                    && JSON.stringify(emptyEn.writes[RESULT]) === JSON.stringify([['textContent', packs.en['compiler.setTestlibPathFirst']]])
+                    && JSON.stringify(filledEn.writes[RESULT].slice(-1)) === JSON.stringify([['textContent', packs.en['compiler.testlibSuccess']]]),
+                { emptyEn, filledEn });
+            add('L28 testTestlib：渲染结果里不许出现键名本身（裸键上屏就是这句提示的失败形态）',
+                [emptyEn, filledEn].every((r) => JSON.stringify(r.writes[RESULT]).indexOf('compiler.') < 0),
+                { emptyEn, filledEn });
+
+            const setGone = await runCase('setTestlibPath', [], ['/my.txt']);
+            add('L28 setTestlibPath：元素不存在时不炸，DOM 一个字节都不写，但设置照样落盘',
+                !setGone.threw && !setGone.missing && Object.keys(setGone.writes).length === 0
+                    && JSON.stringify(setGone.saved) === JSON.stringify([['testlibPath', '/my.txt']]), setGone);
+            const setHere = await runCase('setTestlibPath', [TL], ['/my.txt']);
+            add('L28 setTestlibPath：对照组 —— 元素在就写进去，落盘照旧',
+                !setHere.threw
+                    && JSON.stringify(setHere.writes[TL]) === JSON.stringify([['value', '/my.txt']])
+                    && JSON.stringify(setHere.saved) === JSON.stringify([['testlibPath', '/my.txt']]), setHere);
+
+            const uiAll = await runCase('updateUI', ALL_INPUTS);
+            add('L28 updateUI：五个元素都在时各归各位（testlib 取的是 settings 里的值）',
+                !uiAll.threw && JSON.stringify(uiAll.writes[TL]) === JSON.stringify([['value', '/from-settings.txt']])
+                    && Object.keys(uiAll.writes).length === 5, uiAll);
+            const uiGone = await runCase('updateUI', ALL_INPUTS.filter((i) => i !== TL));
+            add('L28 updateUI：只缺 #testlib-path 时不炸，其余四个写入与全量那次逐字节相同',
+                !uiGone.threw && uiGone.writes[TL] === undefined
+                    && ['compiler-path', 'python-interpreter-path', 'compiler-options', 'run-mode']
+                        .every((k) => JSON.stringify(uiGone.writes[k]) === JSON.stringify(uiAll.writes[k])),
+                { uiGone, uiAll });
+            return [...rows, ...more];
+        });
     }
 
     // L6: 报告称 monaco-editor.css 首个 :root 是死代码，实测两个 :root 变量集不同。
