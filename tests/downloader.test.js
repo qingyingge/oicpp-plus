@@ -13,6 +13,13 @@ global.logError = () => { };
 const ROOT = path.resolve(__dirname, '..');
 const Downloader = require(path.join(ROOT, 'src', 'utils', 'multi-thread-downloader.js'));
 
+// 挂死不等于通过：某个 await 永不 settle 时 Node 会以 0 退出码排空 event loop，
+// 后半截断言一条不发也「全绿」。留一个不 unref 的定时器把「跑不完」顶成失败。
+setTimeout(() => {
+    console.log('[FAIL] 主流程没有跑到结尾：某个 await 永不 settle（异步守卫没被驱动完）');
+    process.exit(1);
+}, 60000);
+
 const SIZE = 3 * 1024 * 1024;
 const source = crypto.randomBytes(SIZE);
 const sourceMd5 = crypto.createHash('md5').update(source).digest('hex');

@@ -5,6 +5,13 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 
+// 挂死不等于通过：某个 await 永不 settle 时 Node 会以 0 退出码排空 event loop，
+// 后半截断言一条不发也「全绿」。留一个不 unref 的定时器把「跑不完」顶成失败。
+setTimeout(() => {
+    console.log('[FAIL] 主流程没有跑到结尾：某个 await 永不 settle（异步守卫没被驱动完）');
+    process.exit(1);
+}, 60000);
+
 let failures = 0;
 // 需要在假 fs 里 await 一遍的断言攒到这里，文件末尾统一执行
 let deferredChecks = Promise.resolve([]);
