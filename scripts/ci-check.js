@@ -211,12 +211,15 @@ if (gitignore) {
 
 // B1: Icon references
 console.log(`\n${Y}[B1] Icon references${R}`);
-const iconRefFiles = ['src/main.js', 'src/renderer/js/tabs.js', 'scripts/generate-icons.js', 'installer.nsi'];
+// 凡是能给应用图标起名字的来源都要在清单上：package.json 里 electron-builder 的
+// build.win.icon 就是真会打进产物的一份，原来不在清单里，把旧名字加回去没人管。
+// ci-check.js 自己不上清单 —— 它唯一出现 oicpp.ico 的地方就是下面这条正则，扫自己必然天天误报。
+const iconRefFiles = ['src/main.js', 'src/renderer/js/tabs.js', 'scripts/generate-icons.js', 'installer.nsi', 'package.json'];
 for (const f of iconRefFiles) {
   const fp = path.join(root, f);
   const content = readFile(fp);
   if (content) {
-    if (/oicpp\.ico(?=$|[^-])/.test(content)) fail(`${f} still references oicpp.ico`); else ok(`${f}`);
+    if (/oicpp\.ico/i.test(content)) fail(`${f} still references oicpp.ico`); else ok(`${f}`);
   }
 }
 

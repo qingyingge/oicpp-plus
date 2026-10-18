@@ -1437,10 +1437,11 @@ check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') &
 // 只打印一行黄字就过关，第三件事之后这条检查天天误报，很快被人整条删掉。
 // 现在喂进去的是合成源码，读出来的是 fail()/ok() 的原文。
 //
-// 顺带一句：正则里那个 (?=$|[^-]) 在本仓库当前是不使力的 —— 全仓只有 oicpp.ico 与
-// oicpp-plus.ico 两种写法，而 oicpp.ico 并不是 oicpp-plus.ico 的子串，加不加这个
-// 前瞻结果一样。它只对 `oicpp.ico-xxx` 这种不存在的名字有区别，所以这里不为它单独设断言，
-// 只锁真正在起作用的两个方向：旧品牌必须抓到、新品牌必须抓不到。
+// 顺带一句关于正则的来历：原来结尾挂着 (?=$|[^-])，是从 B3 的 /\.oicpp[^-]/ 抄过来的。
+// B3 那里它在使劲（要区分 .oicpp 和 .oicpp-plus），B1 这里只会放走 oicpp.ico-xxx 这种写法，
+// 所以本轮去掉；同时补上 i 标志 —— Windows 文件系统不分大小写，installer.nsi 写 OICPP.ICO
+// 照样解析得到，大小写敏感的正则等于这条检查在那份文件上不存在。
+// 两个方向都要锁：旧品牌必须抓到（含大写、含紧跟 -），新品牌必须抓不到（含大写）。
 {
     const regionOf = (header, next) => {
         const at = ciSource.indexOf(header);
@@ -1462,19 +1463,29 @@ check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') &
     const iconLitText = arrayLit(b1, 'iconRefFiles');
     const iconLoop = forStatement(b1, /^for \(const f of iconRefFiles\) \{/m);
     const iconFiles = iconLitText ? new Function('return [' + iconLitText + '];')() : [];
-    const hasIcon = (text) => { try { return /oicpp\.ico(?=$|[^-])/.test(text); } catch (_) { return false; } };
+    // 正则本体也从正文里取，不在测试里抄第二份 —— 抄了之后 ci-check 改 flags 或改前瞻，
+    // 测试照着旧字面量跑，锁的是测试自己那份副本，不是真在跑的那条。
+    // 两种写法都要接得住：字面量直接 .test(content)，或先 const X = /…/ 再 X.test(content)
+    // —— 那是同一种检查的排版差，锁死其中一种就是拿排版当语义。
+    const iconInline = /(\/(?:\\.|[^/\\])+\/[a-z]*)\.test\(content/.exec(b1);
+    const iconNamed = /const\s+(\w+)\s*=\s*(\/(?:\\.|[^/\\])+\/[a-z]*)\s*;/.exec(b1);
+    const iconPatternText = iconInline ? iconInline[1]
+        : (iconNamed && b1.includes(`${iconNamed[1]}.test(content)`) ? iconNamed[2] : '');
+    const iconPattern = iconPatternText ? new Function('return ' + iconPatternText)() : null;
+    const hasIcon = (text) => { try { return iconPattern instanceof RegExp && iconPattern.test(text); } catch (_) { return false; } };
+    check('B1 的旧图标正则从正文里取出来了', iconPattern instanceof RegExp, iconPatternText);
     check('iconRefFiles 清单抽出来真求值成数组',
         Array.isArray(iconFiles) && iconFiles.length > 0, JSON.stringify(iconFiles));
     // 清单是这条检查的全部覆盖面：把 installer.nsi 换掉或删掉，字面量守卫看不见，
     // 而那条文件从此不再被检查 —— 用一份显式期望集合锁住「不许缩水」。
-    check('清单覆盖当初登记的四处旧图标来源（少一处就是那条文件从此不查）',
-        ['src/main.js', 'src/renderer/js/tabs.js', 'scripts/generate-icons.js', 'installer.nsi']
+    check('清单覆盖每一处能给应用图标起名的来源（package.json 里 electron-builder 的 icon 也算一处）',
+        ['src/main.js', 'src/renderer/js/tabs.js', 'scripts/generate-icons.js', 'installer.nsi', 'package.json']
             .every((f) => iconFiles.includes(f)),
         JSON.stringify(iconFiles));
     check('清单里每个文件都真的存在且非空（改名掉出清单就是悄悄放弃检查）',
         iconLoop.startsWith('for (') && iconFiles.every((f) => { try { return read(f).length > 10; } catch (_) { return false; } }),
         JSON.stringify(iconFiles.filter((f) => { try { return read(f).length <= 10; } catch (_) { return true; } })));
-    check('阴性对照：这四个文件当前确实都不含旧图标（上面那条不是空跑）',
+    check('阴性对照：清单上这些文件当前确实都不含旧图标（上面那条不是空跑）',
         iconFiles.every((f) => { try { return !hasIcon(read(f)); } catch (_) { return false; } }),
         JSON.stringify(iconFiles.filter(hasIcon)));
 
@@ -1499,8 +1510,17 @@ check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') &
         hitMid.fails.length === 1 && hitMid.fails[0] === 'src/main.js still references oicpp.ico',
         JSON.stringify(hitMid.fails));
     const hitEol = runB1({ 'a.js': 'oicpp.ico' });
-    check('oicpp.ico 正好在文末也要抓到（前瞻写成 [^-] 而不是 (?=$|[^-]) 就漏掉这一种）',
+    check('oicpp.ico 正好在文末也要抓到',
         hitEol.fails.length === 1, JSON.stringify(hitEol.fails));
+    const hitDash = runB1({ 'installer.nsi': 'File "oicpp.ico-new"' });
+    check('旧图标名后面紧跟 - 也要抓到（那是 (?=$|[^-]) 从 B3 抄过来后唯一还在使劲的地方，只会放走这种写法）',
+        hitDash.fails.length === 1, JSON.stringify(hitDash));
+    const hitUpper = runB1({ 'installer.nsi': '!define MUI_ICON "OICPP.ICO"' });
+    check('大写旧名同样抓到（Windows 不分大小写，OICPP.ICO 照样解析得到，大小写敏感等于这条没查）',
+        hitUpper.fails.length === 1 && /installer\.nsi/.test(hitUpper.fails[0]), JSON.stringify(hitUpper));
+    const upperNew = runB1({ 'package.json': '"icon": "OICPP-PLUS.ICO"' });
+    check('大写的新品牌名不算旧图标（放开大小写就顺手误伤，这种检查活不过一周）',
+        upperNew.fails.length === 0 && upperNew.oks.length === 1, JSON.stringify(upperNew));
     const hitNewBrand = runB1({ 'installer.nsi': 'File "build\\oicpp-plus.ico"' });
     check('本项目自己的 oicpp-plus.ico 不算旧图标（正则放宽成 oicpp[\\w-]*\\.ico 就天天误报）',
         hitNewBrand.fails.length === 0 && hitNewBrand.oks.length === 1, JSON.stringify(hitNewBrand));
