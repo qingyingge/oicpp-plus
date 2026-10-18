@@ -14,7 +14,8 @@ const check = (name, condition, extra = '') => {
 };
 
 const root = path.join(__dirname, '..');
-const { callStatement } = require('./fixtures/source-extract');
+const { callStatement, classMethod, compileMethod } = require('./fixtures/source-extract');
+const { loadLocales } = require('./fixtures/ci-block-runner');
 const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 const comparerSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'sidebar', 'codeComparer.js'), 'utf8');
 
@@ -207,8 +208,223 @@ check('stale writes during compilation are still rejected', cacheWriteBlock.incl
 
 // ---- 对拍器清理与完成日志 ----
 
-check('comparer cleanup deletes compiled products through deleteTempFile', comparerSource.includes('await window.electronAPI.deleteTempFile(exe);'));
-check('compare completion log is no longer skipped when already stopped', !/if \(task\.state\.mode === 'running'\) \{\s*task\.state\.mode = 'complete';\s*logInfo\(/.test(comparerSource));
+// 原来这里是两条字面量：`comparerSource.includes('await window.electronAPI.deleteTempFile(exe);')`
+// 加一条「完成日志没被塞进 if 里」的正则否定。前者只问源码里写过这句没有：把日志删了、
+// 把 exe 传成别的变量、甚至改回走 deleteFile 那条无白名单通道，它照样绿；
+// 后者锁的是字形，把整段挪进 if 反而更像原样。现在抽出真方法/真回调各跑一遍。
+const cleanupMethod = classMethod(comparerSource, 'cleanupCompiledExecutables');
+const finishMethod = classMethod(comparerSource, 'finishCompareTask');
+const completeStmt = callStatement(comparerSource, /^\s*cleanupComplete = window\.electronAPI\.onCompareComplete\(/m);
+check('对拍器三段片段抽取成功（清理方法、收尾方法、完成回调注册语句）',
+    cleanupMethod.length > 300 && finishMethod.length > 120 && completeStmt.length > 500,
+    JSON.stringify({ cleanup: cleanupMethod.length, finish: finishMethod.length, complete: completeStmt.length }));
+
+const packs = loadLocales();
+const fill = (text, params) => String(text).replace(/\{(\w+)\}/g, (m, k) =>
+    Object.prototype.hasOwnProperty.call(params || {}, k) ? String(params[k]) : m);
+
+// 假 i18n：键查不到就吐键名，于是「裸键上屏」会被下面的“不许出现键名”抓到。
+const makeWindow = (pack, api) => ({ i18n: { t: (key, params) => fill(pack[key] === undefined ? key : pack[key], params) }, electronAPI: api });
+
+const runCleanup = ({ executables, failAt = -1, throwStyle = 'reject' }) => {
+    const trace = [];
+    const logs = { info: [], warn: [], error: [] };
+    const task = { key: 't1', compiledExecutables: executables };
+    const ctx = vm.createContext({
+        Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Promise,
+        logInfo: (...a) => { logs.info.push(a.map((x) => String(x)).join(' ')); },
+        logWarn: (...a) => { logs.warn.push(a.map((x) => String(x)).join(' ')); },
+        logError: (...a) => { logs.error.push(a.map((x) => String(x)).join(' ')); },
+        window: makeWindow(packs['zh-cn'], {
+            deleteTempFile: (p) => {
+                trace.push(['call', p]);
+                const shouldFail = failAt === trace.filter((t) => t[0] === 'call').length - 1;
+                // 两跳微任务：不 await 的话所有 call 会先于所有 done，顺序就能看出来。
+                const tail = Promise.resolve().then(() => Promise.resolve().then(() => trace.push(['done', p])));
+                if (shouldFail) {
+                    const error = new Error('删除失败');
+                    return throwStyle === 'sync' ? (() => { throw error; })() : Promise.reject(error);
+                }
+                return tail;
+            },
+            deleteFile: (p) => { trace.push(['deleteFile', p]); return Promise.resolve(); }
+        })
+    });
+    const fn = compileMethod(ctx, cleanupMethod);
+    if (!fn) return Promise.resolve({ missing: 'cleanupCompiledExecutables' });
+    return fn.call({}, task).then(
+        () => ({ task, trace, logs, threw: null }),
+        (error) => ({ task, trace, logs, threw: String((error && error.message) || error) }));
+};
+
+const runFinish = ({ activeKey, taskKey }) => {
+    const order = [];
+    const task = { key: taskKey, state: { isRunning: true, mode: 'running' } };
+    // finishCompareTask 里全是 this.xxx，所以这些方法得挂在被 .call 的那个 self 上，
+    // 挂到 vm 全局上等于给了个不存在的 this。
+    // 清理桩在「活干完」那一刻才记账：只记「调用了」的话，去掉 await 也照样是
+    // cleanup→updateUI（同步前半段先跑），那条 await 就白测了。
+    const self = {
+        activeTaskKey: activeKey,
+        cleanupCompiledExecutables: async (t) => {
+            await Promise.resolve();
+            await Promise.resolve();
+            order.push('cleanupDone');
+            t.__cleaned = true;
+        },
+        updateUIForTask: (t) => { order.push('updateUI'); t.__updated = true; }
+    };
+    const ctx = vm.createContext({
+        Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Promise,
+        logInfo: () => { }, logWarn: () => { }, logError: () => { }
+    });
+    const fn = compileMethod(ctx, finishMethod);
+    if (!fn) return Promise.resolve({ missing: 'finishCompareTask' });
+    return fn.call(self, task).then(() => ({ order, task }));
+};
+
+const runComplete = ({ mode, result, lang = 'zh-cn', state = {} }) => {
+    const holder = {};
+    const calls = { renderIfActive: 0, finishCompareTask: 0, cleanupAllListeners: 0, updateTaskStatus: [], logInfo: [] };
+    const task = {
+        key: 't1',
+        state: Object.assign({ mode, isRunning: true, completedTests: 7, currentTest: 3, failedTests: 1 }, state)
+    };
+    const ctx = vm.createContext({
+        Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Promise,
+        task,
+        cleanupAllListeners: () => { calls.cleanupAllListeners++; },
+        logInfo: (...a) => { calls.logInfo.push(a.map((x) => String(x)).join(' ')); },
+        logWarn: (...a) => { calls.logInfo.push('[warn]' + a.map((x) => String(x)).join(' ')); },
+        logError: (...a) => { calls.logInfo.push('[error]' + a.map((x) => String(x)).join(' ')); },
+        window: makeWindow(packs[lang], {
+            onCompareComplete: (cb) => { holder.cb = cb; return () => { }; }
+        })
+    });
+    Object.assign(ctx, {
+        updateTaskStatus: (t, msg) => { calls.updateTaskStatus.push(msg); },
+        renderIfActive: (t) => { calls.renderIfActive++; },
+        finishCompareTask: async (t) => { calls.finishCompareTask++; await Promise.resolve(); }
+    });
+    try {
+        vm.runInContext(completeStmt, ctx);
+    } catch (error) {
+        return Promise.resolve({ registrationThrew: String((error && error.message) || error) });
+    }
+    if (!holder.cb) return Promise.resolve({ notRegistered: true });
+    return Promise.resolve().then(() => holder.cb(result)).then(
+        () => ({ task, calls }),
+        (error) => ({ task, calls, threw: String((error && error.message) || error) }));
+};
+
+deferredChecks = Promise.all([deferredChecks, (async () => {
+    const rows = [];
+    const add = (name, cond, extra) => rows.push({ name, cond, extra: extra === undefined ? '' : JSON.stringify(extra) });
+    const STD = '/root/.oicpp-plus/compare/std_1.exe';
+    const TEST = '/root/.oicpp-plus/compare/test_1.exe';
+    const GEN = '/root/.oicpp-plus/compare/generator_1.exe';
+    const SPJ = '/root/.oicpp-plus/compare/spj_1.exe';
+    const all = { stdExe: STD, testExe: TEST, generatorExe: GEN, spjExe: SPJ };
+    const callsOf = (r, kind) => r.trace ? r.trace.filter((t) => t[0] === kind).map((t) => t[1]) : [];
+
+    if (!cleanupMethod || !finishMethod || !completeStmt) {
+        rows.push({ name: '对拍器守卫可执行', cond: false, extra: '片段没抽出来' });
+        return rows;
+    }
+
+    const four = await runCleanup({ executables: { ...all } });
+    add('四个产物都走 deleteTempFile：次数、顺序、参数路径全对，且不碰 deleteFile 那条无白名单通道',
+        JSON.stringify(callsOf(four, 'call')) === JSON.stringify([STD, TEST, GEN, SPJ])
+            && callsOf(four, 'deleteFile').length === 0, four.trace);
+    add('删除是串起来的（真 await）：第 n 次 done 一定紧跟在第 n 次 call 之后',
+        four.trace.filter((t) => t[0] === 'done').length === 4
+            && four.trace.every((t, i) => (i % 2 === 0) === (t[0] === 'call')),
+        four.trace.map((t) => t[0] + ':' + t[1].split('/').pop()).join(','));
+    add('清完把句柄交出去（compiledExecutables 置 null，别留下指向已删文件的引用）',
+        four.task.compiledExecutables === null && four.threw === null, four.task.compiledExecutables);
+    add('每个产物记一条 info，一条 error 都不许有（成功路径别刷屏）',
+        four.logs.info.length === 4 && four.logs.error.length === 0 && four.logs.warn.length === 0, four.logs);
+
+    const partial = await runCleanup({ executables: { stdExe: STD, testExe: TEST, generatorExe: null, spjExe: undefined } });
+    add('没编译出来的产物被 filter 掉：只删存在的两个，绝不把 null/undefined 传给主进程',
+        JSON.stringify(callsOf(partial, 'call')) === JSON.stringify([STD, TEST])
+            && partial.logs.info.length === 2, partial.trace);
+    const none = await runCleanup({ executables: null });
+    add('压根没编译过：一次 IPC 都不发、不抛错',
+        none.trace.length === 0 && none.threw === null, none);
+    const absent = await runCleanup({ executables: undefined });
+    add('task 上没这个字段也不炸（可选链那道门）',
+        absent.trace.length === 0 && absent.threw === null, absent);
+
+    const oneFails = await runCleanup({ executables: { ...all }, failAt: 1 });
+    add('某一个删不掉：其余照删（不早退），失败的记 warn 不是 error，方法本身不外抛',
+        callsOf(oneFails, 'call').length === 4 && oneFails.logs.warn.length === 1
+            && oneFails.logs.error.length === 0 && oneFails.threw === null
+            && oneFails.task.compiledExecutables === null,
+        { calls: callsOf(oneFails, 'call').length, logs: oneFails.logs, threw: oneFails.threw });
+    const syncThrow = await runCleanup({ executables: { ...all }, failAt: 0, throwStyle: 'sync' });
+    add('deleteTempFile 同步抛（不是 reject）也一样被兜住，剩下三个照删',
+        callsOf(syncThrow, 'call').length === 4 && syncThrow.threw === null, syncThrow);
+
+    const finishActive = await runFinish({ activeKey: 't1', taskKey: 't1' });
+    add('收尾：先置 isRunning=false，产物真删完才刷新 UI（清理不是发完就不管）',
+        finishActive.task.state.isRunning === false && finishActive.task.__cleaned === true
+            && JSON.stringify(finishActive.order) === JSON.stringify(['cleanupDone', 'updateUI']), finishActive.order);
+    const finishOther = await runFinish({ activeKey: 'other', taskKey: 't1' });
+    add('收尾切到别的任务：仍然清产物，但不碰当前 UI',
+        finishOther.task.__cleaned === true && finishOther.order.indexOf('updateUI') === -1, finishOther.order);
+
+    const running = await runComplete({ mode: 'running', result: { completed: 12, failed: 0 } });
+    add('正常完成（running）：状态转 complete、进度写真值、清监听、走收尾，各恰好一次',
+        running.task.state.mode === 'complete' && running.task.state.completedTests === 12
+            && running.task.state.currentTest === 12 && running.task.state.failedTests === 0
+            && running.calls.cleanupAllListeners === 1 && running.calls.finishCompareTask === 1
+            && running.calls.renderIfActive === 1 && running.calls.updateTaskStatus.length === 0,
+        { mode: running.task.state.mode, calls: running.calls });
+    const stopping = await runComplete({ mode: 'stopping', result: { completed: 5, failed: 0 } });
+    add('点了停止但回调迟到（stopping）：仍然算正常完成，不被踢进「提前结束」分支',
+        stopping.task.state.mode === 'complete' && stopping.calls.logInfo.every((l) => !l.includes('提前结束')),
+        stopping.calls.logInfo);
+    const alreadyStopped = await runComplete({ mode: 'stopped', result: { completed: 9, failed: 0 } });
+    add('已经 stopped 再收到完成回调：状态不被覆盖，但完成日志照打（就是那条被 if 吞掉的）',
+        alreadyStopped.task.state.mode === 'stopped'
+            && alreadyStopped.calls.logInfo.some((l) => l.includes('状态: stopped'))
+            && alreadyStopped.calls.logInfo.some((l) => l.includes('共执行 9'))
+            && alreadyStopped.calls.cleanupAllListeners === 1 && alreadyStopped.calls.finishCompareTask === 1,
+        alreadyStopped.calls.logInfo);
+    const errored = await runComplete({ mode: 'error', result: { completed: 2, failed: 0 } });
+    add('error 态收到迟到回调：同样保留原状态、照常收尾',
+        errored.task.state.mode === 'error'
+            && errored.calls.logInfo.some((l) => l.includes('共执行 2'))
+            && errored.calls.finishCompareTask === 1, errored.calls.logInfo);
+    const stoppedByUser = await runComplete({
+        mode: 'running', result: { stopped: true, completed: 8, failed: 3 }
+    });
+    add('用户中止（result.stopped）：转 stopped、写 warningMessage，并把停止文案递给状态栏',
+        stoppedByUser.task.state.mode === 'stopped' && stoppedByUser.task.state.stopped === true
+            && stoppedByUser.task.state.failedTests === 3
+            && stoppedByUser.task.state.warningMessage === fill(packs['zh-cn']['compare.genFailedWarning'], { count: 3 })
+            && stoppedByUser.calls.updateTaskStatus.length === 1
+            && stoppedByUser.calls.updateTaskStatus[0] === fill(packs['zh-cn']['compare.compareStopped'], { completed: 8, failed: 3 }),
+        stoppedByUser.task.state);
+    const stoppedClean = await runComplete({ mode: 'running', result: { stopped: true, completed: 8, failed: 0 } });
+    add('中止但一组都没失败：不留假警告（warningMessage 归 null）',
+        stoppedClean.task.state.warningMessage === null,
+        stoppedClean.task.state.warningMessage);
+    const NaNed = await runComplete({ mode: 'running', result: { completed: NaN, failed: undefined }, state: { completedTests: 4 } });
+    add('回调里 completed 不是数（NaN/undefined）：回退到任务已有进度，不被写坏',
+        NaNed.task.state.completedTests === 4 && NaNed.task.state.currentTest === 4
+            && NaNed.task.state.failedTests === 0, NaNed.task.state);
+    const enDone = await runComplete({ mode: 'running', result: { stopped: true, completed: 6, failed: 2 }, lang: 'en' });
+    add('换 en 语言包：这两句状态文案跟着换成英文，且屏幕上不出现裸键名',
+        enDone.calls.updateTaskStatus[0] === fill(packs['en']['compare.compareStopped'], { completed: 6, failed: 2 })
+            && enDone.task.state.warningMessage === fill(packs['en']['compare.genFailedWarning'], { count: 2 })
+            && !JSON.stringify(enDone.calls.updateTaskStatus).includes('compare.compareStopped')
+            && !String(enDone.task.state.warningMessage).includes('compare.genFailedWarning'),
+        { status: enDone.calls.updateTaskStatus, warning: enDone.task.state.warningMessage });
+
+    return rows;
+})()]).then(([a, b]) => [...a, ...b]);
 
 (async () => {
     for (const row of await deferredChecks) check(row.name, row.cond, row.extra);
