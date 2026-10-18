@@ -368,6 +368,11 @@ setTimeout(() => {
         check('worker 没带的输出字段补成空串',
             bare.input === '' && bare.stdOutput === '' && bare.testOutput === '',
             JSON.stringify([bare.input, bare.stdOutput, bare.testOutput]));
+        // message 漏了就 undefined 过 IPC，渲染层 rawErrorMessage 拿到 undefined，
+        // 错误面板的「原始细节」区整个不渲染 —— 和空串不是一回事，必须显式补。
+        check('worker 没带 message 时同样补成空串，不是 undefined',
+            bare.message === '' && Object.prototype.hasOwnProperty.call(bare, 'message'),
+            JSON.stringify({ m: bare.message, has: 'message' in bare }));
         check('worker 报了的输出正文原样转发',
             full.input === 'I' && full.stdOutput === 'S' && full.testOutput === 'T',
             JSON.stringify([full.input, full.stdOutput, full.testOutput]));
@@ -686,22 +691,19 @@ setTimeout(() => {
                 }
             }
             console.log(`[INFO] 当前会露出裸占位符的组合: ${unsubstituted.join(', ') || '（无）'}`);
-            // 已知缺陷台账：只许减不许增。子进程被信号杀掉时 exitCode 是 null，
-            // *_exit 三个键走无参分支；compare.incompleteRun 恒走无参分支。
-            // 修法：给这几个分支也传实参（exitCode ?? 空串 / 把已跑组数填进 {error}），
-            // 或者把模板里的占位符去掉。修一条就把对应项从下面删掉。
-            const ledgerBaseline = [
-                'gen_exit/compare.genExit/{code}',
-                'std_exit/compare.stdExit/{code}',
-                'test_exit/compare.testExit/{code}',
-                'incomplete_run/compare.incompleteRun/{error}'
-            ];
+            // 已知缺陷台账：只许减不许增。原先的四处（*_exit 三键在 exitCode 非有限数时
+            // 走无参分支、incomplete_run 恒走无参分支）已全部修掉：getEngineErrorMessage
+            // 现在不管模板用不用得上都把字段带齐，退出码缺失时落本地化的「未知」。
+            // 新增组合就是回归 —— 又一条半成品文案上屏。
+            const ledgerBaseline = [];
             const KNOWN_UNSUBSTITUTED = new Set(ledgerBaseline);
             const actual = new Set(unsubstituted);
             const grown = [...actual].filter((k) => !KNOWN_UNSUBSTITUTED.has(k));
             const stale = [...KNOWN_UNSUBSTITUTED].filter((k) => !actual.has(k));
             check('占位符露出台账：没有新增组合', grown.length === 0, grown.join(', '));
             check('占位符露出台账：修好的项要同步从台账删掉', stale.length === 0, stale.join(', '));
+            check('台账已清空（还留着条目就说明有裸占位符没修）', ledgerBaseline.length === 0,
+                JSON.stringify(ledgerBaseline));
             // 与 i18n.t 同一条替换规则（上面已用真实 t() 跑出「缺实参留裸 token」这条行为），
             // 用来算实参是否把模板填满
             const fill = (template, params) => String(template).replace(/\{(\w+)\}/g,
@@ -720,14 +722,19 @@ setTimeout(() => {
                 exitCode.got.key === 'compare.genExit' && exitCode.got.params.code === 139
                 && exitCode.got.params.error === 'segv', JSON.stringify(exitCode.got));
             const exitNoCode = run({ code: 'gen_exit' });
-            check('exitCode 非有限值时走无参分支（不把 undefined 传进文案）',
-                exitNoCode.got.params === undefined && exitNoCode.got.key === 'compare.genExit',
+            check('exitCode 缺失时不再走无参分支：落本地化的「未知」，屏幕上不留裸 {code}',
+                exitNoCode.got.key === 'compare.genExit'
+                && exitNoCode.got.params.code === 'compare.exitCodeUnknown'
+                && !/\{\w+\}/.test(fill(zh.compare.genExit, exitNoCode.got.params)),
                 JSON.stringify(exitNoCode.got));
             // 子进程被信号杀掉时 worker 传上来的是 null，超时/异常路径还可能是 NaN、字符串
             for (const bad of [null, NaN, Infinity, -Infinity, '139', {}]) {
                 const r = run({ code: 'std_exit', exitCode: bad, message: 'x' });
-                check(`exitCode=${String(bad)} 不是有限数时不传实参（免得文案写成「退出码: ${String(bad)}」）`,
-                    r.got.params === undefined && r.got.key === 'compare.stdExit', JSON.stringify(r.got));
+                check(`exitCode=${String(bad)} 不是有限数时落「未知」，既不把脏值填进文案也不留裸 token`,
+                    r.got.key === 'compare.stdExit'
+                    && r.got.params.code === 'compare.exitCodeUnknown'
+                    && !/\{\w+\}/.test(fill(zh.compare.stdExit, r.got.params)),
+                    JSON.stringify(r.got));
             }
             const negZero = run({ code: 'std_exit', exitCode: -0 });
             check('退出码 0 仍是有限值，照常带实参',
@@ -737,8 +744,37 @@ setTimeout(() => {
                 errKind.got.key === 'compare.testRe' && errKind.got.params.error === 'boom'
                 && errKind.got.params.code === 2, JSON.stringify(errKind.got));
             const errNullExit = run({ code: 'std_error', message: 'x', exitCode: null });
-            check('exitCode 为 null 时传空串而不是 null',
-                errNullExit.got.params.code === '', JSON.stringify(errNullExit.got));
+            check('异常类错误的 exitCode 为 null 时也落本地化标签（统一成一套实参，不再各分支各自拼）',
+                errNullExit.got.params.code === 'compare.exitCodeUnknown'
+                && errNullExit.got.params.error === 'x', JSON.stringify(errNullExit.got));
+            const incomplete = run({ code: 'incomplete_run', completed: 7, total: 16, missing: 9 });
+            check('incomplete_run 把引擎给的计数填进文案（原先 {error} 恒空，缺口看不见）',
+                incomplete.got.key === 'compare.incompleteRun'
+                && incomplete.got.params.completed === 7 && incomplete.got.params.total === 16
+                && incomplete.got.params.missing === 9
+                && !/\{\w+\}/.test(fill(zh.compare.incompleteRun, incomplete.got.params)),
+                fill(zh.compare.incompleteRun, incomplete.got.params));
+            const incompleteBare = run({ code: 'incomplete_run' });
+            check('incomplete_run 没带计数时补 0，仍然不留裸 token',
+                incompleteBare.got.params.completed === 0 && incompleteBare.got.params.total === 0
+                && incompleteBare.got.params.missing === 0
+                && !/\{\w+\}/.test(fill(zh.compare.incompleteRun, incompleteBare.got.params)),
+                JSON.stringify(incompleteBare.got));
+
+            // 统一带实参之后，任何 code × 任何畸形载荷都不该把 null/undefined 交进插值：
+            // i18next 对 null/undefined 是不替换、原样留 token（上面用真 t() 跑过这条行为）。
+            const dirtyParams = [];
+            for (const [, code] of entries) {
+                for (const variant of [{ code }, { code, exitCode: null, message: null },
+                { code, exitCode: 'x', completed: null, total: undefined }]) {
+                    const p = run(variant).got.params || {};
+                    for (const [name, value] of Object.entries(p)) {
+                        if (value === null || value === undefined) dirtyParams.push(`${code}.${name}`);
+                    }
+                }
+            }
+            check('交给插值的实参里没有 null/undefined（有就等于屏幕上多一个裸 token）',
+                dirtyParams.length === 0, dirtyParams.join(', '));
             const fallback = run({ code: 'no_such_code' });
             check('未知错误码回退到通用引擎错误键',
                 fallback.got.key === 'compare.engineError' && fallback.got.params === undefined,

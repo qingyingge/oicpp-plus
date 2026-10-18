@@ -1761,13 +1761,20 @@ class CodeComparer {
         const key = map[code];
         if (!key)
             return window.i18n.t('compare.engineError');
-        if (code.endsWith('_exit') && Number.isFinite(exitCode)) {
-            return window.i18n.t(key, { code: exitCode, error: error?.message || '' });
-        }
-        if (code.endsWith('_error')) {
-            return window.i18n.t(key, { error: error?.message || '', code: exitCode ?? '' });
-        }
-        return window.i18n.t(key);
+        const count = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+        // i18next 只在拿到变量表时才跑插值 —— 漏传 params 不报错，是把 {code} 原样留在界面上。
+        // 所以不管这条模板用不用得上，手头有的字段一律带上：多传的键被忽略，少传的那个
+        // 就是屏幕上的半成品文案。
+        return window.i18n.t(key, {
+            // 被信号杀死时 exitCode 就是 null（POSIX：OOM / 强杀 / 栈溢出撞 SIGSEGV），不是边角
+            code: (typeof exitCode === 'number' && Number.isFinite(exitCode))
+                ? exitCode
+                : window.i18n.t('compare.exitCodeUnknown'),
+            error: error?.message || '',
+            completed: count(error?.completed),
+            total: count(error?.total),
+            missing: count(error?.missing)
+        });
     }
     hideError() {
         const errorSection = (document.getElementById('compare-result'));

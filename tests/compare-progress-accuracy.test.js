@@ -437,6 +437,15 @@ const ERROR_METHODS = ['showError', 'hideError', 'isEngineErrorType', 'getEngine
     'getTruncationText', 'escapeHtml'];
 const eh = comparerHarness(ERROR_METHODS);
 const draw = (result) => eh.self.showError(result);
+// t() 桩把实参拼成 "key|{json}"，那是对象字面量的书写顺序，不是行为。
+// 断言前先按键名排序规范化，这样重排源码里的键序不会被误判成回归。
+const canon = (out) => {
+    const s = String(out);
+    const i = s.indexOf('|');
+    if (i < 0) return s;
+    const params = JSON.parse(s.slice(i + 1));
+    return s.slice(0, i) + '|' + JSON.stringify(params, Object.keys(params).sort());
+};
 // 各错误区元素「当前显示的那一份」（textContent / innerHTML  whichever 最后被写）
 const shown = (id) => eh.el(id).shown;
 
@@ -560,7 +569,7 @@ const shown = (id) => eh.el(id).shown;
 
 // ---- 引擎码 → 译文：跑真映射，顺带把键存在性交叉锁到语言包 ----
 {
-    const msg = (error) => eh.real.getEngineErrorMessage.call(eh.self, error);
+    const msg = (error) => canon(eh.real.getEngineErrorMessage.call(eh.self, error));
     const keyOf = (out) => String(out).split('|')[0];
     const MAP = {
         gen_timeout: 'compare.genTle',
@@ -587,23 +596,39 @@ const shown = (id) => eh.el(id).shown;
         mismapped.length === 0, mismapped.join(', '));
     const absent = Object.values(MAP).filter((k) => !hasLangKey(k));
     check('码表引用的键在 zh / en 两语言包都存在', absent.length === 0, absent.join(','));
+    // 兜底标签不在码表里，只有 exitCode 为 null（OOM / 信号强杀）时才会被查到，
+    // 键没接上就是把裸键名印在错误面板上。
+    check('exitCode 缺失时的兜底标签在两语言包都存在', hasLangKey('compare.exitCodeUnknown'),
+        'compare.exitCodeUnknown');
+    check('兜底标签自己不含占位符（它要被插进 {code}，再套一层就是第二个裸 token）',
+        [zh, en].every((pack) => !/\{\w+\}/.test(String(pack.compare.exitCodeUnknown))),
+        JSON.stringify({ zh: zh.compare.exitCodeUnknown, en: en.compare.exitCodeUnknown }));
     check('码表里没有的码走引擎错误兜底，不返回 undefined',
         msg({ code: 'no_such_code' }) === 'compare.engineError'
         && msg({}) === 'compare.engineError' && msg(null) === 'compare.engineError',
         String(msg({ code: 'no_such_code' })));
     check('退出类错误带 exitCode 时把组号与技术细节一起传给译文',
         msg({ code: 'gen_exit', exitCode: 3, message: 'boom' })
-        === 'compare.genExit|{"code":3,"error":"boom"}',
+        === 'compare.genExit|{"code":3,"completed":0,"error":"boom","missing":0,"total":0}',
         msg({ code: 'gen_exit', exitCode: 3, message: 'boom' }));
-    check('exitCode 为 null 时不带 code 参数（否则模板里的 {code} 会原样显示）',
-        msg({ code: 'std_exit', exitCode: null, message: 'boom' }) === 'compare.stdExit',
+    check('exitCode 为 null 时把 code 收成「未知」译文，不留裸 {code}',
+        msg({ code: 'std_exit', exitCode: null, message: 'boom' })
+        === 'compare.stdExit|{"code":"compare.exitCodeUnknown","completed":0,"error":"boom","missing":0,"total":0}',
         msg({ code: 'std_exit', exitCode: null, message: 'boom' }));
     check('message 缺失时退出类错误把 error 参数收成空串',
-        msg({ code: 'test_exit', exitCode: 1 }) === 'compare.testExit|{"code":1,"error":""}',
+        msg({ code: 'test_exit', exitCode: 1 })
+        === 'compare.testExit|{"code":1,"completed":0,"error":"","missing":0,"total":0}',
         msg({ code: 'test_exit', exitCode: 1 }));
-    check('运行错误类（*_error）无条件带 code 与 error 两个参数',
-        msg({ code: 'std_error', message: 're' }) === 'compare.stdRe|{"error":"re","code":""}',
+    check('运行错误类（*_error）同样带上 code 与 error 两个参数',
+        msg({ code: 'std_error', message: 're' })
+        === 'compare.stdRe|{"code":"compare.exitCodeUnknown","completed":0,"error":"re","missing":0,"total":0}',
         msg({ code: 'std_error', message: 're' }));
+    check('组数类译文拿到 completed/total/missing 三个实参，缺省收成 0 而不是 undefined',
+        msg({ code: 'incomplete_run', completed: 7, total: 16, missing: 9 })
+        === 'compare.incompleteRun|{"code":"compare.exitCodeUnknown","completed":7,"error":"","missing":9,"total":16}'
+        && msg({ code: 'incomplete_run' })
+            === 'compare.incompleteRun|{"code":"compare.exitCodeUnknown","completed":0,"error":"","missing":0,"total":0}',
+        msg({ code: 'incomplete_run', completed: 7, total: 16, missing: 9 }));
 }
 
 // ---- 本地化文案在前、技术细节附后，两份一样时不重复 ----
@@ -1385,7 +1410,7 @@ const handlerBehaviour = async () => {
         JSON.stringify({ i: er.inputTruncated, s: er.stdOutputTruncated, t: er.testOutputTruncated }));
     check('引擎的 type 落成 errorType、code 落成 errorCode，正文译文由 getEngineErrorMessage 现算',
         er.errorType === 'std_re' && er.errorCode === 'std_exit'
-        && er.errorMessage === 'compare.stdExit|{"code":2,"error":"boom"}',
+        && canon(er.errorMessage) === 'compare.stdExit|{"code":2,"completed":0,"error":"boom","missing":0,"total":0}',
         JSON.stringify({ t: er.errorType, c: er.errorCode, m: er.errorMessage }));
     check('原始技术细节单独留一份，不参与本地化', er.rawErrorMessage === 'boom', String(er.rawErrorMessage));
     check('错误回调把任务落成 error 态并重绘',
@@ -1402,7 +1427,7 @@ const handlerBehaviour = async () => {
         thin.input === '' && thin.stdOutput === '' && thin.testOutput === ''
         && thin.errorCode === '' && thin.rawErrorMessage === '',
         JSON.stringify(thin));
-    check('缺 exitCode 时译文走无参分支（面板不会出现裸 {code}）',
+    check('码表查不到的码走兜底译文，且不带实参（尾巴上没有 |{...}）',
         thin.errorMessage === 'compare.engineError', String(thin.errorMessage));
 
     // ---- 完成 / 停止回调 ----

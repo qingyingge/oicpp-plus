@@ -74,7 +74,12 @@ type FreopenContext = {
 
 type EngineError = {
     code?: string;
-    exitCode?: number;
+    // worker 被信号杀死时 IPC 过来的就是 null，不是缺省
+    exitCode?: number | null;
+    message?: string;
+    completed?: number;
+    total?: number;
+    missing?: number;
 };
 
 const MAX_COMPARE_COUNT = 100000;
@@ -1895,13 +1900,21 @@ class CodeComparer {
         };
         const key = map[code as string];
         if (!key) return window.i18n.t('compare.engineError');
-        if (code.endsWith('_exit') && Number.isFinite(exitCode)) {
-            return window.i18n.t(key, { code: exitCode, error: (error as Error)?.message || '' });
-        }
-        if (code.endsWith('_error')) {
-            return window.i18n.t(key, { error: (error as Error)?.message || '', code: exitCode ?? '' });
-        }
-        return window.i18n.t(key);
+        const count = (value: number | null | undefined) =>
+            (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+        // i18next 只在拿到变量表时才跑插值 —— 漏传 params 不报错，是把 {code} 原样留在界面上。
+        // 所以不管这条模板用不用得上，手头有的字段一律带上：多传的键被忽略，少传的那个
+        // 就是屏幕上的半成品文案。
+        return window.i18n.t(key, {
+            // 被信号杀死时 exitCode 就是 null（POSIX：OOM / 强杀 / 栈溢出撞 SIGSEGV），不是边角
+            code: (typeof exitCode === 'number' && Number.isFinite(exitCode))
+                ? exitCode
+                : window.i18n.t('compare.exitCodeUnknown'),
+            error: error?.message || '',
+            completed: count(error?.completed),
+            total: count(error?.total),
+            missing: count(error?.missing)
+        });
     }
 
     hideError() {

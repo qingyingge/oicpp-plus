@@ -3080,7 +3080,9 @@ class OICPPApp {
             return '';
         let displayValue = data.value.toString();
         if (data.isContainer || data.isArray) {
-            const count = data.elementCount !== null ? data.elementCount : '?';
+            // DAP 的 Variable 里常见字段是 namedVariables/indexedVariables，elementCount
+            // 经常压根没填；`!== null` 只挡得住 null，undefined 会原样拼进 "[undefined]"。
+            const count = Number.isFinite(data.elementCount) ? data.elementCount : '?';
             const type = data.isArray ? window.i18n?.t?.('debug.typeArray') : window.i18n?.t?.('debug.typeContainer');
             displayValue = `${type}[${count}] ${displayValue}`;
         }

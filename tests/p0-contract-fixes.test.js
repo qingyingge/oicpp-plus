@@ -1092,11 +1092,16 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
         check('数组用 i18n 的数组名 + [元素数] 前缀',
             fv({ value: '{1,2}', isArray: true, elementCount: 2 }) === `数组[2] {1,2}`,
             fv({ value: '{1,2}', isArray: true, elementCount: 2 }));
-        check('容器用 i18n 的容器名，elementCount 为 null 才显示 ?',
+        // DAP 的 Variable 常见的是 namedVariables/indexedVariables，elementCount 压根没填；
+        // 只判 null 会把 undefined 原样拼进界面变成「容器[undefined] c」。
+        check('elementCount 不是有限数就显示 ?（null / 缺省 / NaN / 字符串都不许拼成 [undefined]）',
             fv({ value: 'c', isContainer: true, elementCount: 3 }) === '容器[3] c'
-            && fv({ value: 'c', isContainer: true, elementCount: null }) === '容器[?] c',
-            JSON.stringify([fv({ value: 'c', isContainer: true, elementCount: 3 }),
-                fv({ value: 'c', isContainer: true, elementCount: null })]));
+            && fv({ value: 'c', isContainer: true, elementCount: null }) === '容器[?] c'
+            && fv({ value: 'c', isContainer: true }) === '容器[?] c'
+            && fv({ value: 'c', isContainer: true, elementCount: NaN }) === '容器[?] c'
+            && fv({ value: 'c', isContainer: true, elementCount: '3' }) === '容器[?] c',
+            JSON.stringify([3, null, undefined, NaN, '3'].map((n) =>
+                fv({ value: 'c', isContainer: true, elementCount: n }))));
         check('恰好 50 字符不截断，51 字符截成 47 + ...',
             fv({ value: 'x'.repeat(50) }) === 'x'.repeat(50)
             && fv({ value: 'x'.repeat(51) }) === 'x'.repeat(47) + '...',

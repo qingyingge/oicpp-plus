@@ -161,7 +161,7 @@ export class CompareEngineV2 extends EventEmitter {
                                 type: msg.kind,
                                 code: msg.code,
                                 exitCode: msg.exitCode,
-                                message: msg.message,
+                                message: msg.message || '',
                                 stdOutput: msg.stdOutput || '',
                                 testOutput: msg.testOutput || '',
                                 input: msg.input || '',
