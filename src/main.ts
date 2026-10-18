@@ -281,6 +281,10 @@ const clangFormatResultCache = new Map();
 const CLANG_FORMAT_RESULT_CACHE_LIMIT = 16;
 
 function cacheClangFormatResult(key: string, value: unknown) {
+    // Map.set 命中已存在的 key 时不会把它挪到队尾，所以「命中即续期」必须先删再插。
+    // 少了这一步，淘汰顺序就退回首见即永久（FIFO）：热点结果会被冷数据挤掉，
+    // 长按格式化快捷键时每 16 次命中仍要 spawn 一次进程。
+    clangFormatResultCache.delete(key);
     clangFormatResultCache.set(key, value);
     while (clangFormatResultCache.size > CLANG_FORMAT_RESULT_CACHE_LIMIT) {
         const oldest = clangFormatResultCache.keys().next().value;

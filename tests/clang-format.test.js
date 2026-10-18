@@ -1415,6 +1415,36 @@ function makeModel(lines, state = {}) {
                 JSON.stringify({ stillThere, top }));
         }
         {
+            // 上面那组只数得清「淘汰了几条」，数不清「淘汰了哪条」——
+            // 命中缓存时那次 cacheClangFormatResult 是给热点续期的，但 Map.set
+            // 对已存在的 key 不挪位置，漏了「先删再插」退化成 FIFO 也照样只淘汰一条。
+            // 这里按 spawn 次数把「谁该活下来」钉成可观测行为。
+            const lru = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
+            for (let i = 0; i < CACHE_LIMIT; i += 1) {
+                await lru.handler(null, { ...REQ, content: `c${i}` });
+            }
+            const afterFill = lru.formatter.calls.length;
+            const hit = await lru.handler(null, { ...REQ, content: 'c0' });
+            check('命中最老那条缓存：不 spawn，同时把它续到队尾',
+                lru.formatter.calls.length === afterFill
+                && hit.content === served({ ...REQ, content: 'c0' }),
+                `calls=${lru.formatter.calls.length}`);
+            await lru.handler(null, { ...REQ, content: 'c-new' });
+            check('塞满后再进一条确实淘汰了一条（容量不涨）',
+                lru.cacheSize() === CACHE_LIMIT && lru.formatter.calls.length === afterFill + 1,
+                `size=${lru.cacheSize()} calls=${lru.formatter.calls.length}`);
+            const againC0 = await lru.handler(null, { ...REQ, content: 'c0' });
+            check('刚命中的 c0 活下来（FIFO 会在这一条上多 spawn 一次）',
+                lru.formatter.calls.length === afterFill + 1
+                && againC0.content === served({ ...REQ, content: 'c0' }),
+                `calls=${lru.formatter.calls.length}`);
+            const c1 = await lru.handler(null, { ...REQ, content: 'c1' });
+            check('最久未用的 c1 被淘汰：会重新 spawn，正文仍是它自己那份',
+                lru.formatter.calls.length === afterFill + 2
+                && c1.content === served({ ...REQ, content: 'c1' }),
+                `calls=${lru.formatter.calls.length}`);
+        }
+        {
             const bareReq = makeMainFormatSandbox({ exists: [devRoot(), devExe()] });
             await bareReq.handler(null, { content: 'x' });
             const got = bareReq.formatter.calls[0];
