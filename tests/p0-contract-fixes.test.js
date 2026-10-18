@@ -192,10 +192,21 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
     // ---- P0-3 连带：重试耗尽时补的是 message，原 error 的 code 不能被洗掉 ----
     // 换成 `throw new Error(error.message)` 看着等价，实际把 ECONNRESET 抹成 undefined，
     // 上层按 code 判可重试/判取消的逻辑全部失效，所以这里断言的是抛出来的那个对象本身。
-    check('耗尽后抛出的仍是原 error：code 保住、message 换成 chunkFailed 上下文',
+    // 期望译文自己按语言包模板拆出来比对，不走 i18next —— 之前这条断的是
+    // includes('chunkFailed')，那是主进程 t() 一直返回裸键名时测试跟着锁死 bug 的写法。
+    const chunkTmpl = String(JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'zh-cn.json'), 'utf8'))
+        .downloader.chunkFailed);
+    const chunkHead = chunkTmpl.slice(0, chunkTmpl.indexOf('{'));
+    const chunkMid = chunkTmpl.slice(chunkTmpl.indexOf('}') + 1, chunkTmpl.lastIndexOf('{'));
+    const chunkTail = chunkTmpl.slice(chunkTmpl.lastIndexOf('}') + 1);
+    const chunkMsg = String(exhausted && exhausted.message);
+    check('耗尽后抛出的仍是原 error：code 保住、message 是语言包译文且两个占位都填上了',
         exhausted !== null && exhausted.code === 'ECONNRESET'
-        && String(exhausted.message).includes('chunkFailed'),
-        exhausted && `code=${exhausted.code} message=${exhausted.message}`);
+        && chunkMsg.startsWith(chunkHead) && chunkMsg.includes(chunkMid)
+        && chunkMsg.endsWith(chunkTail) && !chunkMsg.includes('{')
+        && chunkMsg.length > chunkHead.length + chunkMid.length + chunkTail.length
+        && !chunkMsg.includes('chunkFailed'),
+        exhausted && `code=${exhausted.code} message=${chunkMsg} 模板=${chunkTmpl}`);
     check('不是新造的裸 Error（裸 Error 没有 code）',
         exhausted instanceof Error && typeof exhausted.code === 'string' && exhausted.code.length > 0,
         JSON.stringify(exhausted && Object.keys(exhausted)));
