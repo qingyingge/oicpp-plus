@@ -5,6 +5,15 @@ const path = require('path');
 const vm = require('vm');
 const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, forStatement, funcDecl, ifStatement, scalarConst, setMembers } = require('./fixtures/source-extract');
 
+// 挂死不等于通过：await 一个永不 settle 的 promise 时，Node 带着 0 退出码排空
+// event loop，runner 只看 status 和 [FAIL] 行数 —— 后半截断言一条不发也算过。
+// 这些文件收尾写 process.exitCode 而不是 process.exit，所以定时器必须具名，
+// 并在每个收尾点显式 clearTimeout，否则正常跑完会被它多留 60s 再判红。
+const watchdog = setTimeout(() => {
+    console.log('[FAIL] 主流程没有跑到结尾：某个 await 永不 settle（异步守卫没被驱动完）');
+    process.exit(1);
+}, 60000);
+
 let failures = 0;
 const check = (name, condition, extra = '') => {
     console.log(`${condition ? '[PASS]' : '[FAIL]'} ${name}${extra ? ' | ' + extra : ''}`);
@@ -1587,5 +1596,6 @@ Promise.all([deferredRows, remoteRows, miRows, workerRows, ...updateRowsRef, ...
     .then((batches) => { for (const rows of batches) for (const row of rows) check(row.name, row.cond, row.extra); })
     .then(() => {
         console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
+        clearTimeout(watchdog);
         process.exitCode = failures ? 1 : 0;
     });
