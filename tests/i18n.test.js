@@ -530,7 +530,9 @@ if (packs['zh-cn'] && packs.en) {
 // 放宽，检查就会从「零容忍」退化成「几乎不查」，而 PASS 看起来完全一样。
 // 这里把三条豁免的存在性与 baseline 的 0 锁死。
 {
-    const ciSrc2 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
+    // 归一化成 LF：本块的正则按 \n 切分（\n}\n、\n {2}\};\n），CRLF 下这些模式
+    // 在整个文件里一次都不会出现，断言会因「块不可提取」而空转 —— 失败点离真正的问题很远。
+    const ciSrc2 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8').replace(/\r\n/g, '\n');
 
     check('ci-check defines the hardcoded-English baseline', /const I18N_HARDCODED_EN_BASELINE = (\d+);/.test(ciSrc2));
     const enBase = /const I18N_HARDCODED_EN_BASELINE = (\d+);/.exec(ciSrc2);
