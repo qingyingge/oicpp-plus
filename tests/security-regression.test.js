@@ -836,8 +836,170 @@ check('startup font validation stays local', !settingsInitSource.includes('updat
 check('downloader releases probe response bodies', (downloaderSource.match(/\.body\.resume\(\)/g) || []).length >= 3);
 check('uninstaller preserves foreign cpp associations', installerSource.includes('ReadRegStr $0 HKCR ".cpp" ""') && installerSource.includes('${If} $0 == "OICPPIDE.cpp"') && !installerSource.includes('DeleteRegKey HKCR ".cpp"'));
 check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') && Object.hasOwn(packageJson.devDependencies, 'sharp'));
-check('CI icon boundary matching is exact', ciSource.includes('/oicpp\\.ico(?=$|[^-])/'));
-check('CI secret detections fail the build', ciSource.includes("fail(`potential secret in ${rel}`)"));
+
+// --- ci-check 的图标残留与密钥扫描：整段抽出来真跑 ---------------------------
+// 原来这两条是
+//   ciSource.includes('/oicpp\\.ico(?=$|[^-])/')
+//   ciSource.includes("fail(`potential secret in ${rel}`)")
+// 比的是「那行字还在不在」。可这两条检查的全部保护力恰好在那行字的**语义**上：
+// 把 fail 换成 warn、把 ${rel} 写成 ${f}（报绝对路径）、图标正则放宽成
+// oicpp[\w-]*\.ico 顺手把本项目自己的 oicpp-plus.ico 也判成旧品牌、把汇总那条
+// `else fail()` 删掉 —— 这些改法字面量守卫全都照样绿，而前两件事之后「密钥硬编码」
+// 只打印一行黄字就过关，第三件事之后这条检查天天误报，很快被人整条删掉。
+// 现在喂进去的是合成源码，读出来的是 fail()/ok() 的原文。
+//
+// 顺带一句：正则里那个 (?=$|[^-]) 在本仓库当前是不使力的 —— 全仓只有 oicpp.ico 与
+// oicpp-plus.ico 两种写法，而 oicpp.ico 并不是 oicpp-plus.ico 的子串，加不加这个
+// 前瞻结果一样。它只对 `oicpp.ico-xxx` 这种不存在的名字有区别，所以这里不为它单独设断言，
+// 只锁真正在起作用的两个方向：旧品牌必须抓到、新品牌必须抓不到。
+{
+    const regionOf = (header, next) => {
+        const at = ciSource.indexOf(header);
+        const end = at < 0 ? -1 : ciSource.indexOf(next, at);
+        return end > at ? ciSource.slice(at, end) : '';
+    };
+    const b1 = regionOf('[B1] Icon references', '// B2:');
+    const e4 = regionOf('[E4] Secrets scan', '// E5:');
+    check('B1 整块定位成功（锚点失配就别再往下断言）',
+        b1.includes('iconRefFiles') && b1.includes('oicpp'), `${b1.length} chars`);
+    check('E4 整块定位成功', e4.includes('secretPatterns') && e4.includes('secretsFound'), `${e4.length} chars`);
+
+    // ---- B1 图标引用 ----
+    // 数组字面量按声明名取：直接 /[…]; 会从标题串里的 `[B1]` 开始配平。
+    const arrayLit = (src, name) => {
+        const m = new RegExp('\\b' + name + '\\s*=\\s*\\[([\\s\\S]*?)\\];').exec(src);
+        return m ? m[1] : '';
+    };
+    const iconLitText = arrayLit(b1, 'iconRefFiles');
+    const iconLoop = forStatement(b1, /^for \(const f of iconRefFiles\) \{/m);
+    const iconFiles = iconLitText ? new Function('return [' + iconLitText + '];')() : [];
+    const hasIcon = (text) => { try { return /oicpp\.ico(?=$|[^-])/.test(text); } catch (_) { return false; } };
+    check('iconRefFiles 清单抽出来真求值成数组',
+        Array.isArray(iconFiles) && iconFiles.length > 0, JSON.stringify(iconFiles));
+    // 清单是这条检查的全部覆盖面：把 installer.nsi 换掉或删掉，字面量守卫看不见，
+    // 而那条文件从此不再被检查 —— 用一份显式期望集合锁住「不许缩水」。
+    check('清单覆盖当初登记的四处旧图标来源（少一处就是那条文件从此不查）',
+        ['src/main.js', 'src/renderer/js/tabs.js', 'scripts/generate-icons.js', 'installer.nsi']
+            .every((f) => iconFiles.includes(f)),
+        JSON.stringify(iconFiles));
+    check('清单里每个文件都真的存在且非空（改名掉出清单就是悄悄放弃检查）',
+        iconLoop.startsWith('for (') && iconFiles.every((f) => { try { return read(f).length > 10; } catch (_) { return false; } }),
+        JSON.stringify(iconFiles.filter((f) => { try { return read(f).length <= 10; } catch (_) { return true; } })));
+    check('阴性对照：这四个文件当前确实都不含旧图标（上面那条不是空跑）',
+        iconFiles.every((f) => { try { return !hasIcon(read(f)); } catch (_) { return false; } }),
+        JSON.stringify(iconFiles.filter(hasIcon)));
+
+    const runB1 = (contents) => {
+        const out = { fails: [], oks: [] };
+        try {
+            vm.runInNewContext(iconLoop, {
+                path, root: '/virtual',
+                iconRefFiles: Object.keys(contents),
+                readFile: (fp) => contents[String(fp).replace(/^\/virtual\//, '')] || '',
+                ok: (m) => out.oks.push(String(m)),
+                fail: (m) => out.fails.push(String(m))
+            });
+        } catch (e) {
+            out.fails.push(`EXCEPTION: ${String((e && e.message) || e)}`);
+        }
+        return out;
+    };
+
+    const hitMid = runB1({ 'src/main.js': "app.setIcon('build/oicpp.ico');" });
+    check('旧图标 oicpp.ico 被抓到，且报的是相对路径不是拼接出来的绝对路径',
+        hitMid.fails.length === 1 && hitMid.fails[0] === 'src/main.js still references oicpp.ico',
+        JSON.stringify(hitMid.fails));
+    const hitEol = runB1({ 'a.js': 'oicpp.ico' });
+    check('oicpp.ico 正好在文末也要抓到（前瞻写成 [^-] 而不是 (?=$|[^-]) 就漏掉这一种）',
+        hitEol.fails.length === 1, JSON.stringify(hitEol.fails));
+    const hitNewBrand = runB1({ 'installer.nsi': 'File "build\\oicpp-plus.ico"' });
+    check('本项目自己的 oicpp-plus.ico 不算旧图标（正则放宽成 oicpp[\\w-]*\\.ico 就天天误报）',
+        hitNewBrand.fails.length === 0 && hitNewBrand.oks.length === 1, JSON.stringify(hitNewBrand));
+    const clean = runB1({ 'src/main.js': 'nothing to see' });
+    check('没引用的文件报 ok（else 分支被删就看不出这条检查还在不在跑）',
+        clean.fails.length === 0 && clean.oks.length === 1, JSON.stringify(clean));
+    const missing = runB1({ 'gone.js': '' });
+    check('读不到的文件既不报 ok 也不报 fail（去掉 if (content) 就把空文件判成检查通过）',
+        missing.fails.length === 0 && missing.oks.length === 0, JSON.stringify(missing));
+
+    // ---- E4 硬编码密钥 ----
+    const patternsText = arrayLit(e4, 'secretPatterns');
+    const secretLoop = forStatement(e4, /^for \(const f of jsFiles\) \{/m);
+    // 收尾那句是无花括号的 `if (…) ok(…); else fail(…);`，ifStatement 只认带块的形态，
+    // 这里整条就在同一行上，按行取即可。
+    const secretTail = /^if \(secretsFound === 0\).*$/m.exec(e4)?.[0] || '';
+    const secretPatterns = patternsText ? new Function('return [' + patternsText + '];')() : [];
+    check('secretPatterns 抽出来真求值成 4 条正则',
+        Array.isArray(secretPatterns) && secretPatterns.length === 4
+        && secretPatterns.every((p) => p instanceof RegExp),
+        JSON.stringify(secretPatterns.map(String)));
+    check('E4 循环与收尾都抽取成功',
+        secretLoop.startsWith('for (') && secretTail.startsWith('if ('),
+        `${secretLoop.length}+${secretTail.length} chars`);
+
+    const runE4 = (contents) => {
+        const out = { fails: [], oks: [], warns: [], exception: null };
+        const ctx = {
+            path, root: '/virtual',
+            jsFiles: Object.keys(contents).map((f) => path.join('/virtual', f)),
+            readFile: (fp) => contents[path.relative('/virtual', String(fp))] || '',
+            secretPatterns, secretsFound: 0,
+            ok: (m) => out.oks.push(String(m)),
+            fail: (m) => out.fails.push(String(m)),
+            warn: (m) => out.warns.push(String(m))
+        };
+        vm.createContext(ctx);
+        try { vm.runInContext(`${secretLoop}\n${secretTail}`, ctx); }
+        catch (e) { out.exception = String((e && e.message) || e); }
+        return Object.assign(out, { found: ctx.secretsFound });
+    };
+    const LONG = 'ABCDEFGHIJKLMNOPQRST';        // 20 字符：正好过 api/token/secret 的量词
+    const PWD = '12345678';                    // 8 字符：正好过 password 的量词
+    // 命中一处就有两条 FAIL：逐文件的 `potential secret in <rel>` + 汇总的 `<n> potential secrets`。
+    // 断言只数逐文件那一条，汇总单独锁 —— 两者是不同病灶（点名 vs 计数）。
+    const hits = (r) => r.fails.filter((m) => /^potential secret in /.test(m));
+
+    const e4Clean = runE4({ 'a.js': 'const apiKeyPrefix = process.env.API_KEY;' });
+    check('干净源码报 ok（阴性对照：下面每条阳性断言不是恒真）',
+        e4Clean.exception === null && e4Clean.fails.length === 0 && e4Clean.oks.join(' ') === 'no hardcoded secrets',
+        JSON.stringify(e4Clean));
+    for (const [label, line] of [
+        ['api_key', `const apiKey = "${LONG}";`],
+        ['API_KEY 大写 + 冒号 + 单引号', `const API_KEY: 'abcdefghij0123456789';`],
+        ['password', `let password = "${PWD}";`],
+        ['token', `headers.token = "${LONG}x";`],
+        ['secret', `app.secret = '${LONG}';`]
+    ]) {
+        const r = runE4({ 'cfg/settings.js': line });
+        check(`${label} 形态的硬编码被抓出来，报的是相对路径`,
+            r.exception === null && hits(r).length === 1 && hits(r)[0] === 'potential secret in cfg/settings.js',
+            JSON.stringify({ fails: r.fails, exception: r.exception }));
+        check(`${label}：判定走 fail 而不是 warn（换成 warn 就是只打印不改退出码）`,
+            r.warns.length === 0 && r.found === 1, JSON.stringify(r));
+    }
+    const tooShort = runE4({ 'a.js': `const apiKey = "SHORT"; const password = "1234567";` });
+    check('短值不报：{20,} 与 {8,} 两个量词各自到位（放宽成 {4,} 就把变量名当密钥）',
+        tooShort.fails.length === 0 && tooShort.found === 0, JSON.stringify(tooShort));
+    const justEnough = runE4({ 'a.js': `const password = "${PWD}";` });
+    check('password 满 8 位就报（量词写成 {9,} 会漏掉 8 位口令）',
+        hits(justEnough).length === 1 && justEnough.fails.includes('1 potential secrets'),
+        JSON.stringify(justEnough.fails));
+    const twoKinds = runE4({ 'a.js': `const apiKey = "${LONG}"; const password = "${PWD}";` });
+    check('一个文件里两类命中就报两次，不会被 break 掉后一条',
+        twoKinds.fails.filter((m) => m === 'potential secret in a.js').length === 2,
+        JSON.stringify(twoKinds.fails));
+    check('命中数汇总成独立一条 FAIL，退出码因此非 0',
+        twoKinds.fails.includes('2 potential secrets') && twoKinds.found === 2,
+        JSON.stringify(twoKinds.fails));
+    const twoFiles = runE4({ 'a.js': `const apiKey = "${LONG}";`, 'b.js': 'clean' });
+    check('只有命中的那份文件被点名，另一份不受牵连',
+        twoFiles.fails.length === 2 && twoFiles.oks.length === 0
+        && twoFiles.fails[0] === 'potential secret in a.js',
+        JSON.stringify(twoFiles));
+    // 原先这里还有一条「空文件跳过：去掉 if (!content) continue 会拿空串跑一遍正则」，
+    // 变异实测杀不掉 —— 四条正则对 '' 和 undefined 都不命中，continue 删不删观测点一样。
+    // 留着只会把断言数说得比实际保护力大，删掉。
+}
 
 // 同步断言先跑完，再补上假 DOM 那批（它们是 promise，微任务里才落地）。
 // 汇总必须等这一批落地后才能数 failures，否则 exitCode 会停在 0。
