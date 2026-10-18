@@ -1111,8 +1111,7 @@ class MonacoEditorManager {
                         } : undefined
                     }, token);
 
-                    if (token?.isCancellationRequested) return { suggestions: [] };
-                    if (!model || model.isDisposed?.()) return { suggestions: [] };
+                    if (!this._isModelValid(model, token)) return { suggestions: [] };
                     const items = Array.isArray(result?.items) ? result.items : (Array.isArray(result) ? result : []);
                     const isIncomplete = result?.isIncomplete === true;
 
@@ -1313,8 +1312,7 @@ class MonacoEditorManager {
                                 }
                             }
                         }, token);
-                        if (token?.isCancellationRequested) return null;
-                        if (!model || model.isDisposed?.()) return empty;
+                        if (!this._isModelValid(model, token)) return empty;
                         if (!Array.isArray(result)) return empty;
                         const hints = result.map((hint) => this.lspInlayHintToMonaco(hint)).filter(Boolean);
                         const payload = {
@@ -1383,8 +1381,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }))
                         }, token);
-                        if (token?.isCancellationRequested) return null;
-                        if (!model || model.isDisposed?.()) return positions.map(() => []);
+                        if (!this._isModelValid(model, token)) return positions.map(() => []);
                         if (!Array.isArray(result)) return positions.map(() => []);
                         return result.map((selectionRange) => this.lspSelectionRangeToMonaco(selectionRange));
                     } catch (_) {
@@ -1412,7 +1409,7 @@ class MonacoEditorManager {
                         const result = await this.lspClient.request('textDocument/documentLink', {
                             textDocument: { uri }
                         }, token);
-                        if (token?.isCancellationRequested) return { links: [] };
+                        if (!this._isModelValid(model, token)) return { links: [] };
                         if (!Array.isArray(result)) return { links: [] };
                         return {
                             links: result
@@ -1578,8 +1575,7 @@ class MonacoEditorManager {
                             } : undefined
                         }, token);
 
-                        // 返回后再次校验：模型释放、取消、或文档版本已变
-                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) {
+                        if (!this._isModelValid(model, token)) {
                             return createSignatureHelpResult(emptySignatureHelp);
                         }
                         if (requestVersion !== undefined && model.getVersionId?.() !== requestVersion) {
@@ -1630,6 +1626,22 @@ class MonacoEditorManager {
         }
     }
 
+    /**
+     * LSP 请求返回后的模型生命周期守卫。
+     * 若 model 已为 null、已被 dispose，或请求已被取消，则返回 false，
+     * 调用方应直接返回空结果，避免对已销毁的 Monaco model 进行后续操作，
+     * 从而防止 “Model not found” unhandled rejection。
+     */
+    _isModelValid(model, token) {
+        if (!model || model.isDisposed?.()) {
+            return false;
+        }
+        if (token?.isCancellationRequested) {
+            return false;
+        }
+        return true;
+    }
+
     _registerLspHoverProvider() {
         const languages = ['cpp', 'c'];
         for (const language of languages) {
@@ -1658,7 +1670,7 @@ class MonacoEditorManager {
                         // answering. Returning content for it makes Monaco keep
                         // tokenizing a model whose worker entry is already gone,
                         // which surfaces as an unhandled "Model not found".
-                        if (!model || model.isDisposed?.() || token?.isCancellationRequested) return null;
+                        if (!this._isModelValid(model, token)) return null;
                         if (!result || !result.contents) return null;
 
                         let contents = [];
@@ -1701,18 +1713,14 @@ class MonacoEditorManager {
             const disposable = monaco.languages.registerDefinitionProvider(language, {
                 provideDefinition: async (model, position, token) => {
                     try {
-                        if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
-                            return null;
-                        }
+                        if (!this._isModelValid(model, token)) return null;
                         const lspReady = await this._ensureLspDocumentReady(model);
                         if (!lspReady) return null;
                         if (!this.lspClient) return null;
                         const uri = await this.getDocumentUriForModel(model);
                         if (!uri) return null;
 
-                        if (typeof model.isDisposed === 'function' && model.isDisposed()) {
-                            return null;
-                        }
+                        if (!this._isModelValid(model, token)) return null;
 
                         const result = await this.lspClient.request('textDocument/definition', {
                             textDocument: { uri },
@@ -1725,9 +1733,7 @@ class MonacoEditorManager {
                         // answering. Returning locations for it makes Monaco's
                         // built-in definition action attempt to reference a model
                         // that no longer exists.
-                        if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
-                            return null;
-                        }
+                        if (!this._isModelValid(model, token)) return null;
                         if (!result) return null;
 
                         const locations = Array.isArray(result) ? result : [result];
@@ -1966,7 +1972,7 @@ class MonacoEditorManager {
                         const result = await this.lspClient.request('textDocument/documentSymbol', {
                             textDocument: { uri }
                         }, token);
-                        if (!model || model.isDisposed?.()) return [];
+                        if (!this._isModelValid(model, token)) return [];
                         if (!Array.isArray(result)) return [];
 
                         const toRange = (range) => new monaco.Range(
@@ -2032,18 +2038,14 @@ class MonacoEditorManager {
             const disposable = monaco.languages.registerDeclarationProvider(language, {
                 provideDeclaration: async (model, position, token) => {
                     try {
-                        if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
-                            return null;
-                        }
+                        if (!this._isModelValid(model, token)) return null;
                         const lspReady = await this._ensureLspDocumentReady(model);
                         if (!lspReady) return null;
                         if (!this.lspClient) return null;
                         const uri = await this.getDocumentUriForModel(model);
                         if (!uri) return null;
 
-                        if (typeof model.isDisposed === 'function' && model.isDisposed()) {
-                            return null;
-                        }
+                        if (!this._isModelValid(model, token)) return null;
 
                         const result = await this.lspClient.request('textDocument/declaration', {
                             textDocument: { uri },
@@ -2052,9 +2054,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
-                        if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) {
-                            return null;
-                        }
+                        if (!this._isModelValid(model, token)) return null;
                         if (!result) return null;
 
                         const locations = Array.isArray(result) ? result : [result];
@@ -2093,7 +2093,7 @@ class MonacoEditorManager {
                             },
                             context: { includeDeclaration: context.includeDeclaration }
                         }, token);
-                        if (!model || model.isDisposed?.()) return [];
+                        if (!this._isModelValid(model, token)) return [];
                         if (!Array.isArray(result)) return [];
 
                         return result.filter(Boolean).map((loc) => {
@@ -2141,7 +2141,7 @@ class MonacoEditorManager {
                             },
                             newName
                         }, token);
-                        if (!model || model.isDisposed?.()) return null;
+                        if (!this._isModelValid(model, token)) return null;
                         const workspaceEdit = this.lspWorkspaceEditToMonaco(result);
                         return workspaceEdit || null;
                     } catch (_) {
@@ -2163,7 +2163,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
-                        if (!model || model.isDisposed?.()) return null;
+                        if (!this._isModelValid(model, token)) return null;
                         if (!result) return null;
                         if (result.range) {
                             return {
@@ -2293,7 +2293,7 @@ class MonacoEditorManager {
                                 only: ['quickfix', 'refactor', 'source']
                             }
                         }, token);
-                        if (!model || model.isDisposed?.()) return { actions: [], dispose: () => {} };
+                        if (!this._isModelValid(model, token)) return { actions: [], dispose: () => {} };
                         if (!Array.isArray(result)) return { actions: [], dispose: () => {} };
 
                         const actions = result.filter(Boolean).map((item) => {
@@ -2349,7 +2349,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
-                        if (!model || model.isDisposed?.()) return [];
+                        if (!this._isModelValid(model, token)) return [];
                         if (!result) return null;
 
                         const locations = Array.isArray(result) ? result : [result];
@@ -2387,7 +2387,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
-                        if (!model || model.isDisposed?.()) return [];
+                        if (!this._isModelValid(model, token)) return [];
                         if (!result) return null;
 
                         const locations = Array.isArray(result) ? result : [result];
@@ -2425,7 +2425,7 @@ class MonacoEditorManager {
                                 character: position.column - 1
                             }
                         }, token);
-                        if (!model || model.isDisposed?.()) return [];
+                        if (!this._isModelValid(model, token)) return [];
                         if (!Array.isArray(result)) return [];
 
                         return result.filter(Boolean).map((item) => ({
@@ -2526,7 +2526,7 @@ class MonacoEditorManager {
                         const result = await this.lspClient.request('textDocument/codeLens', {
                             textDocument: { uri }
                         }, token);
-                        if (!model || model.isDisposed?.()) return { lenses: [], dispose: () => {} };
+                        if (!this._isModelValid(model, token)) return { lenses: [], dispose: () => {} };
                         if (!Array.isArray(result)) return { lenses: [], dispose: () => {} };
 
                         const lenses = result.filter(Boolean).map((item) => {
@@ -2602,9 +2602,7 @@ class MonacoEditorManager {
                             textDocument: { uri }
                         }, token);
                         if (!Array.isArray(result)) return [];
-                        if (typeof model.isDisposed === 'function' && model.isDisposed()) {
-                            return [];
-                        }
+                        if (!this._isModelValid(model, token)) return [];
 
                         const foldingRangeKind = monaco.languages.FoldingRangeKind || {};
                         const kindMap = {
@@ -8257,7 +8255,7 @@ class MonacoEditorManager {
                 return;
             }
             const model = editor?.getModel?.();
-            if (!model || (typeof model.isDisposed === 'function' && model.isDisposed())) return;
+            if (!this._isModelValid(model)) return;
             const symbol = this.identifySymbolAtPosition(model, position);
             if (!symbol) return;
 
