@@ -152,6 +152,12 @@ deferredChecks = (async () => {
     const rootItself = await runDelete({ filePath: TMP });
     add('白名单目录本身也不许删（只许删里面的文件）',
         rootItself.threw === 'error.pathTraversalBlocked' && rootItself.unlinks.length === 0, rootItself);
+    // 这条是 security-boundaries 里那条 `!startsWith(codeTempDir)` 文本锁的行为替身：
+    // 只要 containment 退化成前缀匹配，同前缀兄弟目录就会被当成白名单内、真去 unlink。
+    const sibling = await runDelete({ filePath: path.join(path.dirname(codeTemp), 'codeTempEvil', 'x.exe') });
+    add('同前缀兄弟目录 codeTempEvil 不在白名单里（containment 退化成 startsWith 会先在这里红）',
+        sibling.threw === 'error.pathTraversalBlocked' && sibling.unlinks.length === 0
+            && sibling.logs.error === 1, sibling);
 
     const relative = await runDelete({ filePath: 'std_2.exe' });
     add('相对路径按 codeTemp 根解析，不是按 process.cwd()',

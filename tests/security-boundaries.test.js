@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const os = require('os');
-const { callbackBody, funcDecl } = require('./fixtures/source-extract');
+const { callbackBody, funcDecl, scalarConst } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -375,6 +375,39 @@ async function main() {
     const WORKSPACE = mk('workspace');
     const OUTSIDE = mk('outside');
 
+    // 临时根清单看着是「配置」，但配置也该由运行那条声明得到，而不是用正则切数组字面量：
+    // 写成一行、换成 .filter、给 path.join 多加一段 —— 切片要么失配，要么静默少一项。
+    const rootsDeclSrc = scalarConst(mainSource, 'TEMP_DELETE_ROOTS');
+    check('临时根声明语句按括号配平抽到了', rootsDeclSrc.length > 0,
+        rootsDeclSrc.replace(/\s+/g, ' ').slice(0, 70));
+    const rootsScope = makeScope({ USER_DATA_DIR_NAME });
+    vm.runInContext(`${rootsDeclSrc}\nthis.__roots = TEMP_DELETE_ROOTS;`, rootsScope.ctx);
+    const declaredRoots = rootsScope.ctx.__roots;
+    const realRootsByLeaf = {};
+    for (const dir of Array.isArray(declaredRoots) ? declaredRoots : []) realRootsByLeaf[path.basename(dir)] = dir;
+    const HOME_DATA_DIR = path.join(os.homedir(), USER_DATA_DIR_NAME);
+    check('真跑出来的临时根恰好是 codeTemp 与 compare 两个（改名、增减都在这里红）',
+        Object.keys(realRootsByLeaf).length === 2
+        && Object.keys(realRootsByLeaf).sort().join(',') === 'codeTemp,compare',
+        JSON.stringify(declaredRoots));
+    check('真跑出来的每一项都在用户数据目录里、是绝对路径、且不等于用户数据目录本身',
+        Array.isArray(declaredRoots) && declaredRoots.length === 2
+        && declaredRoots.every((dir) => path.isAbsolute(dir)
+            && dir !== HOME_DATA_DIR && isPathInsideDir(dir, HOME_DATA_DIR) === true),
+        JSON.stringify(declaredRoots));
+    // 清单与判定之间也要有数据流：只看注入 [codeTemp, compare] 的那批断言，
+    // 证明不了源码真声明的那两个目录被 isPathInsideTempRoots 认。
+    const realRootsFn = compileFn('isPathInsideTempRoots',
+        makeScope({ TEMP_DELETE_ROOTS: declaredRoots })).fn;
+    check('真清单接上真判定：两个根各自的产物算临时目录，根自身、同前缀兄弟目录、用户目录里别的文件都不算',
+        typeof realRootsFn === 'function' && !!realRootsByLeaf.codeTemp && !!realRootsByLeaf.compare
+        && realRootsFn(path.join(realRootsByLeaf.codeTemp, 'std_1.exe')) === true
+        && realRootsFn(path.join(realRootsByLeaf.compare, 'a', 'test_1.txt')) === true
+        && realRootsFn(realRootsByLeaf.codeTemp) === false
+        && realRootsFn(path.join(realRootsByLeaf.codeTemp + 'Evil', 'x')) === false
+        && realRootsFn(path.join(HOME_DATA_DIR, 'Documents', 'x.cpp')) === false,
+        JSON.stringify(declaredRoots));
+
     const tempRootsScope = makeScope({ TEMP_DELETE_ROOTS: [CODE_TEMP, COMPARE_TEMP] });
     const { body: tempRootsBody, fn: isPathInsideTempRoots } = compileFn('isPathInsideTempRoots', tempRootsScope);
     check('函数抽取成功: isPathInsideTempRoots',
@@ -675,6 +708,12 @@ async function main() {
         check('合法语言代码读到真实内容', !!en && en.hello === 'world', JSON.stringify(en));
         const cached = loadLanguageFile('en');
         check('第二次调用命中缓存、不再读盘', reads.length === 1 && cached === en, `${reads.length} 次读`);
+        // 原来这条是 `!/path\.join\(__dirname,\s*'lang',\s*`\$\{langCode/.test(mainSource)`：
+        // 只证明源码里没那行旧写法，证明不了读到的真是应用自带语言目录里的那个文件。
+        // 换成钉住读目标 —— 改读工作区/用户目录、少拼 .json、大小写变形都会在这里红。
+        check('读的就是应用自带 lang 目录下的 <code>.json',
+            reads.length === 1 && reads[0] === path.join(LANG_ROOT, 'lang', 'en.json'),
+            JSON.stringify(reads));
         check('合法但不存在的语言代码返回 null（不抛）', loadLanguageFile('fr') === null);
 
         reads.length = 0;
@@ -704,28 +743,31 @@ async function main() {
         check('越界拒绝走的是「语言文件路径越界」这条日志',
             stripScope.calls.logWarn.some((row) => row.join(' ').includes('路径越界')));
         check('变体本身没被改废（合法代码照样读得到）', !!(stripped('en') && stripped('en').hello === 'world'));
+        // 上面那条「越界仍判死」用的是 /etc/passwd.json —— 沙箱里那文件本就不存在，
+        // 把 isPathInsideDir 整道拆掉也读不出东西，等于真空通过。给它一个真存在的逃逸目标。
+        const LEAK_DIR = mk('leak');
+        fs.writeFileSync(path.join(LEAK_DIR, 'secret.json'), '{"leaked":"yes"}', 'utf8');
+        const escapeToRealFile = path.relative(path.join(LANG_ROOT, 'lang'), path.join(LEAK_DIR, 'secret'));
+        check('逃逸目标本身真的可读（否则下面那条是真空通过）',
+            JSON.parse(fs.readFileSync(path.join(LEAK_DIR, 'secret.json'), 'utf8')).leaked === 'yes');
+        reads.length = 0;
+        const leaked = stripped(escapeToRealFile);
+        check('拆掉字符集校验后，越界校验拦住的是「文件确实存在」的那条逃逸',
+            leaked === null && reads.length === 0,
+            JSON.stringify({ escapeToRealFile, leaked, reads }));
+        check('越界拒绝走的是「语言文件路径越界」这条日志（第二道，不是白名单那条）',
+            stripScope.calls.logWarn.some((row) => row.join(' ').includes('路径越界'))
+            && !stripScope.calls.logWarn.slice(-1).join(' ').includes('非法语言代码'));
     }
 
-    // -----------------------------------------------------------------------
-    // 有意保留的文本守卫：「某段代码不该存在」这类断言没有可调用对象，换不成行为。
-    // 真空风险由开头的「读到了内容」两条兜住。
-    // -----------------------------------------------------------------------
-    check('main.js 不再有裸 startsWith(codeTempDir)', !/startsWith\(codeTempDir\)/.test(mainSource));
-    check('main.js 不再把语言代码直接 path.join 进 __dirname/lang',
-        !/path\.join\(__dirname,\s*'lang',\s*`\$\{langCode/.test(mainSource));
-    // 临时根注册了哪两个目录属于「配置」而不是「行为」，只能按数据读。
-    // 这里取每个 path.join(os.homedir(), USER_DATA_DIR_NAME, '<末段>') 的末段做精确比较，
-    // 不能用 /compare/.test() —— 生产把 'compare' 改成 'compareX' 时子串仍然命中，
-    // 而对拍产物立刻删不掉（实测这种变异只有精确比较才抓得到）。
-    const rootsDecl = /const TEMP_DELETE_ROOTS\s*=\s*\[([\s\S]*?)\]\s*\.map/.exec(mainSource);
-    check('TEMP_DELETE_ROOTS 声明抽到了', !!rootsDecl,
-        rootsDecl ? rootsDecl[1].trim().replace(/\s+/g, ' ') : '');
-    const rootSegments = rootsDecl
-        ? [...rootsDecl[1].matchAll(/,\s*'([^']+)'\s*\)/g)].map((m) => m[1]).sort()
-        : null;
-    check('临时根恰好是 codeTemp 与 compare 两个',
-        Array.isArray(rootSegments) && rootSegments.join(',') === 'codeTemp,compare',
-        JSON.stringify(rootSegments));
+    // 原先这里挂着三条「源码里不该出现某串字面量」的守卫，现在都换成了可跑的：
+    //   · 裸 startsWith(codeTempDir) —— isPathInsideDir / isPathInsideTempRoots /
+    //     load-temp-file、save、delete-temp-file 各自都有 codeTempEvil 同前缀兄弟目录的行为行，
+    //     containment 一旦退化回前缀匹配，红的是那几条真跑。
+    //   · path.join(__dirname,'lang',`${langCode}`) —— 改成钉住真读到的那个文件路径，
+    //     再给越界校验一个「文件确实存在」的逃逸目标（旧目标 /etc/passwd.json 本就不存在，
+    //     把第二道校验整个拆掉也不会读到东西）。
+    //   · TEMP_DELETE_ROOTS 的数组切片 —— 挪到上面 A2 里，跑真声明拿到清单再接真判定。
 
     // -----------------------------------------------------------------------
     // 行为测试里回显用到的 i18n 键，必须真的存在于两语言包（防止拒了但界面空白）
