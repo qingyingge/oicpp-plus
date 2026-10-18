@@ -2145,6 +2145,10 @@ class TabManager {
 
         const content = this.getTabContentForSave(currentTab);
         if (typeof content === 'string') {
+            // 内容与上次记录一致时跳过保存链：避免无改动切标签触发 saveFile IPC、
+            // 主进程写盘比对、file-saved 广播与样例测试器刷新
+            if (content === currentTab.content) return;
+
             const isCloudPath = (p) => {
                 if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
                     return window.oicppApp.isCloudFilePath(p);

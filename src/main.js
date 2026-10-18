@@ -412,7 +412,7 @@ async function ensureClangdUserBundle() {
 
             const bundledRoot = resolveClangdRootFromBundle();
             if (!bundledRoot) {
-                logWarn('[LSP] 未找到打包的 clangd，用户可能不会获得 LSP 支持');
+                logInfo('[LSP] 未找到打包的 clangd，将尝试用户目录/系统 PATH 回退');
                 return { ok: false, error: 'clangd bundle not found' };
             }
 
@@ -744,7 +744,7 @@ class ClangdLspManager {
     async _startClangdInternal(options = {}) {
         const ensured = await ensureClangdUserBundle();
         if (!ensured.ok) {
-            logWarn('[LSP] 打包/用户目录无 clangd，尝试系统 PATH:', ensured.error || '');
+            logInfo('[LSP] 打包/用户目录无 clangd，尝试系统 PATH:', ensured.error || '');
         }
 
         const clangdRoot = ensured.root || getUserToolsRoot();
@@ -3873,6 +3873,7 @@ function setupIPC() {
     ipcMain.handle('update-settings', async (event, newSettings) => {
         try {
             const incomingSettings = { ...(newSettings || {}) };
+            logInfo('update-settings 收到键:', Object.keys(incomingSettings).join(','), '| 调用栈:', (new Error('update-settings-call-site')).stack);
             const rejectedKeys = Object.keys(incomingSettings).filter((key) => !SETTINGS_WRITABLE_KEYS.includes(key));
             if (rejectedKeys.length > 0) {
                 logInfo(`拒绝非法设置键: ${rejectedKeys.join(', ')}`);
@@ -3904,7 +3905,7 @@ function setupIPC() {
             // 语言是所有设置页保存时的公共字段，必须走这里广播，否则只写盘不生效
             await applyLanguageChange(settings.language, prevLanguage);
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-applied', settings);
+                mainWindow.webContents.send('settings-applied', settings, Object.keys(incomingSettings));
             }
 
             return { success: true };
@@ -4131,18 +4132,9 @@ function setupIPC() {
     });
 
     ipcMain.handle('lsp-request', async (_event, method, params, requestId) => {
-        logInfo('[LSP] 请求: ' + method);
+        // 生命周期/完成日志只在渲染端 lsp-client.js 记一套，主进程不再逐请求打印
         try {
             const result = await clangdLspManager.request(method, params || {}, requestId);
-            if (method === 'initialize') {
-                const caps = result?.capabilities;
-                const version = result?.serverInfo?.version || '?';
-                logInfo('[LSP] 初始化完成, 服务器:', result?.serverInfo?.name || 'clangd', '版本:', version);
-                if (caps?.semanticTokensProvider) {
-                    const legend = caps.semanticTokensProvider.legend;
-                    logInfo('[LSP] 语义令牌支持: ' + (legend?.tokenTypes?.length || 0) + ' 种类型, ' + (legend?.tokenModifiers?.length || 0) + ' 种修饰符');
-                }
-            }
             return result;
         } catch (err) {
             // clangd 在文档被修改时会正常取消进行中的 semanticTokens 等请求（LSP -32800），
@@ -9601,6 +9593,9 @@ app.whenReady().then(() => {
         ensureClangdUserBundle().then((clangdStatus) => {
             if (clangdStatus.ok) {
                 logInfo('[LSP] 启动时 clangd 就绪:', clangdStatus.root);
+            } else if (clangdLspManager.isRunning()) {
+                // 打包缺失但 LSP 已通过系统 PATH 回退启动，不算未就绪
+                logInfo('[LSP] 启动时打包 clangd 缺失，LSP 已经由回退路径运行');
             } else {
                 logWarn('[LSP] 启动时 clangd 未就绪:', clangdStatus.error || 'unknown');
             }

@@ -2761,13 +2761,7 @@ class MonacoEditorManager {
                 return;
             }
 
-            // 发送 didSave 触发 clangd 进行完整的诊断分析
-            try {
-                await this.lspClient.notify('textDocument/didSave', {
-                    textDocument: { uri }
-                });
-            } catch (_) {}
-
+            // didOpen 后不补发 didSave：clangd 本就会建 AST 并 publishDiagnostics，补发只会重建 preamble
             this._bindLspModelLifecycle(model);
         } catch (err) {
             logWarn('[LSP] 打开文档失败:', err?.message || err);
@@ -4216,7 +4210,12 @@ class MonacoEditorManager {
                 this.userSnippets = Array.isArray(all?.codeSnippets) ? all.codeSnippets : [];
             }
             if (!Array.isArray(this.userSnippets)) this.userSnippets = [];
-            logInfo('加载用户片段完成，数量:', this.userSnippets.length);
+            // 仅首次或数量变化时打日志：设置刷新会多次触发本函数，数量未变时刷屏无信息量
+            const count = this.userSnippets.length;
+            if (this._lastLoggedSnippetCount !== count) {
+                this._lastLoggedSnippetCount = count;
+                logInfo('加载用户片段完成，数量:', count);
+            }
         } catch (e) {
             logWarn('加载用户片段失败:', e);
             this.userSnippets = [];

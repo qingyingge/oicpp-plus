@@ -713,10 +713,13 @@ class OICPPApp {
                 this.applySettings('editor', previewSettings);
             });
 
-            window.electronAPI.onSettingsApplied((finalSettings) => {;
+            window.electronAPI.onSettingsApplied((finalSettings, changedKeys) => {;
                 this.applySettings('editor', finalSettings);
                 this.forceRefreshEditor(); // 强制刷新以应用字体等
-                try { window.monacoEditorManager?.refreshUserSnippets?.(); } catch (_) {}
+                // 只有本次改动包含 codeSnippets 才重载；无 changedKeys（如云同步恢复）时保持旧行为
+                if (!Array.isArray(changedKeys) || changedKeys.includes('codeSnippets')) {
+                    try { window.monacoEditorManager?.refreshUserSnippets?.(); } catch (_) {}
+                }
             });
 
             if (typeof window.electronAPI.onUpdateDownloadStatus === 'function') {
