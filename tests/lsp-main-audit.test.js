@@ -421,6 +421,30 @@ class FakeProc extends EventEmitter {
         check('M52: 渲染层拿不到 fallbackFlags（返回值没这个键，参数里也没有 fallback 字样）',
             !Object.hasOwn(started, 'fallbackFlags') && started.args.every((a) => !/fallback/i.test(a)),
             JSON.stringify(Object.keys(started)));
+        // std-cxx include 拼装链（collectStdCxxIncludeDirs → addStdCxxIncludeBundle → fallbackFlags）
+        // 整条删掉了：探测出的 include 目录唯一出路是 compile_flags.txt。
+        // 原来只查这两个标识符没被写回源码，改名重引、或改从命令行喂 -I 都不会红；
+        // 现在钉住「命令行参数的全部来源」和「include 目录不进命令行」这两个行为。
+        const allowedArgs = [
+            '--offset-encoding=utf-16',
+            '--background-index',
+            '--completion-style=detailed',
+            '--header-insertion=iwyu',
+            '--pch-storage=memory',
+            `--query-driver=${binDir.replace(/\\/g, '/')}/g++*`,
+            '--log=verbose',
+            `--compile-commands-dir=${flagsDir}`
+        ];
+        check('M52: clangd 命令行只有这八个来源，多一个都红（重新引回 include 拼装链会先在这里暴露）',
+            started.args.length === allowedArgs.length
+            && JSON.stringify([...started.args].sort()) === JSON.stringify([...allowedArgs].sort()),
+            JSON.stringify(started.args));
+        check('M52: 探测到的 include 目录一个都不进命令行，只交给写标志文件那一步',
+            started.args.every((a) => !/^-I/.test(a) && !a.startsWith('--extra-arg')
+                && !probed.includePaths.some((inc) => a.includes(inc)))
+            && seen.flagCalls.length === 1
+            && JSON.stringify(seen.flagCalls[0].includePaths) === JSON.stringify(probed.includePaths),
+            JSON.stringify(started.args));
         check('M52: spawn 的 cwd 落到工作区，detached 只在非 win32',
             seen.spawns[0][2].cwd === ws && seen.spawns[0][2].detached === (process.platform !== 'win32'),
             JSON.stringify(seen.spawns[0][2]));
@@ -475,8 +499,6 @@ class FakeProc extends EventEmitter {
         await brokenProbe.m.stop();
         fs.rmSync(ws, { recursive: true, force: true });
     }
-    check('M52: 已删除的 std-cxx include 拼装链没有被重新引回',
-        !mainSource.includes('addStdCxxIncludeBundle') && !mainSource.includes('collectStdCxxIncludeDirs'));
 
     // -----------------------------------------------------------------------
     // P3 / L35 / M56
@@ -655,8 +677,67 @@ class FakeProc extends EventEmitter {
             m3._lspChangePromises.size === 0, `残留 ${m3._lspChangePromises.size}`);
         check('L35: pending 的 model 会被重新排队', s3.queued === 1, String(s3.queued));
 
-        // 死缓存已删除：字段名守卫本身就是文本断言，形态与缩进无关，保留
-        check('L35: 必然失配的单槽安全性缓存已移除', !managerSource.includes('_lspSafetyCache'));
+        // 死缓存已删除。原来的守卫只锁字段名 _lspSafetyCache —— 换个名字重新引回来
+        // （_lspSafetyMemo 之类）守卫照样绿，而它锁的其实是一条「字段不许存在」的排版。
+        // 旧缓存的键是 长度:首字符码:尾字符码，所以要钉住的行为是：同键的不同文本必须
+        // 各算各的，后一条不能吃前一条的结论。下面把真方法抽出来连跑三种文本。
+        const assessSrc = classMethod('assessLspDocumentSafety');
+        check('方法体抽取成功: assessLspDocumentSafety', assessSrc.length > 500, String(assessSrc.length));
+        const assess = toFn(assessSrc);
+        const savedWindow = global.window;
+        const i18nCalls = [];
+        global.window = { i18n: { t: (key, params) => { i18nCalls.push({ key, params }); return `<<${key}>>`; } } };
+        try {
+            const BIG = 'int a[100000][100000];';
+            const SAFE = 'int       a[100][100];';
+            const SAFE2 = 'int          b[1][10];';
+            const CHAR = 'char a[100000][100000];';
+
+            const big = assess(BIG);
+            check('L35: 大数组真能判出不安全（安全性判定不是恒过）',
+                big.safe === false && big.line === 1 && big.elementSize === 4
+                && big.estimatedBytes > 1024 * 1024 * 1024, JSON.stringify(big));
+            check('L35: 三条文本在旧单槽缓存的键上必然碰撞（同长度、同首尾字符）',
+                SAFE.length === BIG.length && SAFE[0] === BIG[0] &&
+                SAFE[SAFE.length - 1] === BIG[BIG.length - 1] &&
+                SAFE2.length === BIG.length && SAFE2[0] === BIG[0] &&
+                SAFE2[SAFE2.length - 1] === BIG[BIG.length - 1],
+                JSON.stringify({ bigLen: BIG.length, safeLen: SAFE.length, safe2Len: SAFE2.length }));
+
+            const lookupsBeforeSafe = i18nCalls.length;
+            const safeAfterBig = assess(SAFE);
+            const safe2AfterSafe = assess(SAFE2);
+            const bigAgain = assess(BIG);
+            check('L35: 同键文本依次判定互不干扰，后一条不吃前一条的结论（缓存一旦被重引这里就红）',
+                safeAfterBig.safe === true && safe2AfterSafe.safe === true
+                && bigAgain.safe === false,
+                JSON.stringify({ safeAfterBig, safe2AfterSafe, bigAgain }));
+            check('L35: 判定是纯函数：同一条文本重复调用的结果逐字段相同，不随调用次数漂移',
+                JSON.stringify(bigAgain) === JSON.stringify(big),
+                JSON.stringify({ first: big, again: bigAgain }));
+
+            const charGiant = assess(CHAR);
+            check('L35: 元素大小按声明类型算，不是写死一个数（同维度 char 只有 int 的四分之一）',
+                charGiant.safe === false && charGiant.elementSize === 1 && big.elementSize === 4,
+                JSON.stringify(charGiant));
+            check('L35: 不安全理由走 i18n 查表，dims/bytes 来自本次判定',
+                i18nCalls.length === lookupsBeforeSafe + 2 /* bigAgain + CHAR */
+                && big.reason === '<<monaco.largeArrayDetail>>'
+                && i18nCalls.every((c) => c.key === 'monaco.largeArrayDetail')
+                && i18nCalls[0].params.dims === 2 && i18nCalls[0].params.bytes === 4
+                && i18nCalls[i18nCalls.length - 1].params.bytes === 1,
+                JSON.stringify(i18nCalls));
+            check('L35: 判定为安全时不查文案（不会为 {safe:true} 造一条 i18n 记录）',
+                lookupsBeforeSafe === 1, String(lookupsBeforeSafe));
+
+            const commented = assess('// int a[100000][100000];\nint x;\n');
+            const stringed = assess('char *s = "int a[100000][100000];";\n');
+            check('L35: 注释和字符串字面量里的例子不会误判不安全',
+                commented.safe === true && stringed.safe === true,
+                JSON.stringify({ commented, stringed }));
+        } finally {
+            global.window = savedWindow;
+        }
 
         const disposed = { isDisposed: () => true };
         const { m: m4, seen: s4 } = make();
