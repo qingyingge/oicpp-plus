@@ -289,10 +289,10 @@ if (packs['zh-cn'] && packs.en) {
     check('no window.i18n.t()/window.__() call passes a third argument', overlong.length === 0,
         overlong.slice(0, 5).join(' | '));
 
-    // 反向锁定前提：window.i18n.t 确实只有两个形参。
+    // 反向锁定前提：window.i18n.t 确实只有两个形参 —— 放在末尾的行为块里真调一次
+    // （原先是 /^\s{4}t\(key, params\) \{/m.test(源码)：把形参改成 params = {} 或加个
+    // 默认值，长相一变守卫就红，而第三参数到底会不会被吃只能靠人肉推断）。
     // 另锁定本轮收敛的成果：类上不再提供三参的 this.t，渲染层也不再调 this.t / window.__。
-    const i18nSource2 = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'i18n.js'), 'utf8');
-    check('premise: I18nManager.t takes exactly (key, params)', /^\s{4}t\(key, params\) \{/m.test(i18nSource2));
 
     const legacyThisT = [];
     for (const f of scanFiles) {
@@ -448,6 +448,13 @@ const rendererContract = (async () => {
     const zhBoot = boot({ currentLang: 'zh-cn', files: { 'zh-cn': zhPack } });
     await zhBoot.i.init();
     check('zh-cn 只取自己一份', zhBoot.loaded.join(',') === 'zh-cn', zhBoot.loaded.join(','));
+
+    // 上面那条「没有调用点给 window.i18n.t 传第三个参数」的前提，在这里用行为锁死：
+    // 多传的那参数既不报错也不生效。将来谁给 t() 加了兜底形参，这条先红，
+    // 那条静态检查才有意义（否则「静默丢弃」这件事本身就没人保证了）。
+    check('t() 只收两个形参，第三个参数被静默丢弃',
+        en.i.t.length === 2 && en.i.t('browser.reload', null, '中文兜底') === en.i.t('browser.reload'),
+        `t.length=${en.i.t.length} 三参返回=${JSON.stringify(en.i.t('no.such.key', null, '中文兜底'))}`);
 
     // 契约：缺 key 时返回 key 本身（而不是空串或 undefined）—— CI 的孤儿键检查依赖这一点。
     check('真实点分键解析到译文（拿 en.json 的 browser.reload 喂真表）',
