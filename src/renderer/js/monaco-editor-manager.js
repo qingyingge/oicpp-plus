@@ -6683,30 +6683,63 @@ class MonacoEditorManager {
         const splitLines = (text) => text.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
         const originalLines = splitLines(original);
         const formattedLines = splitLines(formatted);
+        const lineCount = originalLines.length;
         let prefix = 0;
-        const maxPrefix = Math.min(originalLines.length, formattedLines.length);
+        const maxPrefix = Math.min(lineCount, formattedLines.length);
         while (prefix < maxPrefix && originalLines[prefix] === formattedLines[prefix]) {
             prefix++;
         }
         let suffix = 0;
-        const maxSuffix = Math.min(originalLines.length - prefix, formattedLines.length - prefix);
+        const maxSuffix = Math.min(lineCount - prefix, formattedLines.length - prefix);
         while (suffix < maxSuffix
-            && originalLines[originalLines.length - 1 - suffix] === formattedLines[formattedLines.length - 1 - suffix]) {
+            && originalLines[lineCount - 1 - suffix] === formattedLines[formattedLines.length - 1 - suffix]) {
             suffix++;
         }
-        const originalEndLine = originalLines.length - suffix;
-        const formattedEndLine = formattedLines.length - suffix;
-        // 差异段为空（只在中间插入了行）时也要覆盖一个插入点，因此终点至少是下一行
-        const replaceEndLine = originalEndLine > prefix ? originalEndLine : prefix + 1;
-        const replacementLines = formattedLines.slice(prefix, formattedEndLine);
+        const replacement = formattedLines.slice(prefix, formattedLines.length - suffix);
+        const segEnd = lineCount - suffix;
+        // 差异段两端对齐（既没改写也没有插入任何整行）就是逐行比下来完全没变 ——
+        // 只差行尾 \r 是这种情况的典型。这种时候一条编辑都不该发，发出去就是一条
+        // 空 undo 记录，还会把「格式化没生效」伪装成「格式化生效了」。
+        if (replacement.length === 0 && segEnd <= prefix)
+            return [];
+        const maxColumn = (lineNumber) => model.getLineMaxColumn?.(lineNumber) || (originalLines[lineNumber - 1] || '').length + 1;
+        // 换行符的归属是这里唯一容易写反的地方：Monaco 的 range 覆盖的是字符，
+        // 而「一整行」要连它自己的换行符一起吃掉才算删干净。所以区间取
+        // [差异段首行的行首, 段后首行的行首)，替换文本自带尾随换行 ——
+        // 少写这个换行，插入的行会和下一行粘成一行；少删这个换行，删完留个空行。
+        // 段尾顶到文件末尾时后面没有行可借，只能退回收尾到文档末尾、文本不带换行。
+        const touchesEOF = segEnd >= lineCount;
+        // 原文整篇都是公共前缀，格式化只在末尾追加：插入点必须接在最后一行的行尾，
+        // 否则区间会算到不存在的下一行上。
+        if (prefix >= lineCount) {
+            return [{
+                    range: {
+                        startLineNumber: lineCount,
+                        startColumn: maxColumn(lineCount),
+                        endLineNumber: lineCount,
+                        endColumn: maxColumn(lineCount)
+                    },
+                    text: '\n' + replacement.join('\n')
+                }];
+        }
+        // 删掉的是段尾一直到文件末尾的若干整行（替换结果为空）：要从上一行的行尾起算，
+        // 把上一行的换行符一并删掉，不然会留下一个空行。
+        const fromPrevLineEnd = replacement.length === 0 && touchesEOF;
+        const startLineNumber = fromPrevLineEnd ? prefix : prefix + 1;
+        const startColumn = fromPrevLineEnd ? maxColumn(prefix) : 1;
+        const endLineNumber = touchesEOF ? lineCount : segEnd + 1;
+        const endColumn = touchesEOF ? maxColumn(lineCount) : 1;
+        const text = replacement.length === 0
+            ? ''
+            : replacement.join('\n') + (touchesEOF ? '' : '\n');
         return [{
                 range: {
-                    startLineNumber: prefix + 1,
-                    startColumn: 1,
-                    endLineNumber: replaceEndLine,
-                    endColumn: originalEndLine > prefix ? (model.getLineMaxColumn?.(replaceEndLine) || 1) : 1
+                    startLineNumber,
+                    startColumn,
+                    endLineNumber,
+                    endColumn
                 },
-                text: replacementLines.join('\n')
+                text
             }];
     }
     async requestClangFormattedCode(model, range = null) {

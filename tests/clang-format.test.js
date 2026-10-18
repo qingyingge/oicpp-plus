@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const vm = require('vm');
 const { EventEmitter } = require('events');
 const { callbackBody, classMethod, funcDecl } = require('./fixtures/source-extract');
+const { editOutOfBounds, replayEdit } = require('./fixtures/monaco-edit-replay');
 const {
     buildClangFormatArgs,
     formatCodeWithClangFormat,
@@ -950,10 +951,14 @@ function makeModel(lines, state = {}) {
             const e2 = await provideRange(model, { startLineNumber: 2, endLineNumber: 2 }, {}, LIVE);
             bridge.onCall = null;
             bridge.reply = () => 'FORMATTED';
+            // 锁的是回放结果，不是区间数字：把编辑套回「用户已经改过第 3 行」的
+            // 当前文档，第 3 行必须原样留着 —— 这才叫「只改写变了的那一行」。
+            const liveValue = model.getValue();
+            const applied = e2.length === 1 ? replayEdit(liveValue, e2[0]).doc : null;
             check('区域格式化只改写真正变了的那一行：await 期间用户改了第 3 行也不跟着重写',
-                e2.length === 1 && e2[0].text === 'LINE2' &&
-                e2[0].range.startLineNumber === 2 && e2[0].range.endLineNumber === 2,
-                JSON.stringify(e2));
+                e2.length === 1 && liveValue === 'line1\nline2\nline3-typed-by-user'
+                && applied === 'line1\nLINE2\nline3-typed-by-user',
+                JSON.stringify({ edits: e2, liveValue, applied }));
 
             model.lines[2] = 'line3';
             bridge.calls.length = 0;
@@ -992,81 +997,97 @@ function makeModel(lines, state = {}) {
         // -----------------------------------------------------------------------
         {
             const m = minimal.fn;
+            const asText = (v) => (Array.isArray(v) ? v.join('\n') : String(v));
             check('buildMinimalFormatEdits 抽取成功', typeof m === 'function');
+
+            // 主断言是回放：把返回的编辑按 Monaco 的语义套回原文，结果必须逐字等于
+            // 格式化输出，且区间本身没越界、只有 1 条（undo 粒度）。
+            // 「增删整行」这一族原来只锁区间数字，少带 / 多带一个换行全都照样绿。
+            const RT = [
+                ['中间一行变了', ['a', 'b', 'c'], ['a', 'B', 'c']],
+                ['只有首行变', ['a', 'b', 'c'], ['A', 'b', 'c']],
+                ['纯插入一行', ['a', 'b'], ['a', 'X', 'b']],
+                ['纯插入多行', ['a', 'b'], ['a', 'X', 'Y', 'b']],
+                ['首行之前插入', ['a', 'b'], ['H', 'a', 'b']],
+                ['删掉中间一行', ['a', 'b', 'c'], ['a', 'c']],
+                ['删掉中间一大段', ['a', 'b', 'c', 'd'], ['a', 'd']],
+                ['删掉中间空行', ['a', '', 'b'], ['a', 'b']],
+                ['删掉末尾一行', ['a', 'b', 'c'], ['a', 'b']],
+                ['删掉末尾三行', ['a', 'b', 'c', 'd'], ['a']],
+                ['末尾追加一行', ['a', 'b'], ['a', 'b', 'c']],
+                ['末尾追加一行（三行文档）', ['a', 'b', 'c'], ['a', 'b', 'c', 'd']],
+                ['整篇重排', ['a', 'b'], ['zz', 'yy']],
+                ['两处分散的改动', ['a', 'b', 'c', 'd'], ['A', 'b', 'c', 'D']],
+                ['缩进改动', ['x', '  indented', 'y'], ['x', '\tindented', 'y']],
+                ['空行变正文', ['a', '', 'b'], ['a', 'x', 'b']],
+                ['正文变空行', ['a', 'x', 'b'], ['a', '', 'b']],
+                ['单行文档改写', ['a'], ['z']],
+                ['格式化到空文本', ['a', 'b'], ['']],
+                ['删掉尾部换行', 'a\nb\n', 'a\nb'],
+                ['补上尾部换行', 'a\nb', 'a\nb\n']
+            ];
+            const rtBad = [];
+            for (const [name, from, to] of RT) {
+                const original = asText(from), formatted = asText(to);
+                const edits = m.call(manager, makeModel(original), original, formatted);
+                if (edits.length !== 1) { rtBad.push(`${name}→${edits.length} 条编辑`); continue; }
+                const outOfRange = edits.map((e) => editOutOfBounds(original, e)).filter(Boolean);
+                if (outOfRange.length) { rtBad.push(`${name} 区间越界: ${outOfRange.join(' / ')}`); continue; }
+                const back = replayEdit(original, edits[0]).doc;
+                if (back !== formatted) {
+                    rtBad.push(`${name} 回放成 ${JSON.stringify(back)} ≠ ${JSON.stringify(formatted)}`);
+                }
+            }
+            check(`${RT.length} 种增删改形状：区间不越界、只一条、回放后逐字等于格式化结果`,
+                rtBad.length === 0, rtBad.join(' | '));
+
             check('正文没变就不产出编辑（避免空 undo 记录）',
                 m.call(manager, makeModel(['a', 'b']), 'a\nb', 'a\nb').length === 0);
-            {
-                // 行尾 \r 只让逐行比较相等，overall 字符串仍不等，所以走的是
-                // 「prefix 吃满、末尾零宽改写」这条路，而不是早退。锁的语义是
-                // 「不重写任何正文」—— 将来若改成直接返回 []，这条照样过。
-                const e = m.call(manager, makeModel(['a', 'b']), 'a\r\nb', 'a\nb');
-                check('只差行尾 \\r 时不重写任何正文（不剥 \r 就逐行不等，会退化成整篇替换）',
-                    e.length <= 1 && e.every((row) => row.text === ''), JSON.stringify(e));
-                const e2 = m.call(manager, makeModel(['a', 'b', 'c']), 'a\r\nb\r\nc', 'a\nb\nc');
-                check('逐行只差 \\r 时同样不重写正文',
-                    e2.every((row) => row.text === ''), JSON.stringify(e2));
-            }
             check('非字符串输入直接返回空，不抛进 Monaco',
                 m.call(manager, makeModel(['a']), null, 'x').length === 0 &&
                 m.call(manager, makeModel(['a']), 'x', undefined).length === 0);
             {
-                const e = m.call(manager, makeModel(['a', 'b', 'c']), 'a\nb\nc', 'a\nB\nc');
-                check('中间一行变了就只覆盖那一行，列从行首开始',
-                    e.length === 1 && e[0].text === 'B' &&
-                    e[0].range.startLineNumber === 2 && e[0].range.endLineNumber === 2 &&
-                    e[0].range.startColumn === 1, JSON.stringify(e));
-            }
-
-            {
-                const e = m.call(manager, makeModel(['a', 'b']), 'a\nb', 'a\nX\nb');
-                check('纯插入一行：改写区间收成第 2 行行首的零宽范围',
-                    e.length === 1 && e[0].range.startLineNumber === 2 &&
-                    e[0].range.endLineNumber === 2 && e[0].range.endColumn === 1 &&
-                    e[0].text === 'X', JSON.stringify(e));
+                // 逐行只差行尾 \r：比较时剥掉 \r 让两边相等，于是压根没有差异段。
+                // 这时发出去的那条编辑是零宽的，只会往 undo 栈里塞一条空记录，
+                // 并把「格式化其实没生效」伪装成「生效了」—— 一条都不该发。
+                const e = m.call(manager, makeModel('a\r\nb'), 'a\r\nb', 'a\nb');
+                check('只差行尾 \\r 时一条编辑都不产出（原来留一条指向不存在那行的零宽编辑）',
+                    e.length === 0, JSON.stringify(e));
+                const e2 = m.call(manager, makeModel('a\r\nb\r\nc'), 'a\r\nb\r\nc', 'a\nb\nc');
+                check('逐行只差 \\r 时同样不产出编辑', e2.length === 0, JSON.stringify(e2));
             }
             {
-                const e = m.call(manager, makeModel(['a', 'b', 'c', 'd']), 'a\nb\nc\nd', 'a\nd');
-                check('删掉中间一大段：改写区间跟着缩',
-                    e.length === 1 && e[0].range.startLineNumber === 2 &&
-                    e[0].range.endLineNumber === 3 && e[0].text === '',
-                    JSON.stringify(e));
+                // 不剥 \r 就会逐行不等 → prefix/suffix 双双归零 → 退化成整篇替换，
+                // 把这次修复要消除的巨型 undo 又放回来。锁的是「没被改的行不在区间里」。
+                const e = m.call(manager, makeModel('a\r\nb\r\nc'), 'a\r\nb\r\nc', 'a\nB\nc');
+                const back = e.length === 1 ? replayEdit('a\r\nb\r\nc', e[0]) : { covered: '', doc: '' };
+                check('原文带 \\r 时也只圈住真正变了的那一行（未改动的行不进区间）',
+                    e.length === 1 && !back.covered.includes('a') && !back.covered.includes('c'),
+                    JSON.stringify({ edits: e, covered: back.covered }));
+                check('没被改写的行保留原文行尾，只重写第 2 行',
+                    back.doc === 'a\r\nB\nc', JSON.stringify(back.doc));
             }
             {
-                const e = m.call(manager, makeModel(['a', 'b']), 'a\nb', 'zz\nyy');
-                check('整篇重排时退化成全文替换（但至少仍是一条编辑）',
-                    e.length === 1 && e[0].range.startLineNumber === 1 &&
-                    e[0].range.endLineNumber === 2 && e[0].text === 'zz\nyy',
-                    JSON.stringify(e));
-            }
-            {
-                const e = m.call(manager, makeModel(['a', 'b', 'c', 'd']), 'a\nb\nc\nd', 'A\nb\nc\nD');
-                check('两处分散的改动合成一条编辑（Monaco 只记一次 undo）',
-                    e.length === 1 && e[0].range.startLineNumber === 1 &&
-                    e[0].range.endLineNumber === 4 && e[0].text === 'A\nb\nc\nD',
-                    JSON.stringify(e));
-            }
-            {
-                const e = m.call(manager, makeModel(['x', '  indented', 'y']),
-                    'x\n  indented\ny', 'x\n\tindented\ny');
-                check('缩进改动只重写那一行，endColumn 取该行最大列',
-                    e.length === 1 && e[0].range.startLineNumber === 2 &&
-                    e[0].text === '\tindented' &&
-                    e[0].range.endColumn === ('  indented'.length + 1),
-                    JSON.stringify(e));
+                const model = makeModel(['KEEP_TOP', 'x', 'KEEP_BOTTOM']);
+                const e = m.call(manager, model,
+                    'KEEP_TOP\nx\nKEEP_BOTTOM', 'KEEP_TOP\ny\nKEEP_BOTTOM');
+                const covered = e.length === 1 ? replayEdit('KEEP_TOP\nx\nKEEP_BOTTOM', e[0]).covered : '';
+                check('区间只覆盖被改动的那一行，前后两行不进回放',
+                    e.length === 1 && covered === 'x\n', JSON.stringify({ edits: e, covered }));
             }
             {
                 const noMaxColumn = makeModel(['a', 'b']);
                 delete noMaxColumn.getLineMaxColumn;
-                const e = m.call(manager, noMaxColumn, 'a\nb', 'a\nB');
-                check('模型没有 getLineMaxColumn 时 endColumn 兜到 1，不抛',
-                    e.length === 1 && e[0].range.endColumn === 1, JSON.stringify(e));
-            }
-            {
-                const e = m.call(manager, makeModel(['a', 'b', 'c']), 'a\nb\nc', 'a\nb');
-                check('删掉末尾一行：改写区间落在被删的那一行上',
-                    e.length === 1 && e[0].range.startLineNumber === 3 &&
-                    e[0].range.endLineNumber === 3 && e[0].text === '',
-                    JSON.stringify(e));
+                let thrown = '';
+                let back = null;
+                try {
+                    const e = m.call(manager, noMaxColumn, 'a\nb', 'a\nB');
+                    back = e.length === 1 ? replayEdit('a\nb', e[0]).doc : `edits=${e.length}`;
+                } catch (error) {
+                    thrown = String(error && error.message ? error.message : error);
+                }
+                check('模型没有 getLineMaxColumn 时按原文行长度兜底，回放照样正确',
+                    thrown === '' && back === 'a\nB', JSON.stringify({ thrown, back }));
             }
         }
     }

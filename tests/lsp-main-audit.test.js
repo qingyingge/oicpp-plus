@@ -14,6 +14,7 @@ const {
     toFn,
     toProviderFn: buildProviderFn
 } = require('./fixtures/source-extract');
+const { editOutOfBounds, replayEdit } = require('./fixtures/monaco-edit-replay');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -749,34 +750,45 @@ class FakeProc extends EventEmitter {
     // ---- M56: 范围格式化只回写差异行 ----
     {
         const buildMinimal = toFn(buildMinimalSrc);
+        // 模型桩按原文建行：生产里 original 就是 model.getValue()，
+        // 拿 formatted 建行会让 getLineMaxColumn 报出原文没有的列。
         const mkModel = (lines) => ({ getLineMaxColumn: (n) => (lines[n - 1] || '').length + 1 });
-        const edit = (original, formatted) => buildMinimal(mkModel(formatted.split('\n')), original, formatted);
+        const edit = (original, formatted) => buildMinimal(mkModel(original.split('\n')), original, formatted);
 
-        const mid = edit('a\nb\nc\nd\ne', 'a\nB\nc\nd\ne');
-        check('M56: 中间一行变化只回写那一行',
-            mid.length === 1 && mid[0].range.startLineNumber === 2 &&
-            mid[0].range.endLineNumber === 2 && mid[0].text === 'B',
-            JSON.stringify(mid[0] && mid[0].range));
-        const head = edit('a\nb\nc', 'A\nb\nc');
-        check('M56: 首行变化时 prefix 归零，不会多带一行',
-            head[0].range.startLineNumber === 1 && head[0].range.endLineNumber === 1 &&
-            head[0].text === 'A', JSON.stringify(head[0]));
-        const tail = edit('a\nb\nc', 'a\nb\nC');
-        check('M56: 末行变化只回写末行', tail[0].range.startLineNumber === 3 &&
-            tail[0].range.endLineNumber === 3 && tail[0].text === 'C', JSON.stringify(tail[0]));
+        // 断言回放结果，不断言区间数字：增删整行的正确性全在「换行符归谁管」上，
+        // 少带一个 '\n' 时区间三个数照样好看，回放才知道会把两行粘成一行。
+        const CASES = [
+            ['中间一行变化只回写那一行', 'a\nb\nc\nd\ne', 'a\nB\nc\nd\ne'],
+            ['首行变化时 prefix 归零，不会多带一行', 'a\nb\nc', 'A\nb\nc'],
+            ['末行变化只回写末行', 'a\nb\nc', 'a\nb\nC'],
+            ['纯插入一行', 'a\nb\nc', 'a\nN\nb\nc'],
+            ['删掉中间一行不留空行', 'a\nb\nc', 'a\nc'],
+            ['删掉末行不留空行', 'a\nb\nc', 'a\nb'],
+            ['末尾追加一行', 'a\nb', 'a\nb\nc'],
+            ['整篇重排仍只一条编辑', 'a\nb', 'z\ny']
+        ];
+        const bad = [];
+        for (const [name, original, formatted] of CASES) {
+            const edits = edit(original, formatted);
+            if (edits.length !== 1) { bad.push(`${name}→${edits.length} 条编辑`); continue; }
+            const oob = editOutOfBounds(original, edits[0]);
+            if (oob) { bad.push(`${name} 区间越界: ${oob}`); continue; }
+            const back = replayEdit(original, edits[0]).doc;
+            if (back !== formatted) {
+                bad.push(`${name} 回放成 ${JSON.stringify(back)} ≠ ${JSON.stringify(formatted)}`);
+            }
+        }
+        check(`${CASES.length} 种增删改形状：区间不越界、只一条、回放后逐字等于格式化结果`,
+            bad.length === 0, bad.join(' | '));
 
         // 行尾 \r 差异必须忽略：否则每行都不等，prefix/suffix 双双归零，
         // 退化成整文档替换 —— 恰好把本次要消除的巨型 undo / 光标跳变 / 全文重排放回来
         const crlf = edit('a\nb\nc', 'a\r\nX\r\nc');
-        check('M56: 行尾 \\r 差异不会让最小化退化',
-            crlf.length === 1 && crlf[0].range.startLineNumber === 2 &&
-            crlf[0].range.endLineNumber === 2, JSON.stringify(crlf[0] && crlf[0].range));
-
-        const inserted = edit('a\nb\nc', 'a\nN\nb\nc');
-        check('M56: 纯插入也覆盖一个插入点而不是整文档',
-            inserted.length === 1 && inserted[0].range.startLineNumber === 2 &&
-            inserted[0].range.endLineNumber === 2 && inserted[0].text === 'N',
-            JSON.stringify(inserted[0] && inserted[0].range));
+        const crlfCovered = crlf.length === 1 ? replayEdit('a\nb\nc', crlf[0]).covered : null;
+        check('M56: 行尾 \\r 差异不会让最小化退化成整篇替换',
+            crlf.length === 1 && crlfCovered === 'b\n'
+            && replayEdit('a\nb\nc', crlf[0]).doc === 'a\nX\nc',
+            JSON.stringify({ edits: crlf, covered: crlfCovered }));
 
         check('M56: 内容没变时一条 edit 都不发',
             buildMinimal(mkModel([]), 'a\nb', 'a\nb').length === 0);
