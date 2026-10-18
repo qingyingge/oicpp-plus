@@ -12,7 +12,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { classMethod, funcDecl, toFn } = require('./fixtures/source-extract');
+const vm = require('vm');
+const { classMethod, compileMethod, funcDecl, setMembers, toFn } = require('./fixtures/source-extract');
 
 global.logInfo = () => { };
 global.logWarn = () => { };
@@ -199,33 +200,178 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
         exhausted instanceof Error && typeof exhausted.code === 'string' && exhausted.code.length > 0,
         JSON.stringify(exhausted && Object.keys(exhausted)));
 
-    // P0-1 / P0-2 这两段刻意留在文本层：它们锁的是「某段代码不该存在」（死处理器、
-    // 文案匹配、白名单残留），删除类断言没有可调用的对象，换不成行为。
-    // 真空风险由上面的「读到了内容」兜住，负向正则只在文件确实非空时才有意义。
-    // ---- P0-1：取消判定不再依赖 message 文案 ----
-    check('P0-1 catch 内用 isDownloadCancelled 而非文案匹配',
-        (mainSource.match(/isDownloadCancelled\(error\)/g) || []).length >= 2 &&
-        !/error\.message\.includes\('用户取消'\)/.test(mainSource));
-    check('P0-1 不存在裸名 isCancelledError（导入时已改名为 isDownloadCancelled）',
-        !/(?<![A-Za-z0-9_])isCancelledError\s*\?/.test(mainSource));
-    check('P0-1 close 延时用的是作用域内的 isCancelled',
-        (mainSource.match(/\}, isCancelled \? 1000 : 3000\);/g) || []).length === 2);
+    // ---- P0-1 / P0-2：取消判定与死 IPC 通道清理 ----
+    // 原先这九条全是「源码里不该再出现 X」的负向正则。删除类断言确实没有可直接调用的对象，
+    // 但两侧都有数据可抽：主进程注册了哪些通道、往外发过哪些、preload 放行了哪些、
+    // compile-manager 到底注册了几个监听 —— 当成集合做交叉核对，锁的就不再是某行字，
+    // 而是「监听了一个没人发送的通道」这个 bug 类本身。
+    // 剥掉整行注释再抽：源码里「compile-result 已移除」这类说明文字会把字面量守卫自己点着。
+    const decomment = (s) => s.split('\n').map((l) => /^\s*\/\//.test(l) ? '' : l).join('\n');
+    const mainCode = decomment(mainSource);
+    const cmCode = decomment(compileMgrSource);
+    const names = (re, s) => { const out = new Set(); let m; while ((m = re.exec(s))) out.add(m[1]); return out; };
+    const mainHandlers = names(/ipcMain\.(?:on|handle)\(\s*['"`]([a-z0-9-]+)['"`]/g, mainCode);
+    const mainPushes = names(/\.send\(\s*['"`]([a-z0-9-]+)['"`]/g, mainCode);
+    const preloadEvents = setMembers(preloadSource, 'ALLOWED_EVENT_CHANNELS');
+    check('IPC 三侧的通道集都抽成了数据（抽不到就退化成真空否定，先钉死）',
+        mainHandlers.size > 100 && mainPushes.size > 30 && Array.isArray(preloadEvents) && preloadEvents.length > 40,
+        `注册=${mainHandlers.size} 外发=${mainPushes.size} 白名单=${preloadEvents && preloadEvents.length}`);
 
-    // ---- P0-2：compile-code 死处理器已移除，监听随之清理 ----
-    check('P0-2 compile-code handler 已删除', !/ipcMain\.on\('compile-code'/.test(mainSource));
-    check('P0-2 compileCode 调用点已消失', !/[^.\w]compileCode\(/.test(mainSource));
-    check('P0-2 compile-manager 不再监听无发送方的四个通道',
-        !/'compile-result':/.test(compileMgrSource) &&
-        !/'run-result':/.test(compileMgrSource) &&
-        !/'run-error':/.test(compileMgrSource) &&
-        !/'compile-error': \(/.test(compileMgrSource));
-    check('P0-2 preload 事件白名单同步移除这四个通道',
-        !/'compile-result'/.test(preloadSource) &&
-        !/'run-result'/.test(preloadSource) &&
-        !preloadSource.includes("'run-error'"));
-    check('P0-2 handleCompileResult/handleRunResult 方法本身仍被其它路径使用',
-        /this\.handleCompileResult\(result\)/.test(compileMgrSource) &&
-        /this\.handleRunResult\(result\)/.test(compileMgrSource));
+    // 渲染层「监听了什么」不该靠读它的源码来猜 —— 把 setupEventListeners 真跑一遍，
+    // 拿假 ipcRenderer 记下每一次 on()，注册表就是它自己的输出。
+    const setupSrc = classMethod(cmCode, 'setupEventListeners');
+    check('方法体抽取成功: CompileManager.setupEventListeners', /^\s*setupEventListeners\(/.test(setupSrc), String(setupSrc).slice(0, 40));
+    const cmCtx = vm.createContext({ logInfo: () => { }, logWarn: () => { }, Object, window: undefined });
+    const setup = compileMethod(cmCtx, setupSrc);
+    const remove = compileMethod(cmCtx, classMethod(cmCode, 'removeEventListeners'));
+    check('两个方法都编译成可调用函数', typeof setup === 'function' && typeof remove === 'function');
+    const mgrSelf = {
+        settings: { compilerPath: 'g++', compilerArgs: '-std=c++17', runMode: 'stdin' },
+        applied: null,
+        updateSettings(patch) { this.applied = { ...this.settings, ...patch }; }
+    };
+    // 先走没有 electron 桥的那条分支：不能抛，也不能留下半个登记表。
+    let bridgeThrew = null;
+    cmCtx.window = {};
+    try { setup.call(mgrSelf); } catch (e) { bridgeThrew = e.message; }
+    check('没有 electron 桥时只记日志、不注册也不炸',
+        bridgeThrew === null && mgrSelf._ipcListeners === undefined, String(bridgeThrew));
+
+    const on = [];
+    const off = [];
+    cmCtx.window = { electron: { ipcRenderer: { on: (c, h) => on.push([c, h]), removeListener: (c, h) => off.push([c, h]) } } };
+    setup.call(mgrSelf);
+    const cmChannels = on.map(([c]) => c);
+    check('compile-manager 实际注册的监听通道就是这一份（四个死通道加回来就在这里显形）',
+        JSON.stringify(cmChannels.slice().sort()) === '["settings-changed"]', JSON.stringify(cmChannels));
+    check('每个监听通道主进程都真有地方往外发（P0-2 的病根：监听恒不触发的死通道）',
+        cmChannels.every((c) => mainPushes.has(c)),
+        `缺发送方: ${JSON.stringify(cmChannels.filter((c) => !mainPushes.has(c)))}`);
+    check('每个监听通道都在 preload 白名单里（不在就被 safeIpcRenderer 拒掉，等于以为监听成功了）',
+        cmChannels.every((c) => preloadEvents.includes(c)),
+        JSON.stringify(cmChannels.filter((c) => !preloadEvents.includes(c))));
+    const DEAD = ['compile-result', 'run-result', 'run-error', 'compile-error'];
+    check('四个死通道在「主进程注册 / 主进程外发 / preload 白名单 / 渲染层监听」四处都已清零',
+        DEAD.every((c) => !mainHandlers.has(c) && !mainPushes.has(c)
+            && !(preloadEvents || []).includes(c) && !cmChannels.includes(c)),
+        DEAD.map((c) => `${c}${[mainHandlers.has(c), mainPushes.has(c), (preloadEvents || []).includes(c), cmChannels.includes(c)].map((v) => (v ? '有' : '无')).join('')}`).join(' '));
+    check('compile-code 既没在主进程注册、渲染层也没有调用点（老处理器整条撤掉）',
+        !mainHandlers.has('compile-code') && !/[^.\w]compileCode\s*\(/.test(mainCode + cmCode),
+        `注册=${mainHandlers.has('compile-code')}`);
+
+    // 注册回来的东西还得能退干净：注销用的通道和句柄与注册一一对应，登记表清空。
+    remove.call(mgrSelf);
+    check('removeEventListeners 注销的通道与句柄和注册完全对应（漏一个就是切页后同一事件处理两遍）',
+        JSON.stringify(off.map(([c]) => c).sort()) === JSON.stringify(cmChannels.slice().sort())
+            && off.every(([c, h], idx) => c === on[idx][0] && h === on[idx][1]),
+        JSON.stringify({ on: cmChannels, off: off.map(([c]) => c) }));
+    const offBefore = off.length;
+    remove.call(mgrSelf);
+    check('注销后登记表置空，重复调用不再多发 removeListener',
+        mgrSelf._ipcListeners === null && off.length === offBefore, `off=${off.length}`);
+
+    // 处理器本身也不是摆设：喂三种 settings-changed 载荷，看它到底更不更新。
+    const again = [];
+    cmCtx.window = { electron: { ipcRenderer: { on: (c, h) => again.push([c, h]), removeListener: () => { } } } };
+    setup.call(mgrSelf);
+    const settingsHandler = again.length ? again[0][1] : null;
+    check('settings-changed 的处理器注册成了可调用函数', typeof settingsHandler === 'function', String(typeof settingsHandler));
+    const fire = (payload) => {
+        mgrSelf.applied = null;
+        try { settingsHandler({}, 'compiler', payload); } catch (e) { mgrSelf.applied = 'THREW:' + e.message; }
+        return mgrSelf.applied;
+    };
+    const moved = fire({ compilerPath: 'clang++' });
+    check('只改 compilerPath 时其余字段保留原值，而不是整体覆盖成 undefined',
+        JSON.stringify(moved) === JSON.stringify({ compilerPath: 'clang++', compilerArgs: '-std=c++17', runMode: 'stdin' }),
+        JSON.stringify(moved));
+    check('三个关键字段一个都没变时不去动设置（否则每次广播都白重编译一遍）',
+        fire({ theme: 'dark' }) === null, JSON.stringify(fire({ theme: 'dark' })));
+    check('载荷是 null/undefined 时不炸、也不动设置', fire(null) === null && fire(undefined) === null);
+
+    // ---- P0-1：取消判定看 code，不看文案 ----
+    // 原来两条 !includes 锁的是「用户取消」这四个字和导入别名；把文案改成「已取消」它就看不见，
+    // 而真正要保证的是「只有下载器自己打的取消码才算取消」。谓词就在导出里，直接跑。
+    const isCancel = Downloader.isCancelledError;
+    check('message 写着「用户取消」的普通 Error 不算取消（文案不参与判定）',
+        isCancel(new Error('用户取消')) === false, String(isCancel(new Error('用户取消'))));
+    check('算取消的只有下载器那个取消码',
+        isCancel(Object.assign(new Error('x'), { code: Downloader.CANCELLED_CODE })) === true
+            && Downloader.CANCELLED_CODE === 'DOWNLOAD_CANCELLED', String(Downloader.CANCELLED_CODE));
+    // 光测谓词还不够：得确认主进程那两处 catch 真的把「是不是取消」交给这个谓词，
+    // 而不是哪天又改回 `error.message.includes('…')`。把两条 catch 里 isCancelled 的
+    // 初始化表达式原样抽出来，喂两种 error 真算一遍 —— 换文案、换谓词都会在这里显形。
+    const cancelBindings = [...mainCode.matchAll(/(?:const|let)\s+isCancelled\s*=\s*([^;]+);/g)].map((m) => m[1].trim());
+    check('主进程恰好两处 isCancelled 绑定（两条下载 catch 各一处）',
+        cancelBindings.length === 2, JSON.stringify(cancelBindings));
+    for (const [idx, expr] of cancelBindings.entries()) {
+        const ev = (error) => {
+            try {
+                return vm.runInNewContext(`(${expr})`,
+                    { error, isDownloadCancelled: Downloader.isCancelledError, Boolean, String, Object }, { timeout: 50 });
+            }
+            catch (e) { return 'UNRESOLVED:' + e.message; }
+        };
+        check(`第 ${idx + 1} 处取消判定认码不认文案（${expr}）`,
+            ev(new Error('用户取消')) === false
+                && ev(Object.assign(new Error('x'), { code: Downloader.CANCELLED_CODE })) === true,
+            `${ev(new Error('用户取消'))}/${ev(Object.assign(new Error('x'), { code: Downloader.CANCELLED_CODE }))}`);
+    }
+    // 取消后窗口关得多快，原先是数 `}, isCancelled ? 1000 : 3000);` 出现两次 —— 锁的是空格和字形。
+    // 改成把每个 setTimeout 的延时实参抽出来，在 isCancelled 两种取值下真算一遍，
+    // 只保留「取值随取消与否变化」的那些：写死成常量、或对调两边的值，都逃不出这两条。
+    const delaySites = (src) => {
+        const out = [];
+        let at = 0;
+        while (true) {
+            const i = src.indexOf('setTimeout(', at);
+            if (i < 0) break;
+            const open = i + 'setTimeout'.length;
+            let d = 0, q = null, close = -1;
+            for (let k = open; k < src.length; k++) {
+                const c = src[k];
+                if (q) { if (c === '\\') k++; else if (c === q) q = null; continue; }
+                if (c === '"' || c === "'" || c === '`') q = c;
+                else if (c === '(' || c === '[' || c === '{') d++;
+                else if (c === ')' || c === ']' || c === '}') { d--; if (d === 0) { close = k; break; } }
+            }
+            if (close < 0) { at = i + 1; continue; }
+            const args = [];
+            let bd = 0, bq = null, cur = '';
+            for (let k = open + 1; k < close; k++) {
+                const c = src[k];
+                if (bq) { cur += c; if (c === '\\') cur += src[++k]; else if (c === bq) bq = null; continue; }
+                if (c === '"' || c === "'" || c === '`') bq = c;
+                if (c === '(' || c === '[' || c === '{') bd++;
+                else if (c === ')' || c === ']' || c === '}') bd--;
+                if (c === ',' && bd === 0) { args.push(cur); cur = ''; continue; }
+                cur += c;
+            }
+            args.push(cur);
+            const expr = args[args.length - 1].replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').trim();
+            const ev = (flag) => {
+                try { return vm.runInNewContext(`(${expr})`, { isCancelled: flag, Number, Math, String }, { timeout: 50 }); }
+                catch (_) { return 'UNRESOLVED'; }
+            };
+            const yes = ev(true), no = ev(false);
+            if (yes !== 'UNRESOLVED' && no !== 'UNRESOLVED' && yes !== no) out.push({ expr, yes, no });
+            at = close;
+        }
+        return out;
+    };
+    const delays = delaySites(mainCode);
+    check('主进程里「随取消与否变化」的关闭延时恰好两处（两条下载路径各一条）',
+        delays.length === 2, JSON.stringify(delays.map((x) => x.expr)));
+    for (const x of delays) {
+        check(`取消时 1 秒就关、失败时留 3 秒看错误（实测 ${x.yes}/${x.no}）`,
+            x.yes === 1000 && x.no === 3000, x.expr);
+    }
+
+    // handleCompileResult/handleRunResult 仍要有人调：编译改走 invoke，结果经这两条路分发。
+    const cmCallSites = (m) => (cmCode.match(new RegExp('this\\.' + m + '\\s*\\(', 'g')) || []).length;
+    check('handleCompileResult/handleRunResult 各自仍有调用点（撤监听时没把方法一起带走）',
+        cmCallSites('handleCompileResult') >= 1 && cmCallSites('handleRunResult') >= 1,
+        `调用点=${cmCallSites('handleCompileResult')}/${cmCallSites('handleRunResult')}`);
 
     // ---- P0-4 / S-3：moveItem 与 copyFolderRecursive 真跑 ----
     // 原守卫是 `!/ok === false/.test(src)` 这种「旧写法不再出现」的文本锁：
@@ -712,10 +858,26 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
         global.window = realWindow;
     }
 
-    // 下面这条留在文本层：closeTab 依赖 DOM 渲染 / Monaco 生命周期 / 确认对话框，
-    // 重建成本远高于守卫价值；这条只锁「同一处赋值成对出现」，空白容忍已放开。
-    check('关闭 tab 时一并清空 activeTabKey',
-        /this\.activeTab = null;\s*\n\s*this\.activeTabKey = null;/.test(tabsSource));
+    // 原来这条是全文件正则 `this.activeTab = null;\n this.activeTabKey = null;`：
+    // 只要文件里任意两处挨在一起就算过，写在别的类里、或别的办法里都拦不住。
+    // 改成按方法作用域判定：抽 closeTab 本体，两个赋值都得在它里面。
+    const closeTabBody = classMethod(tabsSource, 'closeTab');
+    check('方法体抽取成功: TabManager.closeTab', /^\s*closeTab\(/.test(closeTabBody), String(closeTabBody).slice(0, 40));
+    check('关闭 tab 时 activeTab 与 activeTabKey 在同一个方法里一并清空',
+        /this\.activeTab\s*=\s*null/.test(closeTabBody) && /this\.activeTabKey\s*=\s*null/.test(closeTabBody),
+        `activeTab=${/this\.activeTab\s*=\s*null/.test(closeTabBody)} activeTabKey=${/this\.activeTabKey\s*=\s*null/.test(closeTabBody)}`);
+    // 只清一个、留下另一个的「不对称站点」现在已知恰好一处（closeWelcomePage：删了 Welcome
+    // 但 activeTabKey 仍指着它）。钉成棘轮：再新增一处就红 —— 那正是 6ddac59 那类身份错位。
+    const asymmetric = [];
+    for (const name of ['closeTab', 'closeWelcomePage', 'closeTabByUniqueKey', 'closeTabByFileName', 'destroy']) {
+        const body = classMethod(tabsSource, name);
+        if (!body) continue;
+        const a = /this\.activeTab\s*=\s*null/.test(body);
+        const k = /this\.activeTabKey\s*=\s*null/.test(body);
+        if (a !== k) asymmetric.push(name);
+    }
+    check('「只清 activeTab 不清 activeTabKey」的方法只有已知那一处（新增一处就是身份错位的苗头）',
+        JSON.stringify(asymmetric) === '["closeWelcomePage"]', JSON.stringify(asymmetric));
 
     // ---- 7032ecf：调试变量转义 —— 直接重建 createVariableElement 跑一遍看产物 ----
     {
