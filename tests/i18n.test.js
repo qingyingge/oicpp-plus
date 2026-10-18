@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { bracedBlock: extractBracedBlock } = require('./fixtures/source-extract');
+const { bracedBlock: extractBracedBlock, ifStatement } = require('./fixtures/source-extract');
 
 const root = path.resolve(__dirname, '..');
 const langDir = path.join(root, 'src', 'lang');
@@ -390,29 +390,136 @@ if (packs['zh-cn'] && packs.en) {
 }
 
 // --- renderer 查表实现行为 ---------------------------------------------------
-// 渲染层用的是自研 I18nManager（不是 i18next），这里固定它的既有契约。
-{
+// 渲染层用的是自研 I18nManager（不是 i18next）。
+// 这块原来有七条断言，一条都碰不到 i18n.js：
+//   三条是「测试自己重写一遍 key.split('.').reduce(...)，再拿重写版和重写版比」的自证；
+//   两条同样是把 interpolate 自己实现一遍再自比；
+//   剩下三条比源码长相：/replace\(\/\\\{\(\\w\+\)\\\}\/g/、includes("getLanguageFile")、
+//   includes('_fallbackMessages')。
+// 自证断言最坏：i18n.js 的 t() 整段删掉它们照样绿。比长相的三条也一样 ——
+// 把兜底查表改成查不到就返回空串，_fallbackMessages 这个变量名还在，守卫还是过。
+// 现在把整个 i18n.js 在 vm 里真跑（连同 window.i18n / window.__ 的接线），
+// 断言只看这个实例的返回值，以及它向主进程要了哪几份语言包。
+const rendererContract = (async () => {
     const i18nSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'i18n.js'), 'utf8');
     const enPack = JSON.parse(fs.readFileSync(path.join(langDir, 'en.json'), 'utf8'));
+    const zhPack = JSON.parse(fs.readFileSync(path.join(langDir, 'zh-cn.json'), 'utf8'));
 
-    const resolve = (messages, key) => key.split('.').reduce((acc, part) => (acc && typeof acc === 'object' ? acc[part] : undefined), messages);
+    // files 就是「主进程那边有哪些语言包可给」，fail 用来模拟 IPC 抛错。
+    const boot = ({ currentLang = 'en', files = {}, fail = false } = {}) => {
+        const loaded = [];
+        const errs = [];
+        const infos = [];
+        const win = {};
+        win.electronAPI = {
+            getLanguage: async () => currentLang,
+            getLanguageFile: async (code) => {
+                loaded.push(code);
+                if (fail) throw new Error('ipc exploded');
+                return files[code] === undefined ? null : files[code];
+            }
+        };
+        const sandbox = {
+            window: win,
+            document: { body: {}, querySelectorAll: () => [], addEventListener: () => { } },
+            module: { exports: {} },
+            exports: {},
+            console: { log: () => { } },
+            logInfo: (...a) => infos.push(a.map(String).join(' ')),
+            logError: (...a) => errs.push(a.map(String).join(' ')),
+            MutationObserver: class { observe() { } disconnect() { } },
+            setTimeout,
+            clearTimeout
+        };
+        vm.createContext(sandbox);
+        vm.runInContext(i18nSource, sandbox, { filename: 'renderer/js/i18n.js' });
+        return { i: sandbox.module.exports, win, loaded, errs, infos };
+    };
 
-    // 契约：缺 key 时返回 key 本身（而不是空串或 undefined），这是 CI 必须存在的原因
-    check('renderer returns the key itself for unknown keys', resolve(enPack, 'definitely.not.a.real.key') === undefined);
-    check('renderer resolves a real dotted key', resolve(enPack, 'browser.reload') === enPack.browser.reload);
-    check('renderer resolves a nested dotted key', resolve(enPack, 'settings.language') === enPack.settings.language);
+    const en = boot({ currentLang: 'en', files: { en: enPack, 'zh-cn': zhPack } });
+    await en.i.init();
+    check('i18n.js 整文件在 vm 里跑通并接上 window.i18n',
+        !!en.i && en.i === en.win.i18n, `typeof window.i18n = ${typeof en.win.i18n}`);
+    check('window.__ 是同一个 t 的绑定（换成独立实现就会绕过当前语言）',
+        typeof en.win.__ === 'function' && en.win.__('browser.reload') === en.i.t('browser.reload'),
+        `typeof window.__ = ${typeof en.win.__}`);
+    check('按当前语言取包，非 zh-cn 时再取一份 zh-cn 兜底（少取一次就有一半键裸奔）',
+        en.loaded.join(',') === 'en,zh-cn', en.loaded.join(','));
+    const zhBoot = boot({ currentLang: 'zh-cn', files: { 'zh-cn': zhPack } });
+    await zhBoot.i.init();
+    check('zh-cn 只取自己一份', zhBoot.loaded.join(',') === 'zh-cn', zhBoot.loaded.join(','));
 
-    // 契约：占位符替换保持未提供的 {token} 原样，方便肉眼发现漏传参数
-    const interpolate = (value, params) => value.replace(/\{(\w+)\}/g, (m, name) => (
-        params && params[name] !== undefined && params[name] !== null ? String(params[name]) : m
-    ));
-    check('interpolation substitutes provided params', interpolate('{a} and {b}', { a: 1, b: 2 }) === '1 and 2');
-    check('interpolation keeps missing params visible', interpolate('{a} and {b}', { a: 1 }) === '1 and {b}');
+    // 契约：缺 key 时返回 key 本身（而不是空串或 undefined）—— CI 的孤儿键检查依赖这一点。
+    check('真实点分键解析到译文（拿 en.json 的 browser.reload 喂真表）',
+        en.i.t('browser.reload') === enPack.browser.reload, JSON.stringify(en.i.t('browser.reload')));
+    check('多层嵌套键解析到译文',
+        en.i.t('settings.language') === enPack.settings.language, JSON.stringify(en.i.t('settings.language')));
+    check('缺 key 返回 key 本身',
+        en.i.t('definitely.not.a.real.key') === 'definitely.not.a.real.key',
+        JSON.stringify(en.i.t('definitely.not.a.real.key')));
+    check('键路径中途不是对象时返回 key 本身而不是抛错',
+        en.i.t('browser.reload.x') === 'browser.reload.x', JSON.stringify(en.i.t('browser.reload.x')));
 
-    check('renderer t() substitutes {token} placeholders', /replace\(\/\\\{\(\\w\+\)\\\}\/g/.test(i18nSource));
-    check('renderer loads the current language over IPC', i18nSource.includes("getLanguageFile"));
-    check('renderer keeps a fallback pack for missing keys', i18nSource.includes('_fallbackMessages'));
-}
+    // 契约：占位符替换保持未提供的 {token} 原样，方便肉眼发现漏传参数。
+    const FONT_KEY = 'settings.fontUnavailableMessage';
+    const fontTemplate = enPack.settings.fontUnavailableMessage;
+    check('不给实参时占位符原样留在文案里',
+        en.i.t(FONT_KEY) === fontTemplate, JSON.stringify(en.i.t(FONT_KEY)));
+    check('{token} 用实参逐个替换',
+        en.i.t(FONT_KEY, { font: 'KaiTi', fallback: 'SimSun' }) ===
+        fontTemplate.replace('{font}', 'KaiTi').replace('{fallback}', 'SimSun'),
+        JSON.stringify(en.i.t(FONT_KEY, { font: 'KaiTi', fallback: 'SimSun' })));
+    check('漏传的 {token} 原样留着（静默吃掉就没人发现少传了参数）',
+        en.i.t(FONT_KEY, { font: 'KaiTi' }).includes('{fallback}'),
+        JSON.stringify(en.i.t(FONT_KEY, { font: 'KaiTi' })));
+    check('实参是 0 也要替换（判空写成 || 就会把 0 当成没传）',
+        en.i.t(FONT_KEY, { font: 0, fallback: 0 }) ===
+        fontTemplate.replace('{font}', '0').replace('{fallback}', '0'),
+        JSON.stringify(en.i.t(FONT_KEY, { font: 0, fallback: 0 })));
+    check('实参是 null 视为没传，保留占位符',
+        en.i.t(FONT_KEY, { font: null }).includes('{font}'),
+        JSON.stringify(en.i.t(FONT_KEY, { font: null })));
+
+    const fb = boot({ currentLang: 'en', files: { en: { only: { present: 'EN' } }, 'zh-cn': { only: { other: '兜底值' } } } });
+    await fb.i.init();
+    check('当前语言包缺键时落到 zh-cn 兜底（不查兜底就有半数键在英界面显示成裸 key）',
+        fb.i.t('only.other') === '兜底值' && fb.i.t('only.present') === 'EN',
+        JSON.stringify([fb.i.t('only.other'), fb.i.t('only.present')]));
+    check('兜底里也没有时仍返回 key 本身',
+        fb.i.t('only.nope') === 'only.nope', JSON.stringify(fb.i.t('only.nope')));
+
+    const missingFb = boot({ currentLang: 'en', files: { en: { a: { b: 'AB' } } } });
+    await missingFb.i.init();
+    check('兜底包取不到（null）时不抛错，只是没有兜底',
+        missingFb.i.t('a.b') === 'AB' && missingFb.i.t('nope') === 'nope',
+        JSON.stringify(missingFb.loaded));
+
+    const num = boot({ currentLang: 'en', files: { en: { n: { v: 7 } }, 'zh-cn': {} } });
+    await num.i.init();
+    check('译文值不是字符串时转成字符串（渲染层拿到数字拼进 innerHTML 会变形）',
+        num.i.t('n.v') === '7', JSON.stringify(num.i.t('n.v')));
+
+    check('空 key / 非字符串 key 返回空串而不是抛错',
+        en.i.t('') === '' && en.i.t(null) === '' && en.i.t(undefined) === '' && en.i.t(0) === '',
+        JSON.stringify([en.i.t(''), en.i.t(null), en.i.t(undefined), en.i.t(0)]));
+    check('translate() 与 t() 同义（老调用点还在用 translate）',
+        en.i.translate('browser.reload') === en.i.t('browser.reload'));
+
+    const boom = boot({ currentLang: 'en', files: {}, fail: true });
+    await boom.i.init();
+    check('语言包 IPC 抛错不掀掉初始化：记一条日志，查表退回裸 key',
+        boom.errs.length > 0 && boom.i.t('browser.reload') === 'browser.reload',
+        JSON.stringify(boom.errs[0] || null));
+    // 只数 logError 不够：把 _loadCurrentLanguage 的 catch 改成往上抛，_doInit 的 catch
+    // 也会记一条同样的日志、查表照样退回裸 key，上面那条还是绿的 ——
+    // 但 _applyToDOM 和「初始化完成」这条收尾日志被一起跳过了，界面停在默认语言上。
+    check('语言包 IPC 抛错后 init 照常走完结尾（不是被外层 catch 半路截走）',
+        boom.infos.some((s) => /语言初始化完成/.test(s)),
+        JSON.stringify({ infos: boom.infos, errs: boom.errs }));
+    check('阴性对照：正常启动也是这条收尾日志（上面那条不是恒真）',
+        en.infos.some((s) => /语言初始化完成/.test(s)) && en.errs.length === 0,
+        JSON.stringify(en.infos));
+})();
 
 // --- 主进程 i18next 接线 -----------------------------------------------------
 {
@@ -423,11 +530,91 @@ if (packs['zh-cn'] && packs.en) {
     check('main-process exposes the documented instance API',
         ['t', 'getCurrentLanguage', 'setLanguage', 'getAvailableLanguages'].every((fn) => langIndex.includes(`${fn}:`)));
 
-    // 设置变更后必须重建原生菜单，否则语言切换对菜单栏无效
-    const rebuildTriggers = [...mainSource.matchAll(/createMenuBar\(\)/g)];
-    const keybindingGate = /hasOwnProperty\.call\([^)]*'keybindings'\)\)\s*\{\s*\n?\s*createMenuBar\(\)/.test(mainSource);
-    check('application menu is rebuilt when keybindings change', keybindingGate, `${rebuildTriggers.length} call site(s)`);
+    // 设置变更后必须重建原生菜单，否则语言切换对菜单栏无效。
+    // 原来这条比的是 /hasOwnProperty\.call\([^)]*'keybindings'\)\)\s*\{\s*\n?\s*createMenuBar\(\)/ ——
+    // 把门写成 `'keybindings' in patch`（继承属性也算）或把 createMenuBar() 换个调用形式，正则就看不见；
+    // 反过来两处门任何一处被删掉、但另一处还留着符合形状的代码，正则照样过。
+    // 现在把两处门各自抽出来真跑：喂进 patch，看 createMenuBar 被叫了几次。
+    // 各档自己防不防 null 是另一回事，不在这里锁：
+    // update-settings 的门自带 `incomingSettings &&`，update-top-level-settings 的门没有
+    // （它上面有 `for (const key in patch)`，null 走到这里不会先炸，会在本行炸），
+    // 后者记入待修的健壮性问题，锁成「必须抛」就是把 bug 当契约。
+    const gates = [
+        ['update-settings（渲染层整包回传）',
+            ifStatement(mainSource, /^\s*if \(incomingSettings && Object\.prototype\.hasOwnProperty\.call\(incomingSettings, 'keybindings'\)/m),
+            'incomingSettings', true],
+        ['update-top-level-settings（按键打补丁）',
+            ifStatement(mainSource, /^\s*if \(Object\.prototype\.hasOwnProperty\.call\(patch, 'keybindings'\)/m),
+            'patch', false]
+    ];
+    for (const [where, src, paramName, nullSafe] of gates) {
+        check(`菜单重建门抽取成功：${where}`, src.startsWith('if ('), `${src.length} chars`);
+        const calls = [];
+        const sandbox = { createMenuBar: () => calls.push('menu') };
+        vm.createContext(sandbox);
+        vm.runInContext(`this.__gate = (${paramName}) => { ${src} };`, sandbox);
+        const gate = sandbox.__gate;
+        // 源码里门一旦被改成对 null 直接取值，抽出来的语句会抛。抛在这儿必须是
+        // 一条可读的 FAIL，而不是让整份测试带着 stack trace 崩掉（后半段断言就没了）。
+        const run = (input) => {
+            calls.length = 0;
+            try { gate(input); }
+            catch (e) { return 'throw: ' + e.message; }
+            return calls.length;
+        };
+        check(`${where}：改动里带了 keybindings 就重建菜单`,
+            run({ keybindings: {} }) === 1, `calls=${run({ keybindings: {} })}`);
+        check(`${where}：没带 keybindings 就不白重建一次`,
+            run({ font: 'Consolas' }) === 0 && run({}) === 0, `calls=${run({ font: 'Consolas' })}`);
+        check(`${where}：值为 undefined 也算改过（清空键位同样得重画菜单）`,
+            run({ keybindings: undefined }) === 1, `calls=${run({ keybindings: undefined })}`);
+        check(`${where}：只认自有属性（写成 in 会把继承来的 keybindings 也算成改动）`,
+            run(Object.create({ keybindings: {} })) === 0, `calls=${run(Object.create({ keybindings: {} }))}`);
+        if (nullSafe) {
+            check(`${where}：整包是 null/undefined 时门自己兜住，不抛错`,
+                run(null) === 0 && run(undefined) === 0, `run(null)=${run(null)} run(undefined)=${run(undefined)}`);
+        }
+    }
+
+    // 语言切换那一档：setLanguage 与 createMenuBar 必须成对，缺一个就是「切了语言菜单还是旧语言」。
+    const langGateSrc = ifStatement(mainSource, /^\s*if \(typeof patch\['language'\] === 'string'\)/m);
+    check('语言切换门抽取成功', langGateSrc.startsWith('if ('), `${langGateSrc.length} chars`);
+    {
+        const seen = [];
+        const sandbox = {
+            setLanguage: (code) => seen.push(['setLanguage', code]),
+            createMenuBar: () => seen.push(['createMenuBar'])
+        };
+        vm.createContext(sandbox);
+        vm.runInContext(`this.__gate = (patch) => { ${langGateSrc} };`, sandbox);
+        const call = (input) => { try { sandbox.__gate(input); } catch (e) { seen.push(['throw', e.message]); } };
+        call({ language: 'en' });
+        check('切语言时 setLanguage 与 createMenuBar 成对发生（只切不重建就是旧菜单）',
+            JSON.stringify(seen) === JSON.stringify([['setLanguage', 'en'], ['createMenuBar']]),
+            JSON.stringify(seen));
+        seen.length = 0;
+        call({ language: 42 });
+        call({});
+        check('非字符串/缺失的 language 不动语言也不重建菜单',
+            seen.length === 0, JSON.stringify(seen));
+    }
 }
 
-console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
-process.exitCode = failures ? 1 : 0;
+// 本文件末尾有 async 块：某一环的 promise 永不结算时，事件循环会直接排空、
+// 进程以 0 退出，runner 数到前半截的 [PASS] 就判过 —— 尾巴上整段断言静默蒸发。
+// （exit 监听里改不了退出码，所以用一条不 unref 的定时器把「跑不完」顶成失败。）
+const watchdog = setTimeout(() => {
+    console.log('[FAIL] i18n 测试 20s 没跑到收尾（renderer 契约块里有 promise 永不结算）');
+    process.exit(1);
+}, 20000);
+
+rendererContract
+    .catch((e) => {
+        failures++;
+        console.log(`[FAIL] renderer i18n 契约块抛错 | ${(e && e.stack) || (e && e.message) || e}`);
+    })
+    .then(() => {
+        clearTimeout(watchdog);
+        console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
+        process.exitCode = failures ? 1 : 0;
+    });
