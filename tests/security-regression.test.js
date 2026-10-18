@@ -616,13 +616,158 @@ const workerRows = (() => {
 
 
 check('workflows do not depend on the Node 22-only system CA flag', !workflows.includes('--use-system-ca'));
-check('markdown fallback does not assign untrusted innerHTML', !preloadSource.includes('innerHTML'));
+{
+    // 原文：check('markdown fallback does not assign untrusted innerHTML', !preloadSource.includes('innerHTML'))
+    // —— 扫错了文件。这个汇（sink）根本不在 preload.js 里，而在
+    // src/renderer/js/tabs.js:3427 `container.innerHTML = window.markdownAPI.render(...)`。
+    // 于是它是一条永远绿着的空守卫：把兜底分支从 textContent 改成
+    // `container.innerHTML = content`（把 markdown 原文当 HTML 塞进 DOM），
+    // preload.js 一个字符都不会变，守卫照样 PASS。
+    // 现在抽 updateMarkdownPreview 本体，挂在一个「记下每个被写的属性」的假容器上真跑，
+    // 断言只看实际落进容器的那几次赋值。
+    const mdSrc = classMethod(tabsSource, 'updateMarkdownPreview');
+    check('方法体抽取成功: TabManager.updateMarkdownPreview', /^\s*updateMarkdownPreview\(/.test(mdSrc), String(mdSrc).slice(0, 48));
+    const mdCtx = vm.createContext({ String });
+    const md = compileMethod(mdCtx, mdSrc);
+    check('updateMarkdownPreview 编译成可调用函数', typeof md === 'function');
+    const EVIL = '<img src=x onerror=alert(1)>';
+    // get 也记一笔：insertAdjacentHTML 这类「不是属性赋值」的汇，靠它被读取这个动作现形。
+    // 取默认值一律用 `in` 判断而不是解构默认值：解构默认值会把显式传入的
+    // undefined 也吃掉，而 undefined 正是这里要测的那一档。
+    const runMd = (opts = {}) => {
+        const hasApi = 'hasApi' in opts ? opts.hasApi : true;
+        const rendered = 'rendered' in opts ? opts.rendered : '<p>RENDERED</p>';
+        const content = 'content' in opts ? opts.content : '# hi';
+        const filePath = 'filePath' in opts ? opts.filePath : '/docs/a.md';
+        const writes = [];
+        const reads = [];
+        const renderCalls = [];
+        mdCtx.window = hasApi
+            ? { markdownAPI: { render: (c, f) => { renderCalls.push([c, f]); return rendered; } } }
+            : {};
+        const container = new Proxy({}, {
+            set(target, key, value) { writes.push([String(key), String(value)]); target[key] = value; return true; },
+            get(target, key) { reads.push(String(key)); return target[key]; }
+        });
+        let threw;
+        try { md.call({}, container, content, filePath); }
+        catch (e) { threw = String((e && e.message) || e); }
+        return { writes, reads, renderCalls, threw };
+    };
+
+    const shown = runMd();
+    check('markdownAPI 在位：容器只被写一次 innerHTML，值是渲染结果',
+        shown.threw === undefined && JSON.stringify(shown.writes) === JSON.stringify([['innerHTML', '<p>RENDERED</p>']]),
+        JSON.stringify(shown));
+    check('渲染调用拿到 filePath（图片相对路径靠它定位，丢了图就裂）',
+        shown.renderCalls.length === 1 && shown.renderCalls[0][1] === '/docs/a.md',
+        JSON.stringify(shown.renderCalls));
+    check('正文为 null 时送进渲染器的是空串（直接传 undefined 会让 markdown-it 抛在渲染路径上）',
+        runMd({ content: null }).renderCalls[0][0] === '' &&
+        runMd({ content: undefined }).renderCalls[0][0] === '',
+        JSON.stringify([runMd({ content: null }).renderCalls, runMd({ content: undefined }).renderCalls]));
+    // 两条「不含原文」都必须喂真正的恶意原文，否则断言是空的：
+    // 默认正文 '# hi' 里本来就没有 onerror，写进去也不会被逮到。
+    const evilShown = runMd({ content: EVIL });
+    check('在位路径不把未转义原文写进任何属性（原文只进渲染器，落进容器的是桩返回的渲染结果）',
+        evilShown.writes.every((w) => !w[1].includes('onerror')) &&
+        evilShown.renderCalls.some((c) => c[0] === EVIL),
+        JSON.stringify(evilShown));
+
+    const hidden = runMd({ hasApi: false, content: EVIL });
+    check('markdownAPI 缺席：兜底只写 textContent，一个 innerHTML 都不碰',
+        hidden.threw === undefined && hidden.writes.length === 1 && hidden.writes[0][0] === 'textContent',
+        JSON.stringify(hidden.writes));
+    check('兜底文案不回显 markdown 原文（回显就等于把 onerror= 原样交给 DOM）',
+        hidden.writes.every((w) => !w[1].includes('onerror')), JSON.stringify(hidden.writes));
+    const sinks = [...new Set([...shown.writes, ...hidden.writes].map((w) => w[0]))]
+        .concat(shown.reads, hidden.reads);
+    check('两个分支用到的容器属性只有 innerHTML / textContent（冒出 outerHTML、insertAdjacentHTML 之类新汇就红）',
+        sinks.every((k) => k === 'innerHTML' || k === 'textContent'), JSON.stringify(sinks));
+    // 政策另半边：渲染器本身要转义内联 HTML —— 那条在 tests/preload.test.js 里真调
+    // markdownAPI.render 断言过（'markdown 转义内联 HTML'），这里不重复扫源码。
+}
 check('Linux hard memory limits use a non-shell prlimit wrapper', read('src/utils/process-supervisor.js').includes('getResourceLimitedSpawn') && read('src/utils/process-supervisor.js').includes('prlimit'));
 check('native fastspawn has a reproducible POSIX build script', read('scripts/build-fastspawn.js').includes('node-gyp') && read('binding.gyp').includes('fastspawn.cc'));
 check('release downloaders share one hardened implementation', read('scripts/lib/release-downloader.js').includes('maxRedirects') && read('scripts/download-clangd.js').includes('createReleaseDownloader') && read('scripts/download-clang-format.js').includes('createReleaseDownloader'));
 check('disabled automatic update checks cannot leave UI busy', !mainSource.includes('function checkDailyUpdate') && !mainSource.includes('setAutoUpdateCheckInProgress(true)'));
 check('disabled update checks have no remote fallback', !mainSource.includes('oicpp.mywwzh.top/api/checkUpdate') && !mainSource.includes('oicpp.mywwzh.top/api/getUpdateFilelist') && !mainSource.includes('downloadAndInstallUpdate'));
-check('renderer Buffer bridge is removed', !preloadSource.includes("exposeInMainWorld('Buffer'") && !rendererMainSource.includes('window.Buffer') && rendererMainSource.includes('new Uint8Array(arrayBuffer)') && rendererMainSource.includes('btoa(binary)'));
+{
+    // 渲染层那条「不许再挂 window.Buffer 桥」的政策，原先锁四段字面量：
+    //   !preloadSource.includes("exposeInMainWorld('Buffer'") && !rendererMainSource.includes('window.Buffer')
+    //   && rendererMainSource.includes('new Uint8Array(arrayBuffer)') && rendererMainSource.includes('btoa(binary)')
+    // 四段用 && 串起来挡的其实是一件事：Base64 通道必须自己逐字节啃出来。
+    // 把它改回 `return Buffer.from(arrayBuffer).toString('base64')` 之后，
+    // `new Uint8Array(arrayBuffer)` 与 `btoa(binary)` 在文件别处还在（本轮实测：全仓
+    // 各有 1 处其它出处），四段里红两段、整条守卫立刻失守 —— 而 Buffer 一旦回到渲染层，
+    // 拿到的就是 Node 的池化 ArrayBuffer（可能被复用）和另一套字节序语义，
+    // 正是这轮安全收敛专门拆掉的东西。
+    // 现在把真方法抽出来，在一个**没有 Buffer 全局**的沙箱里跑：
+    // 跑得出正确 base64，才算这条通道真的不依赖它。
+    const b64Src = classMethod(rendererMainSource, 'arrayBufferToBase64');
+    check('方法体抽取成功: OICPPApp.arrayBufferToBase64', /^\s*arrayBufferToBase64\(/.test(b64Src), String(b64Src).slice(0, 40));
+    const warns = [];
+    const b64Ctx = vm.createContext({
+        Uint8Array, String, ArrayBuffer, JSON, Math, Number, Array, Error, TypeError,
+        btoa, atob, logWarn: (...a) => warns.push(a.map((v) => String(v && v.message ? `${v.constructor.name}: ${v.message}` : v)))
+    });
+    const b64 = compileMethod(b64Ctx, b64Src);
+    check('arrayBufferToBase64 编译成可调用函数', typeof b64 === 'function');
+    check('沙箱里确实没有 Buffer 全局（下面每条转出正确才算这条通道不靠它）',
+        vm.runInContext('typeof Buffer', b64Ctx) === 'undefined');
+    const buf = (arr) => new Uint8Array(arr).buffer;
+    const bytesFromB64 = (s) => Array.from(new Uint8Array(atob(String(s)).split('').map((c) => c.charCodeAt(0))));
+    const call = (input) => {
+        warns.length = 0;
+        try { return { out: b64.call({}, input), warns: warns.slice() }; }
+        catch (e) { return { out: null, warns: warns.slice(), threw: String((e && e.message) || e) }; }
+    };
+
+    const hi = call(buf([72, 105]));
+    check('两字节缓冲转出 "SGk="（逐字节 fromCharCode + btoa 这条自研通道真的在跑）',
+        hi.threw === undefined && hi.out === 'SGk=' && hi.warns.length === 0, JSON.stringify(hi));
+    const abc = call(buf([65, 66, 67]));
+    check('三字节正好整除，末尾不补 padding',
+        abc.out === 'QUJD', JSON.stringify(abc));
+    for (const seed of [[0], [0, 1, 2, 253, 254, 255], [0x00, 0xFF, 0x80], Array.from({ length: 256 }, (_, i) => i)]) {
+        const r = call(buf(seed));
+        check(`转出结果能用 atob 逐字节还原（${seed.length} 字节，含 >0x7F 的高字节）`,
+            r.threw === undefined && r.warns.length === 0
+            && JSON.stringify(bytesFromB64(r.out)) === JSON.stringify(seed),
+            JSON.stringify({ len: seed.length, out: String(r.out).slice(0, 24), threw: r.threw }));
+    }
+    const big = call(buf(Array.from({ length: 5000 }, (_, i) => i % 256)));
+    check('5000 字节整包转出，不分块截断（加个 1024 上限就静默丢尾部）',
+        big.threw === undefined && bytesFromB64(big.out).length === 5000 && big.warns.length === 0,
+        JSON.stringify({ b64len: String(big.out).length, decoded: bytesFromB64(big.out).length }));
+    for (const empty of [null, undefined, 0, '']) {
+        const r = call(empty);
+        check(`空输入（${JSON.stringify(empty)}）直接退化成空串：不抛、也不算转换失败`,
+            r.threw === undefined && r.out === '' && r.warns.length === 0, JSON.stringify(r));
+    }
+    // 注：这一档锁的是「输出」，不是那行 `if (!arrayBuffer)` 本身 —— 实测把早退整段删掉
+    // 这四条照样绿（null/undefined/0/"" 都 ToNumber 成 0，new Uint8Array 拿到长度 0 的数组，
+    // btoa("") 还是空串）。早退现在是纯优化，不再是一道保护：它当年是为 Buffer.from(undefined)
+    // 会抛 TypeError 才加的。改成抛错或返回 null 则会被这四条逮到。
+    const zeroLen = call(new ArrayBuffer(0));
+    check('长度为 0 的 ArrayBuffer 同样退化成空串（空缓冲不是错误）',
+        zeroLen.out === '' && zeroLen.warns.length === 0, JSON.stringify(zeroLen));
+    // 真正构造不出来的入参：长度是负数 / Infinity，或值本身不可转成数字。
+    // （{} 不算：new Uint8Array({}) 是长度 0，跟空缓冲同命，走不到 catch。）
+    // 只锁「一次 logWarn、带上 cause 两个实参」，不锁具体文案 —— 文案换了不该红，
+    // 但把 logWarn() 写成无参、或者把 error 丢掉，就该红。
+    for (const bad of [-1, Infinity, Symbol('bytes')]) {
+        const r = call(bad);
+        check(`构造不出字节串的入参（${typeof bad === 'symbol' ? 'Symbol' : bad}）走 catch：回空串并留一条带 cause 的 logWarn`,
+            r.threw === undefined && r.out === '' && r.warns.length === 1 && r.warns[0].length === 2,
+            JSON.stringify(r));
+    }
+    check('裸对象入参不抛、也不假装失败（new Uint8Array({}) 就是长度 0）',
+        call({}).out === '' && call({}).warns.length === 0, JSON.stringify(call({})));
+    // 政策另半边：preload 不许把 Buffer 挂进 window。那条归属 preload 的行为测试
+    // （那边已经真加载了 preload.js 并收齐 exposeInMainWorld 的名字表），
+    // 这里不再用字面量重复一遍。
+}
 // 渲染层三段生命周期：启动顺序、PDF 监听注销、透明度预览防抖。
 // 这三条原来都是「比源码长相」的文本守卫，改成在假 DOM 里真跑一遍。
 //

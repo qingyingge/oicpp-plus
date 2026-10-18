@@ -64,6 +64,30 @@ check('preload exposes electronIPC', !!exposed.electronIPC);
 check('preload exposes electronAPI', !!exposed.electronAPI);
 check('preload exposes markdownAPI', !!exposed.markdownAPI);
 
+// 渲染层能摸到哪些全局，就等于这张表 —— 它是真跑一遍 src/preload.js 之后
+// contextBridge.exposeInMainWorld 实际递交上来的名字，不是对源码正则扫
+// `exposeInMainWorld\(['"]` 的结果。后者有两个盲区：名字拼出来的
+// （exposeInMainWorld(name, …)，name 来自变量/字符串拼接）看不见，
+// 换成别的挂载写法（window.Buffer = Buffer、Object.assign(window, …)）也看不见。
+// 这条是按安全边界登记的清单：往里加一个名字，就是给渲染层多开一个入口，
+// 必须在这里同步改一次 —— 加 Buffer 尤其不行，Node 的 Buffer 一进来，
+// 池化 ArrayBuffer（alloc unsafe 的复用行为）和它背后的 binding 就跟着进了沙箱。
+const EXPOSED_GLOBALS = [
+    '__electronRequireAvailable', 'electron', 'electronAPI', 'electronIPC',
+    'getElectronModule', 'logError', 'logInfo', 'logWarn', 'logerror', 'logwarn',
+    'markdownAPI', 'process', 'turndownAPI'
+];
+check('挂进 window 的名字就是这份清单（多一个就是多开一个渲染层入口）',
+    Object.keys(exposed).sort().join(',') === EXPOSED_GLOBALS.join(','),
+    Object.keys(exposed).sort().join(','));
+check('清单里没有 Buffer（渲染层的二进制转换只能走自研的逐字节 base64）',
+    !Object.keys(exposed).some((name) => /buffer/i.test(name)),
+    Object.keys(exposed).join(','));
+check('window 上没有直接被 preload 写进去的额外全局（require/process.binding 之类）',
+    global.window.Buffer === undefined && global.window.require === undefined &&
+    global.window.process === undefined,
+    JSON.stringify(Object.keys(global.window)));
+
 // 扫描 renderer 实际使用的所有 send/invoke 通道
 const scanFiles = [];
 (function walk(d) {
