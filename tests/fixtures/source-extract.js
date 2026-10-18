@@ -152,18 +152,45 @@ function objectConst(src, name) {
 // 整条 if 语句（条件 + 配平的语句块）。
 // 用在「拦截逻辑就写在一个 if 里」的形态：把 if 真跑一遍，命中条件与命中后的动作
 // 都是可观测点，不用再比 `if (/^\\s*\\(?:cmd/` 这种一看就随排版碎掉的长相。
-// 锚点必须落在 `if` 关键字上；只认带花括号的语句块，条件和 `{` 之间除了空白还有别的东西
-// （例如无括号单语句 if、或 `if (x) return y; else {`）一律返回 ''，不猜区间。
+// 锚点必须落在 `if` 关键字上；条件和 `{` 之间除了空白还有别的东西一律返回 ''，不猜区间。
+// 默认只认带花括号的语句块；传 `{ allowBraceless: true }` 才额外接受
+// 无花括号的单语句 if（`if (x) y;`，以及 tsc printer 拆成的两行 `if (x)\n    y;`）——
+// 判定条件见 bracelessIfEnd，不满足仍然返回 ''，不会因为多给一个开关就乱猜。
 // 行首缩进剥掉（和 scalarConst 一致），抽出来的语句要拼进函数正文。
-function ifStatement(src, pattern) {
+function ifStatement(src, pattern, opts = {}) {
     const m = pattern.exec(src);
     if (!m) return '';
     const close = matchParen(src, src.indexOf('(', m.index));
     if (close < 0) return '';
     const open = src.indexOf('{', close);
-    if (open < 0 || src.slice(close + 1, open).trim() !== '') return '';
-    const end = matchBrace(src, open);
-    return end < 0 ? '' : src.slice(m.index, end + 1).replace(/^\s+/, '');
+    if (open >= 0 && src.slice(close + 1, open).trim() === '') {
+        const end = matchBrace(src, open);
+        if (end >= 0) return src.slice(m.index, end + 1).replace(/^\s+/, '');
+    }
+    if (!opts.allowBraceless) return '';
+    const end = bracelessIfEnd(src, m.index, close);
+    return end < 0 ? '' : src.slice(m.index, end).replace(/^\s+/, '');
+}
+
+// 无花括号 if 的语句体末尾（开区间下标），读不准返回 -1。
+// 只肯认「就一条语句」这一种形状：条件右括号后本行还有内容，体就到本行行尾；
+// 本行到此为止，就吃下一条**缩进更深**的非空行。末尾必须是 `;`（ASI 那种不认），
+// 整段里不许出现花括号 —— 出现说明体是个块或套了 `for (…) {`，那种区间该由配平来定，
+// 按行切会切半，宁可抽取失败。
+function bracelessIfEnd(src, ifAt, close) {
+    const eol = (at) => { const i = src.indexOf('\n', at); return i < 0 ? src.length : i; };
+    const indentOf = (at) => /^[ \t]*/.exec(src.slice(at, eol(at)))[0].length;
+    const ifLineEnd = eol(ifAt);
+    let end;
+    if (src.slice(close + 1, ifLineEnd).trim() !== '') end = ifLineEnd;
+    else {
+        const next = ifLineEnd + 1;
+        if (next >= src.length || src.slice(next, eol(next)).trim() === '') return -1;
+        if (indentOf(next) <= indentOf(ifAt)) return -1;
+        end = eol(next);
+    }
+    const body = src.slice(ifAt, end);
+    return /[;]\s*$/.test(body) && !/[{}]/.test(body) ? end : -1;
 }
 
 // 整条 `const NAME = new Set([ '...', ... ])` 的成员表。

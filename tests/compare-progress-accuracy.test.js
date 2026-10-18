@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, classMethod, compileMethod, funcDecl, objectConst, scalarConst, toFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, callbackBody, classMethod, compileMethod, funcDecl, ifStatement, objectConst, scalarConst, toFn } = require('./fixtures/source-extract');
 const { runEngine, pick } = require('./fixtures/fake-compare-engine');
 
 let failures = 0;
@@ -393,8 +393,23 @@ check('进度标签的译文带齐 current 与 total 两个占位',
         global.window = realWindow;
     }
 }
-check('progress label element carries no hardcoded English literal',
-    !/<span id="current-test">Test 0<\/span>/.test(htmlSource));
+// 原守卫是 `!/<span id="current-test">Test 0<\/span>/.test(htmlSource)`：
+// 只认「Test 0」这一种写法 —— 改成 "Test 1"、"0 / 100"，或者把英文字塞进 title 属性，
+// 它全都照样绿；反过来译文换个说法又能把它假红。改成把那个标签真解析出来看内容。
+const tagById = (html, id) => {
+    const m = new RegExp('<([a-z0-9]+)\\b[^>]*\\bid="' + id + '"[^>]*>').exec(html);
+    if (!m) return null;
+    const close = html.indexOf('</' + m[1] + '>', m.index);
+    return close < 0 ? null : { tag: m[0], text: html.slice(m.index + m[0].length, close) };
+};
+const ctEl = tagById(htmlSource, 'current-test');
+check('index.html 里解析得到 #current-test 标签', ctEl !== null, ctEl && ctEl.tag);
+check('进度标签初值不写死任何文案（值一律由 updateProgress 落）',
+    ctEl !== null && ctEl.text.trim() === '', JSON.stringify(ctEl && ctEl.text));
+check('进度标签不挂 data-i18n（挂了切语言就会把实时进度盖成译文）',
+    ctEl !== null && !/data-i18n/.test(ctEl.tag), ctEl && ctEl.tag);
+check('进度标签也不靠 title/aria 带英文默认值',
+    ctEl !== null && !/(title|aria-label)\s*=\s*"[^"]*[A-Za-z]{4}/.test(ctEl.tag), ctEl && ctEl.tag);
 
 // ---- 错误区渲染：把 showError 真调，读它落到 DOM 桩上的最终值 ----
 //
@@ -745,13 +760,106 @@ const shown = (id) => eh.el(id).shown;
             catch (_) { return false; }
         })());
 }
-// 起跑路径上还有第二处同样的 clamp（runTask 里，夹完写回 #compare-count）：
-// 它嵌在一个 await 链中间，抽不出可独立运行的构造，所以留两条字面量断言 ——
-// 一处已经真跑锁住算法，另一处至少锁住「也回写、且共用同一个命名常量」。
-check('start-time compare count clamp is also written back',
-    /compareCountEl && Number\(compareCountEl\.value\) !== compareCount/.test(comparerSource));
-check('compare count cap is a named constant shared by both clamps',
-    (comparerSource.match(/MAX_COMPARE_COUNT/g) || []).length >= 3);
+// 起跑路径上还有第二处同样的 clamp（runTask 里，夹完写回 #compare-count）。
+// 原来留的是两条字面量：匹配 `compareCountEl && Number(compareCountEl.value) !== compareCount`
+// 这行长相，外加数 MAX_COMPARE_COUNT 出现几次。前者一改排版就碎，后者把「两处共用同一个上限」
+// 说成了一个计数 —— 真加第三处、或两处各自写死不同的数字，它都拦不住。
+// 现在把两段代码都抽出来在假输入框上跑：回没回写、回写成几，是结果；
+// 「两处共用同一个上限」则是把两段喂同一组输入比对输出，不再数出现次数。
+{
+    const capDecl = scalarConst(comparerSource, 'MAX_COMPARE_COUNT');
+    check('上限常量的声明抽出来成功', /^\s*(?:const|let)\s+MAX_COMPARE_COUNT\s*=/.test(capDecl), capDecl);
+
+    // 区间定位只用「行首形态 + 块内必须出现的语句」，不拿整条条件的字面长相当锚点：
+    // 条件里换个变量名、tsc printer 把单行 if 拆成两行，都不该让抽取失败；
+    // 反过来「回写那段被删掉」时区间仍然合法可跑，红点落在行为断言上，不是红在切片的语法错上。
+    const cmpLines = comparerSource.split(/\r?\n/);
+    const nl = (s) => (s.match(/\n/g) || []).length;
+    const firstIfBlock = (from, want, span = 8) => {
+        for (let i = from; i < cmpLines.length && i <= from + span; i++) {
+            if (!/^[ \t]*if \(/.test(cmpLines[i])) continue;
+            const block = ifStatement(cmpLines.slice(i).join('\n'), /^([ \t]*)if \(/m, { allowBraceless: true });
+            if (block && want.test(block)) return { block, end: i + nl(block) };
+        }
+        return null;
+    };
+    const lineOf = (re, from = 0) => cmpLines.findIndex((l, i) => i >= from && re.test(l));
+
+    let bStart = lineOf(/^\s*let compareCount = parseInt\(compareCountEl\?\.value\)/);
+    if (bStart > 0 && /const compareCountEl = ccInput\('compare-count'\);/.test(cmpLines[bStart - 1])) bStart -= 1;
+    let clampLine = lineOf(/^\s*compareCount = Math\.\w+\(/, bStart);
+    const bWrite = clampLine >= 0 ? firstIfBlock(clampLine + 1, /compareCountEl\s*\.\s*value\s*=/) : null;
+    const clampRun = (bStart >= 0 && clampLine >= 0)
+        ? cmpLines.slice(bStart, (bWrite ? bWrite.end : clampLine) + 1).join('\n') : '';
+    check('runTask 那处 clamp 整段抽取成功（切片非空，且能独立跑起来）', clampRun.length > 80,
+        JSON.stringify(clampRun.slice(0, 60)));
+
+    // A 段是「整个判断写在一个 if 里」的形态：从 compareCount 那行往后找第一个
+    // 真往 task.config.compareCount 赋值的 if 块。
+    const declA = lineOf(/^\s*const compareCount = parseInt\(compareCountEl\?\.value\);/);
+    const aBlock = declA >= 0 ? firstIfBlock(declA + 1, /task\.config\.compareCount\s*=/) : null;
+    const clampIf = aBlock ? aBlock.block : '';
+    check('配置同步那处 clamp 整段抽取成功', clampIf.length > 80, JSON.stringify(clampIf.slice(0, 40)));
+
+    // B 段：自带 compareCountEl / compareCount 声明，只依赖 ccInput 与 task。
+    // 输入框用 Proxy 包一层：回写这件事本身要能被数出来，不然「重写一遍同样的值」
+    // 和「没动」在断言里长得一样。
+    const runB = (rawValue, configDefault = 77) => {
+        const writes = [];
+        const ctx = vm.createContext({ Math, Number, String, parseInt, Object,
+            task: { config: { compareCount: configDefault } } });
+        ctx.__box = rawValue === null ? null
+            : new Proxy({ value: rawValue }, {
+                set(t, k, v) { writes.push([String(k), String(v)]); t[k] = v; return true; }
+            });
+        ctx.ccInput = () => ctx.__box;
+        vm.runInContext(`${capDecl}\nthis.__run = () => {\n${clampRun}\nreturn { compareCount, value: __box && __box.value };\n};`, ctx);
+        try { return { res: ctx.__run(), cap: vm.runInContext('MAX_COMPARE_COUNT', ctx), writes }; }
+        catch (e) { return { threw: String((e && e.message) || e), writes }; }
+    };
+    // A 段：区间从 `if (Number.isFinite(compareCount))` 起，外层的
+    // `const compareCount = parseInt(compareCountEl?.value);` 不在区间里，所以这里替它算一次，
+    // 好让两段吃到**同一个输入框内容**。回写同样用 Proxy 计数，A 处的口径才不只是「夹出同一个数」。
+    const runA = (rawValue) => {
+        const writes = [];
+        const ctx = vm.createContext({ Math, Number, String, parseInt, Object,
+            task: { config: { compareCount: 100 } }, compareCount: parseInt(rawValue) });
+        ctx.compareCountEl = new Proxy({ value: rawValue }, {
+            set(t, k, v) { writes.push([String(k), String(v)]); t[k] = v; return true; }
+        });
+        vm.runInContext(`${capDecl}\nthis.__run = () => {\n${clampIf}\nreturn { capped: task.config.compareCount, boxValue: compareCountEl.value };\n};`, ctx);
+        try { return { res: ctx.__run(), cap: vm.runInContext('MAX_COMPARE_COUNT', ctx), writes }; }
+        catch (e) { return { threw: String((e && e.message) || e), writes }; }
+    };
+
+    const over = runB('999999999');
+    check('输入框填超限值：夹到上限并且把夹后的值回写进输入框（原守卫说的就是这件事）',
+        over.res && over.res.compareCount === over.cap
+            && over.writes.length === 1 && over.writes[0][0] === 'value' && over.writes[0][1] === String(over.cap),
+        JSON.stringify(over.res && { compareCount: over.res.compareCount, writes: over.writes, cap: over.cap }));
+    const ok = runB('500');
+    check('合法值不动、也一次都不回写（免得把用户刚敲的数字格式化掉）',
+        ok.res && ok.res.compareCount === 500 && ok.writes.length === 0, JSON.stringify(ok.writes));
+    const missing = runB(null);
+    check('输入框整个不存在时按配置默认走，不炸（那两处 ?. 与 && 是真起作用的）',
+        missing.res && missing.res.compareCount === 77 && missing.writes.length === 0, JSON.stringify(missing));
+    const junk = runB('abc');
+    check('输入框里是非数字：退回配置默认值，而不是 NaN 传进引擎',
+        junk.res && junk.res.compareCount === 77 && Number.isFinite(junk.res.compareCount), JSON.stringify(junk.res));
+
+    const shared = ['500', '999999999', '1'].map((v) => ({ v, b: runB(v), a: runA(v) }));
+    check('两段 clamp 对同一组输入夹出同一个上限（共用命名常量是比对结果，不是数出现几次）',
+        shared.every((x) => x.a.threw === undefined && x.b.threw === undefined
+            && x.a.res.capped === x.b.res.compareCount) && shared.length === 3,
+        JSON.stringify(shared.map((x) => x.a.threw || x.b.threw || `${x.v}:${x.a.res.capped}/${x.b.res.compareCount}`)));
+    // 回写口径也一起比：两处都只在「夹后跟框里不一样」时写一次。少了一边，
+    // 用户就会看到「配置同步时输入框跟着改、起跑时不改」这种两套行为。
+    check('两段 clamp 的回写次数与写回的值逐个相同（A 处不是只夹不写）',
+        shared.every((x) => JSON.stringify(x.a.writes) === JSON.stringify(x.b.writes)
+            && x.a.writes.every((w) => w[1] === String(x.b.res.compareCount)))
+            && shared.some((x) => x.a.writes.length === 1) && shared.some((x) => x.a.writes.length === 0),
+        JSON.stringify(shared.map((x) => `${x.v}:A=${JSON.stringify(x.a.writes)}B=${JSON.stringify(x.b.writes)}`)));
+}
 
 // ---- 截断标记不得靠译文反推 ----
 
@@ -907,18 +1015,77 @@ check('expand dialog no longer hardcodes MB in the language pack',
     && !en.compare.expandConfirmMsg.includes('{size} MB')
     && !zh.compare.expandConfirmMsgText.includes('{size} MB')
     && !en.compare.expandConfirmMsgText.includes('{size} MB'));
-check('no leftover MB-only size helper', !/getOutputSizeMbText/.test(comparerSource));
+// 原守卫 `!/getOutputSizeMbText/.test(comparerSource)` 是全文件字面量缺席：
+// 注释里、字符串里提一句旧名就红，而把旧函数真加回来但换个调用写法反而更容易漏。
+// 改成先把这个文件里「实际声明了哪些函数/方法」抽成名字表 —— 缺席断言作用在名字表上，
+// 说明文字随便写，加回来的函数一定在表里。
+const declaredNames = new Set([
+    ...[...comparerSource.matchAll(/^\s*(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)].map((m) => m[1]),
+    ...[...comparerSource.matchAll(/^\s{4}(?:async\s+|static\s+|get\s+|set\s+)*([A-Za-z0-9_$]+)\s*\(/gm)].map((m) => m[1])
+]);
+check('codeComparer 的函数/方法名表抽取成功（抽不到下面几条就是真空通过）',
+    declaredNames.has('getOutputSizeText') && declaredNames.has('getOutputSizeBytes')
+        && declaredNames.size > 20, `共 ${declaredNames.size} 个`);
+check('只出 MB 的旧尺寸助手确实不在这张表里', !declaredNames.has('getOutputSizeMbText'),
+    [...declaredNames].filter((n) => /size/i.test(n)).join(','));
 
 // 进度条残留 / 完成面板被当成提示位：两条都改成真跑了 ——
 // resetComparison 看它实际写进 #progress-fill 的 style.width，
 // showSuccessMessage 看它落进日志的内容和「一个 DOM 都不碰」。见上面两段。
 
-// ---- 新增告警通道 ----
+// ---- 新增告警通道：两侧都真跑 ----
+// 原来是两条正则：主进程那条 `engine\.on\('warning'[\s\S]*?compare-warning` 只要
+// 两个词之间出现过的东西不超一段就绿（把 send 换成 sendOnce、或通道写错成
+// compare-warning-1 但下文又提到一次正名，都能骗过去）；preload 那条只查「这两个词在文件里」。
+{
+    const warnCb = callbackBody(mainSource, /engine\.on\('warning',\s*/);
+    check('主进程 warning 回调体抽取成功', warnCb.length > 10, JSON.stringify(warnCb.slice(0, 48)));
+    const wCtx = vm.createContext({ mainWindow: undefined, String, Object });
+    vm.runInContext(`this.__f = (data) => ${warnCb};`, wCtx);
+    const fires = [];
+    const emit = (win, data) => {
+        fires.length = 0;
+        wCtx.mainWindow = win;
+        let threw;
+        try { wCtx.__f.call({ }, data); } catch (e) { threw = String((e && e.message) || e); }
+        return { fires: fires.slice(), threw };
+    };
+    const recWin = (onSend) => ({ webContents: { send: (ch, payload) => { if (onSend) onSend(ch, payload); fires.push([ch, payload]); } } });
+    const fwd = emit(recWin(), { code: 'disk-nearly-full', taskId: 't1' });
+    check('引擎非致命告警按 compare-warning 通道原样转给渲染层',
+        fwd.threw === undefined && fwd.fires.length === 1 && fwd.fires[0][0] === 'compare-warning'
+            && fwd.fires[0][1].code === 'disk-nearly-full' && fwd.fires[0][1].taskId === 't1',
+        JSON.stringify(fwd));
+    const brokenWin = { webContents: { send: () => { throw new Error('Object has been destroyed'); } } };
+    const dead = emit(brokenWin, { code: 'x' });
+    check('窗口已经没了也不把告警冒成未捕获异常（那层 try 是真的）',
+        dead.threw === undefined && dead.fires.length === 0, JSON.stringify(dead));
+    check('没有 mainWindow 时静默跳过，不炸',
+        (() => { const r = emit(undefined, { code: 'x' }); return r.threw === undefined && r.fires.length === 0; })());
 
-check('main process forwards non-fatal engine warnings',
-    /engine\.on\('warning'[\s\S]*?compare-warning/.test(mainSource));
-check('preload exposes the warning channel',
-    /onCompareWarning/.test(preloadSource) && /compare-warning/.test(preloadSource));
+    const warnProp = arrowProp(preloadSource, 'onCompareWarning');
+    check('preload 的 onCompareWarning 抽取成功', warnProp !== null && warnProp.body.length > 10,
+        warnProp && warnProp.signature);
+    const pCtx = vm.createContext({ subscribeIpc: () => { }, ipcRenderer: { removeListener: () => { } }, Function });
+    vm.runInContext(`this.__on = ${warnProp.params} => ${warnProp.body};`, pCtx);
+    const subs = [];
+    const rms = [];
+    pCtx.subscribeIpc = (ch, l) => { subs.push([ch, l]); };
+    pCtx.ipcRenderer = { removeListener: (ch, l) => { rms.push([ch, l]); } };
+    const got = [];
+    const unsub = pCtx.__on((d) => got.push(d));
+    check('订阅走的就是 compare-warning 这一个通道',
+        subs.length === 1 && subs[0][0] === 'compare-warning' && typeof subs[0][1] === 'function',
+        JSON.stringify(subs.map((s) => s[0])));
+    // 把 (event, data) 摊成 (data) 是给渲染层的接口形状，改回原样传就是让每个调用方多写一个 _.
+    subs[0][1]({}, { code: 'near-full' });
+    check('事件参数被摊平：回调直接收到 payload 本身',
+        got.length === 1 && got[0].code === 'near-full', JSON.stringify(got));
+    check('返回的取消函数按同一通道、同一句柄摘干净',
+        typeof unsub === 'function' && (unsub(), rms.length === 1
+            && rms[0][0] === 'compare-warning' && rms[0][1] === subs[0][1]),
+        JSON.stringify({ channels: rms.map((r) => r[0]), sameHandle: rms.length === 1 && rms[0][1] === subs[0][1] }));
+}
 // 渲染层把告警当非致命改成真跑（见文件尾 handlerBehaviour）：原守卫是
 // /onCompareWarning\(\(data\) => \{\s*logWarn/ —— 只要那两行字在，把告警改成 showError
 // 或者照样 stopCompare 都查不出来。

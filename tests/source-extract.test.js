@@ -367,6 +367,28 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
     check('ifStatement 锚点查不到时返回空串', ifStatement(IF_SRC, /^\s*if \(\/nope/) === '');
     check('ifStatement 不认无花括号的单语句 if（宁可不抽，也不猜区间）',
         ifStatement('if (x) return 1;\nfunction y() { }', /^\s*if \(x\)/m) === '');
+    // allowBraceless：tsc 的 printer 会把单行 if 拆成两行不带花括号的形式
+    // （`if (x)\n    return;`），抽取跟不上这种等价重写，行为守卫就会假红。
+    const BRACELESS = [
+        'method() {',
+        '    if (a && b !== c)',
+        '        box.value = String(c);',
+        '    const next = 1;',
+        '}'
+    ].join('\n');
+    const bl = ifStatement(BRACELESS, /^\s*if \(a && b/m, { allowBraceless: true });
+    check('allowBraceless：两行式无括号 if 抽到语句体为止，不吃下一条',
+        bl.startsWith('if (a && b !== c)') && bl.trimEnd().endsWith('String(c);') && !bl.includes('const next'),
+        JSON.stringify(bl));
+    check('allowBraceless：单行式只到本行行尾',
+        ifStatement('if (x) return 1;\nfunction y() { }', /^\s*if \(x\)/m, { allowBraceless: true })
+            .trimEnd().endsWith('return 1;'));
+    check('allowBraceless：体尾不带分号不抽（ASI 的区间说不清）',
+        ifStatement('if (x)\n    return\nfoo();', /^\s*if \(x\)/m, { allowBraceless: true }) === '');
+    check('allowBraceless：体里带花括号不抽（那是块，该走配平）',
+        ifStatement('if (x)\n    o = { a: 1 };', /^\s*if \(x\)/m, { allowBraceless: true }) === '');
+    check('allowBraceless：下一条缩进不比 if 那行深就不抽',
+        ifStatement('if (x)\nbar();', /^if \(x\)/m, { allowBraceless: true }) === '');
 
     // bracedBlock：整段裸块语句。CI 的每个检查项都是这种形态，锚点行里通常还带
     // `${R}` 这类模板插值 —— 直接 indexOf('{') 会从半个插值开始配平，所以块首必须独立成行。
