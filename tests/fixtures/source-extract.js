@@ -232,6 +232,30 @@ function bracedBlock(src, pattern) {
     return end < 0 ? '' : src.slice(open, end + 1);
 }
 
+// 整段裸块语句，但**按缩进收尾**而不是数花括号。
+// bracedBlock 在 CI 检查项上会失配：块里的正则有 `[,{]` 这类字符类，半个 `{` 混在字符类里
+// 把计数带偏，配平永远回不到 0（[I5] 那块就是这样抽不出来的）。这里改认该文件的排版约定：
+// 标题行的下一条非空行必须是独占一行的 `{`，块尾是**同一缩进**上独占一行的 `}` ——
+// ci-check.js 里每个检查项都是这种写法，且该文件不经 tsc emit，排版稳定。
+// 任一条不成立就返回 ''：宁可抽取失败显式报红，也不顺着下文捞到别的块去。
+function blockByIndent(src, pattern) {
+    const m = pattern.exec(src);
+    if (!m) return '';
+    const lines = src.split('\n');
+    const anchorLine = src.slice(0, m.index).split('\n').length - 1;
+    let i = anchorLine + 1;
+    while (i < lines.length && lines[i].replace(/\r$/, '').trim() === '') i++;
+    const openLine = i < lines.length ? lines[i].replace(/\r$/, '') : '';
+    const om = /^([ \t]*)\{[ \t]*$/.exec(openLine);
+    if (!om) return '';
+    const indent = om[1];
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+        if (lines[j].replace(/\r$/, '') === indent + '}') break;
+    }
+    return j < lines.length ? lines.slice(i, j + 1).join('\n') : '';
+}
+
 // 从 open 这个 '[' 配平到成对的 ']'，返回其下标；不配对返回 -1。
 // 字符串字面量里的括号不参与计数（通道名里带 ']' 就切错了）。
 function matchBracket(src, open) {
@@ -305,4 +329,4 @@ function toProviderFn(prop) {
     return new Function('return (async function ' + prop.params + ' ' + prop.body + ')')();
 }
 
-module.exports = { arrowExpr, arrowProp, bracedBlock, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn };
+module.exports = { arrowExpr, arrowProp, blockByIndent, bracedBlock, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn };

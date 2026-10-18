@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, arrowProp, bracedBlock, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn } = require('./fixtures/source-extract');
+const { arrowExpr, arrowProp, blockByIndent, bracedBlock, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, ifStatement, objectConst, scalarConst, setMembers, toFn, toProviderFn } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -417,6 +417,41 @@ check('toFn 能处理 async 方法', typeof fn === 'function');
     check('bracedBlock 锚点查不到时返回空串', bracedBlock(BLOCK_SRC, /nope ratchet/) === '');
     check('bracedBlock 不认 `if (…) {` 这类不独立成行的块（宁可不抽，也不猜区间）',
         bracedBlock('mark();\nif (x) { y(); }', /mark\(\)/) === '');
+
+    // blockByIndent：同样抽裸块，但按缩进收尾。CI 检查项块里带 `[,{]` 这种字符类时，
+    // 数花括号会被字符类里的半个 `{` 骗过去，配平永远回不到 0 —— bracedBlock 就抽不出来。
+    const IND_BLOCK = [
+        'console.log(`${Y}[I5] some check${R}`);',
+        '{',
+        '  const res = [/[,{]\\s*x/g, /y\\{2\\}/];',
+        '  for (const re of res) {',
+        '    scan(re);',
+        '  }',
+        '  if (bad) {',
+        "    fail('k');",
+        '  }',
+        '}',
+        'report(-1);'
+    ].join('\n');
+    const indSrc = blockByIndent(IND_BLOCK, /\[I5\] some check/);
+    check('blockByIndent 数不动的字符类花括号不影响收尾：取到标题行后第一块，到同缩进的 } 为止',
+        indSrc.startsWith('{') && indSrc.endsWith('}') && !indSrc.includes('report(-1)'),
+        JSON.stringify(indSrc.slice(0, 40)));
+    check('blockByIndent 同条件下 bracedBlock 确实抽不出来（这才是另开一个工具的理由）',
+        bracedBlock(IND_BLOCK, /\[I5\] some check/) === '');
+    const indSeen = [];
+    try {
+        vm.runInNewContext(indSrc, {
+            scan: (re) => indSeen.push(String(re.source)), fail: () => indSeen.push('fail'),
+            bad: true, report: () => indSeen.push('report')
+        });
+    } catch (e) { indSeen.push('THREW:' + e.message); }
+    check('blockByIndent 的产物整块跑得起来：嵌套块不提前收尾，块外 report 不在区间内',
+        indSeen.length === 3 && indSeen[indSeen.length - 1] === 'fail', JSON.stringify(indSeen));
+    check('blockByIndent 锚点下一条非空行不是独立成行的 { 时返回空串（不顺着下文捞别的块）',
+        blockByIndent('log([I9] x);\nfoo();\n{\n}', /\[I9\] x/) === '');
+    check('blockByIndent 收尾的 } 缩进对不上时返回空串（不会一路吃到文件尾，也不认错位的 }）',
+        blockByIndent('log(t);\n{\n  a();\n    }\nb();\n', /log\(t\)/) === '');
 
     // setMembers：整条 `const NAME = new Set([...])` 的成员表，白名单的保护力全在成员上。
     const SET_SRC = [

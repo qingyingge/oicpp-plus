@@ -9,9 +9,11 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
+const vm = require('vm');
 const {
-    arrowExpr, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst
+    arrowExpr, blockByIndent, callbackBody, callStatement, classMethod, compileMethod, forStatement, funcDecl, objectConst
 } = require('./fixtures/source-extract');
+const { loadLocales, runCiBlock } = require('./fixtures/ci-block-runner');
 
 const root = path.resolve(__dirname, '..');
 let failures = 0;
@@ -31,6 +33,9 @@ const check = (name, fn) => {
         console.log(`[FAIL] ${name} | ${error.message}`);
     }
 };
+
+// 喂给 CI 检查项的假文件：键是「绝对路径」，块里 path.relative(root, f) 出来就是可读定位串。
+const virtualFile = (name, content) => ({ [`/proj/src/${name}`]: content });
 
 // ---------------------------------------------------------------------------
 // 1. _runCounter 必须初始化，且轮次严格递增
@@ -152,7 +157,7 @@ const runEngineOnce = async (Ctor, progressCount) => {
     // 其中一条还是「旧写法 `if (!this.isCompiling)` 不许出现」的负向文本断言 ——
     // 那种断言只要有人把旧写法换个排版就能绕过。改成把两个方法真跑一遍。
     deferredChecks.push(async () => {
-        const vm = require('vm');
+
         const compileSrc = classMethod(cmSrc, 'compileCurrentFile');
         const andRunSrc = classMethod(cmSrc, 'compileAndRun');
         check('方法体抽取成功: compileCurrentFile / compileAndRun', () => {
@@ -259,7 +264,7 @@ const runEngineOnce = async (Ctor, progressCount) => {
         // JS 里 + 优先级高于 ||：`t() || 'fb' + '\n'` 解析为 `t() || ('fb' + '\n')`。
         // t() 返回非空（= 有翻译，**常态**）时整个表达式取 t()，后面的 '\n' 被整个丢掉；
         // t() 返回空（= 落到兜底）时反而正常。也就是「有翻译才丢换行」。
-        const vm = require('vm');
+
         const NL = String.fromCharCode(10);
         const run = (expr, translated) => {
             const s = vm.createContext({ window: { i18n: { t: () => (translated ? '已翻译' : '') } } });
@@ -282,25 +287,141 @@ const runEngineOnce = async (Ctor, progressCount) => {
 {
     const mainSrc = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
 
-    check('assertDeletableInWorkspace 已定义', () => {
-        assert.ok(/function assertDeletableInWorkspace\(targetPath\)/.test(mainSrc));
+    // 原先是六条字面量：一条匹配 `function assertDeletableInWorkspace(targetPath)` 的长相，
+    // 五条在通道名后面划一个 `[\s\S]{0,1200}?assertDeletableInWorkspace\(` 的窗口。
+    // 窗口长度是拍脑袋定的：handler 变长就静默截断（越界删盘的通道照样“通过”），
+    // 而且「先校验再删」和「先删再校验」在它眼里长得一样。
+    // 现在把真 handler 连同真守卫一起塞进 vm 跑：假 fs 记账，越界路径下破坏性调用必须一次都不发。
+    const WS = '/proj/ws';
+    const OUT = '/home/user/.ssh/id_rsa';
+    const guardSrc = funcDecl(mainSrc, 'assertDeletableInWorkspace');
+
+    // 每跑一次重建一个上下文：桩里的 calls 是「这条通道到底对磁盘做了什么」的唯一账本。
+    // assertSafeIoPath 故意放行 —— 本段只测工作区边界，两个校验混在一起就分不清谁拦的。
+    const boot = (src, opt = {}) => {
+        const calls = [];
+        const destructive = () => calls.filter((c) => ['rm', 'unlink', 'rename', 'p.unlink'].includes(c[0]));
+        const ctx = vm.createContext({
+            Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Promise, Set, Symbol, path, console,
+            t: (key) => key,
+            logError: () => { },
+            logWarn: () => { calls.push(['logWarn']); },
+            logInfo: () => { },
+            assertSafeIoPath: () => { },
+            isPathInsideTempRoots: (p) => String(p).includes('CODE_TEMP'),
+            isPathInsideDir: (p, d) => p === d || String(p).startsWith(d + '/'),
+            currentExternalWorkspacePath: opt.workspace === null ? null : WS,
+            markLocalDeletion: () => { calls.push(['mark']); return []; },
+            restoreFileWatchStates: () => { },
+            validateFileName: () => ({ valid: true }),
+            getUniquePath: (d, n) => path.join(d, n + '.1'),
+            mainWindow: { isDestroyed: () => false, webContents: { send: (...a) => calls.push(['send', a[0], a[2]]) } },
+            fs: {
+                statSync: () => ({ isDirectory: () => opt.isDir === true }),
+                existsSync: () => opt.exists === true,
+                readdirSync: () => ['e1', 'e2'],
+                rmSync: (p) => { calls.push(['rm', p]); },
+                unlinkSync: (p) => { calls.push(['unlink', p]); },
+                renameSync: (a, b) => { calls.push(['rename', a, b]); },
+                promises: { unlink: async (p) => { calls.push(['p.unlink', p]); } }
+            },
+            ipcMain: {
+                on: (ch, fn) => { ctx.__reg = ['on', ch]; ctx.__h = fn; },
+                handle: (ch, fn) => { ctx.__reg = ['handle', ch]; ctx.__h = fn; }
+            }
+        });
+        vm.runInContext(`${guardSrc}\n${src};`, ctx);
+        return { ctx, calls, destructive, h: ctx.__h, reg: ctx.__reg };
+    };
+    const event = () => {
+        const replies = [];
+        return { replies, stub: { reply: (...a) => replies.push(a) } };
+    };
+
+    check('守卫本体抽出来了（后面所有通道都跑的是它，不是桩）', () => {
+        assert.ok(/^function assertDeletableInWorkspace\(/.test(guardSrc.trim()), guardSrc.slice(0, 40));
+    });
+
+    const callGuard = (p, opt) => {
+        const b = boot('globalThis.__g = (target) => assertDeletableInWorkspace(target);', opt);
+        try { b.ctx.__g(p); return { threw: null }; }
+        catch (error) { return { threw: error.message }; }
+    };
+    check('没打开工作区时，删除一律拒绝（不是“没校验”而是明确报错）', () => {
+        const r = callGuard(OUT, { workspace: null });
+        assert.strictEqual(r.threw, 'error.noWorkspaceForDelete', JSON.stringify(r));
+    });
+    check('工作区外的路径抛 outsideWorkspace 并留下一条告警日志', () => {
+        const b = boot('globalThis.__g = (p) => assertDeletableInWorkspace(p);');
+        let msg = null;
+        try { b.ctx.__g(OUT); } catch (error) { msg = error.message; }
+        assert.strictEqual(msg, 'error.outsideWorkspace');
+        assert.deepStrictEqual(b.calls, [['logWarn']], JSON.stringify(b.calls));
+    });
+    check('工作区内的路径放行（对照组：守卫不是一律抛，否则上面的“拦住了”毫无意义）', () => {
+        for (const p of [`${WS}/a.txt`, WS]) {
+            assert.strictEqual(callGuard(p).threw, null, p);
+        }
+    });
+    check('运行时临时目录走豁免分支：它本来就在工作区外，由 delete-temp-file 专门治理', () => {
+        assert.strictEqual(callGuard('/proj/CODE_TEMP/x').threw, null);
     });
 
     // 上一轮只挂了 2 个 handler，文件管理器主路径（ipcMain.on）与
     // delete-file-invoke 都没接，assertSafeIoPath 只拦系统目录，用户目录照删不误
     const deletionChannels = [
-        { name: "ipcMain.on('delete-file')", re: /ipcMain\.on\('delete-file',[\s\S]{0,1200}?assertDeletableInWorkspace\(/ },
-        { name: "ipcMain.handle('delete-file')", re: /ipcMain\.handle\('delete-file',[\s\S]{0,1200}?assertDeletableInWorkspace\(/ },
-        { name: "ipcMain.handle('delete-file-invoke')", re: /ipcMain\.handle\('delete-file-invoke',[\s\S]{0,1200}?assertDeletableInWorkspace\(/ },
-        { name: "ipcMain.handle('clear-directory-contents')", re: /ipcMain\.handle\('clear-directory-contents',[\s\S]{0,1600}?assertDeletableInWorkspace\(/ },
+        { name: "ipcMain.on('delete-file')", re: /^\s*ipcMain\.on\(\s*'delete-file'/m, kind: 'on', channel: 'delete-file', out: [OUT], inside: [`${WS}/a.txt`], wantInside: 1 },
+        { name: "ipcMain.handle('delete-file')", re: /^\s*ipcMain\.handle\(\s*'delete-file'/m, kind: 'handle', channel: 'delete-file', out: [OUT], inside: [`${WS}/a.txt`], wantInside: 1 },
+        { name: "ipcMain.handle('delete-file-invoke')", re: /^\s*ipcMain\.handle\(\s*'delete-file-invoke'/m, kind: 'handle', channel: 'delete-file-invoke', out: [OUT], inside: [`${WS}/a.txt`], wantInside: 1 },
+        // 清空目录是对每个 entry 各 rmSync 一次，桩里给两个条目
+        { name: "ipcMain.handle('clear-directory-contents')", re: /^\s*ipcMain\.handle\(\s*'clear-directory-contents'/m, kind: 'handle', channel: 'clear-directory-contents', out: [OUT], inside: [`${WS}/sub`], wantInside: 2, isDir: true },
         // 重命名的覆盖分支是 rmSync(recursive)，等价于删除
-        { name: "rename 覆盖分支", re: /options\?\.overwrite\)[\s\S]{0,400}?assertDeletableInWorkspace\(/ },
+        { name: "rename 的 overwrite 分支", re: /^\s*ipcMain\.handle\(\s*'rename-file-invoke'/m, kind: 'handle', channel: 'rename-file-invoke', out: [`${WS}/a.txt`, OUT], inside: [`${WS}/a.txt`, `${WS}/b.txt`], wantInside: 2, exists: true, options: { overwrite: true } }
     ];
     for (const ch of deletionChannels) {
-        check(`${ch.name} 接了 assertDeletableInWorkspace`, () => {
-            assert.ok(ch.re.test(mainSrc), `${ch.name} 未接工作区校验`);
+        ch.src = callStatement(mainSrc, ch.re);
+        check(`${ch.name} 抽到了整条注册语句`, () => {
+            assert.ok(ch.src.length > 200, `只抽到 ${ch.src.length} 个字符：${JSON.stringify(ch.src.slice(0, 40))}`);
+        });
+        if (!ch.src) continue;
+
+        check(`${ch.name} 的注册方式是 ${ch.kind}、通道名就是 '${ch.channel}'（on/handle 用错渲染进程收不到结果）`, () => {
+            assert.deepStrictEqual(boot(ch.src).reg, [ch.kind, ch.channel]);
         });
     }
+
+    // handler 全是 async，检查点攒进延迟批次（文件尾统一 await 后再汇总）。
+    // 每个通道两组：越界必须一次破坏性调用都不发、且把原因回给调用方；
+    // 工作区内照常执行 —— 没有这组对照，桩“谁都不许删”也能让上一组通过。
+    deferredChecks.push(async () => {
+        for (const ch of deletionChannels.filter((c) => c.src)) {
+            const invoke = async (paths) => {
+                const b = boot(ch.src, { isDir: ch.isDir, exists: ch.exists });
+                const e = event();
+                const args = [e.stub, ...paths];
+                if (ch.options) args.push(ch.options);
+                const res = await b.h(...args);
+                // on 通道不回返回值，错误只出现在 event.reply 的第三个参数上
+                const surfaced = ch.kind === 'on'
+                    ? (e.replies.length ? e.replies[e.replies.length - 1][2] : '<没有 reply>')
+                    : (res && res.error) || (res && res.success ? null : JSON.stringify(res));
+                return { destructive: b.destructive(), surfaced, res, replies: e.replies };
+            };
+
+            const out = await invoke(ch.out);
+            check(`${ch.name} 越界路径下破坏性调用一次都不发，并把原因回给调用方`, () => {
+                assert.deepStrictEqual(out.destructive, [], JSON.stringify(out.destructive));
+                assert.strictEqual(out.surfaced, 'error.outsideWorkspace', JSON.stringify(out));
+            });
+
+            const inside = await invoke(ch.inside);
+            check(`${ch.name} 工作区内照常执行（对照组：拦住的必须是越界，不是所有删除）`, () => {
+                assert.strictEqual(inside.destructive.length, ch.wantInside,
+                    JSON.stringify({ calls: inside.destructive, res: inside.res }));
+                assert.strictEqual(inside.surfaced, null, JSON.stringify(inside.surfaced));
+            });
+        }
+    });
 
     check('check-file-exists 不把权限类错误当成不存在', () => {
         // 原先用 `{0,1200}?\n    });` 划窗口：既锁收尾括号的缩进与 `);` 排版，
@@ -320,27 +441,36 @@ const runEngineOnce = async (Ctor, progressCount) => {
 // ---------------------------------------------------------------------------
 {
     const ciSrc = fs.readFileSync(path.join(root, 'scripts/ci-check.js'), 'utf8');
-    check('I5 覆盖对象属性形态 key: (\'k\')', () => {
-        // 源码里是这条（转义前的字面量）：
-        //   /(^|[,{]\s*)([A-Za-z_$][\w$]*)\s*:\s*\(\s*['"]([a-z][\w]*(?:\.[a-zA-Z][\w]*)+)['"]\s*\)/gm
-        assert.ok(ciSrc.includes("(^|[,{]\\s*)([A-Za-z_$][\\w$]*)\\s*:\\s*\\(\\s*['\"]"),
-            'I5 需覆盖 `key: (\'i18n.key\')` 对象属性形态');
-    });
-    check('I5 注释说明两种形态（防止后人又删掉属性分支）', () => {
-        assert.ok(/两种形态都要拦/.test(ciSrc));
+    const I5 = blockByIndent(ciSrc, /\[I5\] No-op t\(\) residue/);
+
+    // 原来三条都是文本守卫：一条比 I5 第二条正则的字面量、一条比注释里那句「两种形态都要拦」，
+    // 还有一条在测试里**重抄了一遍**属性形态的正则去扫真文件。
+    // 前者一改排版就碎，后者更糟：ci-check 里的判据哪天收紧或放宽，这条都不知道自己在测什么。
+    // 现在整块真跑：报没报、报了几处、报的是哪个键，都是跑出来的。
+    check('I5 检查项整块抽出来（真跑的必须是它，不是测试里的副本）', () => {
+        assert.ok(I5.startsWith('{') && I5.length > 400, JSON.stringify(I5.slice(0, 40)));
     });
 
-    // 回归：曾经真实存在的 3 处裸 key
-    const files = [
-        'src/renderer/js/sidebar/cloudSync.js',
-        'src/renderer/js/compile-manager.js'
-    ];
-    const bareKeyRe = /(?:^|[,{]\s*)[A-Za-z_$][\w$]*\s*:\s*\(\s*'([a-z][\w]*(?:\.[\w]+)+)'\s*\)/gm;
-    for (const rel of files) {
-        check(`${rel} 没有裸 key 字面量`, () => {
-            const src = fs.readFileSync(path.join(root, rel), 'utf8');
-            const hits = [...src.matchAll(bareKeyRe)].map((m) => m[0].trim());
-            assert.strictEqual(hits.length, 0, `仍有裸 key: ${hits.join(' | ')}`);
+    check('I5 真跑：`= (\'k\')` 赋值与 `key: (\'k\')` 属性两种形态各报一次', () => {
+        const { fails } = runCiBlock(I5, virtualFile('a.js',
+            "const o = {\n    title: ('dialog.save'),\n};\nlet z = 1;\nz = ('dialog.save');\n"));
+        assert.strictEqual(fails.length, 2, JSON.stringify(fails));
+        assert.ok(fails.every((m) => m.includes('dialog.save')), JSON.stringify(fails));
+    });
+
+    check('I5 真跑：正常 t() 调用一处都不报（对照组：不是“看见括号里的引号就报”）', () => {
+        const { fails, oks } = runCiBlock(I5, virtualFile('a.js',
+            "const o = { title: window.i18n.t('dialog.save') };\nlet z = window.i18n.t('dialog.save');\n"));
+        assert.deepStrictEqual(fails, [], JSON.stringify(fails));
+        assert.deepStrictEqual(oks, ['no no-op t() residue'], JSON.stringify(oks));
+    });
+
+    // 回归：曾经真实存在的 3 处裸 key（原生对话框标题 x2、编译输出诊断位置 x1）
+    for (const rel of ['src/renderer/js/sidebar/cloudSync.js', 'src/renderer/js/compile-manager.js']) {
+        check(`${rel} 过 I5：没有裸 key 字面量`, () => {
+            const abs = path.join(root, rel);
+            const { fails } = runCiBlock(I5, { [abs]: fs.readFileSync(abs, 'utf8') });
+            assert.deepStrictEqual(fails, [], JSON.stringify(fails));
         });
     }
 }
@@ -350,10 +480,34 @@ const runEngineOnce = async (Ctor, progressCount) => {
 // ---------------------------------------------------------------------------
 {
     const ciSrc = fs.readFileSync(path.join(root, 'scripts/ci-check.js'), 'utf8');
-    check('I8 豁免要求 t() 的键存在于语言包', () => {
-        assert.ok(/tKeysOnLine\(line\)\.filter\(\(k\) => !packKeys\.has\(k\)\)/.test(ciSrc));
-        assert.ok(/if \(missingKeys\.length > 0\) \{\s*\n\s*fail\(/.test(ciSrc),
-            '键缺失必须 fail，而不是只记日志');
+    const I8 = blockByIndent(ciSrc, /\[I8\] Hardcoded CJK ratchet/);
+    // 兜底豁免的判据是「这行的 t() 键在不在语言包里」，所以必须喂真包；
+    // 键名也不写死 —— 写死的那个哪天被删，这条就会假红。取包里第一个键当「确实存在」的样本。
+    const knownKey = Object.keys(loadLocales()['zh-cn'])[0];
+
+    check('I8 检查项整块抽出来', () => {
+        assert.ok(I8.startsWith('{') && I8.length > 1000, JSON.stringify(I8.slice(0, 40)));
+    });
+
+    check('I8 真跑：兜底串挂在真实存在的键上时豁免生效，一处都不报', () => {
+        const { fails } = runCiBlock(I8, virtualFile('a.js',
+            `const m = window.i18n.t('${knownKey}') || '已保存';\n`));
+        assert.deepStrictEqual(fails, [], JSON.stringify(fails));
+    });
+
+    check('I8 真跑：键写错时兜底永远不生效（屏幕上就是裸键名），必须 fail 而不是记日志', () => {
+        const { fails, infos } = runCiBlock(I8, virtualFile('a.js',
+            `const m = window.i18n.t('${knownKey}Typo') || '已保存';\n`));
+        assert.strictEqual(fails.length, 1, JSON.stringify({ fails, infos }));
+        assert.ok(/not in any language pack/.test(fails[0]) && fails[0].includes(`${knownKey}Typo`),
+            JSON.stringify(fails[0]));
+        assert.deepStrictEqual(infos, [], '只 info 不 fail 等于放行');
+    });
+
+    check('I8 真跑：真硬编码中文走 ratchet 分支（和“键不存在”是两种报法，别混成一条）', () => {
+        const { fails } = runCiBlock(I8, virtualFile('a.js', "showError('出错了');\n"));
+        assert.strictEqual(fails.length, 1, JSON.stringify(fails));
+        assert.ok(/baseline/.test(fails[0]) && !/language pack/.test(fails[0]), JSON.stringify(fails[0]));
     });
 }
 
@@ -365,7 +519,7 @@ const runEngineOnce = async (Ctor, progressCount) => {
     // 三条正则守卫（缓存失效数组字面量、代数比较的写法、白名单 Set 的字面量）
     // 全部换成把真代码跑起来：循环真注册、getAllSettings 真缓存、包装器真拦人。
     deferredChecks.push(async () => {
-        const vm = require('vm');
+
         const pieces = {
             loop: forStatement(preloadSrc, /^\s*for \(const ch of \[/m),
             invalidate: funcDecl(preloadSrc, 'invalidateSettingsCache'),
