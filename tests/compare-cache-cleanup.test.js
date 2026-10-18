@@ -14,7 +14,7 @@ const check = (name, condition, extra = '') => {
 };
 
 const root = path.join(__dirname, '..');
-const { callStatement, classMethod, compileMethod } = require('./fixtures/source-extract');
+const { callStatement, classMethod, compileMethod, ifStatement } = require('./fixtures/source-extract');
 const { loadLocales } = require('./fixtures/ci-block-runner');
 const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 const comparerSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'sidebar', 'codeComparer.js'), 'utf8');
@@ -184,27 +184,282 @@ deferredChecks = (async () => {
 
 // ---- Bug B/D: 编译缓存按签名命名并交出产物 ----
 
-const cacheBlock = mainSource.slice(
-    mainSource.indexOf('const compileCacheVersion'),
-    mainSource.indexOf('const args = [', mainSource.indexOf('const compileCacheVersion'))
-);
-check('compile cache uses a dedicated cache dir', mainSource.includes("path.join(os.homedir(), USER_DATA_DIR_NAME, 'compile-cache')"));
-check('cache record no longer requires outputFile', /const createCompileCacheRecord = \(\) => \{\s*if \(!inputFile \|\| !compilerPath\)\s*return null;/.test(cacheBlock));
-check('cache signature payload drops outputFile', !/outputFile:\s*path\.resolve/.test(cacheBlock));
-check('cache payload still hashes source, compiler, args and cwd', /inputSize/.test(cacheBlock) && /compilerMtimeMs/.test(cacheBlock) && /compilerArgs/.test(cacheBlock) && /workingDirectory/.test(cacheBlock));
-check('cached exe and metadata are named by signature', cacheBlock.includes('`${sig}${path.extname(outputFile) || \'.exe\'}`') && cacheBlock.includes('`${sig}.oicpp-cache`'));
-check('cache hit copies the cached exe to the requested outputFile', /fs\.copyFileSync\(cacheExePath, outputFile\)/.test(cacheBlock));
-check('cache hit still resolves with cached: true', cacheBlock.includes('cached: true'));
-check('cache hit is logged', cacheBlock.includes("logInfo('[编译缓存]"));
+// 这一段原来是十几条「切一段源码下来比字面量」：比的是 copyFileSync 的参数顺序、
+// 模板字符串的长相、logInfo 的中文字。把缓存挪到 outputFile 旁边、把 chmod 摘掉、
+// 命中时改成 resolve(result)（调用方拿到一个不存在的文件）、把 workingDirectory 从签名里漏掉，
+// 这些断言全都照绿 —— 它们读的是排版，不是「同签名复用不复用、复用后文件在不在」。
+// 现在把编译处理里的两段真语句（查缓存 / 写缓存）原样抽出来，接一个虚拟 fs 跑：
+// 签名跟着什么变、命中与未命中各写不写盘、失败落在哪一级，全是从调用记录里数出来的。
+const readStart = mainSource.indexOf('const compileCacheVersion');
+const readLen = readStart < 0 ? -1
+    : mainSource.slice(readStart).search(/^ {8}const outputDir = path\.dirname\(outputFile\);/m);
+const cacheReadBlock = readStart >= 0 && readLen > 0 ? mainSource.slice(readStart, readStart + readLen) : '';
+const cacheWriteBlock = ifStatement(mainSource, /^[ \t]+if \(result\.success && outputExists && compileCacheRecord/m);
+check('编译缓存两段真语句抽取成功（查缓存 + 写缓存）',
+    cacheReadBlock.length > 1500 && cacheWriteBlock.length > 500,
+    JSON.stringify({ read: cacheReadBlock.length, write: cacheWriteBlock.length }));
 
-const cacheWriteBlock = mainSource.slice(
-    mainSource.indexOf('if (result.success && outputExists && compileCacheRecord'),
-    mainSource.indexOf('if (code === 0) {', mainSource.indexOf('if (result.success && outputExists && compileCacheRecord'))
-);
-check('successful compile stores the exe into the cache', /fs\.copyFileSync\(outputFile, cacheExePath\)/.test(cacheWriteBlock));
-check('successful compile stores signature metadata without outputFile', /fs\.writeFileSync\(cacheMetadataPath, JSON\.stringify\(latestRecord\)/.test(cacheWriteBlock) && !/outputFile:\s*path\.resolve/.test(cacheWriteBlock));
-check('cache write failures stay at warn level', cacheWriteBlock.includes("logWarn('[编译缓存] 写入签名失败:'"));
-check('stale writes during compilation are still rejected', cacheWriteBlock.includes("logWarn('[编译缓存] 编译期间源文件或编译环境发生变化，跳过写入签名'"));
+const HOME = '/home/oicpp';
+const SRC = path.join(HOME, 'src', 'a.cpp');
+const GPP = path.join(HOME, 'bin', 'g++');
+const CACHE_DIR = path.join(HOME, '.oicpp-plus', 'compile-cache');
+
+const runCache = (opts = {}) => {
+    const o = Object.assign({
+        inputFile: SRC,
+        compilerPath: GPP,
+        outputFile: path.join(HOME, 'out', 'a_1700.exe'),
+        workingDirectory: path.join(HOME, 'work'),
+        parsedUserArgs: ['-O2', '-std=c++17'],
+        sourceSize: 100, sourceMtime: 1000, compilerSize: 500, compilerMtime: 800,
+        cacheExeExists: false, cacheExeMtime: 2000,
+        cacheMetaExists: false, cacheMeta: null,
+        result: { success: true }, outputExists: true,
+        platform: 'linux', outputDirExists: true,
+        sourceChangesMidCompile: false, throwOn: null,
+        missingInput: false, missingCompiler: false
+    }, opts);
+    const logs = { info: [], warn: [], error: [] };
+    const writes = { copy: [], writeFile: [], mkdir: [], chmod: [], stat: [] };
+    // 跨类型的落盘顺序：只分开记 copy/writeFile 看不出「先 exe 后元数据」这个先后关系，
+    // 而那个先后正是中断时不留「有元数据却没产物」的有效假缓存的关键。
+    const seq = [];
+    const resolved = [];
+    const enoent = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    const inCacheDir = (p) => typeof p === 'string' && p.startsWith(CACHE_DIR + path.sep);
+    let inputStatCount = 0;
+    const fsStub = {
+        existsSync: (p) => {
+            if (p === o.inputFile) return !o.missingInput;
+            if (p === o.compilerPath) return !o.missingCompiler;
+            if (inCacheDir(p)) return p.endsWith('.oicpp-cache') ? o.cacheMetaExists : o.cacheExeExists;
+            if (p === path.dirname(o.outputFile)) return o.outputDirExists;
+            return false;
+        },
+        statSync: (p) => {
+            writes.stat.push(p);
+            if (p === o.inputFile) {
+                if (o.missingInput) throw enoent();
+                inputStatCount++;
+                // 「编译期间源文件变了」就是这么来的：第二次 stat 读到新的 size/mtime
+                const bump = o.sourceChangesMidCompile && inputStatCount > 1;
+                return { size: o.sourceSize + (bump ? 1 : 0), mtimeMs: o.sourceMtime + (bump ? 500 : 0) };
+            }
+            if (p === o.compilerPath) {
+                if (o.missingCompiler) throw enoent();
+                return { size: o.compilerSize, mtimeMs: o.compilerMtime };
+            }
+            if (inCacheDir(p)) return { size: 4096, mtimeMs: o.cacheExeMtime };
+            throw enoent();
+        },
+        readFileSync: (p) => {
+            if (inCacheDir(p) && o.cacheMeta !== null) return JSON.stringify(o.cacheMeta);
+            throw enoent();
+        },
+        copyFileSync: (a, b) => {
+            if (o.throwOn === 'copy') throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+            writes.copy.push([a, b]);
+            seq.push('copy');
+        },
+        writeFileSync: (p, content) => {
+            if (o.throwOn === 'write') throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+            writes.writeFile.push([p, String(content)]);
+            seq.push('writeFile');
+        },
+        mkdirSync: (p, options) => {
+            writes.mkdir.push([p, (options && options.recursive) === true]);
+            seq.push('mkdir');
+        },
+        chmodSync: (p, mode) => {
+            writes.chmod.push([p, mode]);
+            seq.push('chmod');
+        }
+    };
+    const ctx = vm.createContext({
+        Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Promise,
+        path, os: { homedir: () => HOME }, USER_DATA_DIR_NAME: '.oicpp-plus',
+        crypto: require('crypto'), process: { platform: o.platform, cwd: () => HOME },
+        fs: fsStub,
+        logInfo: (...a) => { logs.info.push(a.map((x) => String(x)).join(' ')); },
+        logWarn: (...a) => { logs.warn.push(a.map((x) => String(x)).join(' ')); },
+        logError: (...a) => { logs.error.push(a.map((x) => String(x)).join(' ')); },
+        resolve: (v) => { resolved.push(v); },
+        inputFile: o.inputFile, compilerPath: o.compilerPath, outputFile: o.outputFile,
+        workingDirectory: o.workingDirectory, parsedUserArgs: o.parsedUserArgs,
+        result: o.result, outputExists: o.outputExists
+    });
+    // 探针插在两段之间：命中时真代码走 resolve + return，探针就不会执行 ——
+    // 「命中后不再往下写」是跑出来的，不是数字数数出来的。
+    const readSrc = o.readBlock || cacheReadBlock;
+    vm.runInContext(`this.__run = function () {\n${readSrc}\n`
+        + 'this.__afterRead = { cacheExePath, cacheMetadataPath, record: compileCacheRecord };\n'
+        + `${cacheWriteBlock}\nthis.__done = true;\n};`, ctx);
+    let threw = null;
+    try {
+        ctx.__run();
+    } catch (error) {
+        threw = String((error && error.message) || error);
+    }
+    const after = ctx.__afterRead || null;
+    return {
+        threw, resolved, logs, writes, seq,
+        hit: !!resolved.length && resolved[0] && resolved[0].cached === true,
+        record: after && after.record ? after.record : null,
+        cacheExePath: after ? after.cacheExePath : null,
+        cacheMetadataPath: after ? after.cacheMetadataPath : null,
+        ranWriteBlock: ctx.__done === true
+    };
+};
+
+deferredChecks = Promise.all([deferredChecks, (async () => {
+    const rows = [];
+    const add = (name, cond, extra) => rows.push({ name, cond, extra: extra === undefined ? '' : JSON.stringify(extra) });
+    if (!cacheReadBlock || !cacheWriteBlock) {
+        rows.push({ name: '编译缓存守卫可执行', cond: false, extra: '两段真语句没抽出来' });
+        return rows;
+    }
+
+    const miss = runCache();
+    const sig = miss.record && miss.record.signature;
+    add('未命中时按 sha256 签名给缓存产物命名，落在独立的 compile-cache 目录里（不是 outputFile 旁边）',
+        /^[0-9a-f]{64}$/.test(String(sig)) && miss.cacheExePath === path.join(CACHE_DIR, sig + '.exe')
+            && miss.cacheMetadataPath === path.join(CACHE_DIR, sig + '.oicpp-cache'),
+        { sig, exe: miss.cacheExePath, meta: miss.cacheMetadataPath });
+    add('签名里不许掺 outputFile 这类每次不同的随机值（否则永远命中不了）',
+        miss.record && !Object.prototype.hasOwnProperty.call(miss.record, 'outputFile')
+            && miss.record.inputSize === 100 && miss.record.compilerMtimeMs === 800
+            && JSON.stringify(miss.record.compilerArgs) === JSON.stringify(['-O2', '-std=c++17'])
+            && miss.record.workingDirectory === path.resolve(path.join(HOME, 'work')),
+        miss.record);
+    add('编译成功：exe 与元数据都写进缓存目录，元数据就是那份签名记录',
+        miss.writes.copy.length === 1 && miss.writes.copy[0][0] === path.join(HOME, 'out', 'a_1700.exe')
+            && miss.writes.copy[0][1] === miss.cacheExePath
+            && miss.writes.writeFile.length === 1 && miss.writes.writeFile[0][0] === miss.cacheMetadataPath
+            && miss.writes.writeFile[0][1] === JSON.stringify(miss.record)
+            && miss.ranWriteBlock === true,
+        { copy: miss.writes.copy, writeFile: miss.writes.writeFile.map((w) => w[0]) });
+    add('缓存目录不存在时先 recursive 建目录（否则 copyFileSync 直接失败）',
+        miss.writes.mkdir.length === 1 && miss.writes.mkdir[0][0] === CACHE_DIR
+            && miss.writes.mkdir[0][1] === true, miss.writes.mkdir);
+
+    const sameOtherName = runCache({ outputFile: path.join(HOME, 'out', 'a_9999.exe') });
+    add('换了 outputFile 的名字签名不变（同一段源码第二次编译能命中）',
+        sameOtherName.record && sameOtherName.record.signature === sig
+            && sameOtherName.cacheExePath === path.join(CACHE_DIR, sig + path.extname(path.join(HOME, 'out', 'a_9999.exe'))),
+        { sig2: sameOtherName.record && sameOtherName.record.signature, exe: sameOtherName.cacheExePath });
+    const edited = runCache({ sourceSize: 101 });
+    add('源文件变一个字节签名就变（不复用旧产物）',
+        edited.record.signature !== sig, { old: sig.slice(0, 8), neo: edited.record.signature.slice(0, 8) });
+    const touched = runCache({ sourceMtime: 2000 });
+    add('源文件 mtime 变（size 没变）签名也变', touched.record.signature !== sig, touched.record.signature.slice(0, 8));
+    const otherCompiler = runCache({ compilerMtime: 900 });
+    add('编译器本体变了签名变（升级了 g++ 不能复用老产物）', otherCompiler.record.signature !== sig, '');
+    const biggerCompiler = runCache({ compilerSize: 501 });
+    add('编译器换了构建（mtime 没变、size 变了）签名也变', biggerCompiler.record.signature !== sig, '');
+    // 把源码里那个代际常量改成 3 再跑一遍：换了缓存格式，旧签名必须整体作废，
+    // 而不是只靠元数据里那个 cacheVersion 字段（签名本身就得跟着变）。
+    const gen3 = runCache({
+        readBlock: cacheReadBlock.replace('const compileCacheVersion = 2;', 'const compileCacheVersion = 3;')
+    });
+    add('缓存代际号进签名：compileCacheVersion 从 2 升到 3，所有签名都换（旧缓存整体失效）',
+        gen3.record && gen3.record.signature !== sig && /^[0-9a-f]{64}$/.test(gen3.record.signature),
+        { v2: sig.slice(0, 8), v3: gen3.record && gen3.record.signature.slice(0, 8) });
+    const otherArgs = runCache({ parsedUserArgs: ['-O2'] });
+    add('编译参数变了签名变（少了 -std=c++17 就是另一个产物）', otherArgs.record.signature !== sig, '');
+    const otherCwd = runCache({ workingDirectory: path.join(HOME, 'other') });
+    add('工作目录变了签名变（相对 include 会编出不同东西）', otherCwd.record.signature !== sig, '');
+    const noExt = runCache({ outputFile: path.join(HOME, 'out', 'a.out') });
+    const otherExt = runCache({ outputFile: path.join(HOME, 'out', 'a_bin') });
+    add('缓存 exe 跟产物扩展名走，没扩展名时退回 .exe',
+        noExt.cacheExePath.endsWith('.out') && otherExt.cacheExePath.endsWith('.exe'),
+        { out: noExt.cacheExePath.slice(-8), bin: otherExt.cacheExePath.slice(-8) });
+
+    const hit = runCache({
+        cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
+        cacheMeta: { cacheVersion: 2, signature: sig }
+    });
+    const OUT_EXE = path.join(HOME, 'out', 'a_1700.exe');
+    add('命中：resolve({success:true, cached:true}) 并把缓存产物拷到本次 outputFile',
+        hit.hit === true && hit.resolved.length === 1 && hit.resolved[0].exitCode === 0
+            && hit.writes.copy.length === 1 && hit.writes.copy[0][0] === path.join(CACHE_DIR, sig + '.exe')
+            && hit.writes.copy[0][1] === OUT_EXE, hit.writes.copy);
+    add('命中即返回：写缓存那段一行都不执行（不把刚复用的东西再写回去）',
+        hit.ranWriteBlock === false && hit.writes.writeFile.length === 0 && hit.writes.mkdir.length === 0, hit.logs);
+    add('命中记一条 info，且不带 warn/error（正常复用别刷屏）',
+        hit.logs.info.length === 1 && hit.logs.warn.length === 0 && hit.logs.error.length === 0, hit.logs);
+    const hitNoDir = runCache({
+        cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
+        cacheMeta: { cacheVersion: 2, signature: sig }, outputDirExists: false
+    });
+    add('命中时输出目录不在：先 recursive 建目录再拷（调用方拿到的路径一定存在）',
+        hitNoDir.writes.mkdir.length === 1 && hitNoDir.writes.mkdir[0][1] === true
+            && hitNoDir.writes.copy.length === 1, hitNoDir.writes);
+    const hitPosix = runCache({ cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000, cacheMeta: { cacheVersion: 2, signature: sig } });
+    const hitWin = runCache({
+        cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
+        cacheMeta: { cacheVersion: 2, signature: sig }, platform: 'win32'
+    });
+    add('非 Windows 补回可执行位（copyFileSync 不保留权限），Windows 上不 chmod',
+        hitPosix.writes.chmod.length === 1 && hitPosix.writes.chmod[0][0] === path.join(HOME, 'out', 'a_1700.exe')
+            && hitPosix.writes.chmod[0][1] === 0o755 && hitWin.writes.chmod.length === 0,
+        { posix: hitPosix.writes.chmod, win: hitWin.writes.chmod });
+    const staleHit = runCache({
+        cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 500,
+        cacheMeta: { cacheVersion: 2, signature: sig }
+    });
+    add('缓存 exe 比源文件还旧：不算命中，正常编译并覆盖写回（不返回过期产物）',
+        staleHit.hit === false && staleHit.resolved.length === 0
+            && staleHit.writes.copy.length === 1 && staleHit.writes.copy[0][0] === path.join(HOME, 'out', 'a_1700.exe'),
+        { copy: staleHit.writes.copy, hit: staleHit.hit });
+    for (const [name, opt] of [
+        ['缓存元数据不在（只有孤儿 exe）：不算命中', { cacheExeExists: true, cacheMetaExists: false }],
+        ['元数据版本号不匹配（旧版缓存）：不算命中', {
+            cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
+            cacheMeta: { cacheVersion: 1, signature: sig }
+        }],
+        ['元数据签名对不上（换机器/换编译器）：不算命中', {
+            cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
+            cacheMeta: { cacheVersion: 2, signature: 'f'.repeat(64) }
+        }]
+    ]) {
+        const r = runCache(opt);
+        add(name, r.hit === false && r.resolved.length === 0 && r.logs.error.length === 0
+            && r.writes.copy.length === 1 && r.writes.copy[0][0] === OUT_EXE
+            && r.writes.copy[0][1] === path.join(CACHE_DIR, sig + '.exe'),
+            { hit: r.hit, resolved: r.resolved.length, copy: r.writes.copy });
+    }
+    const failed = runCache({ result: { success: false }, outputExists: true });
+    const noOutput = runCache({ result: { success: true }, outputExists: false });
+    add('编译失败 / 产物不在：一个字节都不写进缓存（别把坏产物签成好的）',
+        failed.writes.copy.length === 0 && failed.writes.writeFile.length === 0
+            && noOutput.writes.copy.length === 0 && noOutput.writes.writeFile.length === 0,
+        { failed: failed.writes, noOutput: noOutput.writes });
+    const midChanged = runCache({ sourceChangesMidCompile: true });
+    add('编译期间源文件被改了：跳过写入并 warn 一条（存进去的签名对不上下次命中不了）',
+        midChanged.writes.copy.length === 0 && midChanged.writes.writeFile.length === 0
+            && midChanged.logs.warn.length === 1 && midChanged.threw === null, midChanged.logs);
+    const diskFull = runCache({ throwOn: 'copy' });
+    const writeFail = runCache({ throwOn: 'write' });
+    add('落盘失败只 warn，绝不影响编译结果（缓存是加速，不是正确性）',
+        diskFull.threw === null && diskFull.logs.warn.length === 1 && diskFull.logs.error.length === 0
+            && writeFail.threw === null && writeFail.logs.warn.length === 1,
+        { copy: diskFull.logs, write: writeFail.logs });
+    add('先落 exe 再落元数据：元数据写失败时最多留个没人认的孤儿 exe',
+        miss.seq.join('>') === 'mkdir>copy>writeFile'
+            && writeFail.writes.copy.length === 1 && writeFail.writes.writeFile.length === 0,
+        { seq: miss.seq, writeFail: writeFail.writes });
+    const broken = runCache({ missingInput: true });
+    const noCompiler = runCache({ missingCompiler: true });
+    add('源文件或编译器不在：不建签名记录、不外抛，安静走正常编译',
+        broken.record === null && broken.threw === null && broken.resolved.length === 0
+            && noCompiler.record === null && noCompiler.threw === null,
+        { broken: broken.logs, noCompiler: noCompiler.logs });
+    const statBoom = runCache({ cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000, cacheMeta: null });
+    add('读缓存元数据本身炸了：降级成 warn 继续正常编译（不是 error，也不静默）',
+        statBoom.threw === null && statBoom.logs.warn.length >= 1 && statBoom.hit === false, statBoom.logs);
+
+    return rows;
+})()]).then(([a, b]) => [...a, ...b]);
 
 // ---- 对拍器清理与完成日志 ----
 
