@@ -393,16 +393,29 @@ function ensureMarkdown(): any {
     return md;
 }
 
+// 渲染器不可用/抛错时绝不能把源文本原样交出去：消费方是 innerHTML
+// （tabs.ts 的 updateMarkdownPreview），正常路径的转义全靠 MarkdownIt 的 html:false，
+// 兜底一旦返回原文，用户写的 <img src=x onerror=...> 就从「文本」变成「真元素」。
+// & 必须先转，否则后面产出的 &lt; 会被二次转义成 &amp;lt;。
+function escapeMarkdownPlainText(text: string): string {
+    return String(text === undefined || text === null ? '' : text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 contextBridge.exposeInMainWorld('markdownAPI', {
     render: (text: string, filePath?: string): string => {
         const renderer = ensureMarkdown();
-        if (!renderer) return text;
+        if (!renderer) return `<pre class="markdown-plain">${escapeMarkdownPlainText(text)}</pre>`;
         try {
             const normalizedText = normalizeMarkdownMath(text || '');
             return renderer.render(normalizedText, { filePath });
         } catch (err) {
             console.error('Markdown render error:', err);
-            return text;
+            return `<pre class="markdown-plain">${escapeMarkdownPlainText(text)}</pre>`;
         }
     }
 });

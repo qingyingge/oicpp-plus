@@ -95,6 +95,54 @@ check('window 上没有直接被 preload 写进去的额外全局（require/proc
     global.window.process === undefined,
     JSON.stringify(Object.keys(global.window)));
 
+// 把 'markdown-it' 这条 require 换成「模块缺失」或「render 抛错」，再重跑一遍 preload。
+// 为什么要重跑：兜底分支在 render 里面，而首份 preload 用的是真 markdown-it，
+// 那个分支永远进不去 —— 只测得到主路径。每次重跑的模块级 md 缓存是新的，
+// ensureMarkdown 就会按当前桩重新失败一次。
+// body 必须在打桩窗口内跑完：ensureMarkdown 是惰性的，第一次 render 才去 require，
+// 出了窗口再调就换成真模块了（实测过这个坑，兜底分支根本没被走到）。
+// electron 桩必须整套独立：共享 ipcRenderer 的话，重复实例的日志批量定时器会往
+// 同一个 sent 数组里塞东西，把后面 P1 那几条「即时发送数」的计数搅脏。
+function withMarkdownStub(mode, body) {
+    const bag = {};
+    const isolatedStub = {
+        contextBridge: { exposeInMainWorld: (name, api) => { bag[name] = api; } },
+        ipcRenderer: {
+            send: () => { },
+            invoke: () => Promise.resolve({ ok: true }),
+            on: () => isolatedStub.ipcRenderer,
+            once: () => { },
+            removeListener: () => { },
+            removeAllListeners: () => { }
+        },
+        shell: electronStub.shell,
+        clipboard: { writeText: () => { }, readText: () => '' }
+    };
+    const prevLoad = Module._load;
+    Module._load = function (request, parent, isMain) {
+        if (request === 'electron') return isolatedStub;
+        if (request === 'markdown-it') {
+            if (mode === 'missing') throw new Error("Cannot find module 'markdown-it'");
+            const FakeMarkdownIt = function () {
+                this.renderer = { rules: {} };
+                this.utils = { escapeHtml: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;') };
+            };
+            FakeMarkdownIt.prototype.use = function () { return this; };
+            FakeMarkdownIt.prototype.render = function () { throw new Error('katex boom'); };
+            return FakeMarkdownIt;
+        }
+        return prevLoad.apply(this, arguments);
+    };
+    delete require.cache[PRELOAD];
+    try {
+        require(PRELOAD);
+        return body(bag);
+    } finally {
+        Module._load = prevLoad;
+        delete require.cache[PRELOAD];
+    }
+}
+
 // 扫描 renderer 实际使用的所有 send/invoke 通道
 const scanFiles = [];
 (function walk(d) {
@@ -262,6 +310,63 @@ check('preload 内部 invoke 通道全部通过白名单', blockedInternalInvoke
 
     // H9: Markdown 转义内联 HTML
     check('markdown 转义内联 HTML', !exposed.markdownAPI.render('a <b>b</b>').includes('<b>'));
+
+    // (ff) 兜底路径的转义。消费方是 tabs.ts 的 updateMarkdownPreview，它把返回值
+    // 直接交给 innerHTML；主路径的转义全靠 MarkdownIt 的 html:false，所以渲染器一缺失/
+    // 一抛错，兜底返回源文本就等于把用户写的 <img src=x onerror=...> 从文本升级成真元素。
+    {
+        const EVIL = '<img src=x onerror="alert(1)"><script>alert(2)</script>';
+        const errs = [];
+        const prevError = console.error;
+        let outMissing = '', outBroken = '', amp = '', empty = '';
+        let missingApi = null, brokenApi = null;
+        try {
+            console.error = (...a) => { errs.push(a.map((x) => String((x && x.message) || x)).join(' ')); };
+            const missingRun = withMarkdownStub('missing', (api) => {
+                missingApi = api.markdownAPI;
+                return {
+                    evil: api.markdownAPI.render(EVIL, '/tmp/doc.md'),
+                    amp: api.markdownAPI.render('a & b < c'),
+                    empty: api.markdownAPI.render(undefined)
+                };
+            });
+            outMissing = missingRun.evil;
+            amp = missingRun.amp;
+            empty = missingRun.empty;
+            outBroken = withMarkdownStub('broken', (api) => {
+                brokenApi = api.markdownAPI;
+                return api.markdownAPI.render(EVIL, '/tmp/doc.md');
+            });
+        } finally {
+            console.error = prevError;
+        }
+        check('markdown-it 缺失时不再原样返回源文本',
+            outMissing !== EVIL && !outMissing.includes('<img') && !outMissing.includes('<script'),
+            JSON.stringify(outMissing).slice(0, 100));
+        check('markdown-it 缺失：< 与 " 被转义成实体',
+            outMissing.includes('&lt;img') && outMissing.includes('&quot;alert(1)&quot;'),
+            JSON.stringify(outMissing).slice(0, 100));
+        check('渲染器抛错走同一条转义兜底',
+            outBroken.includes('&lt;img') && !outBroken.includes('<img'),
+            JSON.stringify(outBroken).slice(0, 100));
+        check('兜底保留正文，用户至少看得见自己写了什么',
+            outMissing.includes('src=x') && outBroken.includes('src=x'), '');
+        check('& 先转义：产出的一次实体不会被二次转义',
+            amp.includes('&amp;') && amp.includes('&lt;') &&
+            !amp.includes('&amp;lt;') && !amp.includes('&amp;amp;'), amp);
+        check('undefined 输入不炸，兜底成空段落',
+            empty === '<pre class="markdown-plain"></pre>', JSON.stringify(empty));
+        check('兜底不是静默降级：失败原因仍写进 console',
+            errs.some((e) => e.includes('markdown-it')) &&
+            errs.some((e) => e.includes('Markdown render error')),
+            JSON.stringify(errs.map((e) => e.slice(0, 30))));
+        check('重跑 preload 没吃掉主路径：渲染器可用时仍输出真 HTML',
+            exposed.markdownAPI.render('# 标题', '/tmp/x.md').includes('<h1'), '');
+        check('独立袋子加载不动首份 exposed',
+            missingApi && brokenApi && missingApi !== exposed.markdownAPI &&
+            Object.keys(exposed).sort().join(',') === EXPOSED_GLOBALS.join(','),
+            Object.keys(exposed).sort().join(','));
+    }
 
     // P1: 渲染进程日志合并成批发送，不再每条一次 IPC
     const logSendsBefore = sent.length;
