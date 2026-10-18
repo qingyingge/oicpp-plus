@@ -2,7 +2,7 @@
 // exposeInMainWorld('electronAPI', {...}) 块，改 preload 时同步更新。
 // 批3：参数已按实现收窄（路径 string、载荷 unknown/Record、回调按 unwrap 形状）；
 // 批4：返回值已收窄（invoke → Promise<unknown>、订阅类 → 解订阅 () => void、send → void）。
-type AppSettings = InstanceType<typeof import('../js/main.js')>['settings'];
+// AppSettings 是 main.ts 里的全局 interface，这里直接用。
 
 // preload 幂等守卫标记：同一上下文重复求值时不重复绑定 IPC（preload.ts 是 CommonJS 脚本，不能 declare global）
 var __oicppPreloadInitialized: boolean | undefined;

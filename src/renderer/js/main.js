@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.OICPPApp = void 0;
 class OICPPApp {
     currentFile;
     files;
@@ -51,6 +49,7 @@ class OICPPApp {
             autoBackupSettings: false
         };
         this.editorManager = null;
+        this.compilerManager = null;
         this.initialized = false;
         this.accountLoggedIn = false;
         this.accountInfo = null;
@@ -1286,8 +1285,8 @@ class OICPPApp {
                 return handle(() => this.compileCode());
             if (matches('runAllSamples'))
                 return handle(() => this.runAllSamples());
-            if (false && matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                return handle(() => this.compilerManager.cloudCompileCurrentFile());
+            if (false && matches('cloudCompile') && typeof this.compilerManager?.cloudCompileCurrentFile === 'function') {
+                return handle(() => this.compilerManager?.cloudCompileCurrentFile?.());
             }
             if (matches('openTerminal'))
                 return handle(() => this.openIntegratedTerminal());
@@ -1316,7 +1315,7 @@ class OICPPApp {
             };
             logInfo(`全局Ctrl+Z事件被检测到，目标元素:`, targetInfo);
             logInfo(`当前活跃编辑器:`, currentEditorInfo);
-            logInfo(`当前标签页ID:`, this.editorManager ? this.editorManager.currentTabId : '无');
+            logInfo(`当前标签页ID:`, window.tabManager?.activeTabKey || '无');
         }
         if ((e.ctrlKey || e.metaKey) && !e.altKey) {
             if (e.shiftKey && key === 'n') {
@@ -1358,8 +1357,8 @@ class OICPPApp {
                 return handle(() => this.compileCode());
             if (matches('runAllSamples'))
                 return handle(() => this.runAllSamples());
-            if (false && matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                return handle(() => this.compilerManager.cloudCompileCurrentFile());
+            if (false && matches('cloudCompile') && typeof this.compilerManager?.cloudCompileCurrentFile === 'function') {
+                return handle(() => this.compilerManager?.cloudCompileCurrentFile?.());
             }
             if (matches('openTerminal'))
                 return handle(() => this.openIntegratedTerminal());
@@ -1855,7 +1854,8 @@ class OICPPApp {
                     const reader = new FileReader();
                     reader.onload = (event) => {
                         if (this.editorManager) {
-                            this.editorManager.openFile(file.name, event.target?.result);
+                            const content = typeof event.target?.result === 'string' ? event.target.result : '';
+                            this.editorManager.openFile(file.name, content);
                         }
                     };
                     reader.readAsText(file);
@@ -2126,7 +2126,7 @@ class OICPPApp {
                             try {
                                 const ed = this.editorManager.currentEditor;
                                 ed.filePath = newPath;
-                                ed.getFilePath = () => ed.filePath;
+                                ed.getFilePath = () => ed.filePath ?? null;
                             }
                             catch (_) { }
                             try {
@@ -2944,10 +2944,13 @@ class OICPPApp {
     }
     highlightCurrentLine(file, line) {
         try {
+            const lineNumber = Number(line);
+            if (!Number.isFinite(lineNumber))
+                return;
             if (window.editorManager && window.editorManager.currentEditor) {
                 const currentEditor = window.editorManager.currentEditor;
                 if (currentEditor.highlightLine) {
-                    currentEditor.highlightLine(line);
+                    currentEditor.highlightLine(lineNumber);
                 }
             }
         }
@@ -3813,7 +3816,8 @@ class OICPPApp {
             const language = statusBar.querySelector('.language');
             if (this.editorManager && this.editorManager.currentEditor) {
                 const editor = this.editorManager.currentEditor;
-                const pos = editor.cursorPosition || { line: 1, column: 1 };
+                const position = editor.getPosition();
+                const pos = position ? { line: position.lineNumber, column: position.column } : { line: 1, column: 1 };
                 if (cursor)
                     cursor.textContent = `${window.i18n.t('cloudCompile.line', { line: pos.line })}, ${window.i18n.t('cloudCompile.column', { col: pos.column })}`;
                 if (encoding)
@@ -4026,7 +4030,7 @@ class OICPPApp {
     }
     showFindReplace() {
         if (this.editorManager && this.editorManager.currentEditor) {
-            this.editorManager.currentEditor.trigger('keyboard', 'actions.find');
+            this.editorManager.currentEditor.trigger('keyboard', 'actions.find', undefined);
         }
     }
     compileAndRun() {
@@ -4332,7 +4336,6 @@ class OICPPApp {
         }
     }
 }
-exports.OICPPApp = OICPPApp;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = OICPPApp;
 }

@@ -1,46 +1,6 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.MonacoEditorManager = void 0;
 // lsp-start 失败后的重试冷却期：避免每个 LSP 特性请求都重新发起一次启动 IPC
 const LSP_START_RETRY_COOLDOWN_MS = 3000;
-/// <reference types="monaco-editor" />
-/// <reference path="../../types/global.d.ts" />
-// monaco 全局变量由 AMD loader 注入，同时导入类型用于类型检查
-// 类型扩展在 types/monaco-augmentation.d.ts 中定义
-const monaco = __importStar(require("monaco-editor"));
 class MonacoEditorManager {
     currentEditor;
     editors;
@@ -4346,10 +4306,10 @@ class MonacoEditorManager {
                     if (allSettings) {
                         currentTheme = allSettings.theme || 'dark';
                         if (allSettings.fontSize) {
-                            fontSize = parseInt(allSettings.fontSize);
+                            fontSize = parseInt(String(allSettings.fontSize));
                         }
-                        if (typeof allSettings.lineHeight === 'number' && allSettings.lineHeight > 0) {
-                            lineHeightSetting = allSettings.lineHeight;
+                        if (typeof allSettings['lineHeight'] === 'number' && allSettings['lineHeight'] > 0) {
+                            lineHeightSetting = allSettings['lineHeight'];
                         }
                         if (allSettings.font) {
                             if (window.fontDetector) {
@@ -4366,8 +4326,8 @@ class MonacoEditorManager {
                         }
                         foldingEnabled = allSettings.foldingEnabled !== false;
                         stickyScrollEnabled = allSettings.stickyScrollEnabled !== false;
-                        fontLigaturesEnabled = allSettings.fontLigaturesEnabled !== false;
-                        unifiedPreprocessorColor = !!allSettings.unifiedPreprocessorColor;
+                        fontLigaturesEnabled = allSettings['fontLigaturesEnabled'] !== false;
+                        unifiedPreprocessorColor = !!allSettings['unifiedPreprocessorColor'];
                         this.unifiedPreprocessorColor = unifiedPreprocessorColor;
                         autoCompletionEnabled = allSettings.enableAutoCompletion !== false;
                         this._syntaxCheckEnabled = allSettings.syntaxCheckEnabled !== false;
@@ -4379,7 +4339,7 @@ class MonacoEditorManager {
                             syntaxFontStyles: this.syntaxStyles,
                             syntaxColors: allSettings.syntaxColors
                         };
-                        const parsedTabSize = parseInt(allSettings.tabSize, 10);
+                        const parsedTabSize = parseInt(String(allSettings.tabSize), 10);
                         if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
                             tabSize = parsedTabSize;
                         }
@@ -9212,7 +9172,6 @@ class MonacoEditorManager {
         return result;
     }
 }
-exports.MonacoEditorManager = MonacoEditorManager;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = MonacoEditorManager;
 }

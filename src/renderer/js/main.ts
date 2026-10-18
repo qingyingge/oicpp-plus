@@ -2,12 +2,6 @@ declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
 
-declare global {
-    interface Window {
-        folderPicker: { show: (opts?: { startPath?: string }) => Promise<string | null> };
-    }
-}
-
 interface AppSettings {
     theme: string;
     fontSize: number;
@@ -24,6 +18,8 @@ interface AppSettings {
     glassEffectEnabled: boolean;
     compilerPath: string;
     compilerArgs: string;
+    pythonInterpreterPath?: string;
+    testlibPath?: string;
     cppTemplate: string;
     codeSnippets?: Array<{ keyword?: string; description?: string; content?: string }>;
     autoBackupSettings?: boolean;
@@ -156,7 +152,7 @@ interface PdfResolution {
 
 type I18nParams = Record<string, unknown> | undefined;
 
-export class OICPPApp {
+class OICPPApp {
     currentFile: string | null;
     files: Map<string, unknown>;
     settings: AppSettings;
@@ -219,6 +215,7 @@ export class OICPPApp {
             autoBackupSettings: false
         };
         this.editorManager = null;
+        this.compilerManager = null;
         this.initialized = false;
         this.accountLoggedIn = false;
         this.accountInfo = null;
@@ -1532,8 +1529,8 @@ export class OICPPApp {
             if (matches('runCode') && !this.isDebugging) return handle(() => this.runCode());
             if (matches('compileCode')) return handle(() => this.compileCode());
             if (matches('runAllSamples')) return handle(() => this.runAllSamples());
-            if (false && matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                return handle(() => this.compilerManager.cloudCompileCurrentFile());
+            if (false && matches('cloudCompile') && typeof this.compilerManager?.cloudCompileCurrentFile === 'function') {
+                return handle(() => this.compilerManager?.cloudCompileCurrentFile?.());
             }
             if (matches('openTerminal')) return handle(() => this.openIntegratedTerminal());
 
@@ -1563,7 +1560,7 @@ export class OICPPApp {
             };
             logInfo(`全局Ctrl+Z事件被检测到，目标元素:`, targetInfo);
             logInfo(`当前活跃编辑器:`, currentEditorInfo);
-            logInfo(`当前标签页ID:`, this.editorManager ? this.editorManager.currentTabId : '无');
+            logInfo(`当前标签页ID:`, window.tabManager?.activeTabKey || '无');
         }
         
         if ((e.ctrlKey || e.metaKey) && !e.altKey) {
@@ -1598,8 +1595,8 @@ export class OICPPApp {
             if (matches('runCode') && !this.isDebugging) return handle(() => this.runCode());
             if (matches('compileCode')) return handle(() => this.compileCode());
             if (matches('runAllSamples')) return handle(() => this.runAllSamples());
-            if (false && matches('cloudCompile') && this.compilerManager && typeof this.compilerManager.cloudCompileCurrentFile === 'function') {
-                return handle(() => this.compilerManager.cloudCompileCurrentFile());
+            if (false && matches('cloudCompile') && typeof this.compilerManager?.cloudCompileCurrentFile === 'function') {
+                return handle(() => this.compilerManager?.cloudCompileCurrentFile?.());
             }
             if (matches('openTerminal')) return handle(() => this.openIntegratedTerminal());
         }
@@ -1630,7 +1627,7 @@ export class OICPPApp {
         }
     }
 
-    async openDroppedFile(file: { name?: string; path?: string; text?: () => Promise<string> } | File | null, options: { filePath?: string; fileName?: string; base64Data?: string; groupId?: string } = {}) {
+    async openDroppedFile(file: { name?: string; path?: string; text?: () => Promise<string> } | File | null, options: { filePath?: string | null; fileName?: string | null; base64Data?: string | null; groupId?: string | null } = {}) {
         if (!file && !options?.filePath) {
         return;
         }
@@ -2120,7 +2117,8 @@ export class OICPPApp {
                     const reader = new FileReader();
                     reader.onload = (event) => {
                         if (this.editorManager) {
-                            this.editorManager.openFile(file.name, event.target?.result);
+                            const content = typeof event.target?.result === 'string' ? event.target.result : '';
+                            this.editorManager.openFile(file.name, content);
                         }
                     };
                     reader.readAsText(file);
@@ -2411,7 +2409,7 @@ export class OICPPApp {
                             try {
                                 const ed = this.editorManager.currentEditor;
                                 ed.filePath = newPath;
-                                ed.getFilePath = () => ed.filePath;
+                                ed.getFilePath = () => ed.filePath ?? null;
                             } catch (_) {}
                             try { window.tabManager?.updateTabPathBySource(null, newPath); } catch (_) {}
                             if (window.tabManager) {
@@ -3281,10 +3279,12 @@ export class OICPPApp {
 
     highlightCurrentLine(file: string | undefined, line: string | number | undefined) {
         try {
+            const lineNumber = Number(line);
+            if (!Number.isFinite(lineNumber)) return;
             if (window.editorManager && window.editorManager.currentEditor) {
                 const currentEditor = window.editorManager.currentEditor;
                 if (currentEditor.highlightLine) {
-                    currentEditor.highlightLine(line);
+                    currentEditor.highlightLine(lineNumber);
             }
             }
         } catch (error) {
@@ -4212,7 +4212,8 @@ export class OICPPApp {
             
             if (this.editorManager && this.editorManager.currentEditor) {
                 const editor = this.editorManager.currentEditor;
-                const pos = editor.cursorPosition || { line: 1, column: 1 };
+                const position = editor.getPosition();
+                const pos = position ? { line: position.lineNumber, column: position.column } : { line: 1, column: 1 };
                 
                 if (cursor) cursor.textContent = `${window.i18n.t('cloudCompile.line', { line: pos.line })}, ${window.i18n.t('cloudCompile.column', { col: pos.column })}`;
                 if (encoding) encoding.textContent = 'UTF-8';
@@ -4433,7 +4434,7 @@ export class OICPPApp {
 
     showFindReplace() {
         if (this.editorManager && this.editorManager.currentEditor) {
-            this.editorManager.currentEditor.trigger('keyboard', 'actions.find');
+            this.editorManager.currentEditor.trigger('keyboard', 'actions.find', undefined);
         }
     }
 

@@ -451,10 +451,11 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
 
         const runLoad = async (opts = {}) => {
             const writes = [];
-            const renames = [];
-            const tag = (name) => (n, m) => renames.push(`${n}|${m}`);
-            const editorA = { tag: 'A', updateFileName: tag('A') };
-            const editorB = { tag: 'B', updateFileName: tag('B') };
+            // editorA/editorB 是两个可区分的编辑器实例，用于验证「await 期间切走了就不能写」；
+            // 曾经还挂过 updateFileName 桩，但全仓没有任何地方定义过 editor.updateFileName，
+            // 那两处调用一直是死代码，随 ts 迁移删除，这里不再断言「文件名补挂」
+            const editorA = { tag: 'A' };
+            const editorB = { tag: 'B' };
             const tab = {
                 uniqueKey: opts.noKey ? undefined : '/abs/a.cpp',
                 filePath: '/abs/a.cpp', fileName: 'a.cpp',
@@ -476,9 +477,8 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
                 electronAPI: { readFileContent: () => { readCalls++; return gate; } }
             };
             loadFileContentToEditor.call(self, 'a.cpp', tab);
-            const baseRenames = renames.length;
             return {
-                tab, self, writes, renames, editorA, editorB, baseRenames,
+                tab, self, writes, editorA, editorB,
                 get readCalls() { return readCalls; },
                 finish: async (content) => { resolveRead(content); await settle(); },
                 fail: async (error) => { rejectRead(error); await settle(); }
@@ -489,10 +489,9 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
         await ok.finish('DATA');
         check('正常回写：内容进编辑器并标记已保存',
             JSON.stringify(ok.writes) === '["DATA|true"]', JSON.stringify(ok.writes));
-        check('正常回写：tab 缓存同步、modified 复位、文件名补挂',
-            ok.tab.content === 'DATA' && ok.tab.modified === false
-            && ok.renames.length === ok.baseRenames + 1,
-            JSON.stringify({ content: ok.tab.content, modified: ok.tab.modified, renames: ok.renames }));
+        check('正常回写：tab 缓存同步、modified 复位',
+            ok.tab.content === 'DATA' && ok.tab.modified === false,
+            JSON.stringify({ content: ok.tab.content, modified: ok.tab.modified }));
         check('读完后清除 isLoading，避免下次切回被永久跳过',
             ok.tab.isLoading === false, String(ok.tab.isLoading));
 

@@ -18,6 +18,7 @@ declare module 'monaco-editor/editor/editor.api' {
       onDidType?: (listener: (text: string) => void) => IDisposable;
       __markdownPreviewContextKey?: { set: (value: boolean) => void };
       // 自定义运行时属性
+      highlightLine?: (line: number) => void;
       clearExecHighlight?: () => void;
       __breakpointDecos?: string[];
       __isDiffEditor?: boolean;
@@ -37,6 +38,11 @@ declare module 'monaco-editor/editor/editor.api' {
       __ctrlClickNavigationListener?: IDisposable;
       // 键盘快捷键相关
       __enhancedCompletionRegistered?: boolean;
+      // Markdown 预览同步（tabs.ts 挂载在编辑器实例上）
+      _markdownLiveTimer?: ReturnType<typeof setTimeout> | null;
+      _markdownPreviewSyncTimer?: ReturnType<typeof setTimeout> | null;
+      _markdownListenerAttached?: boolean;
+      _markdownPreviewSyncAttached?: boolean;
       // 字体缩放相关
       hasWheelZoomListener?: boolean;
       hasGlobalWheelZoomListener?: boolean;
@@ -57,11 +63,11 @@ declare module 'monaco-editor/editor/editor.api' {
 
     // Diff 编辑器创建选项
     interface CreateDiffEditorOptions {
-      groupId?: string;
+      groupId?: string | null;
       targetGroupId?: string;
       originalPath?: string;
       modifiedPath?: string;
-      label?: string;
+      label?: string | null;
       originalContent?: string;
       modifiedContent?: string;
       originalFileName?: string;
@@ -121,7 +127,7 @@ declare module 'monaco-editor/editor/editor.api' {
       startY?: number;
       isDirty?: boolean;
       element?: HTMLElement;
-      groupId?: string;
+      groupId?: string | null;
       content?: string;
       active?: boolean;
       externalChangeTimestamp?: number;

@@ -4,7 +4,7 @@ declare function logWarn(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
 
 /** 编译管理器持有的编译器设置（全量形状）。 */
-interface CompilerSettingsState {
+interface CompileRunSettings {
     compilerPath: string;
     compilerArgs: string;
     runMode: string;
@@ -12,7 +12,7 @@ interface CompilerSettingsState {
 }
 
 /** settings-changed 载荷里可能只带其中几项。 */
-type CompilerSettingsPatch = Partial<CompilerSettingsState>;
+type CompilerSettingsPatch = Partial<CompileRunSettings>;
 
 /** IPC 监听器形状：与 preload 的 onSettingsChanged 回调一致。 */
 type SettingsChangedListener = (
@@ -24,19 +24,11 @@ type SettingsChangedListener = (
 /** monaco 诊断标记（类型别名会被完全擦除）。 */
 type MonacoMarker = import('monaco-editor').editor.IMarker;
 
-/** 报错解析卡片消费的单个诊断。 */
-interface AnalysisDiagnostic {
-    raw?: string;
-    message?: string;
-    severity?: string;
-    file?: string;
-    line?: number;
-    column?: number;
-}
-
 /** renderSmartAnalysis / buildAnalysisItems 的入参形状。 */
 interface AnalysisPayload {
-    diagnostics?: AnalysisDiagnostic[];
+    // 诊断行的统一形状见 monaco-editor-manager.ts 的 CompilerDiagnosticInput
+    // （sampleTester / codeComparer / compile-file IPC 都往里送 line/column 为字符串或数字的原始行）
+    diagnostics?: CompilerDiagnosticInput[];
     errors?: unknown[];
     warnings?: unknown[];
     stderr?: string;
@@ -71,8 +63,8 @@ interface ErrorLike {
     message?: string;
 }
 
-export class CompilerManager {
-    settings: CompilerSettingsState;
+class CompilerManager {
+    settings: CompileRunSettings;
     isCompiling: boolean;
     isRunning: boolean;
     compileOutput: HTMLDivElement | null;

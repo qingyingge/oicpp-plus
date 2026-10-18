@@ -3377,7 +3377,7 @@ class SampleTester {
         const manager = window.compilerManager;
         if (!manager)
             return;
-        if (typeof manager.showExternalCompileResult === 'function') {
+        if (result && typeof manager.showExternalCompileResult === 'function') {
             manager.showExternalCompileResult(result, { title });
             return;
         }

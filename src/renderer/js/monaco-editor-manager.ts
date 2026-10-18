@@ -4,9 +4,8 @@ const LSP_START_RETRY_COOLDOWN_MS = 3000;
 /// <reference types="monaco-editor" />
 /// <reference path="../../types/global.d.ts" />
 
-// monaco 全局变量由 AMD loader 注入，同时导入类型用于类型检查
+// monaco 全局变量由 AMD loader 注入；类型经 src/types/monaco-umd.d.ts 挂成全局命名空间
 // 类型扩展在 types/monaco-augmentation.d.ts 中定义
-import * as monaco from 'monaco-editor';
 
 interface LSPClient {
     restart: (options: { workspaceRoot: string; rootUri: string; workspaceName: string; compileFlags: string; compilerPath: string }) => Promise<boolean | void>;
@@ -44,6 +43,20 @@ interface LSPClient {
     request: (method: string, params: unknown, token?: monaco.CancellationToken) => Promise<unknown>;
     getSemanticTokensLegend: () => { tokenTypes: string[]; tokenModifiers: string[] } | undefined;
     _ready?: boolean;
+}
+
+// 语法着色入口的载荷：既接已规范化的结构，也接 settings 里原始的一层 unknown。
+type SyntaxColorPayload = {
+    syntaxColorsByTheme?: Record<string, unknown>;
+    syntaxFontStyles?: Record<string, unknown>;
+    syntaxColors?: Record<string, unknown>;
+};
+
+interface LspGuardDetails {
+    fileName: string;
+    line: number | null | undefined;
+    reason: string;
+    message: string;
 }
 
 interface LspDocumentSafety {
@@ -288,7 +301,7 @@ type LspSemanticTokensResult = {
     resultId?: string;
 };
 
-export class MonacoEditorManager {
+class MonacoEditorManager {
     currentEditor: monaco.editor.IStandaloneCodeEditor | null;
     editors: Map<string, monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor>;
     isInitialized: boolean;
@@ -354,7 +367,7 @@ export class MonacoEditorManager {
     _lspCommandArguments: Map<string, unknown>;
     _lspProvidersReady: boolean;
     _lspGuardedModels: WeakSet<monaco.editor.ITextModel>;
-    _lspGuardDetails: WeakMap<monaco.editor.ITextModel, unknown>;
+    _lspGuardDetails: WeakMap<monaco.editor.ITextModel, LspGuardDetails>;
     lspClient: LSPClient | null;
     _onMonacoContextMenuPasteCapture: ((event: Event) => void) | null;
     _themesDefined?: boolean;
@@ -418,7 +431,7 @@ export class MonacoEditorManager {
         this._lspCommandArguments = new Map<string, unknown>();
         this._lspProvidersReady = false;
         this._lspGuardedModels = new WeakSet<monaco.editor.ITextModel>();
-        this._lspGuardDetails = new WeakMap<monaco.editor.ITextModel, unknown>();
+        this._lspGuardDetails = new WeakMap<monaco.editor.ITextModel, LspGuardDetails>();
         this.lspClient = (window.lspClient as unknown as LSPClient) || null;
         this.setupLspIntegration();
         this._onMonacoContextMenuPasteCapture = this.handleMonacoContextMenuPasteCapture.bind(this);
@@ -3560,7 +3573,7 @@ export class MonacoEditorManager {
         }
     }
 
-    getThemeSyntaxOverride(theme: string, syntaxSettings: { syntaxColorsByTheme?: Record<string, Record<string, string>>; syntaxFontStyles?: Record<string, Record<string, string>>; syntaxColors?: Record<string, string> } = {}) {
+    getThemeSyntaxOverride(theme: string, syntaxSettings: SyntaxColorPayload = {}) {
         const themeKey = this.normalizeThemeKey(theme);
         const hasColorByThemeInPayload = !!(syntaxSettings && syntaxSettings.syntaxColorsByTheme !== undefined);
         const hasGlobalStyleInPayload = !!(syntaxSettings && syntaxSettings.syntaxFontStyles !== undefined);
@@ -4579,10 +4592,10 @@ export class MonacoEditorManager {
             let tabSize = 4;
             let autoCompletionEnabled = true;
             let lineHeightSetting = 0;
-            let syntaxSettings = {
+            let syntaxSettings: SyntaxColorPayload = {
                 syntaxColorsByTheme: this.syntaxColorsByTheme,
                 syntaxFontStyles: this.syntaxStyles,
-                syntaxColors: undefined as Record<string, string> | undefined
+                syntaxColors: undefined
             };
             try {
                 if (window.electronAPI && window.electronAPI.getAllSettings) {
@@ -4590,10 +4603,10 @@ export class MonacoEditorManager {
                     if (allSettings) {
                         currentTheme = allSettings.theme || 'dark';
                         if (allSettings.fontSize) {
-                            fontSize = parseInt(allSettings.fontSize);
+                            fontSize = parseInt(String(allSettings.fontSize));
                         }
-                        if (typeof allSettings.lineHeight === 'number' && allSettings.lineHeight > 0) {
-                            lineHeightSetting = allSettings.lineHeight;
+                        if (typeof allSettings['lineHeight'] === 'number' && allSettings['lineHeight'] > 0) {
+                            lineHeightSetting = allSettings['lineHeight'];
                         }
                         if (allSettings.font) {
                             if (window.fontDetector) {
@@ -4609,8 +4622,8 @@ export class MonacoEditorManager {
                         }
                         foldingEnabled = allSettings.foldingEnabled !== false;
                         stickyScrollEnabled = allSettings.stickyScrollEnabled !== false;
-                        fontLigaturesEnabled = allSettings.fontLigaturesEnabled !== false;
-                        unifiedPreprocessorColor = !!allSettings.unifiedPreprocessorColor;
+                        fontLigaturesEnabled = allSettings['fontLigaturesEnabled'] !== false;
+                        unifiedPreprocessorColor = !!allSettings['unifiedPreprocessorColor'];
                         this.unifiedPreprocessorColor = unifiedPreprocessorColor;
                         autoCompletionEnabled = allSettings.enableAutoCompletion !== false;
                         this._syntaxCheckEnabled = allSettings.syntaxCheckEnabled !== false;
@@ -4622,7 +4635,7 @@ export class MonacoEditorManager {
                             syntaxFontStyles: this.syntaxStyles,
                             syntaxColors: allSettings.syntaxColors
                         };
-                        const parsedTabSize = parseInt(allSettings.tabSize, 10);
+                        const parsedTabSize = parseInt(String(allSettings.tabSize), 10);
                         if (!Number.isNaN(parsedTabSize) && parsedTabSize > 0) {
                             tabSize = parsedTabSize;
                         }

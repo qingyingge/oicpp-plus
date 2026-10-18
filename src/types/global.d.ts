@@ -7,12 +7,8 @@ declare function logError(...args: unknown[]): void;
 declare function logwarn(...args: unknown[]): void;
 declare function logerror(...args: unknown[]): void;
 
-// Monaco AMD loader 注入（monaco-editor 自带完整 ESM 类型）
-declare const monaco: typeof import('monaco-editor');
+// Monaco 全局（AMD loader 注入）的类型见 src/types/monaco-umd.d.ts
 // 渲染层 manager 单例：类在各文件顶层声明，本身就是全局，无需 ambient declare
-declare const OICPPApp: typeof import('../js/main.js');
-declare const MonacoEditorManager: typeof import('../js/monaco-editor-manager.js');
-declare const CompilerManager: typeof import('../js/compile-manager.js');
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
 declare function require(moduleName: string): any;
 // 注：删掉此行会让 @types/node 合并进 Window.require 的 Require 形状激活（cache/extensions/main/resolve 必填），
@@ -127,10 +123,10 @@ interface Window {
   browserManager: BrowserManager;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;
   cloudSyncPanel: CloudSyncPanel;
-  editorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
-  monacoEditorManager: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
-  compilerManager: InstanceType<typeof import('../js/compile-manager.js')>;
-  oicppApp: InstanceType<typeof OICPPApp>;
+  editorManager: MonacoEditorManager;
+  monacoEditorManager: MonacoEditorManager;
+  compilerManager: CompilerManager;
+  oicppApp: OICPPApp;
   OICPPApp: typeof OICPPApp;
   MonacoEditorManager: typeof MonacoEditorManager;
   CompilerManager: typeof CompilerManager;
@@ -140,7 +136,7 @@ interface Window {
   sidebar?: SidebarManager;
   fileExplorer?: unknown;
   app?: {
-    editorManager?: InstanceType<typeof import('../js/monaco-editor-manager.js')>;
+    editorManager?: MonacoEditorManager;
     fileExplorer?: unknown;
     isDebugging?: boolean;
     startDebug?: () => void;

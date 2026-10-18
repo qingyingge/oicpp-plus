@@ -217,69 +217,6 @@ interface ReloadOptions {
     force?: boolean;
 }
 
-interface MonacoDisposable {
-    dispose: () => void;
-}
-
-interface MonacoScrollEvent {
-    scrollTop?: number;
-    scrollHeight?: number;
-    scrollLeft?: number;
-    viewHeight?: number;
-    [key: string]: unknown;
-}
-
-interface MonacoTextModel {
-    getValue: () => string;
-    setValue: (value: string) => void;
-    [key: string]: unknown;
-}
-
-interface MonacoEditorHandle {
-    filePath?: string | null;
-    fileName?: string | null;
-    getValue: () => string;
-    setValue: (...args: unknown[]) => void;
-    getModel: () => MonacoTextModel | null;
-    saveViewState: () => unknown;
-    restoreViewState: (state: unknown) => void;
-    pushUndoStop: () => unknown;
-    layout: () => void;
-    focus: () => void;
-    getFilePath: () => string | null;
-    updateFileName: (...args: unknown[]) => void;
-    onDidChangeModelContent: (cb: (...args: unknown[]) => void) => MonacoDisposable;
-    onDidScrollChange: (cb: (e: MonacoScrollEvent) => void) => MonacoDisposable;
-    _markdownLiveTimer?: number | null;
-    _markdownPreviewSyncTimer?: number | null;
-    _markdownListenerAttached?: boolean;
-    _markdownPreviewSyncAttached?: boolean;
-    [key: string]: unknown;
-}
-
-interface EditorManagerLike {
-    editors: Map<string | null | undefined, MonacoEditorHandle>;
-    groupActiveTab: Map<string | null | undefined, string | null | undefined>;
-    currentEditor: MonacoEditorHandle | null;
-    currentFilePath: string | null;
-    currentFileName: string | null;
-    registerGroup: (...args: unknown[]) => void;
-    unregisterGroup: (...args: unknown[]) => void;
-    moveEditorToGroup: (...args: unknown[]) => void;
-    switchTab: (...args: unknown[]) => unknown;
-    showDiffEditor: (...args: unknown[]) => unknown;
-    createDiffEditor: (...args: unknown[]) => unknown;
-    createNewEditor: (...args: unknown[]) => unknown;
-    generateTabId: (...args: unknown[]) => string;
-    getSelectedText: (...args: unknown[]) => string;
-    insertText: (...args: unknown[]) => void;
-    saveFile: (...args: unknown[]) => unknown;
-    cleanupEditor: (...args: unknown[]) => void;
-    updateAllEditorsSettings: (...args: unknown[]) => void;
-    updateSettings: (...args: unknown[]) => void;
-    [key: string]: unknown;
-}
-
 interface HTMLElement {
     _editorDnDBound?: boolean;
     _tabBarEventsBound?: boolean;
@@ -302,7 +239,7 @@ class TabManager {
     activeTab: TabRecord | string | null;
     activeTabKey: string | null;
     tabOrder: string[];
-    monacoEditorManager: EditorManagerLike | null;
+    monacoEditorManager: MonacoEditorManager | null;
     editorGroupsElement: HTMLElement | null;
     welcomeContainer: HTMLElement | null;
     splitOverlay: HTMLElement | null;
@@ -1613,7 +1550,7 @@ class TabManager {
                 tabData.viewerContainer.classList.add('active');
                 this.focusPdfViewer(tabData);
             }
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 try {
                     this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
                 } catch (err) {
@@ -1642,7 +1579,7 @@ class TabManager {
                 tabData.previewContainer.style.left = '0';
                 tabData.previewContainer.style.position = 'relative';
             }
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
             }
         } else if (tabData.viewType === 'browser') {
@@ -1672,16 +1609,18 @@ class TabManager {
             }
             window.browserManager.showBrowserContainer(uniqueKey as string);
             window.browserManager.focusBrowserTab(uniqueKey as string);
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
             }
         } else if (tabData.viewType === 'diff' && this.monacoEditorManager) {
             this.hideGroupViewContainers(tabData.groupId);
-            await this.monacoEditorManager.showDiffEditor(tabData.tabId, {
-                groupId: tabData.groupId,
-                ...(tabData.diffMeta as Record<string, unknown> || {}),
-                label: tabData.fileName
-            });
+            if (tabData.tabId) {
+                await this.monacoEditorManager.showDiffEditor(tabData.tabId, {
+                    groupId: tabData.groupId,
+                    ...(tabData.diffMeta as Record<string, unknown> || {}),
+                    label: tabData.fileName
+                });
+            }
         } else if (this.monacoEditorManager) {
             this.hideGroupViewContainers(tabData.groupId);
             const expectedTabId = this.monacoEditorManager.generateTabId(tabData.fileName, tabData.filePath || tabData.uniqueKey || null);
@@ -2231,7 +2170,7 @@ class TabManager {
             }
             const content = await window.electronAPI.readFileContent(tabData.filePath);
             const editorManager = this.monacoEditorManager || window.monacoEditorManager || window.editorManager;
-            let editor = null;
+            let editor: monaco.editor.IStandaloneCodeEditor | monaco.editor.IStandaloneDiffEditor | null = null;
             if (editorManager?.editors instanceof Map && tabData.tabId) {
                 editor = editorManager.editors.get(tabData.tabId) || null;
             }
@@ -2242,15 +2181,16 @@ class TabManager {
                 }
             }
 
-            if (editor && editor.getModel) {
+            if (editor && 'onDidChangeModelContent' in editor) {
                 const model = editor.getModel();
-                const viewState = editor.saveViewState ? editor.saveViewState() : null;
-                model.setValue(content);
-                if (viewState && editor.restoreViewState) {
+                const viewState = editor.saveViewState();
+                if (model) {
+                    model.setValue(content);
+                }
+                if (viewState) {
                     editor.restoreViewState(viewState);
                 }
-                editor.pushUndoStop?.();
-                editor.layout?.();
+                editor.layout();
             }
 
             tabData.content = content;
@@ -2523,13 +2463,6 @@ class TabManager {
             return;
         }
 
-        if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-            const editor = this.monacoEditorManager.currentEditor;
-            if (editor.updateFileName) {
-                editor.updateFileName(fileName, tab.modified || false);
-            }
-        }
-
         if (tab.filePath && window.electronAPI) {
             logInfo('从文件系统重新读取文件:', tab.filePath);
             tab.isLoading = true; // 设置加载标志
@@ -2561,9 +2494,6 @@ class TabManager {
                     tab.content = content;
                     tab.modified = false; // 从文件系统加载的内容标记为未修改
 
-                    if (targetEditor && targetEditor.updateFileName) {
-                        targetEditor.updateFileName(fileName, false);
-                    }
                 })
                 .catch((error) => {
                     logError('读取文件失败:', error);
@@ -2584,7 +2514,7 @@ class TabManager {
 
     setEditorContent(content: string | null | undefined, markAsSaved = false) {
         if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-            this.monacoEditorManager.currentEditor.setValue(content, markAsSaved);
+            this.monacoEditorManager.currentEditor.setValue(content ?? '');
             logInfo('编辑器内容已更新，保存状态:', markAsSaved);
         } else {
             logWarn('编辑器管理器或当前编辑器不可用');
@@ -3938,10 +3868,11 @@ class TabManager {
 
     // Markdown 预览每次按键都要全量重新渲染，开销较重；
     // 合并为停手后渲染一次，避免连续输入时反复触发 markdown-it + highlight
-    debouncedUpdateMarkdownPreview(editor: MonacoEditorHandle, timerKey: string, container: HTMLElement | null | undefined, filePath: string | null | undefined) {
+    debouncedUpdateMarkdownPreview(editor: monaco.editor.IStandaloneCodeEditor, timerKey: '_markdownLiveTimer' | '_markdownPreviewSyncTimer', container: HTMLElement | null | undefined, filePath: string | null | undefined) {
         if (!container) return;
-        if (editor[timerKey]) {
-            clearTimeout(editor[timerKey] as ReturnType<typeof setTimeout>);
+        const pending = editor[timerKey];
+        if (pending) {
+            clearTimeout(pending);
         }
         editor[timerKey] = setTimeout(() => {
             editor[timerKey] = null;
@@ -3952,8 +3883,8 @@ class TabManager {
 
     setupMarkdownLiveUpdate(tabId: string | null | undefined, previewContainer: HTMLElement | null | undefined, filePath: string | null | undefined) {
         if (!this.monacoEditorManager) return;
-        const editor = this.monacoEditorManager.editors.get(tabId as string);
-        if (editor && !editor._markdownListenerAttached) {
+        const editor = tabId ? this.monacoEditorManager.editors.get(tabId) : null;
+        if (editor && 'onDidChangeModelContent' in editor && !editor._markdownListenerAttached) {
             editor.onDidChangeModelContent(() => {
                 this.debouncedUpdateMarkdownPreview(editor, '_markdownLiveTimer', previewContainer, filePath);
             });
@@ -3961,9 +3892,12 @@ class TabManager {
 
             editor.onDidScrollChange((e) => {
                 if (!previewContainer || previewContainer.style.display === 'none') return;
-                const percentage = (e.scrollTop as number) / ((e.scrollHeight as number) - (e.viewHeight as number));
-                if (!isNaN(percentage)) {
-                    (previewContainer as HTMLElement).scrollTop = percentage * ((previewContainer as HTMLElement).scrollHeight - (previewContainer as HTMLElement).clientHeight);
+                // monaco 的 IScrollEvent 不带视口高度（旧代码读 e.viewHeight 恒为 undefined，
+                // 算出 NaN 后整条同步被丢掉），改用编辑器布局高度求滚动比例
+                const scrollable = e.scrollHeight - editor.getLayoutInfo().height;
+                if (scrollable > 0) {
+                    const percentage = e.scrollTop / scrollable;
+                    previewContainer.scrollTop = percentage * (previewContainer.scrollHeight - previewContainer.clientHeight);
                 }
             });
         }
@@ -4077,8 +4011,8 @@ class TabManager {
 
         let content = sourceTabData.content || '';
         if (this.monacoEditorManager) {
-            const editor = this.monacoEditorManager.editors.get(sourceTabData.tabId as string);
-            if (editor) {
+            const editor = sourceTabData.tabId ? this.monacoEditorManager.editors.get(sourceTabData.tabId) : null;
+            if (editor && 'onDidChangeModelContent' in editor) {
                 content = editor.getValue();
             }
         }
@@ -4137,8 +4071,8 @@ class TabManager {
 
     setupMarkdownPreviewSync(sourceTabId: string | null | undefined, previewTabData: TabRecord) {
         if (!this.monacoEditorManager) return;
-        const editor = this.monacoEditorManager.editors.get(sourceTabId as string);
-        if (editor && !editor._markdownPreviewSyncAttached) {
+        const editor = sourceTabId ? this.monacoEditorManager.editors.get(sourceTabId) : null;
+        if (editor && 'onDidChangeModelContent' in editor && !editor._markdownPreviewSyncAttached) {
             editor.onDidChangeModelContent(() => {
                 if (previewTabData.previewContainer) {
                     this.debouncedUpdateMarkdownPreview(editor, '_markdownPreviewSyncTimer', previewTabData.previewContainer, previewTabData.filePath);
@@ -4147,10 +4081,13 @@ class TabManager {
             editor._markdownPreviewSyncAttached = true;
 
             editor.onDidScrollChange((e) => {
-                if (!previewTabData.previewContainer || previewTabData.previewContainer.style.display === 'none') return;
-                const percentage = (e.scrollTop as number) / ((e.scrollHeight as number) - (e.viewHeight as number));
-                if (!isNaN(percentage)) {
-                    previewTabData.previewContainer.scrollTop = percentage * (previewTabData.previewContainer.scrollHeight - (previewTabData['clientHeight'] as number));
+                const container = previewTabData.previewContainer;
+                if (!container || container.style.display === 'none') return;
+                // 同上：视口高度取自身 clientHeight，旧代码读的是 previewTabData['clientHeight']（恒 undefined）
+                const scrollable = e.scrollHeight - editor.getLayoutInfo().height;
+                if (scrollable > 0) {
+                    const percentage = e.scrollTop / scrollable;
+                    container.scrollTop = percentage * (container.scrollHeight - container.clientHeight);
                 }
             });
         }
@@ -4259,13 +4196,14 @@ class TabManager {
                 }
             }
 
+            const codeFilePath: string | null = typeof filePath === 'string' ? filePath : null;
             if (this.monacoEditorManager) {
-                tabId = this.monacoEditorManager.generateTabId(fileName, filePath);
-                if (filePath) {
-                    this.monacoEditorManager.currentFilePath = filePath as string | null;
+                tabId = this.monacoEditorManager.generateTabId(fileName, codeFilePath);
+                if (codeFilePath) {
+                    this.monacoEditorManager.currentFilePath = codeFilePath;
                     this.monacoEditorManager.currentFileName = fileName;
                 }
-                await this.monacoEditorManager.createNewEditor(tabId, fileName, content, filePath, { groupId: targetGroupId });
+                await this.monacoEditorManager.createNewEditor(tabId, fileName, content ?? '', codeFilePath, { groupId: targetGroupId });
             } else {
                 tabId = `fallback-${Date.now()}`;
             }
@@ -4282,7 +4220,7 @@ class TabManager {
                 modified: isNew,
                 content: content,
                 active: true,
-                filePath: filePath as string | null,
+                filePath: codeFilePath,
                 tabId: tabId,
                 uniqueKey: uniqueKey,
                 groupId: targetGroupId,
@@ -5845,7 +5783,7 @@ void hello() {
         }
     }
 
-    updateAllEditorsSettings(settings: unknown) {
+    updateAllEditorsSettings(settings: Record<string, unknown>) {
         if (!this.monacoEditorManager) {
             this.tryGetEditorManagerReference();
         }

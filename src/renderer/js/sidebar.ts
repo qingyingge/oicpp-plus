@@ -363,10 +363,11 @@ class SidebarManager {
     }
 
     triggerEditorResize(): void {
-        if (window.monaco && window.editorManager && window.editorManager.currentEditor) {
+        if (window.monaco && window.editorManager) {
             setTimeout(() => {
-                if (window.editorManager.currentEditor.layout) {
-                    window.editorManager.currentEditor.layout();
+                const currentEditor = window.editorManager?.currentEditor;
+                if (currentEditor) {
+                    currentEditor.layout();
                 }
             }, 50);
         }

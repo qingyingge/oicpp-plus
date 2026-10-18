@@ -1,6 +1,4 @@
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.CompilerManager = void 0;
 class CompilerManager {
     settings;
     isCompiling;
@@ -1405,7 +1403,6 @@ class CompilerManager {
         }
     }
 }
-exports.CompilerManager = CompilerManager;
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = CompilerManager;
 }

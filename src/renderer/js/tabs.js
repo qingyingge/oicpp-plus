@@ -1207,7 +1207,7 @@ class TabManager {
                 tabData.viewerContainer.classList.add('active');
                 this.focusPdfViewer(tabData);
             }
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 try {
                     this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
                 }
@@ -1239,7 +1239,7 @@ class TabManager {
                 tabData.previewContainer.style.left = '0';
                 tabData.previewContainer.style.position = 'relative';
             }
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
             }
         }
@@ -1271,17 +1271,19 @@ class TabManager {
             }
             window.browserManager.showBrowserContainer(uniqueKey);
             window.browserManager.focusBrowserTab(uniqueKey);
-            if (this.monacoEditorManager) {
+            if (this.monacoEditorManager && tabData.groupId) {
                 this.monacoEditorManager.groupActiveTab.set(tabData.groupId, null);
             }
         }
         else if (tabData.viewType === 'diff' && this.monacoEditorManager) {
             this.hideGroupViewContainers(tabData.groupId);
-            await this.monacoEditorManager.showDiffEditor(tabData.tabId, {
-                groupId: tabData.groupId,
-                ...(tabData.diffMeta || {}),
-                label: tabData.fileName
-            });
+            if (tabData.tabId) {
+                await this.monacoEditorManager.showDiffEditor(tabData.tabId, {
+                    groupId: tabData.groupId,
+                    ...(tabData.diffMeta || {}),
+                    label: tabData.fileName
+                });
+            }
         }
         else if (this.monacoEditorManager) {
             this.hideGroupViewContainers(tabData.groupId);
@@ -1822,15 +1824,16 @@ class TabManager {
                     editor = editorManager.currentEditor;
                 }
             }
-            if (editor && editor.getModel) {
+            if (editor && 'onDidChangeModelContent' in editor) {
                 const model = editor.getModel();
-                const viewState = editor.saveViewState ? editor.saveViewState() : null;
-                model.setValue(content);
-                if (viewState && editor.restoreViewState) {
+                const viewState = editor.saveViewState();
+                if (model) {
+                    model.setValue(content);
+                }
+                if (viewState) {
                     editor.restoreViewState(viewState);
                 }
-                editor.pushUndoStop?.();
-                editor.layout?.();
+                editor.layout();
             }
             tabData.content = content;
             tabData.modified = false;
@@ -2093,12 +2096,6 @@ class TabManager {
             logInfo('文件正在加载中，跳过重复调用:', fileName);
             return;
         }
-        if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-            const editor = this.monacoEditorManager.currentEditor;
-            if (editor.updateFileName) {
-                editor.updateFileName(fileName, tab.modified || false);
-            }
-        }
         if (tab.filePath && window.electronAPI) {
             logInfo('从文件系统重新读取文件:', tab.filePath);
             tab.isLoading = true; // 设置加载标志
@@ -2128,9 +2125,6 @@ class TabManager {
                 this.setEditorContent(content, true); // 标记为已保存
                 tab.content = content;
                 tab.modified = false; // 从文件系统加载的内容标记为未修改
-                if (targetEditor && targetEditor.updateFileName) {
-                    targetEditor.updateFileName(fileName, false);
-                }
             })
                 .catch((error) => {
                 logError('读取文件失败:', error);
@@ -2151,7 +2145,7 @@ class TabManager {
     }
     setEditorContent(content, markAsSaved = false) {
         if (this.monacoEditorManager && this.monacoEditorManager.currentEditor) {
-            this.monacoEditorManager.currentEditor.setValue(content, markAsSaved);
+            this.monacoEditorManager.currentEditor.setValue(content ?? '');
             logInfo('编辑器内容已更新，保存状态:', markAsSaved);
         }
         else {
@@ -3441,8 +3435,9 @@ class TabManager {
     debouncedUpdateMarkdownPreview(editor, timerKey, container, filePath) {
         if (!container)
             return;
-        if (editor[timerKey]) {
-            clearTimeout(editor[timerKey]);
+        const pending = editor[timerKey];
+        if (pending) {
+            clearTimeout(pending);
         }
         editor[timerKey] = setTimeout(() => {
             editor[timerKey] = null;
@@ -3454,8 +3449,8 @@ class TabManager {
     setupMarkdownLiveUpdate(tabId, previewContainer, filePath) {
         if (!this.monacoEditorManager)
             return;
-        const editor = this.monacoEditorManager.editors.get(tabId);
-        if (editor && !editor._markdownListenerAttached) {
+        const editor = tabId ? this.monacoEditorManager.editors.get(tabId) : null;
+        if (editor && 'onDidChangeModelContent' in editor && !editor._markdownListenerAttached) {
             editor.onDidChangeModelContent(() => {
                 this.debouncedUpdateMarkdownPreview(editor, '_markdownLiveTimer', previewContainer, filePath);
             });
@@ -3463,8 +3458,11 @@ class TabManager {
             editor.onDidScrollChange((e) => {
                 if (!previewContainer || previewContainer.style.display === 'none')
                     return;
-                const percentage = e.scrollTop / (e.scrollHeight - e.viewHeight);
-                if (!isNaN(percentage)) {
+                // monaco 的 IScrollEvent 不带视口高度（旧代码读 e.viewHeight 恒为 undefined，
+                // 算出 NaN 后整条同步被丢掉），改用编辑器布局高度求滚动比例
+                const scrollable = e.scrollHeight - editor.getLayoutInfo().height;
+                if (scrollable > 0) {
+                    const percentage = e.scrollTop / scrollable;
                     previewContainer.scrollTop = percentage * (previewContainer.scrollHeight - previewContainer.clientHeight);
                 }
             });
@@ -3568,8 +3566,8 @@ class TabManager {
         const previewTabId = `preview-${sourceTabData.tabId}`;
         let content = sourceTabData.content || '';
         if (this.monacoEditorManager) {
-            const editor = this.monacoEditorManager.editors.get(sourceTabData.tabId);
-            if (editor) {
+            const editor = sourceTabData.tabId ? this.monacoEditorManager.editors.get(sourceTabData.tabId) : null;
+            if (editor && 'onDidChangeModelContent' in editor) {
                 content = editor.getValue();
             }
         }
@@ -3618,8 +3616,8 @@ class TabManager {
     setupMarkdownPreviewSync(sourceTabId, previewTabData) {
         if (!this.monacoEditorManager)
             return;
-        const editor = this.monacoEditorManager.editors.get(sourceTabId);
-        if (editor && !editor._markdownPreviewSyncAttached) {
+        const editor = sourceTabId ? this.monacoEditorManager.editors.get(sourceTabId) : null;
+        if (editor && 'onDidChangeModelContent' in editor && !editor._markdownPreviewSyncAttached) {
             editor.onDidChangeModelContent(() => {
                 if (previewTabData.previewContainer) {
                     this.debouncedUpdateMarkdownPreview(editor, '_markdownPreviewSyncTimer', previewTabData.previewContainer, previewTabData.filePath);
@@ -3627,11 +3625,14 @@ class TabManager {
             });
             editor._markdownPreviewSyncAttached = true;
             editor.onDidScrollChange((e) => {
-                if (!previewTabData.previewContainer || previewTabData.previewContainer.style.display === 'none')
+                const container = previewTabData.previewContainer;
+                if (!container || container.style.display === 'none')
                     return;
-                const percentage = e.scrollTop / (e.scrollHeight - e.viewHeight);
-                if (!isNaN(percentage)) {
-                    previewTabData.previewContainer.scrollTop = percentage * (previewTabData.previewContainer.scrollHeight - previewTabData['clientHeight']);
+                // 同上：视口高度取自身 clientHeight，旧代码读的是 previewTabData['clientHeight']（恒 undefined）
+                const scrollable = e.scrollHeight - editor.getLayoutInfo().height;
+                if (scrollable > 0) {
+                    const percentage = e.scrollTop / scrollable;
+                    container.scrollTop = percentage * (container.scrollHeight - container.clientHeight);
                 }
             });
         }
@@ -3731,13 +3732,14 @@ class TabManager {
                     logWarn('清理遗留 Markdown 预览标签失败:', e);
                 }
             }
+            const codeFilePath = typeof filePath === 'string' ? filePath : null;
             if (this.monacoEditorManager) {
-                tabId = this.monacoEditorManager.generateTabId(fileName, filePath);
-                if (filePath) {
-                    this.monacoEditorManager.currentFilePath = filePath;
+                tabId = this.monacoEditorManager.generateTabId(fileName, codeFilePath);
+                if (codeFilePath) {
+                    this.monacoEditorManager.currentFilePath = codeFilePath;
                     this.monacoEditorManager.currentFileName = fileName;
                 }
-                await this.monacoEditorManager.createNewEditor(tabId, fileName, content, filePath, { groupId: targetGroupId });
+                await this.monacoEditorManager.createNewEditor(tabId, fileName, content ?? '', codeFilePath, { groupId: targetGroupId });
             }
             else {
                 tabId = `fallback-${Date.now()}`;
@@ -3752,7 +3754,7 @@ class TabManager {
                 modified: isNew,
                 content: content,
                 active: true,
-                filePath: filePath,
+                filePath: codeFilePath,
                 tabId: tabId,
                 uniqueKey: uniqueKey,
                 groupId: targetGroupId,
