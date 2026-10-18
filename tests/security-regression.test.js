@@ -127,6 +127,19 @@ const remoteRows = (() => {
         push('上游回包为空或为 JSON null 时 data 保持 null，不伪造占位对象',
             empties.every((r) => r.ok && r.value.data === null),
             JSON.stringify(empties.map((r) => r.value)));
+        // 「不许向更新接口发请求」原先锁三段 URL 字面量的缺席。字面量缺席挡不住改写：
+        // 把 URL 拼成 base + '/checkUpdate'、或换成 axios.get(new URL(...))，三门全绿
+        // 而请求照发。真正管住这件事的是这道白名单，于是拿更新接口直接来敲门 ——
+        // 拒了、且一次请求都没发，才是那句话的语义。
+        calls.length = 0;
+        const updatePaths = await Promise.all([
+            settle({ path: '/api/checkUpdate' }),
+            settle({ path: '/api/getUpdateFilelist' }),
+            settle({ path: '/api/downloadUpdate' })
+        ]);
+        push('更新接口从渲染层点名也被代理拒掉，且一次请求都不发',
+            updatePaths.every((r) => !r.ok && /^error\.remoteApiNotAllowed/.test(r.message)) && calls.length === 0,
+            JSON.stringify(updatePaths.map((r) => r.message)));
         return rows;
     })().then((r) => r, (e) => [{ name: '远程接口代理守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
 })();
@@ -690,8 +703,95 @@ check('workflows do not depend on the Node 22-only system CA flag', !workflows.i
 check('Linux hard memory limits use a non-shell prlimit wrapper', read('src/utils/process-supervisor.js').includes('getResourceLimitedSpawn') && read('src/utils/process-supervisor.js').includes('prlimit'));
 check('native fastspawn has a reproducible POSIX build script', read('scripts/build-fastspawn.js').includes('node-gyp') && read('binding.gyp').includes('fastspawn.cc'));
 check('release downloaders share one hardened implementation', read('scripts/lib/release-downloader.js').includes('maxRedirects') && read('scripts/download-clangd.js').includes('createReleaseDownloader') && read('scripts/download-clang-format.js').includes('createReleaseDownloader'));
-check('disabled automatic update checks cannot leave UI busy', !mainSource.includes('function checkDailyUpdate') && !mainSource.includes('setAutoUpdateCheckInProgress(true)'));
-check('disabled update checks have no remote fallback', !mainSource.includes('oicpp.mywwzh.top/api/checkUpdate') && !mainSource.includes('oicpp.mywwzh.top/api/getUpdateFilelist') && !mainSource.includes('downloadAndInstallUpdate'));
+const updateRowsRef = [];
+{
+    // 「自动更新检查已经拆掉」原先是五条 `!mainSource.includes(...)` 的字面量缺席断言：
+    //   !includes('function checkDailyUpdate') / !includes('setAutoUpdateCheckInProgress(true)')
+    //   !includes('oicpp.mywwzh.top/api/checkUpdate') / !includes('.../api/getUpdateFilelist')
+    //   !mainSource.includes('downloadAndInstallUpdate')
+    // 缺席断言两个方向都错：往源码里加一句 `// 以前叫 downloadAndInstallUpdate` 的注释
+    // 会把它判红（假阳），而把请求改写成 `fetch(base + '/checkUpdate')`、或把忙标志
+    // 换个 setter 名字，它就完全看不见（假阴）。三条 URL 其实是一件事：
+    // 「主进程不会向更新接口发请求」，而管这件事的门是 fetch-remote-json 的白名单 ——
+    // 那半边并到上面远程代理那块去了（搜「更新接口从渲染层点名」）。
+    // 这里剩下的两条改成：把 checkForUpdates 本体抽出来真跑，看两条路径各自做了什么。
+    const updateRows = (() => {
+        const rows = [];
+        const push = (name, cond, extra = '') => rows.push({ name, cond, extra });
+        const updateFns = [...mainSource.matchAll(/^\s*(?:async\s+)?function\s+([A-Za-z0-9_$]+)/gm)].map((m) => m[1]);
+        push('主进程函数声明表抽取成功', updateFns.length > 50, `${updateFns.length} 个`);
+        for (const gone of ['checkDailyUpdate', 'downloadAndInstallUpdate', 'getUpdateFilelist']) {
+            push(`函数声明表里没有 ${gone}（自动检查/静默安装整条链路都不在，注释和字符串里提它不受影响）`,
+                !updateFns.includes(gone), JSON.stringify(updateFns.filter((n) => /update|install/i.test(n))));
+        }
+
+        const updSrc = funcDecl(mainSource, 'checkForUpdates');
+        push('函数体抽取成功: checkForUpdates', /^\s*(?:async\s+)?function\s+checkForUpdates\(/.test(updSrc), String(updSrc).slice(0, 46));
+        const dialogs = [];
+        const touched = [];
+        const errs = [];
+        const recording = () => ({ showMessageBox: async (_w, opt) => { dialogs.push(opt); return { response: 0 }; } });
+        const updCtx = vm.createContext({
+            // 凡是能把「检查更新」接回网络的入口都先摆在这儿盯着：真被调到了就记一笔，
+            // 认不出来的新依赖会抛 ReferenceError，由下面每条「不抛错」的断言兜住。
+            t: (key) => `T:${key}`,
+            logError: (...a) => errs.push(a.map(String).join(' ')),
+            logInfo: () => { },
+            mainWindow: { id: 1 },
+            dialog: recording(),
+            axios: { get: (...a) => { touched.push(['axios.get', a[0]]); return Promise.resolve({}); } },
+            net: { request: () => { touched.push(['net.request']); } },
+            shell: { openExternal: (...a) => { touched.push(['shell.openExternal', a[0]]); return Promise.resolve(); } },
+            setAutoUpdateCheckInProgress: (...a) => { touched.push(['setAutoUpdateCheckInProgress', a[0]]); },
+            downloadAndInstallUpdate: (...a) => { touched.push(['downloadAndInstallUpdate', a[0]]); },
+            checkDailyUpdate: () => { touched.push(['checkDailyUpdate']); },
+            Promise, String, Object, Array, JSON
+        });
+        vm.runInContext(`this.__checkForUpdates = (${updSrc});`, updCtx);
+        const checkForUpdates = updCtx.__checkForUpdates;
+        push('checkForUpdates 编译成可调用函数', typeof checkForUpdates === 'function');
+        const runUpd = async (call, dialog) => {
+            dialogs.length = 0; touched.length = 0; errs.length = 0;
+            updCtx.dialog = dialog || recording();
+            let threw;
+            try { await call(); }
+            catch (e) { threw = String((e && e.message) || e); }
+            return { dialogs: dialogs.slice(), touched: touched.slice(), errs: errs.slice(), threw };
+        };
+        return (async () => {
+            const auto = await runUpd(() => checkForUpdates());
+            check('自动路径（不传参）彻底空转：不弹对话框、不碰网络、不置忙标志',
+                auto.threw === undefined && auto.dialogs.length === 0 && auto.touched.length === 0 && auto.errs.length === 0,
+                JSON.stringify(auto));
+            const explicitFalse = await runUpd(() => checkForUpdates(false));
+            check('显式传 false 的自动路径同样空转（isManual 判的是值不是「传没传」）',
+                explicitFalse.threw === undefined && explicitFalse.dialogs.length === 0 && explicitFalse.touched.length === 0,
+                JSON.stringify(explicitFalse));
+            const manual = await runUpd(() => checkForUpdates(true));
+            check('手动路径只弹一次「不可用」提示，仍然一次网络都不碰',
+                manual.threw === undefined && manual.dialogs.length === 1
+                && manual.dialogs[0].message === 'T:main.checkUpdateUnavailable'
+                && manual.touched.length === 0,
+                JSON.stringify(manual));
+            check('提示带 title/detail（只给一句 message 用户不知道自己点错了什么）',
+                manual.dialogs.length === 1 && manual.dialogs[0].title === 'T:main.checkUpdateTitle'
+                && manual.dialogs[0].detail === 'T:main.checkUpdateUnavailableDetail',
+                JSON.stringify(manual.dialogs[0] || null));
+            // 对话框弹不出来（主窗口已关）时不能把 rejection 冒泡给菜单点击那一路。
+            const broken = await runUpd(() => checkForUpdates(true),
+                { showMessageBox: () => Promise.reject(new Error('window gone')) });
+            check('showMessageBox 拒绝时记一条日志就收场，不把 rejection 抛给菜单点击',
+                broken.threw === undefined && broken.errs.length === 1 && broken.touched.length === 0,
+                JSON.stringify(broken));
+            const syncBoom = await runUpd(() => checkForUpdates(true),
+                { showMessageBox: () => { throw new Error('sync boom'); } });
+            check('对话框同步抛出时同样被兜住',
+                syncBoom.threw === undefined && syncBoom.errs.length === 1, JSON.stringify(syncBoom));
+            return rows;
+        })().then((r) => r, (e) => [{ name: '更新检查守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
+    })();
+    updateRowsRef.push(updateRows);
+}
 {
     // 渲染层那条「不许再挂 window.Buffer 桥」的政策，原先锁四段字面量：
     //   !preloadSource.includes("exposeInMainWorld('Buffer'") && !rendererMainSource.includes('window.Buffer')
@@ -977,9 +1077,344 @@ const deferredRows = (async () => {
         removed.length === 0, JSON.stringify(removed));
 }
 
-check('startup font validation stays local', !settingsInitSource.includes('updateSettings({ font: validatedFont })') && settingsInitSource.includes('fontFamily = validatedFont'));
-check('downloader releases probe response bodies', (downloaderSource.match(/\.body\.resume\(\)/g) || []).length >= 3);
-check('uninstaller preserves foreign cpp associations', installerSource.includes('ReadRegStr $0 HKCR ".cpp" ""') && installerSource.includes('${If} $0 == "OICPPIDE.cpp"') && !installerSource.includes('DeleteRegKey HKCR ".cpp"'));
+{
+    // 原文：check('startup font validation stays local',
+    //   !settingsInitSource.includes('updateSettings({ font: validatedFont })') && settingsInitSource.includes('fontFamily = validatedFont'))
+    // 两段字面量：前一段锁「别写成这句 updateSettings」——换成
+    // `updateSettings({ font })` / `saveSetting('font', …)` / 抽个 persistFont() 出来调，
+    // 一样是启动即落盘，但它看不见；后一段锁 `fontFamily = validatedFont` 这行字的长相,
+    // 改成 `fontFamily = validatedFont || fontFamily`（语义更好）反而被判红。
+    // 现在把整个 if (font || fontSizeRaw) 抽出来在假 DOM 里真跑：校验值到底有没有落到
+    // 元素和 CSS 变量上、updateSettings 到底被调了几次，都是可观测的。
+    const fontBlock = ifStatement(settingsInitSource, /^\s*if \(font \|\| fontSizeRaw\) \{/m);
+    check('字体应用整块抽取成功: settings-init 的 if (font || fontSizeRaw)',
+        fontBlock.startsWith('if (font || fontSizeRaw)'), `${fontBlock.length} chars`);
+    class FontEl {
+        constructor() { this.style = new Proxy({}, { set: (t, k, v) => { t[k] = v; return true; } }); }
+    }
+    const fCtx = vm.createContext({ HTMLElement: FontEl, String, Number, Object, Array, Error, document: {}, window: {} });
+    // if 语句不能当表达式用，所以塞进一个无参函数的身体里。
+    vm.runInContext(`this.__applyFont = () => { ${fontBlock} };`, fCtx);
+    const applyFont = fCtx.__applyFont;
+    check('字体块编译成可调用函数', typeof applyFont === 'function');
+    const runFont = ({ font, fontSizeRaw, detector, breadcrumbCount = 1 } = {}) => {
+        const els = [new FontEl(), new FontEl()];
+        const crumbs = Array.from({ length: breadcrumbCount }, () => new FontEl());
+        const cssVars = [];
+        const updates = [];
+        const validated = [];
+        fCtx.font = font;
+        fCtx.fontSizeRaw = fontSizeRaw;
+        fCtx.window = detector === undefined ? {} : { fontDetector: { validateFont: (f) => { validated.push(f); return detector; } } };
+        fCtx.updateSettings = (...a) => updates.push(a);
+        fCtx.document = {
+            querySelectorAll: (sel) => (sel === '.folder-picker-breadcrumb' ? crumbs : els),
+            documentElement: { style: { setProperty: (k, v) => cssVars.push([k, String(v)]) } }
+        };
+        let threw;
+        try { applyFont(); }
+        catch (e) { threw = String((e && e.message) || e); }
+        return { els, crumbs, cssVars, updates, validated, threw };
+    };
+
+    const varOf = (r, name) => (r.cssVars.find((v) => v[0] === name) || [])[1];
+    const replaced = runFont({ font: 'KaiTi', fontSizeRaw: 16, detector: 'SimSun' });
+    check('校验值和设置里的不一样时，页面用的是校验值（元素与 CSS 变量两处都是）',
+        replaced.threw === undefined && replaced.els[0].style.fontFamily === 'SimSun' &&
+        replaced.crumbs[0].style.fontFamily === 'SimSun' && varOf(replaced, '--editor-font-family') === 'SimSun',
+        JSON.stringify({ threw: replaced.threw, el: replaced.els[0].style.fontFamily, css: varOf(replaced, '--editor-font-family') }));
+    check('启动阶段一次 updateSettings 都不调（把校验结果写回设置等于每次启动多落一次盘，还跟用户在设置页选的字体打架）',
+        replaced.updates.length === 0 && varOf(runFont({ font: 'KaiTi', detector: 'SimSun' }), '--editor-font-family') === 'SimSun',
+        JSON.stringify(replaced.updates));
+    check('校验只在 font 是字符串时发生，送进去的就是设置里那个字体名',
+        replaced.validated.length === 1 && replaced.validated[0] === 'KaiTi',
+        JSON.stringify(replaced.validated));
+
+    const same = runFont({ font: 'Consolas', fontSizeRaw: 14, detector: 'Consolas' });
+    check('校验结果与设置一致时页面照常用它（不因为「没变化」就漏掉一次赋值）',
+        same.threw === undefined && same.els[0].style.fontFamily === 'Consolas' && varOf(same, '--editor-font-family') === 'Consolas',
+        JSON.stringify({ threw: same.threw, el: same.els[0].style.fontFamily }));
+
+    const noDetector = runFont({ font: 'KaiTi', fontSizeRaw: 14 });
+    check('fontDetector 还没加载时不猜字体：直接用设置值，也不因此崩',
+        noDetector.threw === undefined && noDetector.validated.length === 0 &&
+        noDetector.els[0].style.fontFamily === 'KaiTi' && varOf(noDetector, '--editor-font-family') === 'KaiTi',
+        JSON.stringify({ threw: noDetector.threw, validated: noDetector.validated }));
+
+    // 这一档必须把 detector 也摆上：只带字号时如果连 fontDetector 都没有，
+    // 「去掉 font !== undefined 那道门」这种变异就没人调 validateFont，断言成了空的。
+    const sizeOnly = runFont({ font: undefined, fontSizeRaw: 15, detector: 'SimSun' });
+    check('只带字号的设置不去校验字体（font 是 undefined 时 validateFont 一次都不该调）',
+        sizeOnly.threw === undefined && sizeOnly.validated.length === 0,
+        JSON.stringify({ threw: sizeOnly.threw, validated: sizeOnly.validated }));
+    check('没指定字体时不覆盖编辑器字体，但 CSS 变量落到默认 Consolas（也不能被校验结果顶掉）',
+        sizeOnly.els.every((el) => el.style.fontFamily === undefined) &&
+        varOf(sizeOnly, '--editor-font-family') === 'Consolas',
+        JSON.stringify({ el: sizeOnly.els[0].style.fontFamily, css: varOf(sizeOnly, '--editor-font-family') }));
+
+    const fallbackSize = runFont({ font: 'KaiTi', fontSizeRaw: undefined });
+    check('字号缺省时落到 14px（写成 0px 编辑器就没法看了）',
+        fallbackSize.threw === undefined && varOf(fallbackSize, '--editor-font-size') === '14px' &&
+        fallbackSize.els[0].style.fontSize === undefined,
+        JSON.stringify({ threw: fallbackSize.threw, css: varOf(fallbackSize, '--editor-font-size'), el: fallbackSize.els[0].style.fontSize }));
+    const sized = runFont({ font: 'KaiTi', fontSizeRaw: 18 });
+    check('字号两处都写：元素与 CSS 变量',
+        sized.els[0].style.fontSize === '18px' && varOf(sized, '--editor-font-size') === '18px',
+        JSON.stringify([sized.els[0].style.fontSize, varOf(sized, '--editor-font-size')]));
+
+    const quiet = runFont({ font: undefined, fontSizeRaw: undefined });
+    check('font 和字号都没有时整块空转（不写 CSS、不弹校验、也不落盘）',
+        quiet.threw === undefined && quiet.cssVars.length === 0 && quiet.validated.length === 0 && quiet.updates.length === 0,
+        JSON.stringify(quiet));
+}
+const downloaderRowsRef = [];
+{
+    // 原文：check('downloader releases probe response bodies',
+    //   (downloaderSource.match(/\.body\.resume\(\)/g) || []).length >= 3);
+    // 「数一下这行字出现了几次」离题太远：把 `headResponse.body.resume()` 从 if 之前挪到
+    // if 之后，次数一个字没变，而 accept-ranges: bytes 那条早退路径上的响应体就再也没人排空
+    // ——undici 的 connection 会一直挂在池里等 body 被消费，探测几次就少几个连接。
+    // 现在抽真方法在假 fetch 上跑：每条返回路径都数一次「发过几个请求、每个 body 被 resume 了几次」。
+    downloaderRowsRef.push((async () => {
+        const rows = [];
+        const push = (name, cond, extra = '') => rows.push({ name, cond, extra });
+        const rangeSrc = classMethod(downloaderSource, 'checkRangeSupport');
+        const sizeSrc = classMethod(downloaderSource, 'getFileSize');
+        push('方法体抽取成功: MultiThreadDownloader.checkRangeSupport',
+            /^\s*async checkRangeSupport\(/.test(rangeSrc), String(rangeSrc).slice(0, 40));
+        push('方法体抽取成功: MultiThreadDownloader.getFileSize',
+            /^\s*async getFileSize\(/.test(sizeSrc), String(sizeSrc).slice(0, 40));
+        const dlCtx = vm.createContext({ Promise, String, Number, Object, Array, Error, parseInt });
+        vm.runInContext(`this.__range = ${rangeSrc.replace(/^\s*async\s+/, 'async function ')};
+            this.__size = ${sizeSrc.replace(/^\s*async\s+/, 'async function ')};`, dlCtx);
+        const checkRangeSupport = dlCtx.__range;
+        const getFileSize = dlCtx.__size;
+        push('两个探测方法编译成可调用函数',
+            typeof checkRangeSupport === 'function' && typeof getFileSize === 'function');
+
+        // 假 fetch：按脚本依次回包。bodies 只收「真的交到被测代码手上」的那些响应，
+        // 于是「每个交出去的 body 被 resume 恰好一次」是一条能数的政策，不是数正则。
+        const bootProbe = (script) => {
+            const requests = [];
+            const bodies = [];
+            const queue = script.map((r) => {
+                if (r.error) return { error: r.error };
+                const body = { resumes: 0 };
+                body.resume = () => {
+                    body.resumes++;
+                    if (r.resumeThrows) throw new Error('body already detached');
+                };
+                bodies.push(body);
+                return {
+                    status: r.status === undefined ? 200 : r.status,
+                    headers: { get: (k) => (r.headers || {})[String(k).toLowerCase()] },
+                    body
+                };
+            });
+            const warns = [];
+            dlCtx.makeRequest = async (url, opt) => {
+                const o = opt || {};
+                requests.push({ url, method: o.method || 'GET', range: (o.headers || {})['Range'] || '' });
+                const next = queue.shift();
+                if (!next) throw new Error('假 fetch 脚本用完了（被测代码多发了请求）');
+                if (next.error) throw new Error(next.error);
+                return next;
+            };
+            dlCtx.logWarn = (...a) => warns.push(a.map((v) => (v && v.message) || String(v)).join(' '));
+            dlCtx.errorInfo = (e) => ({ message: String((e && e.message) || e) });
+            return { requests, warns, bodies, drains: () => bodies.map((b) => b.resumes) };
+        };
+        const onceEach = (p) => p.bodies.length > 0 && p.bodies.every((b) => b.resumes === 1);
+        const state = (p) => JSON.stringify({ requests: p.requests, drains: p.drains(), warns: p.warns });
+
+        const bytesH = bootProbe([{ headers: { 'accept-ranges': 'bytes' } }]);
+        const fast = await checkRangeSupport.call({}, 'https://example.invalid/a.zip');
+        push('accept-ranges: bytes 时直接判定支持，且只发一个 HEAD',
+            fast === true && bytesH.requests.length === 1 && bytesH.requests[0].method === 'HEAD', state(bytesH));
+        push('早退那条路径也把 HEAD 的响应体排空了（resume 挪到 return 之后就会漏连接）',
+            onceEach(bytesH) && bytesH.warns.length === 0, state(bytesH));
+
+        const detached = bootProbe([{ headers: { 'accept-ranges': 'bytes' }, resumeThrows: true }]);
+        const stillOk = await checkRangeSupport.call({}, 'https://example.invalid/e.zip');
+        push('body 已经 detached、resume() 自己抛错时照样返回判定（那层 try 不是摆设）',
+            stillOk === true && detached.bodies[0].resumes === 1 && detached.warns.length === 0, state(detached));
+
+        const twoStep = bootProbe([{ headers: {}, status: 200 }, { status: 206 }]);
+        const slow = await checkRangeSupport.call({}, 'https://example.invalid/b.zip');
+        push('没有 accept-ranges 时补一发 Range: bytes=0-1，看 206',
+            slow === true && twoStep.requests.length === 2
+                && twoStep.requests[1].method === 'GET' && twoStep.requests[1].range === 'bytes=0-1', state(twoStep));
+        push('两步探测的两个响应体都被排空，一个不多一个不少',
+            onceEach(twoStep) && twoStep.bodies.length === 2, state(twoStep));
+
+        // 上面 detached 只让 HEAD 那个 body 抛，range 探测那处 try 一条场景都没碰过
+        // （实测「删掉 range 那层 try」能逃逸）；第二个包补一条，两处 resume 各有各的兜底。
+        const rangeDetached = bootProbe([{ headers: {}, status: 200 }, { status: 206, resumeThrows: true }]);
+        const slowOk = await checkRangeSupport.call({}, 'https://example.invalid/b2.zip');
+        push('range 探测的 body 抛错也照常判定，不因此退回 false',
+            slowOk === true && rangeDetached.bodies[1].resumes === 1 && rangeDetached.warns.length === 0, state(rangeDetached));
+
+        const rejected = bootProbe([{ headers: {}, status: 200 }, { status: 200 }]);
+        const noRange = await checkRangeSupport.call({}, 'https://example.invalid/c.zip');
+        push('两发之后仍不是 206 就判不支持，且这条路径不冒日志',
+            noRange === false && rejected.requests.length === 2 && rejected.warns.length === 0, state(rejected));
+        push('不支持那条分支同样把两个 body 排空（三处 resume 全在两条返回路径上）',
+            onceEach(rejected) && rejected.bodies.length === 2, state(rejected));
+
+        const boom = bootProbe([{ error: 'network down' }]);
+        const errored = await checkRangeSupport.call({}, 'https://example.invalid/d.zip');
+        push('fetch 抛错时吞掉、记一条日志、判不支持（不把 rejection 冒给下载流程）',
+            errored === false && boom.bodies.length === 0
+                && boom.warns.length === 1 && boom.warns[0].includes('network down'), state(boom));
+
+        const sized = bootProbe([{ headers: { 'content-length': '2097152' } }]);
+        const len = await getFileSize.call({}, 'https://example.invalid/f.zip');
+        push('getFileSize 按十进制读出长度，且排空 HEAD 的 body 后才返回',
+            len === 2097152 && onceEach(sized) && sized.warns.length === 0, state(sized));
+
+        const noLen = bootProbe([{ headers: {} }]);
+        const missing = await getFileSize.call({}, 'https://example.invalid/g.zip');
+        push('服务器不回 content-length 时返回 null 而不是 NaN/0（0 会被当成空文件直接下完）',
+            missing === null && onceEach(noLen) && noLen.warns.length === 0, state(noLen));
+
+        const junkLen = bootProbe([{ headers: { 'content-length': 'unknown' } }]);
+        const junk = await getFileSize.call({}, 'https://example.invalid/j.zip');
+        push('content-length 是垃圾串时现状返回 NaN —— 记账条，真去修成 null 时这条要一起改',
+            Number.isNaN(junk) && onceEach(junkLen), state(junkLen));
+
+        const sizeBoom = bootProbe([{ error: 'network down' }]);
+        const sizeErr = await getFileSize.call({}, 'https://example.invalid/h.zip');
+        push('getFileSize 的 fetch 抛错时同样吞掉并记日志，返回 null',
+            sizeErr === null && sizeBoom.warns.length === 1 && sizeBoom.warns[0].includes('network down'), state(sizeBoom));
+
+        const sizeDetached = bootProbe([{ headers: { 'content-length': '7' }, resumeThrows: true }]);
+        const detachedSize = await getFileSize.call({}, 'https://example.invalid/i.zip');
+        push('getFileSize 也兜得住 resume 抛错：照样给出长度',
+            detachedSize === 7 && sizeDetached.bodies[0].resumes === 1, state(sizeDetached));
+
+        return rows;
+    })().then((r) => r, (e) => [{ name: '下载探测守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]));
+}
+{
+    // 原文：check('uninstaller preserves foreign cpp associations',
+    //   installerSource.includes('ReadRegStr $0 HKCR ".cpp" ""') && installerSource.includes('${If} $0 == "OICPPIDE.cpp"')
+    //   && !installerSource.includes('DeleteRegKey HKCR ".cpp"'));
+    // 三条字面量：形参名从 $0 换成 $1、引号写成转义的双写、${If} 后面多一个空格 ——
+    // 任一处排版一动守卫就红；反过来把那句 DeleteRegValue 换成 DeleteRegKey HKCR ".cpp"，
+    // 它会连带把别人注册在 .cpp 下的子键一起端走，可第三段只查 `HKCR ".cpp"` 前面那个动词，
+    // 写成 ${DeleteRegKey} 或者拆成两行就看不见。
+    // makensis 在 linux/arm64 上跑不起来，所以把这段 NSIS 抽出来交给一个只认这四条语句的
+    // 小解释器，在假注册表上真执行一遍 —— 「别人家的 .cpp 到底还在不在」成了可观测结果。
+    const lines = installerSource.split(/\r?\n/);
+    const start = lines.findIndex((l) => /^\s*ReadRegStr\s+\$\w+\s+HKCR\s+"\.cpp"/.test(l));
+    const end = lines.findIndex((l) => /^\s*DeleteRegKey\s+HKCR\s+"OICPPIDE\.cpp"/.test(l));
+    const uninstallRegion = start >= 0 && end >= start ? lines.slice(start, end + 1).join('\n') : '';
+    check('卸载段的 .cpp 关联处理抽出来成功', uninstallRegion.length > 0,
+        `start=${start} end=${end}`);
+
+    const STMT = /^\s*(ReadRegStr|DeleteRegValue|DeleteRegKey)\s+(\$\w+\s+)?(HKCR|HKCU|HKLM)\s+"((?:[^"\\]|\\.)*)"\s*(?:"((?:[^"\\]|\\.)*)"\s*)?$/;
+    const IF = /^\s*\$\{If\}\s+(\$\w+)\s+==\s+"((?:[^"\\]|\\.)*)"\s*$/;
+    const runNsis = (region, regIn) => {
+        const reg = { ...regIn };
+        const vars = {};
+        const unknown = [];
+        let skipUntilEndIf = false;
+        const key = (hive, path) => `${hive}\\${path}`;
+        const unesc = (s) => s.replace(/\\\\/g, '\\');
+        for (const line of region.split(/\r?\n/)) {
+            if (!line.trim() || /^\s*;/.test(line)) continue;
+            if (/^\s*\$\{EndIf\}\s*$/.test(line)) { skipUntilEndIf = false; continue; }
+            if (IF.test(line)) {
+                if (skipUntilEndIf) unknown.push(`套娃的 ${'$'}{If}（这个小解释器只支持一层）：${line.trim()}`);
+                const m = IF.exec(line);
+                skipUntilEndIf = String(vars[m[1]]) !== m[2];
+                continue;
+            }
+            const s = STMT.exec(line);
+            if (!s) { unknown.push(line.trim()); continue; }
+            const [, op, rawVar, hive, path, value] = s;
+            const full = key(hive, unesc(path));
+            // 门没开时语句直接跳过（这段 NSIS 里没有赋值之外的副作用）。
+            if (skipUntilEndIf) continue;
+            if (op === 'ReadRegStr') {
+                const want = value === undefined ? '' : unesc(value);
+                vars[rawVar.trim()] = reg[full] && Object.prototype.hasOwnProperty.call(reg[full], want)
+                    ? reg[full][want] : '';
+            }
+            else if (op === 'DeleteRegValue') {
+                if (reg[full]) delete reg[full][unesc(value)];
+            }
+            else {
+                delete reg[full];
+                for (const k of Object.keys(reg)) if (k.startsWith(full + '\\')) delete reg[k];
+            }
+        }
+        return { reg, vars, unknown };
+    };
+
+    const FOREIGN = 'SomeOtherEditor.cpp';
+    const ours = {
+        'HKCR\\.cpp': { '': FOREIGN },
+        'HKCR\\OICPPIDE.cpp': { '': 'OICPP-Plus IDE C++ 源文件' },
+        'HKCR\\OICPPIDE.cpp\\shell\\open\\command': { '': '"$INSTDIR\\OICPP-Plus.exe" "%1"' }
+    };
+    const foreignOwner = runNsis(uninstallRegion, structuredClone(ours));
+    check('解释器认得这段里的每一条语句（有没见过的写法就红，避免静默少执行一条）',
+        foreignOwner.unknown.length === 0, JSON.stringify(foreignOwner.unknown));
+    check('别家占着 .cpp 时，卸载不动它的默认值（这是那条政策的全部内容）',
+        foreignOwner.reg['HKCR\\.cpp'] && foreignOwner.reg['HKCR\\.cpp'][''] === FOREIGN,
+        JSON.stringify(foreignOwner.reg['HKCR\\.cpp']));
+    check('别家占着 .cpp 时，.cpp 这个键本身也还在（键没了会连坐别人注册的子键）',
+        Object.keys(foreignOwner.reg).includes('HKCR\\.cpp'), JSON.stringify(Object.keys(foreignOwner.reg)));
+    check('自家的 ProgID 连同它的子键一律删干净（残留会让下次安装认成旧版本）',
+        !('HKCR\\OICPPIDE.cpp' in foreignOwner.reg) &&
+        !Object.keys(foreignOwner.reg).some((k) => k.startsWith('HKCR\\OICPPIDE.cpp\\')),
+        JSON.stringify(Object.keys(foreignOwner.reg)));
+
+    const mine = runNsis(uninstallRegion, structuredClone({
+        'HKCR\\.cpp': { '': 'OICPPIDE.cpp' },
+        'HKCR\\OICPPIDE.cpp': { '': 'desc' }
+    }));
+    check('我们占着 .cpp 时，卸载把那条默认值删掉（留着就是指向不存在程序的死链接）',
+        mine.reg['HKCR\\.cpp'] && mine.reg['HKCR\\.cpp'][''] === undefined,
+        JSON.stringify(mine.reg['HKCR\\.cpp']));
+    check('删的是值不是键：.cpp 键仍留在注册表里', Object.keys(mine.reg).includes('HKCR\\.cpp'),
+        JSON.stringify(Object.keys(mine.reg)));
+
+    const absent = runNsis(uninstallRegion, structuredClone({ 'HKCR\\OICPPIDE.cpp': { '': 'desc' } }));
+    check('.cpp 压根没注册过时也不崩、也不凭空造出一个 .cpp 键',
+        absent.unknown.length === 0 && !('HKCR\\.cpp' in absent.reg),
+        JSON.stringify(Object.keys(absent.reg)));
+
+    // 反向对照：解释器必须真的看得见「关联被毁」这件事，否则上面几条是空的。
+    // ①用「我们占着 .cpp」这一档做对照：DeleteRegKey 只在门开的时候执行，
+    // 而门在别家占着时本来就不开 —— 拿别家的场景测它，永远测不出差别。
+    // 真危害长这样：别人往 .cpp 下挂了 ShellNew（新建文件模板），
+    // 删键会把它连子键一起端走，删值不会。
+    const ownedWithSub = () => structuredClone({
+        'HKCR\\.cpp': { '': 'OICPPIDE.cpp' },
+        'HKCR\\.cpp\\ShellNew': { NullFile: '' },
+        'HKCR\\OICPPIDE.cpp': { '': 'desc' }
+    });
+    const keptSub = runNsis(uninstallRegion, ownedWithSub());
+    check('我们的 .cpp 下挂着别人的子键时，卸载只删默认值、子键原样留着',
+        keptSub.reg['HKCR\\.cpp\\ShellNew'] !== undefined && keptSub.reg['HKCR\\.cpp'][''] === undefined,
+        JSON.stringify(Object.keys(keptSub.reg)));
+    const brutal = runNsis(
+        uninstallRegion.replace(/DeleteRegValue\s+HKCR\s+"\.cpp"\s+""/, 'DeleteRegKey HKCR ".cpp"'), ownedWithSub());
+    check('对照①：把 DeleteRegValue 换成 DeleteRegKey，.cpp 整键连同 ShellNew 一起没了（说明断言不是摆设）',
+        !('HKCR\\.cpp' in brutal.reg) && !('HKCR\\.cpp\\ShellNew' in brutal.reg),
+        JSON.stringify(Object.keys(brutal.reg)));
+    const unguarded = runNsis(
+        uninstallRegion.replace(/\$\{If\}\s+\$\w+\s+==\s+"OICPPIDE\.cpp"/, '${If} $0 == "SomeOtherEditor.cpp"'), ours);
+    check('对照②：把门里的比较对象换成别家自己（等于没有门），别家的 .cpp 默认值就该被抹掉',
+        unguarded.reg['HKCR\\.cpp'] && unguarded.reg['HKCR\\.cpp'][''] === undefined,
+        JSON.stringify(unguarded.reg['HKCR\\.cpp']));
+    const ungated = runNsis(uninstallRegion.replace(/\$\{If\}[\s\S]*?\$\{EndIf\}[ \t]*\r?\n?/, ''), ours);
+    check('对照③：整道 ${If} 门被删掉时同样要红（对照②只换了比较值）',
+        ungated.reg['HKCR\\.cpp'] && ungated.reg['HKCR\\.cpp'][''] === undefined,
+        JSON.stringify(ungated.reg['HKCR\\.cpp']));
+}
 check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') && Object.hasOwn(packageJson.devDependencies, 'sharp'));
 
 // --- ci-check 的图标残留与密钥扫描：整段抽出来真跑 ---------------------------
@@ -1148,7 +1583,7 @@ check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') &
 
 // 同步断言先跑完，再补上假 DOM 那批（它们是 promise，微任务里才落地）。
 // 汇总必须等这一批落地后才能数 failures，否则 exitCode 会停在 0。
-Promise.all([deferredRows, remoteRows, miRows, workerRows])
+Promise.all([deferredRows, remoteRows, miRows, workerRows, ...updateRowsRef, ...downloaderRowsRef])
     .then((batches) => { for (const rows of batches) for (const row of rows) check(row.name, row.cond, row.extra); })
     .then(() => {
         console.log(`security regression tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
