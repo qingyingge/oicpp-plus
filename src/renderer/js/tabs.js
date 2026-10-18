@@ -4692,8 +4692,17 @@ class TabManager {
                 logWarn('恢复侧边栏(退出欢迎页)失败:', e);
             }
         }
+        // 两条身份都要认：displayWelcomePage 走 activateTabByUniqueKey，key 是 'Welcome'；
+        // showWelcomePage 只把字符串 'Welcome' 赋给 activeTab，key 仍是启动时的 null。
+        const welcomeWasActive = this.activeTabKey === 'Welcome' || this.activeTab === 'Welcome';
         this.tabs.delete('Welcome');
-        this.activeTab = null;
+        // createNewCppFile 这类调用点在没有任何欢迎页时也会进来：
+        // 无条件清 activeTab 会把当前文件的身份一起抹掉，而 activeTabKey 又留着不动，
+        // 于是 key 悬空指向已删除的 'Welcome'（和 6ddac59 修的是同一类身份错位）。
+        if (welcomeWasActive) {
+            this.activeTab = null;
+            this.activeTabKey = null;
+        }
     }
     getSelectedText() {
         const activeTab = this.getTabByFileName(this.activeTab);

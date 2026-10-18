@@ -877,8 +877,8 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
     check('关闭 tab 时 activeTab 与 activeTabKey 在同一个方法里一并清空',
         /this\.activeTab\s*=\s*null/.test(closeTabBody) && /this\.activeTabKey\s*=\s*null/.test(closeTabBody),
         `activeTab=${/this\.activeTab\s*=\s*null/.test(closeTabBody)} activeTabKey=${/this\.activeTabKey\s*=\s*null/.test(closeTabBody)}`);
-    // 只清一个、留下另一个的「不对称站点」现在已知恰好一处（closeWelcomePage：删了 Welcome
-    // 但 activeTabKey 仍指着它）。钉成棘轮：再新增一处就红 —— 那正是 6ddac59 那类身份错位。
+    // 只清一个、留下另一个的「不对称站点」曾经恰好一处（closeWelcomePage：删了 Welcome
+    // 但 activeTabKey 仍指着它），已修复。钉成空棘轮：再新增一处就红 —— 那正是 6ddac59 那类身份错位。
     const asymmetric = [];
     for (const name of ['closeTab', 'closeWelcomePage', 'closeTabByUniqueKey', 'closeTabByFileName', 'destroy']) {
         const body = classMethod(tabsSource, name);
@@ -887,8 +887,121 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
         const k = /this\.activeTabKey\s*=\s*null/.test(body);
         if (a !== k) asymmetric.push(name);
     }
-    check('「只清 activeTab 不清 activeTabKey」的方法只有已知那一处（新增一处就是身份错位的苗头）',
-        JSON.stringify(asymmetric) === '["closeWelcomePage"]', JSON.stringify(asymmetric));
+    check('没有任何「只清 activeTab 不清 activeTabKey」的方法（新增一处就是身份错位的苗头）',
+        asymmetric.length === 0, JSON.stringify(asymmetric));
+
+    // ---- (ii) closeWelcomePage 的行为守卫 ----
+    // 上面那条棘轮只锁得住「两个赋值挨在一起」，锁不住它们被无条件执行：
+    // 原方法无条件 `this.activeTab = null`，于是在没有欢迎页的调用点（createNewCppFile）
+    // 会把当前文件的身份一起抹掉。这里把方法体抽进 vm 真跑，断言的是清理后的字段和
+    // DOM 可见性 —— 「该清的清了、不该动的没动」两个方向都得是可观测的。
+    {
+        const closeWelcomeSrc = classMethod(tabsSource, 'closeWelcomePage');
+        check('方法体抽取成功: TabManager.closeWelcomePage',
+            /^\s*closeWelcomePage\(/.test(closeWelcomeSrc), String(closeWelcomeSrc).slice(0, 40));
+
+        const runCloseWelcome = (over = {}) => {
+            const opts = over || {};
+            const sidebarCalls = [];
+            const ctx = vm.createContext({
+                logInfo: () => { }, logWarn: () => { }, logError: () => { },
+                window: {
+                    sidebarManager: {
+                        showForEditor: () => sidebarCalls.push('showForEditor'),
+                        enableResize: () => sidebarCalls.push('enableResize')
+                    }
+                }
+            });
+            // instanceof HTMLElement 是同 realm 判定，元素必须在 context 里 new 出来，
+            // 宿主这边 new 的同类对象在 context 里 instanceof 恒 false，那条分支就被静默跳过了。
+            vm.runInContext(`
+                class HTMLElement { constructor(){ this.style = {}; } }
+                globalThis.__els = { welcome: new HTMLElement(), editor: new HTMLElement() };
+                globalThis.document = {
+                    getElementById: (id) => id === 'welcome-container' ? globalThis.__els.welcome : null,
+                    querySelector: (sel) => sel === '.editor-area' ? globalThis.__els.editor : null
+                };
+            `, ctx);
+
+            const FILE = '/home/user/proj/a.cpp';
+            const tabs = new Map();
+            tabs.set('Welcome', { fileName: 'Welcome', isWelcome: true });
+            const self = {
+                tabs,
+                groups: new Map(),
+                activeTab: 'Welcome',
+                activeTabKey: 'Welcome',
+                activeGroupId: null
+            };
+            if (opts.withFile) {
+                tabs.set(FILE, { fileName: 'a.cpp', filePath: FILE, uniqueKey: FILE, isWelcome: false });
+                self.activeTab = tabs.get(FILE);
+                self.activeTabKey = FILE;
+            }
+            // displayWelcomePage → activateTabByUniqueKey：activeTab 是整个 tab 对象、key 是 'Welcome'
+            if (opts.welcomeAsObject) self.activeTab = tabs.get('Welcome');
+            // showWelcomePage：只把字符串 'Welcome' 赋给 activeTab，activeTabKey 还是启动时的 null
+            if (opts.startupWelcome) self.activeTabKey = null;
+            if (opts.noWelcomeTab) tabs.delete('Welcome');
+
+            const fn = compileMethod(ctx, closeWelcomeSrc);
+            let error = null;
+            try { fn.call(self); } catch (e) { error = e; }
+            return {
+                error, self, sidebarCalls,
+                welcomeDisplay: ctx.__els.welcome.style.display,
+                editorDisplay: ctx.__els.editor.style.display
+            };
+        };
+
+        const closedWelcome = runCloseWelcome();
+        check('关欢迎页：跑通，不靠异常静默退出', closedWelcome.error === null, String(closedWelcome.error));
+        check('关欢迎页：tabs 里的 Welcome 被删', !closedWelcome.self.tabs.has('Welcome'),
+            [...closedWelcome.self.tabs.keys()].join());
+        check('关欢迎页：activeTab 与 activeTabKey 一并清空（key 不再悬空指向已删除的 Welcome）',
+            closedWelcome.self.activeTab === null && closedWelcome.self.activeTabKey === null,
+            JSON.stringify({ tab: closedWelcome.self.activeTab, key: closedWelcome.self.activeTabKey }));
+        check('关欢迎页：欢迎页容器隐藏、编辑区恢复显示',
+            closedWelcome.welcomeDisplay === 'none' && closedWelcome.editorDisplay === 'block',
+            JSON.stringify({ welcome: closedWelcome.welcomeDisplay, editor: closedWelcome.editorDisplay }));
+        check('关欢迎页：侧边栏走 showForEditor 恢复（不是 enableResize 兜底）',
+            JSON.stringify(closedWelcome.sidebarCalls) === '["showForEditor"]',
+            JSON.stringify(closedWelcome.sidebarCalls));
+
+        // activeTab 是 TabRecord 对象形态（displayWelcomePage → activateTabByUniqueKey）时，
+        // 认出身份靠的是 activeTabKey —— 只比字符串 'Welcome' 的那一支在这种形态下永远不成立。
+        const welcomeAsObject = runCloseWelcome({ welcomeAsObject: true });
+        check('关欢迎页：activeTab 是 Welcome 的 tab 对象时同样认出身份并清空',
+            welcomeAsObject.error === null
+            && welcomeAsObject.self.activeTab === null && welcomeAsObject.self.activeTabKey === null,
+            JSON.stringify({ tab: welcomeAsObject.self.activeTab, key: welcomeAsObject.self.activeTabKey }));
+
+        // showWelcomePage 只把字符串 'Welcome' 赋给 activeTab，activeTabKey 仍是启动时的 null ——
+        // 反过来只比 key 的那一支在这种形态下也不成立，少了它 activeTab 会指着已删除的 Welcome。
+        const startupWelcome = runCloseWelcome({ startupWelcome: true });
+        check('关欢迎页：只有 activeTab 认得出 Welcome（启动路径 key 为 null）时，两个字段都不留残留',
+            startupWelcome.error === null
+            && startupWelcome.self.activeTab === null && startupWelcome.self.activeTabKey === null,
+            JSON.stringify({ tab: startupWelcome.self.activeTab, key: startupWelcome.self.activeTabKey }));
+
+        const fileActive = runCloseWelcome({ withFile: true });
+        check('当前是普通文件、只是顺带删掉残留的 Welcome：文件的 activeTab/activeTabKey 不许被抹掉',
+            fileActive.error === null
+            && fileActive.self.activeTabKey === '/home/user/proj/a.cpp'
+            && fileActive.self.activeTab && fileActive.self.activeTab.filePath === '/home/user/proj/a.cpp',
+            JSON.stringify({ tab: typeof fileActive.self.activeTab, key: fileActive.self.activeTabKey }));
+        check('同上：Welcome 仍然被删，DOM 恢复也照常做完',
+            !fileActive.self.tabs.has('Welcome') && fileActive.self.tabs.size === 1
+            && fileActive.welcomeDisplay === 'none' && fileActive.editorDisplay === 'block',
+            JSON.stringify({ keys: [...fileActive.self.tabs.keys()], welcome: fileActive.welcomeDisplay, editor: fileActive.editorDisplay }));
+
+        const noWelcome = runCloseWelcome({ noWelcomeTab: true, withFile: true });
+        check('createNewCppFile 那条无欢迎页的调用路径：残留文件的身份不受影响',
+            noWelcome.error === null && noWelcome.self.tabs.size === 1
+            && noWelcome.self.activeTabKey === '/home/user/proj/a.cpp'
+            && noWelcome.self.activeTab !== null,
+            JSON.stringify({ size: noWelcome.self.tabs.size, key: noWelcome.self.activeTabKey }));
+    }
 
     // ---- 7032ecf：调试变量转义 —— 直接重建 createVariableElement 跑一遍看产物 ----
     {
