@@ -450,6 +450,115 @@ function makePauserSandbox(options = {}) {
     };
 }
 
+// runExecutable 的行为沙箱：整条函数抽进 vm，spawn / fs / 时钟 / 语言包全换成记账桩。
+// 之前这里只有两条文本守卫 —— includes('command = absoluteConsolePauserPath;') 和
+// includes("logInfo('[运行] 子进程已退出:'")。H16 的教训恰好是文本守卫挡不住它要挡的东西：
+// 把 command 改回 'cmd'、args 改回 ['-c','start','Program Running',…]，那两行字面量只要
+// 还留在文件里（挪进死分支、挪进注释、挪进另一个函数）includes 照样命中。跑起来之后
+// 断言的是「真正交给 spawn 的第一个参数是谁、close 之后被记录下来的退出码是什么」。
+function makeRunSandbox(options = {}) {
+    const opts = options || {};
+    const EXE = '/home/user/proj/build/a.exe';
+    const CWD = '/home/user/proj/build';
+    const PAUSER = '/home/user/.oicpp-plus/consolepauser.exe';
+    const COMPILER = '/opt/mingw/bin/g++.exe';
+
+    const files = new Set();
+    for (const f of (opts.exists === undefined ? [EXE, PAUSER, COMPILER, '/opt/mingw/bin', '/opt/mingw/mingw64/bin'] : opts.exists)) {
+        files.add(path.resolve(String(f)));
+    }
+    const fmt = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+    const logs = { info: [], warn: [], error: [] };
+    const spawns = [];
+    const children = [];
+    const timers = [];
+    const kills = [];
+    const detachedRunProcesses = new Set();
+
+    const fsStub = {
+        existsSync: (p) => files.has(path.resolve(String(p))),
+        statSync: (p) => {
+            if (opts.statThrows) throw new Error(`EACCES: ${p}`);
+            return { mode: opts.executableMode === undefined ? 0o755 : opts.executableMode, size: 12 };
+        },
+        chmodSync: (p, m) => { chmods.push({ path: path.resolve(String(p)), mode: m }); }
+    };
+    const chmods = [];
+    const requireStub = (id) => {
+        if (id === 'child_process') {
+            return {
+                spawn: (cmd, argsList, spawnOptions) => {
+                    const rec = {
+                        cmd: String(cmd),
+                        args: (argsList || []).map(String),
+                        options: spawnOptions || {}
+                    };
+                    spawns.push(rec);
+                    const child = new EventEmitter();
+                    child.killed = false;
+                    child.unrefCalls = 0;
+                    child.stdout = new EventEmitter();
+                    child.stderr = new EventEmitter();
+                    child.unref = () => { child.unrefCalls++; };
+                    child.kill = () => { child.killed = true; };
+                    children.push(child);
+                    return child;
+                },
+                execSync: (line) => { execCalls.push(String(line)); if (opts.hasTerminal !== true) throw new Error('not found'); }
+            };
+        }
+        if (id === 'path') return path;
+        if (id === 'fs') return fsStub;
+        if (id === 'iconv-lite') throw new Error('Cannot find module iconv-lite');
+        throw new Error(`run 沙箱里不该 require 这个模块: ${id}`);
+    };
+    const execCalls = [];
+
+    const ctx = vm.createContext({
+        __fns: {},
+        require: requireStub,
+        path,
+        fs: fsStub,
+        process: { platform: opts.platform || 'win32', env: { PATH: '/usr/bin' } },
+        settings: opts.settings === undefined ? { runMode: 'popup', compilerPath: COMPILER } : opts.settings,
+        findConsolePauser: () => (opts.pauserPath === null ? undefined : PAUSER),
+        normalizeRunModeForPlatform: (input, platform) => (
+            (platform === 'darwin' || platform === 'linux') ? 'integrated-terminal'
+                : (String(input || '').toLowerCase() === 'integrated-terminal' ? 'integrated-terminal' : 'popup')),
+        detectEncoding: () => 'utf8',
+        killByExePathWindows: async (p) => { kills.push(`exe:${p}`); },
+        killConsolePauserForTargetWindows: async (p) => { kills.push(`pauser:${p}`); },
+        detachedRunProcesses,
+        logInfo: (...a) => { logs.info.push(a.map(fmt)); },
+        logWarn: (...a) => { logs.warn.push(a.map(fmt)); },
+        logError: (...a) => { logs.error.push(a.map(fmt)); },
+        t: (key, params) => (params ? `${key}|${JSON.stringify(params)}` : key),
+        setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+        clearTimeout: () => { },
+        Buffer, EventEmitter,
+        JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Set, Map
+    });
+    const { fns, missing } = compileFuncs(opts.src, ['runExecutable'], ctx);
+
+    const start = (over = {}) => fns.runExecutable({
+        executablePath: EXE,
+        workingDirectory: CWD,
+        ...over
+    });
+    // 沙箱里的 setTimeout 不自动到期：1000ms 那条兜底 resolve 要由用例点名触发。
+    const fireTimers = () => { for (const t of timers.splice(0, timers.length)) t.fn(); };
+    const exitLog = () => logs.info
+        .map((l) => l.find((x) => x.startsWith('{')))
+        .filter(Boolean)
+        .map((s) => JSON.parse(s))
+        .find((o) => Object.prototype.hasOwnProperty.call(o, 'code'));
+    return {
+        fns, missing, spawns, children, logs, timers, kills, execCalls, chmods,
+        detachedRunProcesses, start, fireTimers, exitLog,
+        resolvedPath: (p) => path.resolve(String(p)), EXE, CWD, PAUSER, compilerBin: '/opt/mingw/bin'
+    };
+}
+
 function makeFormatSandbox() {
     const registrations = [];
     const logCalls = { info: [], warn: [] };
@@ -1326,21 +1435,88 @@ function makeModel(lines, state = {}) {
 
     const installerSource = fs.readFileSync(path.join(root, 'installer.nsi'), 'utf8');
 
-    // 下面这几条留作文本守卫，理由写在这：
-    // - cmd start 那两条是历史故障 H16 的「反面」断言 —— 它锁的是某段写法不存在，
-    //   而那段代码在 run 主流程的巨型函数里，抽出来跑等于要把整条运行链路搬进沙箱；
-    //   构建链的行为已经由上面的 pauser 沙箱覆盖，这里只补「别退回 cmd /c start」。
-    // - consolepauser 的 C 源码是要拿去 g++ 编译的源文本，CI 上没有 MinGW，
-    //   能跑的只有「字符串本身」这一层，改成行为守卫就得真编译。
-
+    // consolepauser 的 C 源码是要拿去 g++ 编译的源文本，CI 上没有 MinGW，
+    // 能跑的只有「字符串本身」这一层，改成行为守卫就得真编译 —— 下面三条留作文本守卫。
     const pauserSource = fs.readFileSync(path.join(root, 'src', 'utils', 'consolepauser-source.js'), 'utf8');
     // H16: shell:false 下 libuv 会把参数内的 " 转义成 \"，cmd.exe 不认这种转义，
     // start 会把字面量 "Program Running 当成程序名。必须直接 spawn consolepauser.exe。
-    check('the pauser is spawned directly instead of through cmd start',
-        mainSource.includes('command = absoluteConsolePauserPath;') &&
-        mainSource.includes('args = [absoluteExePath];') &&
-        !mainSource.includes('start "Program Running"') &&
-        !mainSource.includes("command = 'cmd';"));
+    // 这一条原来是 mainSource.includes('command = absoluteConsolePauserPath;') 的文本守卫：
+    // 改回 cmd start 一样能命中那两行字面量（它们可以躺在死分支或注释里），所以换成把
+    // runExecutable 真跑一遍，断言 spawn 实际收到的命令与参数。
+    {
+        const tick = () => new Promise((r) => setImmediate(r));
+        const run = makeRunSandbox({ src: mainSource });
+        check('runExecutable 正文抽取成功（抽不到就别再往下断言）',
+            run.missing.length === 0 && typeof run.fns.runExecutable === 'function',
+            JSON.stringify({ missing: run.missing }));
+        const pending = run.start().then((v) => ({ value: v }), (e) => ({ error: e }));
+        await tick();                 // win32 分支先 await 两个 kill，promise 体才轮到 spawn
+        const rec = run.spawns[0] || {};
+        const child = run.children[0];
+        check('win32 popup 真跑：spawn 的第一个参数就是 consolepauser 本体，不是 cmd',
+            run.spawns.length === 1 && rec.cmd === run.resolvedPath(run.PAUSER) && rec.cmd !== 'cmd',
+            JSON.stringify({ cmd: rec.cmd, count: run.spawns.length }));
+        check('H16 反面：参数里没有 start / 标题 / 引号碎片，只有那一个绝对 exe 路径',
+            Array.isArray(rec.args) && rec.args.length === 1
+            && rec.args[0] === run.resolvedPath(run.EXE)
+            && !rec.args.some((a) => a === 'start' || a.includes('Program Running') || a.includes('"')),
+            JSON.stringify(rec.args));
+        check('spawn 选项保持 detached + stdio:ignore + shell:false + 指定工作目录',
+            rec.options.detached === true && rec.options.stdio === 'ignore'
+            && rec.options.shell === false && rec.options.cwd === run.CWD,
+            JSON.stringify(rec.options));
+        check('编译器目录补进 PATH 前缀、原 PATH 收尾（缺 DLL 时只有 0xC0000135 可查）',
+            String(rec.options.env.PATH).startsWith(`${run.compilerBin}${path.delimiter}`)
+            && String(rec.options.env.PATH).endsWith(`${path.delimiter}/usr/bin`)
+            && !String(rec.options.env.PATH).includes('mingw32'),
+            String(rec.options.env.PATH));
+        check('运行前按绝对路径清同名旧进程和残留 pauser',
+            run.kills.length === 2
+            && run.kills.includes(`exe:${run.resolvedPath(run.EXE)}`)
+            && run.kills.includes(`pauser:${run.resolvedPath(run.EXE)}`),
+            JSON.stringify(run.kills));
+        check('子进程被 unref 并登记进 detachedRunProcesses（退出时才有的可 kill）',
+            !!child && child.unrefCalls === 1 && run.detachedRunProcesses.has(child),
+            JSON.stringify({ unref: child && child.unrefCalls, size: run.detachedRunProcesses.size }));
+        if (child) child.emit('spawn');
+        const out = await pending;
+        check('spawn 事件按成功收口，返回值是渲染层在用的形状',
+            !!out.value && out.value.success === true, JSON.stringify(out));
+        if (child) child.emit('close', 0xC0000135, null);
+        const logged = run.exitLog();
+        check('detached 子进程的退出码原样进日志：code 就是子进程那个数、command 对得上',
+            !!logged && logged.code === 0xC0000135 && logged.command === rec.cmd && logged.signal === null,
+            JSON.stringify({ logged, cmd: rec.cmd }));
+        check('close 之后从 detachedRunProcesses 摘掉，不留悬引用',
+            run.detachedRunProcesses.size === 0, String(run.detachedRunProcesses.size));
+    }
+    {
+        // 三条早退路径：pauser 缺失、可执行文件缺失、darwin/linux 交棒给集成终端。
+        const tick = () => new Promise((r) => setImmediate(r));
+        const noPauser = makeRunSandbox({ src: mainSource, pauserPath: null });
+        const np = await noPauser.start().then((v) => null, (e) => e);
+        check('找不到 consolepauser：按 error.consolePauserMissing 拒绝，一次都不 spawn',
+            np instanceof Error && np.message.startsWith('error.consolePauserMissing')
+            && noPauser.spawns.length === 0, JSON.stringify({ msg: np && String(np.message) }));
+
+        const noExe = makeRunSandbox({ src: mainSource, exists: [noPauser.PAUSER] });
+        const ne = await noExe.start().then((v) => null, (e) => e);
+        check('可执行文件不存在：按 error.executableNotFound 拒绝并把路径传进去',
+            ne instanceof Error && ne.message.startsWith('error.executableNotFound')
+            && ne.message.includes(noExe.EXE) && noExe.spawns.length === 0,
+            JSON.stringify({ msg: ne && String(ne.message) }));
+
+        const mac = makeRunSandbox({ src: mainSource, platform: 'darwin' });
+        const mv = await mac.start().then((v) => v, (e) => ({ err: String(e) }));
+        await tick();
+        check('darwin/linux 一律走 integrated-terminal：交棒终端，不 spawn 任何进程',
+            !!mv && mv.mode === 'integrated-terminal' && mac.spawns.length === 0
+            && mv.executablePath === mac.resolvedPath(mac.EXE)
+            && mv.workingDirectory === mac.resolvedPath(mac.CWD),
+            JSON.stringify(mv));
+        check('非 win32 不碰 taskkill（那两个 helper 只在 windows 分支 awaited）',
+            mac.kills.length === 0, JSON.stringify(mac.kills));
+    }
     // IDE 以 detached + stdio:'ignore' 启动 pauser，不附加控制台；此时 _getch() 无 stdin 可读，
     // 立即返回 EOF，控制台窗口在程序退出的瞬间消失。必须由 pauser 自行 AllocConsole 并重绑句柄。
     check('console pauser allocates its own console so the pause prompt survives',
@@ -1474,8 +1650,6 @@ function makeModel(lines, state = {}) {
                 withDirs.pathEnvOf(0).endsWith(`${path.delimiter}/usr/bin`),
             withDirs.pathEnvOf(0));
     }
-    check('detached run failures are logged through the child exit code', mainSource.includes("logInfo('[运行] 子进程已退出:'"));
-
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     check('build downloads standalone clang-format', packageJson.scripts['prebuild:clang-format'] === 'node scripts/run-node-compat.js scripts/download-clang-format.js');
     const packagedSources = ['win', 'mac', 'linux'].flatMap(platform => packageJson.build[platform].extraResources || []);
