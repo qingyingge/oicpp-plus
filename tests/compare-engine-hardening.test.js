@@ -47,6 +47,20 @@ const EVENTS = ['progress', 'error', 'warning', 'complete', 'stopped'];
 function loadEngine(throwOnCreate = 0) {
     const workers = [];
     let alreadyThrew = false;
+    // stop() 排的「2 秒后收尸」定时器在这里必须是可观测的：真实句柄没暴露出来，
+    // 进程内看不到「退出时被它按住」，而漏 .unref() 的代价正是主进程退不掉。
+    // 把它换成记账桩（形参遮蔽全局，只影响引擎函数作用域内），unref 与到期回调都能直接数。
+    const timers = [];
+    const fakeSetTimeout = (fn, ms) => {
+        const rec = { fn, ms, unref: 0, ref: 0 };
+        rec.handle = {
+            unref: () => { rec.unref++; return rec.handle; },
+            ref: () => { rec.ref++; return rec.handle; },
+            hasRef: () => rec.unref === 0
+        };
+        timers.push(rec);
+        return rec.handle;
+    };
     class FakeWorker extends events.EventEmitter {
         constructor(workerPath) {
             super();
@@ -80,14 +94,15 @@ function loadEngine(throwOnCreate = 0) {
         return require(name);
     };
     const exportsObj = {};
-    const factory = new Function('module', 'exports', '__dirname', '__require__',
+    const factory = new Function('module', 'exports', '__dirname', '__require__', 'setTimeout', 'clearTimeout',
         engineSrc.replace(/require\(/g, '__require__(') + '\nreturn CompareEngineV2;');
-    const Engine = factory({ exports: exportsObj }, exportsObj, ENGINE_DIR, fakeRequire);
-    return { Engine, workers };
+    const Engine = factory({ exports: exportsObj }, exportsObj, ENGINE_DIR, fakeRequire,
+        fakeSetTimeout, () => { });
+    return { Engine, workers, timers };
 }
 
 function makeEngine(throwOnCreate = 0) {
-    const { Engine, workers } = loadEngine(throwOnCreate);
+    const { Engine, workers, timers } = loadEngine(throwOnCreate);
     const engine = new Engine();
     const seen = [];
     for (const evt of EVENTS) engine.on(evt, (payload) => seen.push({ evt, payload }));
@@ -95,6 +110,9 @@ function makeEngine(throwOnCreate = 0) {
         engine,
         workers,
         seen,
+        timers,
+        // 到期时真的发生什么，由用例点名驱动，不靠睡 2 秒
+        fireTimers: () => { for (const t of timers.splice(0, timers.length)) t.fn(); },
         of: (evt) => seen.filter((s) => s.evt === evt).map((s) => s.payload),
         start: (config) => engine.start(Object.assign({
             totalTests: 5, threadCount: 1, generator: 'gen.exe', stdExe: 'std.exe', testExe: 'test.exe'
@@ -558,10 +576,19 @@ setTimeout(() => {
         check('stop() 是 fire-and-forget：不 await worker 收尸',
             stoppingProbe.engine.state === 'stopping' && stoppingProbe.workers[0].terminated === 0,
             `terminated=${stoppingProbe.workers[0].terminated}`);
-        // 只能锁文本：定时器句柄没有暴露出来，进程内观察不到「退出时被按住 2 秒」，
-        // 而漏掉 .unref() 的代价正是主进程退不出。正则按排版容忍，只锁 2000 与 unref 的相邻关系。
-        check('收尸定时器不挂住事件循环（2000ms 后 .unref()）',
-            /2000\)\s*\.unref\(\)/.test(engineSrc));
+        // 原来是 /2000\)\s*\.unref\(\)/.test(engineSrc)：把 setTimeout 换成记账桩之后
+        // 「句柄被 unref 过」和「到期真把 worker 收掉」都能直接数出来，文本锁就不需要了。
+        // 延迟的具体毫秒数是可调参数，只锁它是正数（漏成 0 就是立刻收尸，语义变了）。
+        check('stop() 排了一个收尸定时器，句柄净 unref（否则主进程退不出去）',
+            stoppingProbe.timers.length === 1
+            && stoppingProbe.timers[0].unref === 1 && stoppingProbe.timers[0].ref === 0
+            && Number.isFinite(stoppingProbe.timers[0].ms) && stoppingProbe.timers[0].ms > 0,
+            JSON.stringify(stoppingProbe.timers.map((t) => ({ ms: t.ms, unref: t.unref, ref: t.ref }))));
+        check('收尸定时器到期才 terminate，每个 stop 时的 worker 各一次',
+            stoppingProbe.workers.every((w) => w.terminated === 0)
+            && (() => { stoppingProbe.fireTimers(); return true; })()
+            && stoppingProbe.workers.length === 1 && stoppingProbe.workers[0].terminated === 1,
+            JSON.stringify(stoppingProbe.workers.map((w) => w.terminated)));
         stoppingProbe.workers.forEach((w) => w.report({ type: 'done' }));
         await stopFirst;
 
