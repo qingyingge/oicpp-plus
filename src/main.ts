@@ -9449,6 +9449,9 @@ async function runExecutable(options: Record<string, unknown>) {
                 env: runEnv
             };
         } else {
+            // 走得到这里的只有「既不是 win32、也不是 darwin/linux」的平台：
+            // normalizeRunModeForPlatform 把后两者的 runMode 一律归到 integrated-terminal，
+            // 上面交棒终端就 return 了。要给那两者开外部终端，改那里，别在这里加功能。
             const which = (bin: string) => {
                 try {
                     const { execSync } = require('child_process');

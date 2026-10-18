@@ -506,7 +506,12 @@ function makeRunSandbox(options = {}) {
                     children.push(child);
                     return child;
                 },
-                execSync: (line) => { execCalls.push(String(line)); if (opts.hasTerminal !== true) throw new Error('not found'); }
+                // command -v 的探测结果由 opts.terminals 决定：不在表里就按 sh 的写法抛错。
+                execSync: (line) => {
+                    execCalls.push(String(line));
+                    const bin = String(line).replace(/^command -v /, '');
+                    if (!(opts.terminals || []).includes(bin)) throw new Error(`${bin}: not found`);
+                }
             };
         }
         if (id === 'path') return path;
@@ -1568,6 +1573,107 @@ function makeModel(lines, state = {}) {
             JSON.stringify(mv));
         check('非 win32 不碰 taskkill（那两个 helper 只在 windows 分支 awaited）',
             mac.kills.length === 0, JSON.stringify(mac.kills));
+
+        // posix 外部终端那一支。darwin/linux 走不到（上面两条就是锁这个的），
+        // 能进来的只有既非 win32 又非 darwin/linux 的平台 —— 所以这里用 freebsd 把它跑起来。
+        // 值得跑的不是「支持哪个平台」，是这两件事：命令用 execSync 探完就得停，
+        // 以及 bash -lc 那段命令行是拿用户给的**路径**拼出来的字符串，
+        // 单引号转义一旦退化成直接拼，路径里带个 ' 就是命令注入，而文本守卫永远看不见。
+        {
+            const shq = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+            // 按 POSIX 规则把命令行拆回 token：单引号段原样取，段外反斜杠转义下一个字符，
+            // 段外的 ; | & 各自成 token（引号里的不会走到这一步，正好用来区分「哪来的分号」）。
+            const shTokens = (line) => {
+                const tokens = [];
+                let cur = '';
+                let started = false;
+                const flush = () => { if (started) { tokens.push(cur); cur = ''; started = false; } };
+                for (let i = 0; i < line.length; i++) {
+                    const ch = line[i];
+                    if (ch === "'") {
+                        const end = line.indexOf("'", i + 1);
+                        if (end < 0) throw new Error('单引号没闭合');
+                        cur += line.slice(i + 1, end);
+                        i = end;
+                        started = true;
+                    } else if (ch === '\\') {
+                        cur += line[i + 1];
+                        i++;
+                        started = true;
+                    } else if (ch === ';') {
+                        flush();
+                        tokens.push(';');
+                    } else if (ch === ' ') {
+                        flush();
+                    } else {
+                        cur += ch;
+                        started = true;
+                    }
+                }
+                flush();
+                return tokens;
+            };
+            const CANDIDATES = ['gnome-terminal', 'konsole', 'xfce4-terminal', 'x-terminal-emulator', 'xterm'];
+
+            const none = makeRunSandbox({ src: mainSource, platform: 'freebsd', terminals: [] });
+            const noTerm = await none.start().then((v) => null, (e) => e);
+            check('POSIX 五个候选都没探到：按 error.noTerminalEmulator 拒绝，一次都不 spawn',
+                noTerm instanceof Error && noTerm.message.startsWith('error.noTerminalEmulator')
+                && none.spawns.length === 0 && none.execCalls.join(',') === CANDIDATES.map((c) => `command -v ${c}`).join(','),
+                JSON.stringify({ msg: String(noTerm && noTerm.message), probes: none.execCalls }));
+
+            for (const picked of CANDIDATES) {
+                const box = makeRunSandbox({ src: mainSource, platform: 'freebsd', terminals: [picked] });
+                const pending = box.start().then((v) => ({ value: v }), (e) => ({ error: e }));
+                await tick();
+                const rec = box.spawns[0] || {};
+                const firstArg = picked === 'gnome-terminal' ? '--' : (picked === 'xfce4-terminal' ? '-x' : '-e');
+                check(`只装了 ${picked} 时命令就是它，参数头一项是 ${firstArg}（各终端传命令的语法不一样）`,
+                    box.spawns.length === 1 && rec.cmd === picked
+                    && rec.args[0] === firstArg && rec.args[1] === 'bash' && rec.args[2] === '-lc'
+                    && typeof rec.args[3] === 'string',
+                    JSON.stringify({ cmd: rec.cmd, args: rec.args }));
+                check(`探到 ${picked} 就停：候选按顺序问，命中后面那几个不再起进程`,
+                    box.execCalls.length === CANDIDATES.indexOf(picked) + 1
+                    && box.execCalls[box.execCalls.length - 1] === `command -v ${picked}`,
+                    JSON.stringify(box.execCalls));
+                check(`${picked} 的 spawn 选项保持 detached + stdio:ignore，且工作目录是解析过的绝对路径`,
+                    rec.options?.detached === true && rec.options?.stdio === 'ignore'
+                    && rec.options?.cwd === box.resolvedPath(box.CWD),
+                    JSON.stringify(rec.options));
+                if (box.children[0]) box.children[0].emit('spawn');
+                await pending;
+            }
+
+            const tricky = "/home/user/it's proj/x' ; touch /tmp/pwned ; #.out";
+            const trickyCwd = "/home/user/工作目录/it's build";
+            const inj = makeRunSandbox({
+                src: mainSource, platform: 'freebsd', terminals: ['xterm'],
+                exists: [tricky, trickyCwd]
+            });
+            const injPending = inj.start({ executablePath: tricky, workingDirectory: trickyCwd })
+                .then((v) => v, (e) => ({ err: String(e) }));
+            await tick();
+            const injRec = inj.spawns[0] || {};
+            const injTokens = (() => { try { return shTokens(injRec.args?.[3] || ''); } catch (_) { return null; } })();
+            check('带空格和单引号的路径经 POSIX 还原回来还是那一条（不是被拆成几条命令）',
+                !!injTokens && injTokens.includes(inj.resolvedPath(tricky))
+                && injTokens[0] === 'cd' && injTokens[1] === inj.resolvedPath(trickyCwd),
+                JSON.stringify({ tokens: injTokens, line: injRec.args && injRec.args[3] }));
+            check('路径里的 shell 元字符没被当成命令：touch 不成 token，分隔符仍是那三段',
+                !!injTokens && !injTokens.includes('touch')
+                && injTokens.filter((tk) => tk === ';').length === 3,
+                JSON.stringify(injTokens));
+            check('转义用的是 POSIX 单引号写法，不是双引号（双引号挡不住 $() 和反引号）',
+                typeof injRec.args?.[3] === 'string' && injRec.args[3].includes(shq(inj.resolvedPath(tricky)))
+                && !injRec.args[3].includes('"'),
+                String(injRec.args && injRec.args[3]));
+            check('跑完留一条读等待，程序输出不会被终端秒关',
+                /read\s/.test(String(injRec.args?.[3] || '')) && /printf/.test(String(injRec.args?.[3] || '')),
+                String(injRec.args && injRec.args[3]));
+            if (inj.children[0]) inj.children[0].emit('spawn');
+            await injPending;
+        }
     }
     // IDE 以 detached + stdio:'ignore' 启动 pauser，不附加控制台；此时 _getch() 无 stdin 可读，
     // 立即返回 EOF，控制台窗口在程序退出的瞬间消失。必须由 pauser 自行 AllocConsole 并重绑句柄。
