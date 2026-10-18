@@ -543,9 +543,10 @@ const rendererContract = (async () => {
     // 反过来两处门任何一处被删掉、但另一处还留着符合形状的代码，正则照样过。
     // 现在把两处门各自抽出来真跑：喂进 patch，看 createMenuBar 被叫了几次。
     // 各档自己防不防 null 是另一回事，不在这里锁：
-    // update-settings 的门自带 `incomingSettings &&`，update-top-level-settings 的门没有
-    // （它上面有 `for (const key in patch)`，null 走到这里不会先炸，会在本行炸），
-    // 后者记入待修的健壮性问题，锁成「必须抛」就是把 bug 当契约。
+    // update-settings 的门自带 `incomingSettings &&`，update-top-level-settings 的门没有 ——
+    // 它读到的 patch 是 updateSettings 开头兜过底的对象，null/undefined 到不了这一行。
+    // 那层兜底由 tests/security-boundaries.test.js 的 (bb) 一节真跑验证（落盘与广播是否成套发生），
+    // 在这里锁成「必须抛」就是把调用方的契约当成门自己的性质，两边各管一段。
     const gates = [
         ['update-settings（渲染层整包回传）',
             ifStatement(mainSource, /^\s*if \(incomingSettings && Object\.prototype\.hasOwnProperty\.call\(incomingSettings, 'keybindings'\)/m),

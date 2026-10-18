@@ -769,6 +769,141 @@ async function main() {
     //     把第二道校验整个拆掉也不会读到东西）。
     //   · TEMP_DELETE_ROOTS 的数组切片 —— 挪到上面 A2 里，跑真声明拿到清单再接真判定。
 
+    // ============ (bb) updateSettings：渲染进程整参不传时不许半途而废 ============
+    // 两个入口（update-top-level-settings / updateSettings）的 newSettings 是 unknown，
+    // null / undefined 都能传进来。旧实现在 null 时会「已经 normalize 并落盘之后、
+    // 还没广播 settings-changed 之前」抛 TypeError，再被自己的 catch 折成 {success:false}：
+    // 磁盘上是新的一份，渲染进程手里还是旧的一份，而且没人知道。
+    // 所以这里锁的不是某行字，而是这条路径上的可观测序列：归一化→落盘→广播→返回成功，
+    // 少任何一环都是回归。
+    {
+        const makeSettingsScope = (extra = {}) => {
+            const trace = [];
+            const settingsObj = { theme: 'dark', font: 'Consolas' };
+            const win = (name) => ({
+                isDestroyed: () => false,
+                setBackgroundColor: (c) => { trace.push(`${name}.bg=${c}`); },
+                webContents: { send: (channel) => { trace.push(`${name}.${channel}`); } }
+            });
+            const scope = makeScope({
+                settings: settingsObj,
+                mainWindow: win('main'),
+                compilerSettingsWindow: win('compiler'),
+                editorSettingsWindow: win('editor'),
+                codeTemplatesWindow: win('templates'),
+                backupSettingsWindow: win('backup'),
+                normalizeSettingsRuntimeShape: (s) => { trace.push('normalize'); s.normalized = true; },
+                saveSettings: () => { trace.push('save'); },
+                scheduleAutoSettingsBackup: (reason) => { trace.push(`backup:${reason}`); },
+                createMenuBar: () => { trace.push('menuBar'); },
+                setLanguage: (lang) => { trace.push(`setLanguage:${lang}`); },
+                normalizeRunModeForPlatform: (m) => `runMode(${m})`,
+                normalizeCompilerArgsForPlatform: (a) => `args(${a})`,
+                getThemeBackgroundColor: (name) => `bg(${name})`,
+                ...extra
+            });
+            return { scope, trace, settingsObj };
+        };
+        const runUpdate = (patch, extra) => {
+            const env = makeSettingsScope(extra);
+            const compiled = compileFn('updateSettings', env.scope);
+            // 抽取失败时 fn 是 undefined，直接调用会把整份测试带 stack trace 崩掉，
+            // 后半段断言就没了 —— 让它在这里停住，由「抽取成功」那条报出来。
+            const result = typeof compiled.fn === 'function' ? compiled.fn(null, patch) : undefined;
+            return { ...env, ...compiled, result };
+        };
+        // 只要求这些步骤都出现、且先后顺序不颠倒；中间多插别的步骤不算失败
+        const follows = (trace, steps) => {
+            let at = -1;
+            return steps.every((step) => {
+                const i = trace.indexOf(step);
+                if (i < 0 || i <= at) return false;
+                at = i;
+                return true;
+            });
+        };
+
+        const nulled = runUpdate(null);
+        check('函数抽取成功: updateSettings',
+            nulled.body.length > 0 && typeof nulled.fn === 'function', `${nulled.body.length} 字符`);
+        check('补丁是 null 时返回成功，而不是被自己的 catch 折成 {success:false}',
+            nulled.result && nulled.result.success === true && nulled.result.error === undefined,
+            JSON.stringify(nulled.result));
+        check('补丁是 null 时归一化→落盘→广播三步都发生且顺序没颠倒（旧写法在这条上抛，广播缺失）',
+            follows(nulled.trace, ['normalize', 'save', 'main.settings-changed']),
+            nulled.trace.join(' → '));
+
+        for (const junk of [null, undefined]) {
+            const env = runUpdate(junk);
+            check(`整参传 ${String(junk)} 时既不抛也不写坏 settings`,
+                env.result && env.result.success === true
+                && Object.keys(env.settingsObj).filter((k) => k !== 'normalized').sort().join(',') === 'font,theme',
+                JSON.stringify(env.result));
+        }
+        const junkShape = runUpdate('font=Consolas');
+        check('传进来的是字符串这种非对象形状时当空补丁处理（for...in 会把每个下标当成一个无效键）',
+            junkShape.result.success === true && junkShape.settingsObj.font === 'Consolas'
+            && junkShape.trace.includes('main.settings-changed'),
+            JSON.stringify({ settings: junkShape.settingsObj, result: junkShape.result }));
+
+        const applied = runUpdate({ font: 'Courier New', runMode: 'external', compilerArgs: '-O2', evil: 'x' });
+        check('白名单内的键写进 settings，runMode / compilerArgs 过平台归一化而不是原样落库',
+            applied.settingsObj.font === 'Courier New'
+            && applied.settingsObj.runMode === 'runMode(external)'
+            && applied.settingsObj.compilerArgs === 'args(-O2)',
+            JSON.stringify(applied.settingsObj));
+        check('白名单外的键进不了 settings（渲染进程不能自己加键，比如 account）',
+            applied.settingsObj.evil === undefined && !('evil' in applied.settingsObj),
+            JSON.stringify(Object.keys(applied.settingsObj)));
+
+        const rebound = runUpdate({ keybindings: { 'Ctrl+S': 'save' } });
+        check('改动里带 keybindings 就重画一次原生菜单',
+            rebound.trace.filter((s) => s === 'menuBar').length === 1, rebound.trace.join(' → '));
+        const speak = runUpdate({ language: 'en' });
+        check('改语言先 setLanguage 再重画菜单（否则切换只对界面正文生效，菜单栏还是旧语言）',
+            speak.trace.includes('setLanguage:en')
+            && speak.trace.filter((s) => s === 'menuBar').length === 1
+            && speak.settingsObj.language === 'en', speak.trace.join(' → '));
+        const painted = runUpdate({ theme: 'light' });
+        check('换主题把窗口底色改掉，并通知四个设置子窗口（子窗口不跟着换就是半屏旧色）',
+            painted.trace.includes('main.bg=bg(light)')
+            && ['compiler', 'editor', 'templates', 'backup'].every((w) => painted.trace.includes(`${w}.theme-changed`)),
+            painted.trace.join(' → '));
+
+        // 反向对照：catch 不能因为上面那道兜底变成「怎么都成功」。落盘真炸的时候必须报失败，
+        // 而且广播不许发出去 —— 磁盘没写成却告诉渲染进程改好了，比抛错更糟。
+        const diskFull = runUpdate({ font: 'Courier New' }, { saveSettings: () => { throw new Error('disk full'); } });
+        check('落盘失败仍然如实返回 {success:false} + 错误正文（兜底没把 catch 变成万能成功）',
+            diskFull.result && diskFull.result.success === false && diskFull.result.error === 'disk full',
+            JSON.stringify(diskFull.result));
+        check('落盘失败时不广播 settings-changed（没写成就不能告诉渲染进程改好了）',
+            !diskFull.trace.includes('main.settings-changed'), diskFull.trace.join(' → '));
+
+        // 通道侧：载荷必须原样到 updateSettings，返回值必须原样回给渲染进程。
+        // handler 是同步的，compileHandler 会强行包成 async 改掉返回类型，这里另配一个同步版。
+        const compileSyncHandler = (anchor, params, scope) => {
+            const body = callbackBody(mainSource, anchor);
+            if (!body) return { body, fn: undefined };
+            vm.runInContext(`this.__fn = (${params.join(', ')}) => ${body};`, scope.ctx);
+            return { body, fn: scope.ctx.__fn };
+        };
+        for (const channel of ['update-top-level-settings', 'updateSettings']) {
+            const seen = [];
+            const scope = makeScope({
+                updateSettings: (type, patch) => { seen.push([type, patch]); return { success: true, via: channel }; }
+            });
+            const { body, fn } = compileSyncHandler(
+                new RegExp(`ipcMain\\.handle\\('${channel}'`), ['event', 'newSettings'], scope);
+            check(`handler 抽取成功: ${channel}`, body.startsWith('{') && typeof fn === 'function', `${body.length} 字符`);
+            const out = fn(null, { font: 'Courier New' });
+            check(`${channel}：载荷原样交给 updateSettings，且第一参传 null（按键打补丁，不是整包替换）`,
+                seen.length === 1 && seen[0][0] === null && seen[0][1] && seen[0][1].font === 'Courier New',
+                JSON.stringify(seen));
+            check(`${channel}：updateSettings 的返回值原样回给渲染进程（失败了调用方得看得见）`,
+                out && out.success === true && out.via === channel, JSON.stringify(out));
+        }
+    }
+
     // -----------------------------------------------------------------------
     // 行为测试里回显用到的 i18n 键，必须真的存在于两语言包（防止拒了但界面空白）
     // -----------------------------------------------------------------------

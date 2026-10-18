@@ -8134,7 +8134,13 @@ function saveSettings() {
 }
 function updateSettings(settingsType, newSettings) {
     try {
-        const patch = newSettings;
+        // newSettings 是渲染进程传过来的 unknown，可以整参不传或传 null。
+        // null 时下面那个 for...in 只是空转，但再往下 hasOwnProperty.call(patch, 'keybindings')
+        // 会直接抛 TypeError —— 而那时 normalize 已经改写并落盘、settings-changed 还没发出去，
+        // 于是主进程存的是新的一份，渲染进程显示的还是旧的一份。
+        const patch = (typeof newSettings === 'object' && newSettings !== null)
+            ? newSettings
+            : {};
         const validKeys = [
             'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme',
             'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'fontLigaturesEnabled', 'cppTemplate', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'autoSave', 'autoSaveInterval',
