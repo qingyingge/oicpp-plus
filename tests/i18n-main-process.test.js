@@ -5,6 +5,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
+const { funcDecl, ifStatement } = require('./fixtures/source-extract');
+const { loadLocales } = require('./fixtures/ci-block-runner');
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -164,16 +167,155 @@ const enMain = en.main || {};
 // ---------------------------------------------------------------------------
 
 {
-    check('compiler.js 提供 isTimeoutError 助手',
-        // 形参名不锁：迁移后签名改为 isTimeoutError(cause) + 局部收窄到 error
-        /function isTimeoutError\(/.test(compilerSource));
-    check('isTimeoutError 只看 name/code',
-        /error\.name === 'AbortError' \|\| error\.name === 'TimeoutError'/.test(compilerSource) &&
-        /error\.code === 'ECONNABORTED' \|\| error\.code === 'ETIMEDOUT'/.test(compilerSource));
-    check('两处超时判定都改用 isTimeoutError',
-        (compilerSource.match(/if \(isTimeoutError\(error\)\)/g) || []).length === 2);
-    check('不再用 message 文案正则匹配超时',
-        !/timeout\|timed out\|超时\|ECONNABORTED/i.test(compilerSource));
+    // 原来四条全是文本守卫：`/function isTimeoutError\(/`、把 name/code 那两行逐字比对、
+    // 数 `if (isTimeoutError(error))` 出现两次，最后一条 `/timeout\|timed out\|超时\|ECONNABORTED/i`
+    // 里是**转义竖线**，实际只在查「旧正则的字面量没回来」。
+    // 把 message 匹配换成任何别的写法（/timed\s*out/i、error.message.includes('超时')、判 HTTP 状态码），
+    // 四条一条都不会红 —— 而这正是 M57 那类「改一次译文就静默失配」的入口。
+    // 现在把助手本体和两处 catch 里的判定块抽出来真跑：谁能决定超时，是跑出来的。
+    const guard = funcDecl(compilerSource, 'isTimeoutError');
+    check('isTimeoutError 整段抽取成功（真跑的必须是源码那份，不是测试里重抄的判据）',
+        guard.length > 80, JSON.stringify(guard.slice(0, 40)));
+
+    const vmGlobals = { Object, String, Array, RegExp, Math, Error, JSON };
+    const runGuard = (err) => {
+        const ctx = vm.createContext(vmGlobals);
+        try {
+            vm.runInContext(`${guard}\nthis.__call = (e) => isTimeoutError(e);`, ctx);
+            return { val: ctx.__call(err) };
+        } catch (e) { return { threw: String((e && e.message) || e) }; }
+    };
+
+    // [输入, 期望, 这一条在防什么]
+    const CASES = [
+        [{ name: 'AbortError' }, true, 'abort 的错误名'],
+        [{ name: 'TimeoutError' }, true, '超时的错误名'],
+        [{ code: 'ECONNABORTED' }, true, '连接中止的错误码'],
+        [{ code: 'ETIMEDOUT' }, true, '系统超时的错误码'],
+        [{ __proto__: { name: 'TimeoutError' } }, true, '真 DOMException 的 name 在原型链上，也必须认'],
+        [{ name: 'Error', message: 'timeout' }, false, 'message 里写着 timeout 不算'],
+        [{ name: 'Error', message: 'request timed out after 30000ms' }, false, 'timed out 不算'],
+        [{ name: 'Error', message: '获取编译器列表超时' }, false, '中文「超时」不算'],
+        [{ name: 'Error', message: 'timeout|timed out|超时|ECONNABORTED' }, false,
+            '把旧文案正则整串塞进 message 也不算（这条替掉那条转义竖线的文本守卫）'],
+        [{ name: 'abortError' }, false, '大小写敏感：不是宽松匹配'],
+        [{ name: 'NotTimeoutError' }, false, '子串不算命中：不是 includes'],
+        [{ code: 'ECONNRESET' }, false, '连接重置不是超时'],
+        [{ code: 'timeout' }, false, '把文案塞进 code 也不算：只认那两个码'],
+        [new Error('timeout'), false, '真 Error 的 name 是 Error，不能因为 message 就判超时'],
+        [null, false, 'null 直接挡（!cause 那半条真起作用）'],
+        ['ECONNABORTED', false, '字符串形态的错误也要挡（typeof 那半条真起作用）']
+    ];
+    for (const [err, want, why] of CASES) {
+        check(`助手判定 ${JSON.stringify(err)} === ${want} —— ${why}`,
+            runGuard(err).val === want, JSON.stringify(runGuard(err)));
+    }
+
+    // 两处 catch：抽整块来跑，块后面补一句「走通用分支」的标记 —— 于是「进没进超时分支」
+    // 不再是从源码数出来的，是执行出来的。
+    const cLines = compilerSource.split('\n');
+    const siteLines = cLines.map((l, i) => (/^\s*if \(isTimeoutError\(/.test(l) ? i : -1)).filter((i) => i >= 0);
+    const blocks = siteLines.map((i) => ifStatement(cLines.slice(i).join('\n'), /^([ \t]*)if \(/m));
+    check('两处 catch 里的超时判定各抽到一整块（是抽出来能跑，不是数出现两次）',
+        blocks.length === 2 && blocks.every((b) => b.length > 300),
+        JSON.stringify({ siteLines, lens: blocks.map((b) => b.length) }));
+
+    const pack = loadLocales(['zh-cn'])['zh-cn'];
+    const mkEl = () => {
+        const el = {
+            innerHTML: '', clicks: [],
+            querySelector(sel) {
+                return el.innerHTML.includes(`class="${sel.slice(1)}"`)
+                    ? { addEventListener: (type, fn) => el.clicks.push([type, fn]) } : null;
+            }
+        };
+        return el;
+    };
+    const runSite = (block, err) => {
+        const els = { compilerList: mkEl(), testlibList: mkEl() };
+        const logs = [];
+        const tKeys = [];
+        const reloads = [];
+        const self = {
+            __generic: false,
+            loadAvailableCompilers: () => reloads.push('compilers'),
+            loadAvailableTestlibs: () => reloads.push('testlibs')
+        };
+        const ctx = vm.createContext({
+            ...vmGlobals,
+            logError: (m) => logs.push(m),
+            compilerList: els.compilerList,
+            testlibList: els.testlibList,
+            window: { i18n: { t: (k) => { tKeys.push(k); return pack[k]; } } }
+        });
+        try {
+            vm.runInContext(`${guard}\nthis.__run = function (error) {\n${block}\n    this.__generic = true;\n};`, ctx);
+            ctx.__run.call(self, err);
+            return {
+                generic: self.__generic === true, logs, tKeys, reloads,
+                wrote: Object.keys(els).filter((k) => els[k].innerHTML !== ''),
+                htmlBy: Object.fromEntries(Object.entries(els).map(([k, v]) => [k, v.innerHTML])),
+                handlers: Object.fromEntries(Object.entries(els).map(([k, v]) => [k, v.clicks]))
+            };
+        } catch (e) { return { threw: String((e && e.message) || e) }; }
+    };
+    const SITES = [
+        { block: blocks[0], list: 'compilerList', reload: 'compilers' },
+        { block: blocks[1], list: 'testlibList', reload: 'testlibs' }
+    ];
+    const timeoutErr = { name: 'TimeoutError' };
+    const legacyMsgErr = { name: 'Error', message: 'timeout|timed out|超时|ECONNABORTED' };
+    for (const [n, site] of SITES.entries()) {
+        const to = runSite(site.block, timeoutErr);
+        check(`站点${n + 1} 超时错误走超时分支：只写自己那一个列表，且写的是真译文`,
+            !to.threw && to.generic === false
+                && JSON.stringify(to.wrote) === JSON.stringify([site.list])
+                && to.htmlBy[site.list].includes(pack['compiler.requestTimeout'])
+                && to.htmlBy[site.list].includes(pack['compiler.retry'])
+                && !to.htmlBy[site.list].includes("'compiler.requestTimeout'")
+                && !to.htmlBy[site.list].includes('undefined'),
+            JSON.stringify({ threw: to.threw, generic: to.generic, wrote: to.wrote, html: to.htmlBy }));
+        check(`站点${n + 1} 超时分支确实走 i18n 取文案（两个键、顺序固定），不是硬编码中文`,
+            JSON.stringify(to.tKeys) === JSON.stringify(['compiler.requestTimeout', 'compiler.retry']),
+            JSON.stringify(to.tKeys));
+
+        // 重试按钮：innerHTML 里没有 retry-btn 这个类时 querySelector 返回 null，
+        // 监听也就挂不上 —— 所以「注册了几次监听」是这段渲染的结果，不是前提。
+        const other = site.list === 'compilerList' ? 'testlibList' : 'compilerList';
+        check(`站点${n + 1} 重试按钮接得上：恰好注册一次 click，另一处列表一个监听都没被碰`,
+            to.handlers[site.list].length === 1 && to.handlers[site.list][0][0] === 'click'
+                && to.handlers[other].length === 0,
+            JSON.stringify(to.handlers));
+        const clicked = (() => {
+            const r = runSite(site.block, timeoutErr);
+            if (r.threw || !r.handlers[site.list][0]) return { err: JSON.stringify(r) };
+            let pd = 0;
+            r.handlers[site.list][0][1]({ preventDefault: () => { pd++; } });
+            return { pd, reloads: r.reloads };
+        })();
+        check(`站点${n + 1} 点重试：preventDefault 生效并且真去重新拉列表（只拉自己那一种）`,
+            clicked.pd === 1 && JSON.stringify(clicked.reloads) === JSON.stringify([site.reload]),
+            JSON.stringify(clicked));
+
+        const legacy = runSite(site.block, legacyMsgErr);
+        check(`站点${n + 1} 满屏旧文案的普通错误走通用分支：超时分支一个字符都不写、i18n 一次都不调`,
+            !legacy.threw && legacy.generic === true && legacy.wrote.length === 0
+                && legacy.tKeys.length === 0
+                && Object.values(legacy.handlers).every((h) => h.length === 0),
+            JSON.stringify(legacy));
+        check(`站点${n + 1} 走没走超时分支，与助手的判定逐个一致（分支不是另写一套条件）`,
+            [timeoutErr, legacyMsgErr, { code: 'ETIMEDOUT' }, new Error('timeout'), null].every((e) =>
+                runSite(site.block, e).generic === (runGuard(e).val !== true)),
+            JSON.stringify([timeoutErr, legacyMsgErr].map((e) => ({
+                guard: runGuard(e).val, generic: runSite(site.block, e).generic }))));
+    }
+    const pair = [timeoutErr, legacyMsgErr, { code: 'ECONNABORTED' }, { name: 'Error', message: 'boom' }]
+        .map((e) => [runSite(SITES[0].block, e), runSite(SITES[1].block, e)]);
+    check('两处站点对同一组错误走出同一个形状（只有目标元素与重载方法名不同）',
+        pair.every(([a, b]) => !a.threw && !b.threw && a.generic === b.generic
+            && a.tKeys.length === b.tKeys.length && a.wrote.length === b.wrote.length
+            && a.logs.length === b.logs.length) && pair.length === 4,
+        JSON.stringify(pair.map(([a, b]) => ({ a: a.threw || a.generic, b: b.threw || b.generic }))));
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
