@@ -95,6 +95,7 @@ class CodeComparer {
                     mode: 'idle', // idle | running | stopping | error | complete | stopped
                     errorResult: null,
                     warningMessage: null,
+                    incompleteRun: null,
                     completedTests: 0,
                     failedTests: 0,
                     stopped: false
@@ -608,6 +609,7 @@ class CodeComparer {
         task.state.shouldStop = false;
         task.state.errorResult = null;
         task.state.warningMessage = null;
+        task.state.incompleteRun = null;
         task.state.statusText = (window.i18n.t('compare.ready'));
         task.state.mode = 'running';
         this.setActiveTaskKey(task.config.testCodePath, { syncTestCodePath: true });
@@ -675,6 +677,16 @@ class CodeComparer {
             // 非致命告警（如 fastspawn 回退），只记日志，不打断对拍
             cleanupWarning = window.electronAPI.onCompareWarning((data) => {
                 logWarn('[对拍器][引擎告警]', data?.code || 'warning', data?.message || '');
+                // incomplete_run 走的是告警通道是对的（已跑完的组结果仍然有效，不该弹错误面板），
+                // 但缺口本身必须留下：worker 崩了/提前退出时完成数只统计真正跑过的，
+                // 不记这一笔，完成面板就把「只跑完 7/16」显示成一次成功的对拍。
+                if (data?.code === 'incomplete_run') {
+                    task.state.incompleteRun = {
+                        completed: Number(data?.completed) || 0,
+                        total: Number(data?.total) || 0,
+                        missing: Number(data?.missing) || 0
+                    };
+                }
             });
             cleanupProgress = window.electronAPI.onCompareProgress((data) => {
                 const completed = Number(data.current) || 0;
@@ -715,16 +727,12 @@ class CodeComparer {
                 if (result.stopped) {
                     task.state.stopped = true;
                     task.state.mode = 'stopped';
-                    task.state.warningMessage = failed > 0
-                        ? window.i18n.t('compare.genFailedWarning', { count: failed })
-                        : null;
+                    task.state.warningMessage = this.getCompletionWarningMessage(task, failed);
                     this.updateTaskStatus(task, window.i18n.t('compare.compareStopped', { completed, failed }));
                 }
                 else if (task.state.mode === 'running' || task.state.mode === 'stopping') {
                     task.state.mode = 'complete';
-                    task.state.warningMessage = failed > 0
-                        ? window.i18n.t('compare.genFailedWarning', { count: failed })
-                        : null;
+                    task.state.warningMessage = this.getCompletionWarningMessage(task, failed);
                 }
                 else {
                     logInfo(`对拍已提前结束（状态: ${task.state.mode}），共完成 ${completed} 组测试`);
@@ -1434,6 +1442,7 @@ class CodeComparer {
         task.state.statusText = (window.i18n.t('compare.ready'));
         task.state.errorResult = null;
         task.state.warningMessage = null;
+        task.state.incompleteRun = null;
         task.state.mode = 'idle';
         const progressFill = (document.getElementById('progress-fill'));
         if (progressFill)
@@ -1736,6 +1745,22 @@ class CodeComparer {
         return localized ? `${localized}\n[${raw}]` : `[${raw}]`;
     }
     // 引擎/worker 只给稳定的 code，具体文案由渲染层查 i18n，避免英文直入中文界面
+    // 完成/停止收尾的告警文案：跑漏的组数优先于「生成失败的组数」。后者的文案本身就说
+    // 「N 组没生成」，前者却是整屏的 100% —— 缺口只有在完成面板这一行里才看得见。
+    // 译文直接复用引擎码表：incomplete_run 走告警通道，不这样接一次，码表里那条
+    // compare.incompleteRun 就没有任何调用方。
+    getCompletionWarningMessage(task, failed) {
+        const gap = task.state.incompleteRun;
+        if (gap) {
+            return this.getEngineErrorMessage({
+                code: 'incomplete_run',
+                completed: gap.completed,
+                total: gap.total,
+                missing: gap.missing
+            });
+        }
+        return failed > 0 ? window.i18n.t('compare.genFailedWarning', { count: failed }) : null;
+    }
     getEngineErrorMessage(error) {
         const code = error?.code || '';
         const exitCode = error?.exitCode;

@@ -483,9 +483,17 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
 const cleanupMethod = classMethod(comparerSource, 'cleanupCompiledExecutables');
 const finishMethod = classMethod(comparerSource, 'finishCompareTask');
 const completeStmt = callStatement(comparerSource, /^\s*cleanupComplete = window\.electronAPI\.onCompareComplete\(/m);
+// 完成回调现在把「这一轮到底该显示哪句告警」交给 getCompletionWarningMessage，
+// 那句又借 getEngineErrorMessage 的码表拼 incompleteRun 的计数。给真身而不是桩：
+// 桩会让这两条断言只测到我的桩，计数漏传一个参数照样绿。
+const warnMethod = classMethod(comparerSource, 'getCompletionWarningMessage');
+const engineMsgMethod = classMethod(comparerSource, 'getEngineErrorMessage');
 check('对拍器三段片段抽取成功（清理方法、收尾方法、完成回调注册语句）',
     cleanupMethod.length > 300 && finishMethod.length > 120 && completeStmt.length > 500,
     JSON.stringify({ cleanup: cleanupMethod.length, finish: finishMethod.length, complete: completeStmt.length }));
+check('收尾告警与引擎码表两段抽取成功（抽不到下面的 warningMessage 断言就是真空通过）',
+    warnMethod.length > 60 && engineMsgMethod.length > 300,
+    JSON.stringify({ warn: warnMethod.length, engineMsg: engineMsgMethod.length }));
 
 const packs = loadLocales();
 const fill = (text, params) => String(text).replace(/\{(\w+)\}/g, (m, k) =>
@@ -572,6 +580,8 @@ const runComplete = ({ mode, result, lang = 'zh-cn', state = {} }) => {
     Object.assign(ctx, {
         updateTaskStatus: (t, msg) => { calls.updateTaskStatus.push(msg); },
         renderIfActive: (t) => { calls.renderIfActive++; },
+        getCompletionWarningMessage: compileMethod(ctx, warnMethod),
+        getEngineErrorMessage: compileMethod(ctx, engineMsgMethod),
         finishCompareTask: async (t) => { calls.finishCompareTask++; await Promise.resolve(); }
     });
     try {

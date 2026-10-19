@@ -69,7 +69,7 @@ interface ElectronAPI {
   onCompareProgress(cb: (data: { current: number; total: number; testIndex: number }) => void): () => void;
   onCompareError(cb: (error: { testNumber?: unknown; input?: string; stdOutput?: string; testOutput?: string; inputTruncated?: boolean; stdOutputTruncated?: boolean; testOutputTruncated?: boolean; type?: unknown; code?: string; message?: string }) => void): () => void;
   onCompareComplete(cb: (result: { completed?: number; failed?: number; stopped?: boolean }) => void): () => void;
-  onCompareWarning(cb: (data: { code?: string; message?: string }) => void): () => void;
+  onCompareWarning(cb: (data: { code?: string; type?: string; message?: string; completed?: number; total?: number; missing?: number }) => void): () => void;
   readDirectory(dirPath: string): Promise<Array<{ path?: string; name?: string; type?: string; ext?: string } | null>>;
   renameFile(oldPath: string, newPath: string, options?: Record<string, unknown>): Promise<{ success?: boolean } | null>;
   deleteFile(filePath: string, options?: Record<string, unknown>): Promise<{ success?: boolean; error?: string } | null>;

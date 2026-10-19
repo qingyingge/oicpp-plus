@@ -327,7 +327,8 @@ const called = (calls, name) => calls.some((c) => c.name === name);
     const resetTask = {
         state: {
             isRunning: true, currentTest: 3, totalTests: 9, completedTests: 7, failedTests: 2,
-            statusText: 'X', errorResult: { a: 1 }, warningMessage: 'W', mode: 'error'
+            statusText: 'X', errorResult: { a: 1 }, warningMessage: 'W',
+            incompleteRun: { completed: 7, total: 16, missing: 9 }, mode: 'error'
         }
     };
     const r = comparerHarness(['resetComparison'], { getActiveTask: () => resetTask });
@@ -341,6 +342,10 @@ const called = (calls, name) => calls.some((c) => c.name === name);
         && resetTask.state.errorResult === null && resetTask.state.warningMessage === null
         && resetTask.state.mode === 'idle' && resetTask.state.isRunning === false
         && resetTask.state.stopped === false, JSON.stringify(resetTask.state));
+    // 缺口是上一轮的状态：不清的话，下一轮跑完后收尾会拿这次的 completed 配
+    // 上一轮的 total/missing，报出一个从没发生过的「缺 N 组」。
+    check('重置也清掉上一轮遗留的跑漏缺口', resetTask.state.incompleteRun === null,
+        JSON.stringify(resetTask.state.incompleteRun));
     check('重置后的状态文案取 compare.ready',
         r.seen.t.some(([k]) => k === 'compare.ready'), JSON.stringify(r.seen.t.map(([k]) => k)));
     check('重置也走一次 renderTask', called(r.calls, 'renderTask'),
@@ -1372,7 +1377,7 @@ const handlerHarness = (realMethods) => {
 };
 
 const handlerBehaviour = async () => {
-    const h = handlerHarness(['getEngineErrorMessage']);
+    const h = handlerHarness(['getEngineErrorMessage', 'getCompletionWarningMessage']);
 
     // ---- 进度回调 ----
     const p = h.task({ totalTests: 50, completedTests: 0, currentTest: 0 });
@@ -1479,6 +1484,72 @@ const handlerBehaviour = async () => {
     check('缺 code/message 的告警用占位串，不把 undefined 写进日志',
         h.seen.warns[1][1] === 'warning' && h.seen.warns[1][2] === '',
         JSON.stringify(h.seen.warns[1]));
+
+    // ---- 跑漏缺口（incomplete_run）：记下来，并在收尾时上屏 ----
+    // 引擎把「有 worker 崩了/提前退出，它那批组根本没跑」发成告警而不是错误 ——
+    // 不发红面板是对的（已跑完的组结果仍然有效），但只 logWarn 的话，完成面板会把
+    // 「只跑完 7/16」显示成一次成功的对拍，而这一行是用户唯一能看见缺口的地方。
+    const wg = h.task({ mode: 'running' });
+    h.calls.length = 0;
+    h.seen.warns.length = 0;
+    h.seen.t.length = 0;
+    h.api.stopCompareCalls = 0;
+    h.handlers.warning({ code: 'incomplete_run', completed: 7, total: 16, missing: 9 });
+    check('缺口按三个计数原样记进任务状态（此处不拼文案，留给收尾按当前语言组装）',
+        JSON.stringify(wg.state.incompleteRun) === JSON.stringify({ completed: 7, total: 16, missing: 9 }),
+        JSON.stringify(wg.state.incompleteRun));
+    check('记缺口仍算非致命：不改 mode、不弹错误面板、不停引擎、不重绘',
+        wg.state.mode === 'running' && !called(h.calls, 'showError') && h.api.stopCompareCalls === 0
+        && h.calls.length === 0, JSON.stringify(h.calls.map((c) => c.name)));
+    check('缺口告警自己也记一条 warn（日志里查得到，不只是状态里有个字段）',
+        h.seen.warns.length === 1 && h.seen.warns[0][1] === 'incomplete_run',
+        JSON.stringify(h.seen.warns));
+    const wThin = h.task({ mode: 'running' });
+    h.handlers.warning({ code: 'incomplete_run' });
+    // 这里全用 ?.：字段整个缺席（比如有人把这一支删了）应当是一条 FAIL，
+    // 而不是一记 TypeError 把后面上百条断言一起带走。
+    check('计数整个缺席时收成 0，不把 undefined 写进状态（undefined 会一路带进插值）',
+        wThin.state.incompleteRun?.completed === 0 && wThin.state.incompleteRun?.total === 0
+        && wThin.state.incompleteRun?.missing === 0, JSON.stringify(wThin.state.incompleteRun));
+    const wStr = h.task({ mode: 'running' });
+    h.handlers.warning({ code: 'incomplete_run', completed: 'x', total: '16', missing: null });
+    check('计数是字符串/null 时按 Number 收窄：坏值归 0，能转的照转，不把 NaN 带进状态',
+        wStr.state.incompleteRun?.completed === 0 && wStr.state.incompleteRun?.total === 16
+        && wStr.state.incompleteRun?.missing === 0, JSON.stringify(wStr.state.incompleteRun));
+    const wOther = h.task({ mode: 'running' });
+    h.handlers.warning({ code: 'disk-nearly-full', completed: 3, total: 9, missing: 6 });
+    check('别的告警不碰缺口字段（只有 incomplete_run 这一支会写）',
+        wOther.state.incompleteRun === undefined, JSON.stringify(wOther.state.incompleteRun));
+
+    const g = h.task({
+        mode: 'running', completedTests: 3, totalTests: 16,
+        incompleteRun: { completed: 7, total: 16, missing: 9 }
+    });
+    h.seen.t.length = 0;
+    h.handlers.complete({ completed: 7, failed: 2 });
+    check('有缺口时完成告警走 compare.incompleteRun，三个计数原样递给译文',
+        canon(g.state.warningMessage)
+        === 'compare.incompleteRun|{"code":"compare.exitCodeUnknown","completed":7,"error":"","missing":9,"total":16}',
+        String(g.state.warningMessage));
+    check('缺口与生成失败同时存在时以缺口为准（生成失败的文案自己会交代组数，缺口不会）',
+        String(g.state.warningMessage).indexOf('compare.genFailedWarning') !== 0,
+        String(g.state.warningMessage));
+    const gStop = h.task({
+        mode: 'stopping', completedTests: 3, totalTests: 16,
+        incompleteRun: { completed: 7, total: 16, missing: 9 }
+    });
+    h.handlers.complete({ stopped: true, completed: 7, failed: 0 });
+    check('手动停止的收尾也带缺口（停止时 worker 崩了同样会漏组）',
+        gStop.state.mode === 'stopped' && String(gStop.state.warningMessage).indexOf('compare.incompleteRun') === 0,
+        String(gStop.state.warningMessage));
+    // 收尾只借码表算文案，不该把缺口升格成错误结果：差异面板与 stopCompare 都不该被触发。
+    check('收尾借码表算文案，但不写 errorResult、不弹错误面板',
+        g.state.errorResult === undefined && !called(h.calls, 'showError'),
+        JSON.stringify(h.calls.map((c) => c.name)));
+    const noGap = h.task({ mode: 'running', completedTests: 9, totalTests: 9, failedTests: 0 });
+    h.handlers.complete({ completed: 9, failed: 0 });
+    check('没缺口也没失败时收尾不留任何告警', noGap.state.warningMessage === null,
+        String(noGap.state.warningMessage));
 
     // ---- 下发给引擎的 config ----
     const configSrc = objectConst(comparerSource, 'config');
