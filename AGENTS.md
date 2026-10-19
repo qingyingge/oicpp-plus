@@ -96,11 +96,16 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
 
 ### 迁移 .js → .ts（TypeScript 路线甲）
-单进程仓库的渐进式迁移：**`.ts` 是唯一手写源，`.js` 由 `tsc -p tsconfig.build.json`就地 emit 出来**（`rootDir`/`outDir` 同为 `src`），所以 `.js` 不许手改。`tsconfig.json` 负责全量 typecheck，`tsconfig.build.json` 带 `noCheck: true` 且用 `files` 白名单，只 emit 已迁移文件；迁移一个文件 = 写 `.ts` + 把路径加进 `files` 数组。
+**`.ts` 是唯一手写源，`.js` 由 `tsc -p tsconfig.build.json` 就地 emit 出来**（`rootDir`/`outDir` 同为 `src`），所以 `.js` 不许手改。`tsconfig.json` 负责全量 typecheck；`tsconfig.build.json` 带 `noCheck: true` 且 `include: ["src/**/*.ts", "src/**/*.d.ts"]` —— 全量 emit，**没有白名单要登记**，新增 `.ts` 直接会被编译。`.d.ts` 只进程序不出 JS。
+
+**提交前必须先编译一次**：`npx tsc -p tsconfig.build.json`，然后 `git diff --stat -- src` —— 输出非空就是漂移，两种成因：改了 `.ts` 没编译，或者有人手改了 `.js` 产物。漂移不会让 `tsc --noEmit` 报错（两边各自都合法），所以只能靠这一步兜住。历史上这里靠 `files` 白名单兜，代价是「`.ts` 漏登记 → 它的 `.js` 静默不再重生成」，实测已踩到（`gdb-mi-debugger.ts` 只因为被 `gdb-debugger.ts` 的 `import = require` 传递进程序才没漂），白名单已因此取消。
+
+`.js` ↔ `.ts` 的对应关系仍然成立：`src/` 下每个 `.js` 都有同名 `.ts`。
 
 正确命令序列：
 ```bash
 npx tsc -p tsconfig.build.json   # 重新生成 .js（注意：会用 emit 结果覆盖工作区里的 .js）
+git diff --stat -- src           # 提交前必查：非空 = 产物漂移（漏编译或手改了 .js）
 node tests/run-tests.js          # 快速回归，定位断言失败
 pnpm run ci                      # 完整校验（75 项检查 + 35 个回归测试）
 npx tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
