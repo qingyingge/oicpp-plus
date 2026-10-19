@@ -1526,5 +1526,21 @@
     "evidence": "compile-output.css:40 有 .compile-status 规则（字号/颜色），全仓再无 indicator 相关选择器；同一文件共 72 条规则块，.compile-output-window / -header / -content / -body / -text / -resizer 那一整套面板样式都在，唯独四个档位类一个都没有。",
     "fix_plan": "补四条状态色（建议 8px 圆点 + 复用主题变量，暗/亮两套主题各一条，参照 L7/L8 那批 CSS 收敛的做法），或明确指示灯废弃、把 getStatusIndicator 与 compile-output-status 测试一起删掉。配色属设计决定，不宜由缺陷修复顺手发明。",
     "related": "M57 / L37"
+  },
+  {
+    "id": "M58",
+    "severity": "MEDIUM",
+    "title": "对拍跑漏的组数只写日志，完成面板把「跑了一半」显示成一次成功",
+    "status": "已修复",
+    "file": "src/renderer/js/sidebar/codeComparer.js:676-678; src/main-process/compare-engine-v2.js:197-208",
+    "problem": "引擎发现 worker 崩溃或提前退出、它那批测试根本没跑完时，emit 的是 warning 事件（compare-engine-v2.js:197-208，带 completed/total/missing 三个计数），源码注释写得很清楚：不指出这点，UI 会显示「已完成 N 组」并给出 100% 覆盖率。但渲染层的 onCompareWarning 只做了一件事 —— logWarn（codeComparer.js:676-678，整个函数体就这一行）。缺口停在日志里，完成面板与进度条照常按「跑完的组数」画满。",
+    "impact": "这是本项目最核心的一条反馈回路：对拍的意义是「全部数据组都过了」，而这里用户看到的是一次成功，实际有 9 组从没跑过。AC 会被静默放过。附带一条死代码：i18n 码表里 incomplete_run → compare.incompleteRun 挂在 getEngineErrorMessage 上，而那条函数只被 onCompareError 调用，这条码从来不走 error 通道，等于文案写好了没有人接。",
+    "evidence": "compare-engine-v2.js:198 `this.emit('warning', {... code: 'incomplete_run' ...})`；main.js:7187 原样转 compare-warning；codeComparer.js:676-678 该监听器函数体只有 logWarn 一行；全仓除测试外没有第二处读 data.code === 'incomplete_run'。",
+    "fix_plan": "保留 warning 通道（不该弹错误面板，已跑完的组结果仍然有效），但把三个计数记进任务状态，完成/停止两条收尾共用的告警文案优先取它：缺口译文案身带 completed/total/missing，而 genFailedWarning 只会说「N 组没生成」。开跑前与手动重置都要清，否则下一轮会拿这次的组数配上一轮的总数。",
+    "related": "M57 / L37 / compare-progress-accuracy",
+    "fix": {
+      "commit": "d0f126b",
+      "note": "warning 回调把 {completed,total,missing} 记进 task.state.incompleteRun（Number(..) || 0 收窄）；新增 getCompletionWarningMessage(task, failed) 供 complete 与 stopped 两条收尾共用，有缺口就走 compare.incompleteRun 并复用 getEngineErrorMessage 的码表现算译文，缺口与生成失败同时存在时以缺口为准；startComparison 与 resetComparison 各加一处复位。preload.d.ts 的 onCompareWarning 载荷补上三个计数字段。守卫：compare-progress-accuracy 490→504、compare-cache-cleanup 77→78（改抽真身而非桩）。变异检验 13 例：击杀 9 / 等价存活 3 / 已声明边界 1（startComparison 那处复位无行为守卫，整条开跑流程含编译与 IPC，未接进沙箱）/ 错位 0。"
+    }
   }
 ]
