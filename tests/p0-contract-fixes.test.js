@@ -318,8 +318,11 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
     for (const [idx, expr] of cancelBindings.entries()) {
         const ev = (error) => {
             try {
+                // vm 的 timeout 是「抽出来的表达式万一死循环」的兜底，不是被测指标。
+                // 50ms 在 CI 前段（tsc 刚跑完、机器还在抖）会被无关的调度延迟撞穿，
+                // 报成 UNRESOLVED:Script execution timed out —— 那是环境噪声，不是契约破了。
                 return vm.runInNewContext(`(${expr})`,
-                    { error, isDownloadCancelled: Downloader.isCancelledError, Boolean, String, Object }, { timeout: 50 });
+                    { error, isDownloadCancelled: Downloader.isCancelledError, Boolean, String, Object }, { timeout: 2000 });
             }
             catch (e) { return 'UNRESOLVED:' + e.message; }
         };
@@ -361,7 +364,8 @@ const md5Of = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest(
             args.push(cur);
             const expr = args[args.length - 1].replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '').trim();
             const ev = (flag) => {
-                try { return vm.runInNewContext(`(${expr})`, { isCancelled: flag, Number, Math, String }, { timeout: 50 }); }
+                // 同上：timeout 只是防死循环，撞穿会让这个 site 被静默 skip 掉（覆盖悄悄变少）。
+                try { return vm.runInNewContext(`(${expr})`, { isCancelled: flag, Number, Math, String }, { timeout: 2000 }); }
                 catch (_) { return 'UNRESOLVED'; }
             };
             const yes = ev(true), no = ev(false);
