@@ -983,6 +983,9 @@ const I18N_EN_PUNCT_BASELINE = 1;
 // 2026-10-01：删除 tabs.js 中重复的第二份 getWelcomePageContent 后，
 // welcome.about / welcome.docs / welcome.shortcuts 三个键失去了唯一的
 // 引用点（原先只被那份死代码引用）。存量下降 3，baseline 随之下调。
+// 2026-10-19：退役永无加载入口的 compile-output.js（L37）时，把它独占的 11 个
+// compileOutput.* 键从两个语言包同步摘掉，删除一增一减正好抵平，仍是 202 ——
+// 只删文件不摘键会涨到 213 撞破基线。所以这一档不是「还可以再降」的空间。
 // 取 tests/i18n.test.js 的口径（更严格：只扫 src，键名全字符类）算出的值。
 const I18N_ORPHAN_KEY_BASELINE = 202;
 
