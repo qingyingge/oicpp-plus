@@ -1500,32 +1500,40 @@
     "related": "I18N-HARDCODED-CJK ratchet（scripts/ci-check.js I8）",
     "fix": {
       "commit": "d7d7dbe",
-      "note": "setStatus(status, type, command)：档位由调用方点名（startCompile 传 'compiling'、onCompileSuccess 传 'success'、onCompileError 传 'error'，缺省 'ready'），getStatusIndicator(type) 直接按档位拼 className，删掉三个取词与三个中文兜底，判灯过程一次都不查字典。新增 tests/compile-output-status.test.js：五个方法体抽进 vm 真跑，译文换成老写法认不出的词（「全部搞定」）灯不变、status 与 type 相反时以 type 为准、不点名档位仍是 ready 且中文「成功」不再自己点亮灯、setStatus 期间 t() 调用数为 0。变异检验 10 例：击杀 8 / 计划存活 2 / 错位 0。可达性与样式两个连带发现另记 L37、L38，本轮未动。"
+      "note": "setStatus(status, type, command)：档位由调用方点名（startCompile 传 'compiling'、onCompileSuccess 传 'success'、onCompileError 传 'error'，缺省 'ready'），getStatusIndicator(type) 直接按档位拼 className，删掉三个取词与三个中文兜底，判灯过程一次都不查字典。新增 tests/compile-output-status.test.js：五个方法体抽进 vm 真跑，译文换成老写法认不出的词（「全部搞定」）灯不变、status 与 type 相反时以 type 为准、不点名档位仍是 ready 且中文「成功」不再自己点亮灯、setStatus 期间 t() 调用数为 0。变异检验 10 例：击杀 8 / 计划存活 2 / 错位 0。可达性与样式两个连带发现另记 L37、L38，本轮未动。（后续：宿主文件因永无加载入口于 116b181 退役，本条修的判定与那条测试随之删除 —— 也就是说这次「修复」改善的是永不上屏的代码，正是 L37 当初单独立条要问可达性的原因。）"
     }
   },
   {
     "id": "L37",
     "severity": "LOW",
     "title": "compile-output.js 没有任何加载入口，整个 CompileOutputManager 跑不到",
-    "status": "待确认",
-    "file": "src/renderer/js/compile-output.js:1-214（emit 产物，源 267 行）",
+    "status": "已修复",
+    "file": "src/renderer/js/compile-output.ts（已删除；原 emit 产物 src/renderer/js/compile-output.js:1-214，源 267 行）",
     "problem": "index.html 里没有指向 js/compile-output.js 的 script 标签，全仓也没有 require/import 它，文件尾 `window.compileOutputManager = new CompileOutputManager()` 那条 else 分支因此从不执行。编译输出面板的 DOM 与状态文本实际由 compile-manager.js 的 createCompileOutputWindow()（compile-manager.js:67 起的那段模板）和它自己的 setStatus()（只写 .compile-status 的 textContent，没有指示灯）负责。",
-    "impact": "两个方向都会踩：一是把 M57 这类缺陷定位成「用户看得见的指示灯坏了」，而它今天根本不可达；二是这 214 行维持着 9 个 compileOutput.* 键「有源码引用」的假象 —— compileOutput.startCompile / successOutput / successDone / failOutput / failDone / runningProgram / programComplete / programOutput / programExited 只在这个文件里出现（该文件共引用 15 个 compileOutput.* 键，其余 6 个另有别人引用）。删文件而不摘键，I7 的孤儿键数会从 202 涨到 211，直接撞破基线。",
-    "evidence": "src/**/*.html 里 'compile-output' 只命中 index.html:19 那条 css 链接；'CompileOutputManager|compileOutputManager' 在 src 下只命中 compile-output 自己的 .ts 与 emit 的 .js；docs/ts-migration-baseline.js 里 compile-output.js 的 tests 为空（该表是 2026-10-05 head 97f8e8e 的快照，不参与 CI 判定，只作佐证）。",
-    "fix_plan": "二选一，属产品决定：① 删文件 + 把它独占的语言键从 zh-cn.json/en.json 同步摘掉，I7 基线随之下降；② 在 index.html 挂上 script 标签，并把 compile-manager 里那套面板逻辑收敛到这个类（注意该文件是 `export class` 形态，被 script 标签加载会立刻撞 AGENTS.md 点名的 exports ReferenceError 坑，需先按「逐文件转全局脚本」约定去掉 export）。本轮只按 M57 解掉文案耦合，可达性不动。",
-    "related": "M57 / L36 / I7"
+    "impact": "两个方向都会踩：一是把 M57 这类缺陷定位成「用户看得见的指示灯坏了」，而它今天根本不可达；二是这 214 行维持着 11 个 compileOutput.* 键「有源码引用」的假象 —— 该文件共引用 15 个 compileOutput.* 键，其中 startCompile / success / successOutput / successDone / fail / failOutput / failDone / runningProgram / programComplete / programOutput / programExited 这 11 个全仓唯一引用点就是它，只有 compiling / warningCount / failSimple / errorInfo 另有别人引用。删文件而不摘键，I7 的孤儿键数会从 202 涨到 213，直接撞破基线。",
+    "evidence": "src/**/*.html 里 'compile-output' 只命中 index.html:19 那条 css 链接；'CompileOutputManager|compileOutputManager' 在 src 下只命中 compile-output 自己的 .ts 与 emit 的 .js；docs/ts-migration-baseline.js 里 compile-output.js 的 tests 为空（该表是 2026-10-05 head 97f8e8e 的快照，不参与 CI 判定，只作佐证）。上游同样没有指向该文件的 script 标签，即它在源头也是死代码。",
+    "fix_plan": "二选一，属产品决定：① 删文件 + 把它独占的语言键从 zh-cn.json/en.json 同步摘掉（抵平 I7，不是下降）；② 在 index.html 挂上 script 标签，并把 compile-manager 里那套面板逻辑收敛到这个类（注意该文件是 `export class` 形态，被 script 标签加载会立刻撞 AGENTS.md 点名的 exports ReferenceError 坑，需先按「逐文件转全局脚本」约定去掉 export），还要连 L38 的四条档位配色一起补。取 ①。",
+    "related": "M57 / L36 / L38 / I7",
+    "fix": {
+      "commit": "116b181",
+      "note": "取 ①：删 src/renderer/js/compile-output.ts 与其 emit 产物，从 tsconfig.build.json 的 files 白名单（48→47）摘掉，并把它独占的 11 个 compileOutput.* 键从 zh-cn.json/en.json 同步摘掉（两边键集仍完全一致，1553↔1553）。孤儿键按 tests/i18n.test.js 的宽松口径实测：只删文件不摘键 202→213（会 FAIL），摘键后回到 202，所以 I18N_ORPHAN_KEY_BASELINE 保持 202 不动，这个「抵平而非可降」的理由写进了 ci-check.js 的注释，免得下一个人误以为还能再压一档。compile-output.css 保留 —— 它那一整套面板样式服务于 compile-manager 真正创建的 .compile-output-window。M57 当年修的指示灯判定随本文件一并消失，这正是当时把可达性单独立条的原因。校验：tsc --noEmit 0 error，37/37 测试文件 2506 断言，CI 76 PASS / 23 WARN / 0 FAIL。"
+    }
   },
   {
     "id": "L38",
     "severity": "LOW",
     "title": ".compile-status-indicator 在全仓 CSS 里没有一条规则，四种档位渲染成同一个空 span",
-    "status": "待确认",
-    "file": "src/renderer/css/compile-output.css; src/renderer/js/compile-output.js:113-114",
+    "status": "已修复",
+    "file": "src/renderer/css/compile-output.css; src/renderer/js/compile-output.js:113-114（已随 L37 删除）",
     "problem": "getStatusIndicator 产出 `<span class=\"compile-status-indicator <档位>\"></span>`，档位有 ready/compiling/success/error 四种，但 src 下任何样式文件里都没有 .compile-status-indicator（也没有它的四个档位类）的规则 —— 该选择器全仓只命中 compile-output 自己的 .ts 与 emit 的 .js 两处。",
     "impact": "即使 L37 的可达性问题解决，用户看到的仍是一个不带任何样式的空 span，颜色反馈为零；这大半个解释了 M57 的文案失配为什么长期无人报——灯的显示效果本来就不可观测。",
     "evidence": "compile-output.css:40 有 .compile-status 规则（字号/颜色），全仓再无 indicator 相关选择器；同一文件共 72 条规则块，.compile-output-window / -header / -content / -body / -text / -resizer 那一整套面板样式都在，唯独四个档位类一个都没有。",
     "fix_plan": "补四条状态色（建议 8px 圆点 + 复用主题变量，暗/亮两套主题各一条，参照 L7/L8 那批 CSS 收敛的做法），或明确指示灯废弃、把 getStatusIndicator 与 compile-output-status 测试一起删掉。配色属设计决定，不宜由缺陷修复顺手发明。",
-    "related": "M57 / L37"
+    "related": "M57 / L37",
+    "fix": {
+      "commit": "116b181",
+      "note": "取「明确废弃」那条支路：指示灯宿主类随 L37 整个删除，不替它发明配色。连带删掉 tests/compile-output-status.test.js（9 条断言，全部围着这段跑不到的代码转）。现状是编译输出面板只有 .compile-status 的文字、没有任何颜色反馈，这与删除前完全一致（本来也没渲染过）。日后真要做状态灯，落点是 compile-manager.js 的 setStatus() 与它自己那套面板 DOM，不是这个已退役的类；届时配色属设计决定，需单独定。校验同 L37。"
+    }
   },
   {
     "id": "M58",
