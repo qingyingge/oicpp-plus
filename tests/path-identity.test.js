@@ -177,8 +177,11 @@ try {
     console.log('\n--- invariants ---');
     check('canon 返回绝对路径', path.isAbsolute(canon(ctx.root)), canon(ctx.root));
     check('canon 幂等', canon(canon(ctx.root)) === canon(ctx.root));
-    check('canon 解析软链', canon(path.join(ctx.root, 'link')) === path.join(ctx.root, 'a', 'b'),
-        canon(path.join(ctx.root, 'link')));
+    // 建不出软链时这条断言无意义（canon 会退化成逐级回退），与上面的软链用例一致地跳过
+    if (ctx.canSymlink) {
+        check('canon 解析软链', canon(path.join(ctx.root, 'link')) === path.join(ctx.root, 'a', 'b'),
+            canon(path.join(ctx.root, 'link')));
+    }
     check('canon 对不存在的路径仍返回绝对路径',
         path.isAbsolute(canon(path.join(ctx.root, 'nope', 'x'))));
     check('canon 拒绝空串', (() => {

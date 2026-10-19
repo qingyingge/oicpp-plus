@@ -38,6 +38,7 @@
     "compilerPathInvalid": "编译器路径无效或不存在。",
     "compileTestFailed": "编译测试代码失败。",
     "testProgramFailed": "测试程序运行失败 (退出码: {code})",
+    "testProgramTimeout": "测试程序运行超时 (10 秒)。",
     "testlibPathInvalid": "testlib路径无效或不存在。",
     "notTestlibHeader": "所选文件不是testlib.h文件。",
     "notTestlibLib": "所选文件不是有效的testlib库文件。",
@@ -52,6 +53,8 @@
     "checkUpdateUnavailableDetail": "OICPP-Plus 暂时没有独立的更新服务。请前往 GitHub Releases 页面下载新版本：https://github.com/qingyingge/oicpp-plus/releases",
     "updateDownloadedTitle": "更新包已下载",
     "updateDownloadedMessage": "版本 {version} 已下载完成",
+    "updateReadyTitle": "更新已准备就绪",
+    "updateReadyMessage": "版本 {version} 将在退出 OICPP-Plus 时自动安装。",
     "installerLaunchFailedTitle": "无法启动安装程序",
     "installerLaunchFailed": "自动启动安装程序失败",
     "programHandedToTerminal": "程序已转交内置终端运行",
@@ -82,6 +85,11 @@
     "loginStateMismatch": "状态校验失败。",
     "loginBadParams": "回调参数不完整或服务标识不匹配。",
     "loginVerifyFailed": "验证失败。",
+    "loginNoCredential": "未获取到登录凭证。",
+    "loginVerifyRequestFailed": "验证请求失败。",
+    "loginServerStartFailed": "本地回调服务启动失败，请重试。",
+    "loginTimeout": "登录超时，请重试。",
+    "loginCompleted": "已完成登录。",
     "debugReadyWithBreakpoints": "调试器已启动，程序已加载断点，点击继续执行开始调试",
     "debugReadyNoBreakpoints": "调试器已启动，程序已准备就绪，点击继续执行开始运行"
   },
@@ -576,6 +584,8 @@
     "testlibTitle": "Testlib 配置",
     "downloadFailedTitle": "编译器下载失败",
     "testlibDownloadFailedTitle": "testlib 下载失败",
+    "downloadCompleteTitle": "编译器下载完成",
+    "testlibDownloadCompleteTitle": "testlib 下载完成",
     "downloadFailedMessage": "{name} {version} 下载失败: {message}",
     "browseLocal": "浏览本地",
     "installOnline": "在线安装",
@@ -705,6 +715,7 @@
     "clickToUnfilter": "点击取消筛选",
     "runSample": "运行此样例",
     "deleteSample": "删除样例",
+    "runningBusy": "有样例正在运行，请稍后再删除",
     "importPreview": "导入样例预览",
     "importSettings": "导入设置",
     "selectZip": "选择样例压缩包",
@@ -1115,7 +1126,11 @@
     "intro": "OICPP-Plus 使用了以下开源软件，在此向这些项目的开发者和贡献者表示感谢。",
     "name": "名称",
     "license": "许可证",
-    "projectUrl": "项目地址"
+    "projectUrl": "项目地址",
+    "licenseText": "许可全文",
+    "viewLicense": "查看全文",
+    "licenseLoadFailed": "许可正文读取失败。",
+    "back": "返回"
   },
   "fileExplorer": {
     "noFolder": "没有打开的文件夹",
@@ -1431,6 +1446,7 @@
   },
   "tabs": {
     "readFileUnavailable": "读文件接口不可用",
+    "markdownApiUnavailable": "Markdown 预览接口不可用",
     "reloadFailed": "重新加载文件失败：{error}",
     "tempFileUnsaved": "临时文件 \"{name}\" 未保存。<br><br>请选择如何处理临时文件。",
     "tabUnsaved": "标签页 \"{name}\" 有未保存修改。<br><br>请选择如何处理这些修改。",
@@ -1624,6 +1640,7 @@
     "debuggerNotRunning": "调试器未运行",
     "programEnded": "程序已结束",
     "unknownDebugCommand": "未知的调试命令: {command}",
-    "breakpointArgsIncomplete": "断点参数不完整"
+    "breakpointArgsIncomplete": "断点参数不完整",
+    "breakpointNotFound": "未找到断点: {file}:{line}"
   }
 }

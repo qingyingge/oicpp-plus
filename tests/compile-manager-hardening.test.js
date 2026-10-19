@@ -128,8 +128,10 @@ const en = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'en.json'),
 // ---------------------------------------------------------------------------
 
 {
+    // 锚点用 i18n 键而不是英文兜底文案：兜底已被 i18next 迁移清掉
+    // （缺键时 t() 返回 key 本身，|| 兜底恒不触发，是死代码）。
     check('compileCurrentFile 入口有 isCompiling 重入守卫',
-        /if \(this\.isCompiling\) \{[\s\S]{0,200}?A compilation is already in progress[\s\S]{0,600}?return false;/.test(src));
+        /if \(this\.isCompiling\) \{[\s\S]{0,200}?'compileOutput\.alreadyRunning'[\s\S]{0,600}?return false;/.test(src));
     check('重入时不覆盖 isCompiling 状态',
         /if \(this\.isCompiling\) \{[\s\S]{0,600}?return false;[\s\S]{0,200}?\}\s*\n\s*this\.isCompiling = true;/.test(src));
     check('编译成功路径返回 true，供调用方区分「启动」与「被重入拒绝」',

@@ -1,0 +1,10 @@
+# 入库归一化（text=auto 让 git 自判二进制，.ico/.pdf 等自动豁免）+ 工作区固定 LF。
+#
+# 为什么必须显式写 eol=lf：Windows 上 core.autocrlf=true 会把检出的文本文件全改写成
+# CRLF，而这个仓库有几处检查直接读磁盘字节、要求 LF：
+#   1. tests/third-party-licenses.test.js:44 —— 安装包里的许可正文必须是 LF，
+#      NSIS 在 Windows 上按字节拷贝，CRLF 会让装出来的正文与上游 LLVM 不一致；
+#   2. tests/i18n.test.js —— 形状守卫的正则按 \n 切分。
+# 不写 eol=lf 的话，这两条在任何 autocrlf=true 的 Windows 机器上必然失败，且会
+# 让 GitHub 的 Windows runner 打出 CRLF 版许可正文。
+* text=auto eol=lf

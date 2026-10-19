@@ -612,6 +612,40 @@
     word-break: break-all;
 }
 
+.oss-lib-license-text {
+    white-space: nowrap;
+}
+
+.oss-license-link {
+    background: none;
+    border: 1px solid var(--border-color, #3c3c3c);
+    border-radius: 4px;
+    color: var(--text-color, #cccccc);
+    cursor: pointer;
+    font-size: 12px;
+    padding: 3px 8px;
+}
+
+.oss-license-link:hover {
+    background: var(--hover-bg, #2a2d2e);
+}
+
+.oss-license-body {
+    background: var(--primary-bg, #1e1e1e);
+    border: 1px solid var(--border-color, #3c3c3c);
+    border-radius: 4px;
+    color: var(--text-secondary, #9a9a9a);
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 0;
+    max-height: 60vh;
+    overflow: auto;
+    padding: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* ========== 文件历史对话框 ========== */
 
 .file-history-dialog {

@@ -38,6 +38,7 @@
     "compilerPathInvalid": "The compiler path is invalid or does not exist.",
     "compileTestFailed": "Failed to compile the test code.",
     "testProgramFailed": "The test program failed to run (exit code: {code})",
+    "testProgramTimeout": "The test program timed out (10 seconds).",
     "testlibPathInvalid": "The testlib path is invalid or does not exist.",
     "notTestlibHeader": "The selected file is not a testlib.h header.",
     "notTestlibLib": "The selected file is not a valid testlib library.",
@@ -52,6 +53,8 @@
     "checkUpdateUnavailableDetail": "OICPP-Plus has no dedicated update service. Download the new version from the GitHub Releases page: https://github.com/qingyingge/oicpp-plus/releases",
     "updateDownloadedTitle": "Update downloaded",
     "updateDownloadedMessage": "Version {version} has been downloaded",
+    "updateReadyTitle": "Update ready",
+    "updateReadyMessage": "Version {version} will be installed automatically when you quit OICPP-Plus.",
     "installerLaunchFailedTitle": "Cannot start the installer",
     "installerLaunchFailed": "Failed to start the installer automatically",
     "programHandedToTerminal": "The program was handed over to the built-in terminal",
@@ -82,6 +85,11 @@
     "loginStateMismatch": "State verification failed.",
     "loginBadParams": "Incomplete callback parameters or service mismatch.",
     "loginVerifyFailed": "Verification failed.",
+    "loginNoCredential": "No sign-in credential was received.",
+    "loginVerifyRequestFailed": "The verification request failed.",
+    "loginServerStartFailed": "Failed to start the local callback server. Please try again.",
+    "loginTimeout": "Sign-in timed out. Please try again.",
+    "loginCompleted": "Signed in successfully.",
     "debugReadyWithBreakpoints": "Debugger started with breakpoints loaded. Click continue to start debugging",
     "debugReadyNoBreakpoints": "Debugger started and the program is ready. Click continue to run"
   },
@@ -597,6 +605,8 @@
     "testlibTitle": "Testlib Configuration",
     "downloadFailedTitle": "Compiler Download Failed",
     "testlibDownloadFailedTitle": "Testlib Download Failed",
+    "downloadCompleteTitle": "Compiler Download Complete",
+    "testlibDownloadCompleteTitle": "Testlib Download Complete",
     "downloadFailedMessage": "{name} {version} download failed: {message}",
     "browseLocal": "Browse",
     "installOnline": "Install Online",
@@ -726,6 +736,7 @@
     "clickToUnfilter": "Click to clear filter",
     "runSample": "Run this sample",
     "deleteSample": "Delete sample",
+    "runningBusy": "A sample is running; please delete later",
     "importPreview": "Import Preview",
     "importSettings": "Import Settings",
     "selectZip": "Select Sample Archive",
@@ -1136,7 +1147,11 @@
     "intro": "OICPP-Plus uses the following open-source software. We thank their developers and contributors.",
     "name": "Name",
     "license": "License",
-    "projectUrl": "Project URL"
+    "projectUrl": "Project URL",
+    "licenseText": "License Text",
+    "viewLicense": "View License",
+    "licenseLoadFailed": "Failed to read the license text.",
+    "back": "Back"
   },
   "fileExplorer": {
     "noFolder": "No Folder Open",
@@ -1390,6 +1405,7 @@
   },
   "tabs": {
     "readFileUnavailable": "File read interface unavailable",
+    "markdownApiUnavailable": "Markdown preview interface unavailable",
     "reloadFailed": "Failed to reload file: {error}",
     "tempFileUnsaved": "Temp file \"{name}\" is unsaved.<br><br>How would you like to handle it?",
     "tabUnsaved": "Tab \"{name}\" has unsaved changes.<br><br>How would you like to handle them?",
@@ -1624,6 +1640,7 @@
     "debuggerNotRunning": "The debugger is not running",
     "programEnded": "The program has ended",
     "unknownDebugCommand": "Unknown debug command: {command}",
-    "breakpointArgsIncomplete": "Incomplete breakpoint parameters"
+    "breakpointArgsIncomplete": "Incomplete breakpoint parameters",
+    "breakpointNotFound": "Breakpoint not found: {file}:{line}"
   }
 }

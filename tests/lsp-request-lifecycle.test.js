@@ -54,7 +54,8 @@ function loadManagerClass(mainWindow = null) {
         logError: () => {},
         ensureClangdUserBundle: async () => ({ ok: true, root: '/fake/clangd' }),
         resolveClangdExecutable: () => '/fake/clangd/bin/clangd',
-        getUserClangdRoot: () => '/fake/clangd',
+        findClangdExecutableOnPath: () => null,
+        getUserToolsRoot: () => '/fake/clangd',
         getCompilerRuntimeBinPaths: () => [],
         queryCompilerInfo: async () => ({ includePaths: [], target: '' }),
         compilerInfoCache: new Map()

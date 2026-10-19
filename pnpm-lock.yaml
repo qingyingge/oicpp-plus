@@ -195,8 +195,8 @@ importers:
         specifier: ^11.12.0
         version: 11.12.0
       i18next:
-        specifier: ^26.4.2
-        version: 26.4.2(typescript@7.0.2)
+        specifier: ^26.4.4
+        version: 26.5.2(typescript@7.0.2)
       iconv-lite:
         specifier: ^0.7.3
         version: 0.7.3
@@ -213,17 +213,17 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       monaco-editor:
-        specifier: ~0.57.0
+        specifier: '>=0.30.0 <1.0.0'
         version: 0.57.0
       node-pty:
-        specifier: ~1.1.0
+        specifier: '>=1.0.0 <2.0.0'
         version: 1.1.0
       node-stream-zip:
         specifier: ^1.16.0
         version: 1.16.0
       pdfjs-dist:
-        specifier: ^6.3.289
-        version: 6.3.289
+        specifier: 6.4.299
+        version: 6.4.299
       turndown:
         specifier: ^7.2.4
         version: 7.2.4
@@ -235,10 +235,10 @@ importers:
         specifier: ^26.6.5
         version: 26.6.5
       electron:
-        specifier: ~44.5.1
+        specifier: '>=37.0.0 <45.0.0'
         version: 44.5.1(supports-color@8.1.1)
       electron-builder:
-        specifier: ~26.15.3
+        specifier: ^26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@8.1.1)
       html-webpack-plugin:
         specifier: ^5.6.8
@@ -1406,8 +1406,8 @@ packages:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
     engines: {node: '>= 14'}
 
-  i18next@26.4.2:
-    resolution: {integrity: sha512-RX+R0VLg13IbvRuJSxnqykUFS9vQZTl8wYpWPCIUDWVrSGjsQywB5Y+pjzrkboxGAuYfJZVH1InFTdgBdxq6ug==}
+  i18next@26.5.2:
+    resolution: {integrity: sha512-6fIXt//2MZNok3tULyjnypxe3vbsy3pV1bVg8p2x3yKrzZvp7z3T+wXx/88LQsATRdhyJeAUAvUxEtxsHdJ29w==}
     peerDependencies:
       typescript: ^5 || ^6 || ^7
     peerDependenciesMeta:
@@ -1767,8 +1767,8 @@ packages:
   path-parse@1.0.7:
     resolution: {integrity: sha512-LDJzPVEEEPR+y48z93A0Ed0yXb8pAByGWo/k5YYdYgpY2/2EsOsksJrq7lOHxryrVOn1ejG6oAp8ahvOIQD8sw==}
 
-  pdfjs-dist@6.3.289:
-    resolution: {integrity: sha512-ZHjSVpDa3D6izMq8/04lvkhkATUmL9px6ChPaXc1k6nU2Mrhlg1/7F0bdUqCwUjw3NsPTfPZsMDUU6ZIcRaeQw==}
+  pdfjs-dist@6.4.299:
+    resolution: {integrity: sha512-AVl138zALtfaAPvADulE0PZThbYzCBS79nL4pOSL/6Sm/4AH5A21BD9VHt97OlCuzJuCpmeZtAtkinisF4Vb1g==}
     engines: {node: '>=22.13.0 || >=24'}
 
   pe-library@0.4.1:
@@ -3380,7 +3380,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  i18next@26.4.2(typescript@7.0.2):
+  i18next@26.5.2(typescript@7.0.2):
     optionalDependencies:
       typescript: 7.0.2
 
@@ -3672,7 +3672,7 @@ snapshots:
 
   path-parse@1.0.7: {}
 
-  pdfjs-dist@6.3.289:
+  pdfjs-dist@6.4.299:
     optionalDependencies:
       '@napi-rs/canvas': 1.0.10
 

@@ -849,6 +849,83 @@ if (lsResult !== null) {
   info('pnpm ls timed out after 60s (inconclusive)');
 }
 
+// F3: Third-party license coverage
+// 以二进制形式再分发的组件（clangd / clang-format）必须随附许可正文，
+// 因此正文、清单、构建注入、安装器落盘这四处要同时在位，缺一处就是分发不合规
+console.log(`\n${Y}[F3] Third-party license coverage${R}`);
+{
+  const licenseDir = path.join(root, 'third-party', 'licenses');
+  const noticesPath = path.join(licenseDir, 'THIRD-PARTY-NOTICES.md');
+  const llvmLicensePath = path.join(licenseDir, 'llvm-apache-2.0-with-llvm-exception.txt');
+  const issues = [];
+
+  const llvmBody = readFile(llvmLicensePath) || '';
+  if (!llvmBody) {
+    issues.push('missing third-party/licenses/llvm-apache-2.0-with-llvm-exception.txt');
+  } else if (!/Apache License/.test(llvmBody) || !/LLVM Exceptions to the Apache 2\.0 License/.test(llvmBody)) {
+    issues.push('LLVM license body lacks the expected Apache-2.0 / LLVM-exception sections');
+  }
+
+  const mainSrc = readFile(path.join(root, 'src', 'main.js')) || '';
+  const whitelistBlock = /const THIRD_PARTY_LICENSE_FILES = new Set\(\[([\s\S]*?)\]\)/.exec(mainSrc);
+  const whitelisted = whitelistBlock ? [...whitelistBlock[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : [];
+  if (whitelisted.length === 0) {
+    issues.push('THIRD_PARTY_LICENSE_FILES whitelist not found in src/main.js');
+  }
+
+  let onDisk = [];
+  try {
+    onDisk = fs.readdirSync(licenseDir).filter((n) => n !== 'README.md');
+  } catch (err) {
+    issues.push('cannot read third-party/licenses/: ' + (err && err.message));
+  }
+  for (const name of onDisk) {
+    if (!whitelisted.includes(name)) issues.push(`license file not readable by the UI: ${name} (absent from THIRD_PARTY_LICENSE_FILES)`);
+  }
+  for (const name of whitelisted) {
+    if (!onDisk.includes(name)) issues.push(`whitelisted license file missing on disk: ${name}`);
+  }
+
+  const rendererSrc = readFile(path.join(root, 'src', 'renderer', 'js', 'main.js')) || '';
+  for (const m of rendererSrc.matchAll(/licenseFile:\s*'([^']+)'/g)) {
+    if (!whitelisted.includes(m[1])) issues.push(`showOpenSourceLicenses() references an unknown licenseFile: ${m[1]}`);
+  }
+
+  const buildFiles = (pkg && pkg.build && pkg.build.files) || [];
+  if (!buildFiles.some((f) => String(f).includes('third-party'))) {
+    issues.push('build.files does not ship third-party/**/* — read-third-party-license would fail in a packaged app');
+  }
+
+  for (const script of ['scripts/download-clangd.js', 'scripts/download-clang-format.js']) {
+    if (!(readFile(path.join(root, script)) || '').includes('llvm-apache-2.0-with-llvm-exception.txt')) {
+      issues.push(`${script} does not fall back to third-party/licenses for the license body`);
+    }
+  }
+
+  const installerSrc = readFile(path.join(root, 'installer.nsi')) || '';
+  if (!/File\s+"dist\\win-unpacked\\resources\\clangd\\LICENSE\.TXT"/.test(installerSrc)) {
+    issues.push('installer.nsi does not ship resources/clangd/LICENSE.TXT');
+  }
+  if (!/Delete\s+"\$OICPP_USER_PROFILE\\\.oicpp-plus\\LICENSE\.TXT"/.test(installerSrc)) {
+    issues.push('installer.nsi uninstaller does not remove the shipped clangd license');
+  }
+
+  const notices = readFile(noticesPath) || '';
+  if (!notices) {
+    issues.push('missing third-party/licenses/THIRD-PARTY-NOTICES.md');
+  } else if (pkg) {
+    for (const dep of Object.keys({ ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) })) {
+      if (!notices.includes('`' + dep + '`')) issues.push(`dependency not listed in THIRD-PARTY-NOTICES.md: ${dep}`);
+    }
+  }
+
+  if (issues.length > 0) {
+    fail(`third-party license coverage: ${issues.join(' | ')}`);
+  } else {
+    ok(`third-party licenses covered (${onDisk.length} file(s), ${whitelisted.length} readable via IPC)`);
+  }
+}
+
 // ============================================================
 // G. Code Quality
 // ============================================================
@@ -953,9 +1030,23 @@ if (fileExists(buildInfoPath)) {
 // H4: Electron version check
 console.log(`\n${Y}[H4] Electron version${R}`);
 if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
-  const electronVer = pkg.devDependencies.electron.replace(/[^0-9.]/g, '');
-  const firstDot = electronVer.indexOf('.');
-  const majorVer = firstDot > 0 ? parseInt(electronVer.substring(0, firstDot), 10) : parseInt(electronVer, 10);
+  // Get actual installed version from node_modules (more reliable than package.json range)
+  const electronPkgPath = path.join(root, 'node_modules', 'electron', 'package.json');
+  let electronVer = '';
+  let majorVer = 0;
+  if (fileExists(electronPkgPath)) {
+    const ep = readJson(electronPkgPath);
+    if (ep && ep.version) {
+      electronVer = ep.version;
+      majorVer = parseInt(electronVer.split('.')[0], 10);
+    }
+  }
+  // Fallback to package.json declared range
+  if (!electronVer) {
+    const declared = pkg.devDependencies.electron.replace(/[^0-9.]/g, '');
+    electronVer = declared;
+    majorVer = parseInt(declared.split('.')[0], 10);
+  }
   if (majorVer < 35) {
     fail(`Electron ${electronVer} is too old (security risk)`);
   } else if (majorVer < 39) {
@@ -976,6 +1067,10 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
 // remaining backlog grew — that is a FAIL.
 const I18N_HARDCODED_CJK_BASELINE = 1;
 const I18N_EN_PUNCT_BASELINE = 1;
+// 存量「用户可见行上的硬编码英文散文」。I8 只查 CJK，而项目默认语言是 zh-cn
+// —— 硬编码英文同样会原样显示给用户，只是查不出来（tabs.js 的
+// 'Markdown API not available' 就是这样长期存活的）。
+const I18N_HARDCODED_EN_BASELINE = 0;
 // 存量孤儿键（语言包里有、源码里查不到任何引用）。暂不清理，只锁死不许增长。
 // 用"源码任意位置出现过的 dotted 字面量"作口径而非 I7 的 t('key') 口径：后者
 // 认不出 t(c ? 'a' : 'b')、_t(key, fb)、t(el.dataset.i18n) 这类动态查表，会把
@@ -1286,6 +1381,101 @@ console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
   }
   if (verbose && count > 0) {
     for (const [f, c] of Object.entries(byFile).sort((a, b) => b[1] - a[1])) info(`  ${c} ${f}`);
+  }
+}
+
+// I8b: Hardcoded English prose ratchet
+console.log(`\n${Y}[I8b] Hardcoded English prose ratchet${R}`);
+{
+  // I8 的判定只认 CJK。语言包默认语言是 zh-cn，所以一条硬编码英文同样会原样
+  // 出现在界面上，只是 I8 看不见 —— tabs.js 的 'Markdown API not available'
+  // 就是这样长期存活的。I8b 复用 I8 的整条行级流水线，只把被测字符集换成英文散文。
+  //
+  // 与 CJK 的关键差异：英文在源码里大量「合法」地出现，因此豁免比 I8 多得多，
+  // 且散文识别本身带启发式。误报率靠下面三条收窄压到 0：
+  //   1. 必须含 ≥2 个 ≥3 字母的完整词 —— 标识符、属性名、枚举值都过不了这一关
+  //   2. 排除路径 / URL / 文件名 / MIME / CSS 类名
+  //   3. 只在 I8 的 userVisibleRe 命中后才判定
+  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|message\s*:|title\s*:|detail\s*:|new Error\(|throw Error)/;
+  const alreadyMigratedRe = /data-i18n(-[a-z]+)?\s*=/;
+  const stripTFallback = (line) => line
+    .replace(/\b(?:window\s*\.\s*)?(?:i18n|i18next|__|this)\s*(?:\?\.|\.)\s*t\s*(?:\?\.|\.)?\s*\((?:[^()]|\([^()]*\))*\)(?:\s*\|\|\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\([^()]*\)|[A-Za-z_$][\w.$]*))?/g, 't()')
+    .replace(/(?<![.\w])t\s*\((?:[^()]|\([^()]*\))*\)/g, 't()');
+
+  // 开发者面向的诊断出口。英文工程用语（'clang-format timed out'）在这类位置
+  // 是正常写法，不该逼进语言包。
+  const devDiagnosticRe = /(throw\s+new?\s*Error|new\s+Error\s*\()/;
+  // 机器可读的载荷出口：本地 HTTP 接口给 SampleTester / CompetitiveCompanion
+  // 浏览器扩展的 JSON 响应，以及调试器内部事件的 message 字段。这些是协议字段，
+  // 不是界面文案（服务方按 code / invalidField 判分支，不解析文案）。
+  // 判据取「行上出现判别字段」而非逐个硬编码调用点：type/code/invalidField 是
+  // 协议层的 discriminator，出现在同一行说明这个对象是载荷而不是 UI 文案袋。
+  // （判别字段常与 message 分行书写，所以只按行匹配，不跨行判断。）
+  const payloadRe = /(writeJson\(|res\.end\(|res\.writeHead\(|\bcode\s*:|invalidField\s*:|\btype\s*:\s*['"][a-z_]+['"])/;
+  // 判别字段与 message 经常分行书写（对象字面量换行），只看本行会漏。
+  // 命中散文后向上回看 6 行，落在同一对象字面量里的判别字段即视为协议载荷。
+  // 例：compare-engine-v2 的 { type, code, message } 三行，UI 侧 codeComparer.js
+  // 按 type 查表翻译、根本不读 message —— 这里的英文 message 是诊断细节。
+  const DISCRIMINATOR_LOOKBACK = 6;
+  const discriminatorRe = /(^\s*|[{,]\s*)(type|code|errType|errorType|invalidField|testNumber|testMs)\s*[:=]/;
+  const nearDiscriminator = (lines, i) => {
+    for (let j = i - 1; j >= 0 && i - j <= DISCRIMINATOR_LOOKBACK; j--) {
+      if (discriminatorRe.test(lines[j])) return true;
+    }
+    return false;
+  };
+
+  const literalsOf = (line) => {
+    const out = [];
+    const re = /(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+    let m;
+    while ((m = re.exec(line)) !== null) out.push(m[2]);
+    return out;
+  };
+  const looksLikeProse = (s) => {
+    if (!s || !/[A-Za-z]{2}/.test(s)) return false;
+    const words = s.split(/\s+/).filter(Boolean);
+    if (words.length < 2) return false;                       // 单 token = 标识符/枚举
+    if (/[/\\]/.test(s)) return false;                         // 路径
+    if (/^https?:\/\//i.test(s)) return false;                 // URL
+    if (/\.(js|html|css|json|png|txt|exe|zip)\b/i.test(s)) return false;   // 文件名
+    if (/^text\/|^application\/|^multipart\//i.test(s)) return false;       // MIME
+    if (/^[A-Z0-9_ ]+$/.test(s)) return false;                 // 全大写枚举
+    if (/^(\{\w+\}[\s,]*)+\{?\w*\}?$/.test(s)) return false;   // 纯 format token
+    // CSS 类名串（'dialog-btn dialog-btn-cancel'）无 >=3 字母词
+    const alphaWords = words.filter((w) => /^[A-Za-z]{2,}$/.test(w));
+    if (alphaWords.length < 2) return false;
+    if (alphaWords.filter((w) => /^[A-Za-z]{3,}$/.test(w)).length < 2) return false;
+    return true;
+  };
+
+  const hits = [];
+  for (const f of [...jsFiles, ...htmlFiles]) {
+    const content = readFile(f);
+    if (!content) continue;
+    const rel = path.relative(root, f);
+    const lines = content.split('\n');
+    lines.forEach((line, i) => {
+      if (/[\u4e00-\u9fff]/.test(line)) return;                 // CJK 归 I8 管
+      if (/log(Error|Warn|Info|Debug)/.test(line)) return;      // 开发面向日志
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;             // 注释
+      if (alreadyMigratedRe.test(line)) return;                // 已有 data-i18n-* 钩子
+      if (!userVisibleRe.test(line)) return;                   // 不是用户可见出口
+      if (devDiagnosticRe.test(line)) return;                  // 开发者诊断
+      if (payloadRe.test(line)) return;                        // 机器可读载荷
+      for (const lit of literalsOf(stripTFallback(line))) {
+        if (!looksLikeProse(lit)) continue;
+        if (nearDiscriminator(lines, i)) return;                // 同对象里的协议字段
+        hits.push(`${rel}:${i + 1}  ${JSON.stringify(lit).slice(0, 60)}`);
+        return;
+      }
+    });
+  }
+  if (hits.length > I18N_HARDCODED_EN_BASELINE) {
+    fail(`${hits.length} user-visible hardcoded English strings (baseline ${I18N_HARDCODED_EN_BASELINE}, +${hits.length - I18N_HARDCODED_EN_BASELINE}) — migrate to t() or lower the baseline`);
+    for (const h of hits.slice(0, 10)) info(`  ${h}`);
+  } else {
+    ok('no user-visible hardcoded English text');
   }
 }
 

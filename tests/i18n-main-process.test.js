@@ -375,5 +375,65 @@ const enMain = en.main || {};
         JSON.stringify(pair.map(([a, b]) => ({ a: a.threw || a.generic, b: b.threw || b.generic }))));
 }
 
+// ---------------------------------------------------------------------------
+// 跨进程用户可见文案必须走 t()
+// ---------------------------------------------------------------------------
+// broadcastIdeLoginError / sendLoginHtml / notifyUser 都不在 I8 的 userVisibleRe
+// 里，静态检查看不见它们：历史遗留是「sendLoginHtml 迁了、紧邻的
+// broadcastIdeLoginError 没迁」的半迁移对，英文用户会看到中文 toast。
+// 这里按括号配对抽出实参，只认 t(...)/变量，排除中文字面量。
+
+{
+    const BROADCASTERS = ['broadcastIdeLoginError', 'sendLoginHtml', 'notifyUser'];
+    const cjkLiteral = /['"`][^'"`]*[\u4e00-\u9fff][^'"`]*['"`]/;
+
+    // 抽出 call(...) 的**全部**顶层实参，正确处理括号/引号/模板串嵌套
+    const argsOf = (line, callee) => {
+        const at = line.indexOf(callee + '(');
+        if (at < 0) return null;
+        const start = at + callee.length + 1;
+        const args = [];
+        let depth = 1, quote = null, cur = start;
+        for (let i = start; i < line.length; i++) {
+            const ch = line[i];
+            if (quote) {
+                if (ch === '\\') { i++; continue; }
+                if (ch === quote) quote = null;
+                continue;
+            }
+            if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue; }
+            if (ch === ')' && depth === 0) { args.push(line.slice(cur, i)); return args; }
+            if ('([{'.includes(ch)) depth++;
+            else if (')]}'.includes(ch)) {
+                if (depth === 0) return null;      // 括号不配对
+                depth--;
+            } else if (ch === ',' && depth === 0) { args.push(line.slice(cur, i)); cur = i + 1; }
+        }
+        return null;
+    };
+
+    const leaks = [];
+    mainSource.split('\n').forEach((line, idx) => {
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
+        for (const callee of BROADCASTERS) {
+            const args = argsOf(line, callee);
+            if (args === null) continue;
+            for (let arg of args) {
+                // 先摘掉 t('key') / t('key', {…}) 包裹，它们是合法出口
+                arg = arg.replace(/\bt\(\s*['"`][^'"`]*['"`]\s*(?:,[^()]*)?\)/g, 'T');
+                if (cjkLiteral.test(arg)) leaks.push(`main.js:${idx + 1} ${callee}(…${arg.trim().slice(0, 50)})`);
+            }
+        }
+    });
+    check('跨进程用户可见文案（broadcastIdeLoginError/sendLoginHtml/notifyUser）全部走 t()',
+        leaks.length === 0, leaks.slice(0, 6).join(' | '));
+
+    // 反向锁定前提：确实存在这些调用点，避免正则退化后恒绿
+    const callCounts = Object.fromEntries(BROADCASTERS.map((b) => [b, (mainSource.match(new RegExp(b + '\\(', 'g')) || []).length]));
+    check('守卫覆盖的广播调用点真实存在',
+        callCounts.broadcastIdeLoginError >= 8 && callCounts.sendLoginHtml >= 7 && callCounts.notifyUser >= 5,
+        JSON.stringify(callCounts));
+}
+
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
 process.exit(failures ? 1 : 0);
