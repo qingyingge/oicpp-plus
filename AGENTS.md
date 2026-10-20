@@ -129,6 +129,7 @@ npx tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
 
 - ❌ 给被 `<script src="…js">` 加载的渲染层文件加 `export`/`import`。`module: commonjs` 会把 `export class` emit 成 `Object.defineProperty(exports, "__esModule", …)`，浏览器脚本标签下 `exports` 未定义 → 整文件运行期炸。判据：**文件尾有没有 `module.exports` 守卫**。有的（Node 侧，如 `terminal-manager.ts`）随意用 ES 语法；没有的（浏览器 script 形态，如 `settings/compiler.ts`、`settings/templates.ts`）必须保持**全局 script**，不加任何 import/export。注意 `templates.ts` 已经踩了这个坑。
 - ❌ **用 `any` 躲类型错误**（项目明令禁止）。改用 `unknown` + 局部收窄。收窄后若为保住测试锁定的正文形状而必须换形参名（如 `isTimeoutError(cause)` 内部 `const error = cause as TimeoutLikeError`），同步把那条断言从 `/function isTimeoutError\(error\)/` 放宽成 `/function isTimeoutError\(/`。
+- ❌ **`JSDoc 类型标注` 与 `非空断言 !` 同样是禁用项**（2026-10-20 起全仓清零并锁死：`src/` 下 `as any`/`: any`/`any[]`/`/** @type {...} */`/`x!.y` 均为 0，strict 下 `tsc --noEmit` 0 报错，这是新的地板，只许保持不许回潮）。要类型进签名、擦除式 `as T` 或 `unknown` + 局部收窄；`require(...)` 一律交还给 `types: ["node"]` 的 `NodeRequire` 供给（不要再写 `declare function require(...): any` 遮蔽它）。
 - ❌ 改测试断言去迎合 emit 产物里**语义**的变化。放宽只能针对**排版**（见下条坑），语义收紧就是自废守卫。
 
 **坑：**
