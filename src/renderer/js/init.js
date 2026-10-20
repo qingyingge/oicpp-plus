@@ -53,12 +53,12 @@ async function setUserIconPath() {
 async function initializeApp() {
     try {
         logInfo('初始化标题栏管理器...');
-        window.titlebarManager = new window.titlebarManager();
+        window.titlebarManager = new TitlebarManager();
         logInfo('初始化侧边栏管理器...');
-        window.sidebarManager = new window.sidebarManager();
-        window.sampleTester = window.sidebarManager?.getPanelManager?.('samples');
-        window.codeComparer = window.sidebarManager?.getPanelManager?.('compare');
-        window.cloudSyncPanel = window.sidebarManager?.getPanelManager?.('cloud');
+        window.sidebarManager = new SidebarManager();
+        window.sampleTester = window.sidebarManager.getPanelManager('samples');
+        window.codeComparer = window.sidebarManager.getPanelManager('compare');
+        window.cloudSyncPanel = window.sidebarManager.getPanelManager('cloud');
         setTimeout(() => {
             window.sidebarManager?.updateFileExplorerButtons?.();
         }, 100);
@@ -74,11 +74,13 @@ async function initializeApp() {
             }
         };
         logInfo('初始化标签页管理器...');
+        // tabs.js 已在 DOMContentLoaded 时创建过实例并挂到 window.tabManager，
+        // 这里复用，避免重复执行 initializeGroups/setupEventListeners
         if (!window.tabManager) {
-            window.tabManager = new window.tabManager();
+            window.tabManager = new TabManager();
         }
         logInfo('初始化主应用...');
-        window.oicppApp = new window.oicppApp();
+        window.oicppApp = new OICPPApp();
         logInfo('OICPPApp 实例已创建');
         await window.oicppApp?.init?.();
         setupDefaultContent();
@@ -116,7 +118,7 @@ function setupDefaultContent() {
     setTimeout(function () {
         try {
             const sidebarManager = window.sidebarManager;
-            const fileExplorer = sidebarManager?.getPanelManager?.('files');
+            const fileExplorer = sidebarManager?.getPanelManager('files');
             const hasWorkspace = !!(fileExplorer && fileExplorer.hasWorkspace);
             if (hasWorkspace) {
                 logInfo('检测到已打开工作区，跳过欢迎页面');

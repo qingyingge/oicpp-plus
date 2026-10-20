@@ -117,6 +117,7 @@ interface Window {
   tabManager: TabManager;
   titlebarManager: TitlebarManager;
   sidebarManager: SidebarManager;
+  sampleTester: SampleTester;
   dialogManager: DialogManager;
   browserManager: BrowserManager;
   codeComparer: InstanceType<typeof import('../js/sidebar/codeComparer.js')>;

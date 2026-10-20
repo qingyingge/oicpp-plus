@@ -1,9 +1,8 @@
-
 declare function logInfo(...args: unknown[]): void;
 declare function logWarn(...args: unknown[]): void;
 declare function logError(...args: unknown[]): void;
 
-document.addEventListener('DOMContentLoaded', async function() {
+document.addEventListener('DOMContentLoaded', async function () {
     logInfo('DOM 加载完成，开始初始化应用...');
     await setUserIconPath();
     if (window.i18n && typeof window.i18n.init === 'function') {
@@ -23,7 +22,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             const isNewYearDay = (now.getMonth() === 0 && now.getDate() === 1);
             const isSpringFestivalDay = (now.getMonth() === 1 && now.getDate() === 17);
 
-            const dialogManager = (window as any).dialogManager;
+            const dialogManager = window.dialogManager;
             if (!dialogManager) return;
 
             if (isNewYearDay && typeof dialogManager.showNewYearGreeting === 'function') {
@@ -42,7 +41,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
 async function setUserIconPath(): Promise<void> {
     try {
-        const userIconPath = await (window as any).electronAPI?.getUserIconPath?.();
+        const userIconPath = await window.electronAPI?.getUserIconPath?.();
         const appIcon = document.getElementById('app-icon');
         if (appIcon instanceof HTMLImageElement && userIconPath) {
             appIcon.src = userIconPath;
@@ -55,20 +54,20 @@ async function setUserIconPath(): Promise<void> {
 async function initializeApp(): Promise<void> {
     try {
         logInfo('初始化标题栏管理器...');
-        (window as any).titlebarManager = new ((window as any).titlebarManager as { new(): unknown })();
+        window.titlebarManager = new TitlebarManager();
 
         logInfo('初始化侧边栏管理器...');
-        (window as any).sidebarManager = new ((window as any).sidebarManager as { new(): unknown })();
-        (window as any).sampleTester = (window as any).sidebarManager?.getPanelManager?.('samples');
-        (window as any).codeComparer = (window as any).sidebarManager?.getPanelManager?.('compare');
-        (window as any).cloudSyncPanel = (window as any).sidebarManager?.getPanelManager?.('cloud');
+        window.sidebarManager = new SidebarManager();
+        window.sampleTester = window.sidebarManager.getPanelManager('samples');
+        window.codeComparer = window.sidebarManager.getPanelManager('compare');
+        window.cloudSyncPanel = window.sidebarManager.getPanelManager('cloud');
 
         setTimeout(() => {
-            (window as any).sidebarManager?.updateFileExplorerButtons?.();
+            window.sidebarManager?.updateFileExplorerButtons?.();
         }, 100);
         logInfo('侧边栏管理器已初始化');
-        (window as any).checkSidebarResize = () => {
-            const sidebarManager = (window as any).sidebarManager;
+        window.checkSidebarResize = () => {
+            const sidebarManager = window.sidebarManager;
             if (sidebarManager && sidebarManager.checkResizeStatus) {
                 return sidebarManager.checkResizeStatus();
             } else {
@@ -78,30 +77,32 @@ async function initializeApp(): Promise<void> {
         };
 
         logInfo('初始化标签页管理器...');
-        if (!(window as any).tabManager) {
-            (window as any).tabManager = new ((window as any).tabManager as { new(): unknown })();
+        // tabs.js 已在 DOMContentLoaded 时创建过实例并挂到 window.tabManager，
+        // 这里复用，避免重复执行 initializeGroups/setupEventListeners
+        if (!window.tabManager) {
+            window.tabManager = new TabManager();
         }
 
         logInfo('初始化主应用...');
-        (window as any).oicppApp = new ((window as any).oicppApp as { new(): unknown })();
+        window.oicppApp = new OICPPApp();
         logInfo('OICPPApp 实例已创建');
-        await (window as any).oicppApp?.init?.();
+        await window.oicppApp?.init?.();
 
         setupDefaultContent();
 
         logInfo('应用初始化完成！');
         try {
-            if ((window as any).electronAPI && (window as any).electronAPI.onRequestSaveAll) {
-                (window as any).electronAPI.onRequestSaveAll(async () => {
+            if (window.electronAPI && window.electronAPI.onRequestSaveAll) {
+                window.electronAPI.onRequestSaveAll(async () => {
                     try {
-                        const tabManager = (window as any).tabManager;
-                        if (tabManager && typeof tabManager.saveAllFiles === 'function') {
-                            await tabManager.saveAllFiles();
-                        } else if ((window as any).oicppApp?.saveCurrentFile) {
-                            (window as any).oicppApp.saveCurrentFile();
+                        const tabManager = window.tabManager;
+                        if (tabManager && typeof (tabManager as { saveAllFiles?: () => Promise<void> }).saveAllFiles === 'function') {
+                            await (tabManager as { saveAllFiles: () => Promise<void> }).saveAllFiles();
+                        } else if (window.oicppApp?.saveCurrentFile) {
+                            window.oicppApp.saveCurrentFile();
                         }
                     } finally {
-                        (window as any).electronAPI.notifySaveAllComplete();
+                        window.electronAPI.notifySaveAllComplete();
                     }
                 });
             }
@@ -116,17 +117,17 @@ async function initializeApp(): Promise<void> {
 }
 
 function setupDefaultContent(): void {
-    setTimeout(function() {
+    setTimeout(function () {
         try {
-            const sidebarManager = (window as any).sidebarManager;
-            const fileExplorer = sidebarManager?.getPanelManager?.('files');
+            const sidebarManager = window.sidebarManager;
+            const fileExplorer = sidebarManager?.getPanelManager('files');
             const hasWorkspace = !!(fileExplorer && (fileExplorer as { hasWorkspace?: boolean }).hasWorkspace);
             if (hasWorkspace) {
                 logInfo('检测到已打开工作区，跳过欢迎页面');
                 return;
             }
 
-            const tabManager = (window as any).tabManager;
+            const tabManager = window.tabManager;
             if (tabManager && typeof tabManager.getTabCount === 'function' && tabManager.getTabCount() === 0) {
                 logInfo('显示欢迎页面...');
                 if (typeof tabManager.showWelcomePage === 'function') {
@@ -137,7 +138,7 @@ function setupDefaultContent(): void {
             }
         } catch (error) {
             logError('显示欢迎页面时出错:', error);
-            const tabManager = (window as any).tabManager;
+            const tabManager = window.tabManager;
             if (tabManager && typeof tabManager.createNewCppFile === 'function') {
                 tabManager.createNewCppFile();
             }
@@ -157,10 +158,10 @@ function showErrorMessage(message: string): void {
     const safeMessage = firstLine || fallback;
     try {
         logWarn('[RendererErrorToastSuppressed]', safeMessage);
-    } catch (_) {}
+    } catch (_) { }
 }
 
-window.addEventListener('error', function(e: ErrorEvent) {
+window.addEventListener('error', function (e: ErrorEvent) {
     try {
         const info = {
             message: e?.error?.message || e?.message,
@@ -170,7 +171,7 @@ window.addEventListener('error', function(e: ErrorEvent) {
             stack: e?.error?.stack
         };
         logError('[RendererGlobalError]', info);
-    } catch (_) {}
+    } catch (_) { }
 });
 
 // "Model not found" comes from monaco's text-model resolver
@@ -191,7 +192,7 @@ function isMonacoModelReferenceRejection(message: string, stack: string): boolea
     return /(_acquire|createModelReference|ReferenceCollection|editorWorkerHost)/.test(stack);
 }
 
-window.addEventListener('unhandledrejection', function(e: PromiseRejectionEvent) {
+window.addEventListener('unhandledrejection', function (e: PromiseRejectionEvent) {
     try {
         const reason = e?.reason;
         const message = String(reason?.message || reason || '');
@@ -202,10 +203,10 @@ window.addEventListener('unhandledrejection', function(e: PromiseRejectionEvent)
         }
         const info = reason instanceof Error ? { message: reason.message, stack: reason.stack } : { reason };
         logError('[RendererUnhandledRejection]', info);
-    } catch (_) {}
+    } catch (_) { }
 });
 
-(window as any).initializeApp = initializeApp;
+window.initializeApp = initializeApp;
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { initializeApp };
