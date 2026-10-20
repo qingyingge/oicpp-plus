@@ -10,7 +10,6 @@ declare function logerror(...args: unknown[]): void;
 // Monaco 全局（AMD loader 注入）的类型见 src/types/monaco-umd.d.ts
 // 渲染层 manager 单例：类在各文件顶层声明，本身就是全局，无需 ambient declare
 // 主进程 require 由 @types/node 全局声明接管（electron 的 /// <reference types="node" /> 引入）
-declare function require(moduleName: string): any;
 // 注：删掉此行会让 @types/node 合并进 Window.require 的 Require 形状激活（cache/extensions/main/resolve 必填），
 // 渲染层自定义 require loader（只认 'electron'）无法满足 → TS2322。精确类型化待 .ts 阶段（require → import）。
 
@@ -56,7 +55,7 @@ interface Window {
   logwarn: (...args: unknown[]) => void;
   logerror: (...args: unknown[]) => void;
   monaco: typeof import('monaco-editor');
-  require: ((moduleName: string) => any) & { __electronHelper?: boolean };
+  require: NodeRequire & { __electronHelper?: boolean };
   i18n: {
     t: (key: string, params?: Record<string, unknown>) => string;
     init: () => Promise<void>;

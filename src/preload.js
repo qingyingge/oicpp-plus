@@ -217,7 +217,7 @@ function ensureTurndown() {
                 const className = code.getAttribute('class') || '';
                 const langMatch = className.match(/language-(\S+)/);
                 const lang = langMatch ? langMatch[1] : '';
-                const fence = options.fence;
+                const fence = options['fence'];
                 return '\n\n' + fence + lang + '\n' + code.textContent + '\n' + fence + '\n\n';
             }
         });
@@ -293,13 +293,13 @@ function ensureMarkdown() {
             .use(imageFigures, {
             figcaption: true
         });
-        const defaultFence = md.renderer.rules.fence || function (tokens, idx, options, env, self) {
+        const defaultFence = md.renderer.rules['fence'] || function (tokens, idx, options, env, self) {
             return self.renderToken(tokens, idx, options);
         };
         // 无语言标注的代码块自动探测时的候选语言：highlightAuto 对全部注册语言
         // 逐个试匹配是 markdown 渲染里最贵的分支，限定到常用集合可大幅降低单次按键成本
         const AUTO_DETECT_LANGUAGES = ['cpp', 'c', 'python', 'javascript', 'java', 'bash', 'json', 'xml', 'sql', 'go', 'rust', 'csharp'];
-        md.renderer.rules.fence = function (tokens, idx, options, env, self) {
+        md.renderer.rules['fence'] = function (tokens, idx, options, env, self) {
             const token = tokens[idx];
             const code = token.content;
             const lang = token.info.trim();
@@ -333,15 +333,15 @@ function ensureMarkdown() {
         console.error('Failed to initialize markdown-it:', e);
     }
     if (md) {
-        const defaultImageRender = md.renderer.rules.image || function (tokens, idx, options, env, self) {
+        const defaultImageRender = md.renderer.rules['image'] || function (tokens, idx, options, env, self) {
             return self.renderToken(tokens, idx, options);
         };
-        md.renderer.rules.image = function (tokens, idx, options, env, self) {
+        md.renderer.rules['image'] = function (tokens, idx, options, env, self) {
             const token = tokens[idx];
             const srcIndex = token.attrIndex('src');
             if (srcIndex >= 0) {
                 let src = token.attrs[srcIndex][1];
-                const filePath = env && env.filePath;
+                const filePath = (env && env['filePath']);
                 if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
                     if (filePath) {
                         if (path.isAbsolute(src)) {

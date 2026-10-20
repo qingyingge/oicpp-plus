@@ -54,18 +54,18 @@ interface FolderPickerModule {
     show: (opts?: { startPath?: string }) => Promise<string | null>;
 }
 
-if (typeof window !== 'undefined' && !(window as any).folderPicker) {
+if (typeof window !== 'undefined' && !window.folderPicker) {
     const module: FolderPickerModule = {
         async show(opts = {}) {
             const homeDir = await (window.electronAPI?.getUserHome?.() || '');
             return new Promise<string | null>((resolve) => {
-                const theme = ((window as any).oicppApp?.settings?.theme) || 'dark';
+                const theme = (window.oicppApp?.settings?.theme) || 'dark';
                 const isLightTheme = String(theme).toLowerCase().includes('light');
                 // norm 统一反斜杠为正斜杠、折叠重复分隔符：来自 startPath/lastOpen 的
                 // Windows 路径必须加 norm，否则 buildBreadcrumb 把 `C:\Users\foo` 切成
                 // 单个片段，面包屑只剩一级。同时 USERPROFILE 不再走 process.env（只暴露
                 // NODE_ENV/CI），改走已有的 getUserHome IPC。
-                let cur = norm(opts.startPath || (window as any).oicppApp?.settings?.lastOpen || (process.platform === 'win32' ? (homeDir || 'C:') : '/'));
+                let cur = norm(opts.startPath || window.oicppApp?.settings?.lastOpen || (process.platform === 'win32' ? (homeDir || 'C:') : '/'));
                 if (!cur) cur = '/';
                 const backdrop = E('div', 'folder-picker-backdrop');
                 const panel = E('div', 'folder-picker ' + (isLightTheme ? 'light' : ''));
@@ -108,7 +108,7 @@ if (typeof window !== 'undefined' && !(window as any).folderPicker) {
                 createBtn.onclick = async () => {
                     const name = createInput.value.trim();
                     if (!name) return;
-                    await (window as any).electronAPI?.ensureDirectory?.(norm(cur, name));
+                    await window.electronAPI?.ensureDirectory?.(norm(cur, name));
                     createInput.value = '';
                     reload();
                 };
@@ -141,7 +141,8 @@ if (typeof window !== 'undefined' && !(window as any).folderPicker) {
                     treeWrap.innerHTML = '<div class="folder-picker-loading">' + _t('folderPicker.loading') + '</div>';
                     let entries: Array<{ path?: string; name?: string; type?: string; ext?: string }> | null = [], error: Error | null = null;
                     try {
-                        entries = await (window as any).electronAPI?.readDirectory?.(cur);
+                        // readDirectory 的声明把坏条目写成可空；主进程侧已在源头过滤，这里按实际形状收窄（擦除式断言，不改运行期）
+                        entries = (await window.electronAPI?.readDirectory?.(cur)) as Array<{ path?: string; name?: string; type?: string; ext?: string }> | null;
                     } catch (e) { error = e as Error; }
                     const folders = (entries || []).filter(i => i.type === 'folder');
                     const f = search.value.trim().toLowerCase();
@@ -173,8 +174,8 @@ if (typeof window !== 'undefined' && !(window as any).folderPicker) {
                         item.ondblclick = () => { cur = d.path ?? ''; reload(); };
                         treeWrap.appendChild(item);
                     });
-                    if ((window as any).uiIcons && typeof (window as any).uiIcons.hydrate === 'function') {
-                        (window as any).uiIcons.hydrate(treeWrap);
+                    if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
+                        window.uiIcons.hydrate(treeWrap);
                     }
                     choose.disabled = false;
                 }
@@ -191,9 +192,9 @@ if (typeof window !== 'undefined' && !(window as any).folderPicker) {
             });
         }
     };
-    (window as any).folderPicker = module;
+    window.folderPicker = module;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = (window as any).folderPicker;
+    module.exports = window.folderPicker;
 }

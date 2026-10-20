@@ -6,11 +6,12 @@ import { spawn, spawnSync } from 'child_process';
 import { t } from './lang';
 import { terminateProcessTree } from './utils/process-supervisor';
 
-let pty: any = null;
+type PtyModule = { spawn: (file: string, args: string[], options?: Record<string, unknown>) => PtyProcess };
+let pty: PtyModule | null = null;
 let ptyLoadError: Error | null = null;
 let ptyLoadTargets: string[] = [];
 
-function tryLoadPty(moduleId: string): any {
+function tryLoadPty(moduleId: string): PtyModule | null {
     try {
         return require(moduleId);
     } catch (error) {
@@ -102,7 +103,7 @@ interface Session {
 }
 
 interface SendToRenderer {
-    (channel: string, payload: any): void;
+    (channel: string, payload: unknown): void;
 }
 
 class IntegratedTerminalManager {
@@ -120,15 +121,15 @@ class IntegratedTerminalManager {
         this._pendingTerminalData = new Map();
         this._terminalDataFlushTimer = null;
         this._rawSend = rawSendToRenderer;
-        this.sendToRenderer = (channel: string, payload: any) => {
+        this.sendToRenderer = (channel: string, payload: unknown) => {
             // 终端输出按 8ms 窗口聚合：cat/ls -R 这类命令下 PTY 每秒可产生
             // 数百个 chunk，逐条 send 会打满 IPC 队列并让终端掉帧
-            if (channel === 'terminal-data' && payload && typeof payload.terminalId === 'string') {
-                const chunks = this._pendingTerminalData.get(payload.terminalId);
+            if (channel === 'terminal-data' && payload && typeof (payload as { terminalId?: string }).terminalId === 'string') {
+                const chunks = this._pendingTerminalData.get((payload as { terminalId: string }).terminalId);
                 if (chunks) {
-                    chunks.push(payload.data);
+                    chunks.push((payload as { data?: string }).data as string);
                 } else {
-                    this._pendingTerminalData.set(payload.terminalId, [payload.data]);
+                    this._pendingTerminalData.set((payload as { terminalId: string }).terminalId, [(payload as { data?: string }).data as string]);
                 }
                 if (!this._terminalDataFlushTimer) {
                     this._terminalDataFlushTimer = setTimeout(() => this._flushTerminalData(), TERMINAL_DATA_FLUSH_MS);
@@ -139,8 +140,8 @@ class IntegratedTerminalManager {
                 return;
             }
             // 会话退出前先把该会话的待发数据送出去，避免丢失
-            if (channel === 'terminal-exit' && payload && typeof payload.terminalId === 'string') {
-                this._flushTerminalData(payload.terminalId);
+            if (channel === 'terminal-exit' && payload && typeof (payload as { terminalId?: string }).terminalId === 'string') {
+                this._flushTerminalData((payload as { terminalId: string }).terminalId);
             }
             rawSendToRenderer(channel, payload);
         };
@@ -444,7 +445,7 @@ class IntegratedTerminalManager {
     _resolveProcessFallbackSpawnSpec(shellPath: string, args: string[] | undefined): { command: string; args: string[]; wrappedWithScript: boolean } {
         const normalizedArgs = Array.isArray(args) ? args : [];
 
-        const quotePosixArg = (value: any): string => {
+        const quotePosixArg = (value: unknown): string => {
             const text = String(value ?? '');
             if (!text) {
                 return "''";

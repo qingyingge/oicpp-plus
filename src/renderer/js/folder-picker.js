@@ -137,7 +137,8 @@ if (typeof window !== 'undefined' && !window.folderPicker) {
                     treeWrap.innerHTML = '<div class="folder-picker-loading">' + _t('folderPicker.loading') + '</div>';
                     let entries = [], error = null;
                     try {
-                        entries = await window.electronAPI?.readDirectory?.(cur);
+                        // readDirectory 的声明把坏条目写成可空；主进程侧已在源头过滤，这里按实际形状收窄（擦除式断言，不改运行期）
+                        entries = (await window.electronAPI?.readDirectory?.(cur));
                     }
                     catch (e) {
                         error = e;

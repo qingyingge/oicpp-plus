@@ -42,6 +42,8 @@ const htmlToPlainText = (html: string): string => {
         .trim();
 };
 
+type ToastEl = HTMLElement & { __hideTimer?: ReturnType<typeof setTimeout> };
+
 const showToast = (message: string, type: string = 'info', durationMs: number = 1200): void => {
     try {
         const safeMsg = String(message ?? '');
@@ -63,8 +65,8 @@ const showToast = (message: string, type: string = 'info', durationMs: number = 
             toast.className = `message-toast ${safeType}`;
             toast.textContent = safeMsg;
             toast.style.display = 'block';
-            clearTimeout((toast as any).__hideTimer);
-            (toast as any).__hideTimer = setTimeout(() => {
+            clearTimeout((toast as ToastEl).__hideTimer);
+            (toast as ToastEl).__hideTimer = setTimeout(() => {
                 try {
                     toast.style.display = 'none';
                 } catch (_) { }
@@ -80,9 +82,21 @@ const showToast = (message: string, type: string = 'info', durationMs: number = 
     }
 };
 
-let md: any = null;
-let TurndownService: any = null;
-let turndownInstance: any = null;
+type MdToken = { content: string; info: string; attrIndex: (name: string) => number; attrs: Array<[string, string]> | null };
+type MdSelf = { renderToken: (tokens: MdToken[], idx: number, options: Record<string, unknown>) => string };
+type MdRule = (tokens: MdToken[], idx: number, options: Record<string, unknown>, env: Record<string, unknown>, self: MdSelf) => string;
+interface MdLite {
+    render: (src: string, env?: Record<string, unknown>) => string;
+    utils: { escapeHtml: (s: string) => string };
+    renderer: { rules: Record<string, MdRule> };
+    use: (plugin: unknown, options?: unknown) => MdLite;
+}
+
+let md: MdLite | null = null;
+let TurndownService: (new (options?: Record<string, unknown>) => TurndownInstance) | null = null;
+type TurndownNode = { nodeName: string; classList: { contains: (c: string) => boolean }; firstChild?: { nodeName?: string; getAttribute: (n: string) => string | null; textContent?: string }; querySelector: (sel: string) => { checked?: boolean; textContent?: string } | null; getAttribute: (n: string) => string | null; textContent?: string };
+type TurndownInstance = { addRule: (name: string, rule: { filter: (node: TurndownNode) => unknown; replacement: (content: string, node: TurndownNode, options: Record<string, unknown>) => string }) => void; turndown: (html: string) => string };
+let turndownInstance: TurndownInstance | null = null;
 
 const normalizeMarkdownMath = (input: string): string => {
     if (!input || typeof input !== 'string') return input;
@@ -187,10 +201,10 @@ const normalizeMarkdownMath = (input: string): string => {
 // markdown-it / highlight.js / katex / turndown 合计 300ms+ 的同步 require，
 // 放在 preload 顶层会阻塞每个渲染进程（含各设置窗口）的首帧绘制。
 // 改为首次真正调用渲染/转换 API 时才初始化。
-function ensureTurndown(): any {
+function ensureTurndown(): TurndownInstance | null {
     if (turndownInstance) return turndownInstance;
     try {
-        TurndownService = require('turndown');
+        TurndownService = require('turndown') as unknown as (new (options?: Record<string, unknown>) => TurndownInstance);
         turndownInstance = new TurndownService({
             headingStyle: 'atx',
             hr: '---',
@@ -203,11 +217,11 @@ function ensureTurndown(): any {
         });
 
         turndownInstance.addRule('taskListItem', {
-            filter: function (node: any) {
+            filter: function (node: TurndownNode) {
                 return node.nodeName === 'LI' &&
                     node.classList.contains('task-list-item');
             },
-            replacement: function (content: string, node: any) {
+            replacement: function (content: string, node: TurndownNode) {
                 const checkbox = node.querySelector('input[type="checkbox"]');
                 const checked = checkbox && checkbox.checked;
                 const prefix = checked ? '- [x] ' : '- [ ] ';
@@ -216,38 +230,38 @@ function ensureTurndown(): any {
         });
 
         turndownInstance.addRule('fencedCodeBlock', {
-            filter: function (node: any) {
+            filter: function (node: TurndownNode) {
                 return (
                     node.nodeName === 'PRE' &&
                     node.firstChild &&
                     node.firstChild.nodeName === 'CODE'
                 );
             },
-            replacement: function (content: string, node: any, options: any) {
-                const code = node.firstChild;
+            replacement: function (content: string, node: TurndownNode, options: Record<string, unknown>) {
+                const code = node.firstChild as NonNullable<TurndownNode['firstChild']>;
                 const className = code.getAttribute('class') || '';
                 const langMatch = className.match(/language-(\S+)/);
                 const lang = langMatch ? langMatch[1] : '';
-                const fence = options.fence;
+                const fence = options['fence'];
 
                 return '\n\n' + fence + lang + '\n' + code.textContent + '\n' + fence + '\n\n';
             }
         });
 
         turndownInstance.addRule('hljsCodeBlock', {
-            filter: function (node: any) {
+            filter: function (node: TurndownNode) {
                 return (
                     node.nodeName === 'PRE' &&
                     node.classList.contains('hljs')
                 );
             },
-            replacement: function (content: string, node: any, options: any) {
+            replacement: function (content: string, node: TurndownNode, options: Record<string, unknown>) {
                 const codeText = node.textContent || '';
                 return '\n\n```\n' + codeText + '\n```\n\n';
             }
         });
         turndownInstance.addRule('ignoreCopyButton', {
-            filter: function (node: any) {
+            filter: function (node: TurndownNode) {
                 return node.nodeName === 'BUTTON' &&
                     node.classList.contains('copy-code-btn');
             },
@@ -257,11 +271,11 @@ function ensureTurndown(): any {
         });
 
         turndownInstance.addRule('codeBlockWrapper', {
-            filter: function (node: any) {
+            filter: function (node: TurndownNode) {
                 return node.nodeName === 'DIV' &&
                     node.classList.contains('code-block-wrapper');
             },
-            replacement: function (content: string, node: any, options: any) {
+            replacement: function (content: string, node: TurndownNode, options: Record<string, unknown>) {
                 const pre = node.querySelector('pre');
                 if (pre) {
                     const codeText = pre.textContent || '';
@@ -277,10 +291,10 @@ function ensureTurndown(): any {
     return turndownInstance;
 }
 
-function ensureMarkdown(): any {
+function ensureMarkdown(): MdLite | null {
     if (md) return md;
     try {
-        const MarkdownIt = require('markdown-it');
+        const MarkdownIt = require('markdown-it') as unknown as new (options?: Record<string, unknown>) => MdLite;
         const mk = require('@iktakahiro/markdown-it-katex');
         const taskLists = require('markdown-it-task-lists');
         const imageFigures = require('markdown-it-image-figures');
@@ -298,7 +312,7 @@ function ensureMarkdown(): any {
                             '</code></pre>';
                     } catch (__){}
                 }
-                return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
+                return '<pre class="hljs"><code>' + (md as MdLite).utils.escapeHtml(str) + '</code></pre>';
             }
         })
         .use(mk, {
@@ -310,7 +324,7 @@ function ensureMarkdown(): any {
             figcaption: true
         });
 
-        const defaultFence = md.renderer.rules.fence || function(tokens: any[], idx: number, options: any, env: any, self: any) {
+        const defaultFence = md.renderer.rules['fence'] || function (tokens: MdToken[], idx: number, options: Record<string, unknown>, env: Record<string, unknown>, self: MdSelf) {
             return self.renderToken(tokens, idx, options);
         };
 
@@ -318,8 +332,8 @@ function ensureMarkdown(): any {
         // 逐个试匹配是 markdown 渲染里最贵的分支，限定到常用集合可大幅降低单次按键成本
         const AUTO_DETECT_LANGUAGES = ['cpp', 'c', 'python', 'javascript', 'java', 'bash', 'json', 'xml', 'sql', 'go', 'rust', 'csharp'];
 
-        md.renderer.rules.fence = function (tokens: any[], idx: number, options: any, env: any, self: any) {
-            const token = tokens[idx];
+        md.renderer.rules['fence'] = function (tokens: MdToken[], idx: number, options: Record<string, unknown>, env: Record<string, unknown>, self: MdSelf) {
+            const token = tokens[idx] as MdToken;
             const code = token.content;
             const lang = token.info.trim();
 
@@ -335,7 +349,7 @@ function ensureMarkdown(): any {
                         '</code></pre>';
                 }
             } catch (__){ 
-                highlighted = '<pre class="hljs"><code>' + md.utils.escapeHtml(code) + '</code></pre>';
+                highlighted = '<pre class="hljs"><code>' + (md as MdLite).utils.escapeHtml(code) + '</code></pre>';
             }
             const encodedCode = encodeURIComponent(code);
 
@@ -353,20 +367,20 @@ function ensureMarkdown(): any {
     }
 
     if (md) {
-        const defaultImageRender = md.renderer.rules.image || function (tokens: any[], idx: number, options: any, env: any, self: any) {
+        const defaultImageRender = md.renderer.rules['image'] || function (tokens: MdToken[], idx: number, options: Record<string, unknown>, env: Record<string, unknown>, self: MdSelf) {
             return self.renderToken(tokens, idx, options);
         };
 
-        md.renderer.rules.image = function (tokens: any[], idx: number, options: any, env: any, self: any) {
-            const token = tokens[idx];
+        md.renderer.rules['image'] = function (tokens: MdToken[], idx: number, options: Record<string, unknown>, env: Record<string, unknown>, self: MdSelf) {
+            const token = tokens[idx] as MdToken;
             const srcIndex = token.attrIndex('src');
             if (srcIndex >= 0) {
-                let src = token.attrs[srcIndex][1];
-                const filePath = env && env.filePath;
+                let src = ((token.attrs as Array<[string, string]>)[srcIndex] as [string, string])[1];
+                const filePath = (env && env['filePath']) as string | undefined;
                 if (src && !src.startsWith('http') && !src.startsWith('https:') && !src.startsWith('data:') && !src.startsWith('file:')) {
                     if (filePath) {
                         if (path.isAbsolute(src)) {
-                            token.attrs[srcIndex][1] = '';
+                            ((token.attrs as Array<[string, string]>)[srcIndex] as [string, string])[1] = '';
                             return defaultImageRender(tokens, idx, options, env, self);
                         }
                         const dir = path.dirname(filePath);
@@ -374,7 +388,7 @@ function ensureMarkdown(): any {
                             const resolved = path.resolve(dir, src);
                             const relative = path.relative(dir, resolved);
                             if (relative.startsWith('..') || path.isAbsolute(relative)) {
-                                token.attrs[srcIndex][1] = '';
+                                ((token.attrs as Array<[string, string]>)[srcIndex] as [string, string])[1] = '';
                                 return defaultImageRender(tokens, idx, options, env, self);
                             }
                             src = resolved;
@@ -383,7 +397,7 @@ function ensureMarkdown(): any {
                         if (!src.startsWith('/')) {
                             src = '/' + src;
                         }
-                        token.attrs[srcIndex][1] = `file://${src}`;
+                        ((token.attrs as Array<[string, string]>)[srcIndex] as [string, string])[1] = `file://${src}`;
                     }
                 }
             }
@@ -568,9 +582,9 @@ const SETTINGS_MUTATING_CHANNELS = new Set([
     'reset-settings', 'import-settings',
     'settings-changed', 'settings-preview', 'apply-settings-preview'
 ]);
-let settingsCache: any = null;
+let settingsCache: Record<string, unknown> | null = null;
 let settingsCacheTime = 0;
-let settingsCacheInflight: Promise<any> | null = null;
+let settingsCacheInflight: Promise<Record<string, unknown>> | null = null;
 // 失效代数。写入发生时 +1；在途请求只在代数未变时才回填缓存。
 // 否则「读取在途 + 期间发生写入」会让写入前的旧快照被重新写回缓存并续 1s，
 // 表现为改了设置反而读到更旧的旧值。
@@ -590,58 +604,58 @@ for (const ch of ['settings-changed', 'settings-reset', 'settings-imported', 'se
     ipcRenderer.on(ch, invalidateSettingsCache);
 }
 
-const cloneSettings = (value: any): any => {
+const cloneSettings = (value: unknown): unknown => {
     if (typeof structuredClone === 'function') {
         try { return structuredClone(value); } catch (_) { }
     }
     try { return JSON.parse(JSON.stringify(value)); } catch (_) { return value; }
 };
 
-function getAllSettings(): Promise<any> {
+function getAllSettings(): Promise<Record<string, unknown>> {
     const now = Date.now();
     if (settingsCache && (now - settingsCacheTime) < SETTINGS_CACHE_TTL_MS) {
-        return Promise.resolve(cloneSettings(settingsCache));
+        return Promise.resolve(cloneSettings(settingsCache) as Record<string, unknown>);
     }
     if (!settingsCacheInflight) {
         const generation = settingsCacheGeneration;
         settingsCacheInflight = safeIpcRenderer.invoke('get-all-settings')
-            .then((value: any) => {
+            .then((value: unknown) => {
                 // 期间发生过失效就不再回填：这个响应反映的是写入之前的状态
                 if (generation === settingsCacheGeneration) {
-                    settingsCache = value;
+                    settingsCache = value as Record<string, unknown>;
                     settingsCacheTime = Date.now();
                 }
-                return value;
+                return value as Record<string, unknown>;
             })
             .finally(() => { settingsCacheInflight = null; });
     }
-    return settingsCacheInflight.then((value: any) => cloneSettings(value));
+    return settingsCacheInflight.then((value: unknown) => cloneSettings(value) as Record<string, unknown>);
 }
 
 const safeIpcRenderer = {
-    send: (channel: string, ...args: any[]): void => {
+    send: (channel: string, ...args: unknown[]): void => {
         if (SETTINGS_MUTATING_CHANNELS.has(channel)) invalidateSettingsCache();
         if (ALLOWED_SEND_CHANNELS.has(channel)) {
             return ipcRenderer.send(channel, ...args);
         }
         console.warn(`IPC send blocked: ${channel}`);
     },
-    invoke: (channel: string, ...args: any[]): Promise<any> => {
+    invoke: (channel: string, ...args: unknown[]): Promise<unknown> => {
         if (SETTINGS_MUTATING_CHANNELS.has(channel)) invalidateSettingsCache();
         if (ALLOWED_INVOKE_CHANNELS.has(channel)) {
             return ipcRenderer.invoke(channel, ...args);
         }
         return Promise.reject(new Error(`IPC invoke blocked: ${channel}`));
     },
-    on: (channel: string, listener: (...args: any[]) => void): (() => void) | void => {
+    on: (channel: string, listener: (...args: unknown[]) => void): (() => void) | void => {
         if (ALLOWED_EVENT_CHANNELS.has(channel)) return ipcRenderer.on(channel, listener);
         console.warn('IPC event blocked: ' + channel);
     },
-    once: (channel: string, listener: (...args: any[]) => void): (() => void) | void => {
+    once: (channel: string, listener: (...args: unknown[]) => void): (() => void) | void => {
         if (ALLOWED_EVENT_CHANNELS.has(channel)) return ipcRenderer.once(channel, listener);
         console.warn('IPC event blocked: ' + channel);
     },
-    removeListener: (channel: string, listener: (...args: any[]) => void): void => ipcRenderer.removeListener(channel, listener),
+    removeListener: (channel: string, listener: (...args: unknown[]) => void): void => ipcRenderer.removeListener(channel, listener),
     removeAllListeners: (channel: string): void => ipcRenderer.removeAllListeners(channel)
 };
 
@@ -685,7 +699,7 @@ contextBridge.exposeInMainWorld('getElectronModule', () => {
     };
 });
 
-const subscribeIpc = (channel: string, listener: (...args: any[]) => void): (() => void) => {
+const subscribeIpc = (channel: string, listener: (...args: unknown[]) => void): (() => void) => {
     safeIpcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
 };
@@ -699,9 +713,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readFileBuffer: (filePath: string) => safeIpcRenderer.invoke('read-file-buffer', filePath),
     readZipTextFiles: (zipPath: string) => safeIpcRenderer.invoke('read-zip-text-files', zipPath),
     showItemInFolder: (filePath: string) => safeIpcRenderer.invoke('open-path', filePath, { reveal: true }),
-    openPath: (targetPath: string, options: Record<string, any> = {}) => safeIpcRenderer.invoke('open-path', targetPath, options),
-    showOpenDialog: (options: Record<string, any>) => safeIpcRenderer.invoke('show-open-dialog', options),
-    showSaveDialog: (options: Record<string, any>) => safeIpcRenderer.invoke('show-save-dialog', options),
+    openPath: (targetPath: string, options: Record<string, unknown> = {}) => safeIpcRenderer.invoke('open-path', targetPath, options),
+    showOpenDialog: (options: Record<string, unknown>) => safeIpcRenderer.invoke('show-open-dialog', options),
+    showSaveDialog: (options: Record<string, unknown>) => safeIpcRenderer.invoke('show-save-dialog', options),
 
     saveTempFile: (filePath: string, content: string) => safeIpcRenderer.invoke('save-temp-file', filePath, content),
     saveBinaryTempFile: (fileName: string, base64Data: string) => safeIpcRenderer.invoke('save-binary-temp-file', fileName, base64Data),
@@ -710,13 +724,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     getAllSettings: () => getAllSettings(),
     getSettings: () => safeIpcRenderer.invoke('get-settings'),
-    sendSettingsPreview: (settings: Record<string, any>) => safeIpcRenderer.send('settings-preview', settings),
-    updateSettings: (newSettings: Record<string, any>) => safeIpcRenderer.invoke('update-settings', newSettings),
+    sendSettingsPreview: (settings: Record<string, unknown>) => safeIpcRenderer.send('settings-preview', settings),
+    updateSettings: (newSettings: Record<string, unknown>) => safeIpcRenderer.invoke('update-settings', newSettings),
     updateEditorSettings: () => {}, // deprecated, kept for backward compatibility
     resetSettings: () => safeIpcRenderer.invoke('reset-settings'),
     exportSettings: () => safeIpcRenderer.invoke('export-settings'),
     importSettings: () => safeIpcRenderer.invoke('import-settings'),
-    saveSetting: (key: string, value: any) => safeIpcRenderer.invoke('save-setting', key, value),
+    saveSetting: (key: string, value: unknown) => safeIpcRenderer.invoke('save-setting', key, value),
 
     openCompilerSettings: () => safeIpcRenderer.invoke('open-compiler-settings'),
     openEditorSettings: () => safeIpcRenderer.invoke('open-editor-settings'),
@@ -730,31 +744,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readThirdPartyLicense: (name: string) => safeIpcRenderer.invoke('read-third-party-license', name),
 
     getDownloadedCompilers: () => safeIpcRenderer.invoke('get-downloaded-compilers'),
-    downloadCompiler: (config: Record<string, any>) => safeIpcRenderer.invoke('download-compiler', config),
+    downloadCompiler: (config: Record<string, unknown>) => safeIpcRenderer.invoke('download-compiler', config),
     selectCompiler: (version: string) => safeIpcRenderer.invoke('select-compiler', version),
 
 
     getDownloadedTestlibs: () => safeIpcRenderer.invoke('get-downloaded-testlibs'),
-    downloadTestlib: (config: Record<string, any>) => safeIpcRenderer.invoke('download-testlib', config),
+    downloadTestlib: (config: Record<string, unknown>) => safeIpcRenderer.invoke('download-testlib', config),
     selectTestlib: (version: string) => safeIpcRenderer.invoke('select-testlib', version),
     testTestlib: (testlibPath: string) => safeIpcRenderer.invoke('test-testlib', testlibPath),
 
-    compileFile: (options: Record<string, any>) => safeIpcRenderer.invoke('compile-file', options),
-    formatCppCode: (options: Record<string, any>) => safeIpcRenderer.invoke('format-cpp-code', options),
-    runExecutable: (options: Record<string, any>) => safeIpcRenderer.invoke('run-executable', options),
-    runProgram: (executablePath: string, input: any, timeLimit: number, memoryLimit: number) => safeIpcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
-    runInteractive: (options: Record<string, any>) => safeIpcRenderer.invoke('run-interactive', options),
+    compileFile: (options: Record<string, unknown>) => safeIpcRenderer.invoke('compile-file', options),
+    formatCppCode: (options: Record<string, unknown>) => safeIpcRenderer.invoke('format-cpp-code', options),
+    runExecutable: (options: Record<string, unknown>) => safeIpcRenderer.invoke('run-executable', options),
+    runProgram: (executablePath: string, input: unknown, timeLimit: number, memoryLimit: number) => safeIpcRenderer.invoke('run-program', executablePath, input, timeLimit, memoryLimit),
+    runInteractive: (options: Record<string, unknown>) => safeIpcRenderer.invoke('run-interactive', options),
 
-    startCompare: (config: Record<string, any>) => safeIpcRenderer.invoke('compare-start', config),
+    startCompare: (config: Record<string, unknown>) => safeIpcRenderer.invoke('compare-start', config),
     stopCompare: () => safeIpcRenderer.invoke('compare-stop'),
-    onCompareProgress: (cb: (data: any) => void) => { const l = (_: any, data: any) => cb(data); subscribeIpc('compare-progress', l); return () => ipcRenderer.removeListener('compare-progress', l); },
-    onCompareError: (cb: (data: any) => void) => { const l = (_: any, data: any) => cb(data); subscribeIpc('compare-error', l); return () => ipcRenderer.removeListener('compare-error', l); },
-    onCompareComplete: (cb: (data: any) => void) => { const l = (_: any, data: any) => cb(data); subscribeIpc('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
-    onCompareWarning: (cb: (data: any) => void) => { const l = (_: any, data: any) => cb(data); subscribeIpc('compare-warning', l); return () => ipcRenderer.removeListener('compare-warning', l); },
+    onCompareProgress: (cb: (data: unknown) => void) => { const l = (_: unknown, data: unknown) => cb(data); subscribeIpc('compare-progress', l); return () => ipcRenderer.removeListener('compare-progress', l); },
+    onCompareError: (cb: (data: unknown) => void) => { const l = (_: unknown, data: unknown) => cb(data); subscribeIpc('compare-error', l); return () => ipcRenderer.removeListener('compare-error', l); },
+    onCompareComplete: (cb: (data: unknown) => void) => { const l = (_: unknown, data: unknown) => cb(data); subscribeIpc('compare-complete', l); return () => ipcRenderer.removeListener('compare-complete', l); },
+    onCompareWarning: (cb: (data: unknown) => void) => { const l = (_: unknown, data: unknown) => cb(data); subscribeIpc('compare-warning', l); return () => ipcRenderer.removeListener('compare-warning', l); },
 
     readDirectory: (dirPath: string) => safeIpcRenderer.invoke('read-directory', dirPath),
-    renameFile: (oldPath: string, newPath: string, options: Record<string, any> = {}) => safeIpcRenderer.invoke('rename-file-invoke', oldPath, newPath, options),
-    deleteFile: (filePath: string, options: Record<string, any> = {}) => safeIpcRenderer.invoke('delete-file-invoke', filePath, options),
+    renameFile: (oldPath: string, newPath: string, options: Record<string, unknown> = {}) => safeIpcRenderer.invoke('rename-file-invoke', oldPath, newPath, options),
+    deleteFile: (filePath: string, options: Record<string, unknown> = {}) => safeIpcRenderer.invoke('delete-file-invoke', filePath, options),
     clearDirectoryContents: (dirPath: string) => safeIpcRenderer.invoke('clear-directory-contents', dirPath),
     writeFile: (filePath: string, content: string) => safeIpcRenderer.invoke('write-file', filePath, content),
     createFile: (filePath: string, content: string) => safeIpcRenderer.invoke('create-file', filePath, content),
@@ -771,55 +785,55 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ensureDir: (dirPath: string) => safeIpcRenderer.invoke('ensure-dir', dirPath),
 
     getTerminalFeatureStatus: () => safeIpcRenderer.invoke('terminal-feature-status'),
-    createTerminal: (options: Record<string, any>) => safeIpcRenderer.invoke('terminal-create', options),
+    createTerminal: (options: Record<string, unknown>) => safeIpcRenderer.invoke('terminal-create', options),
     writeTerminal: (terminalId: string, data: string) => safeIpcRenderer.send('terminal-write', terminalId, data),
     resizeTerminal: (terminalId: string, cols: number, rows: number) => safeIpcRenderer.invoke('terminal-resize', terminalId, cols, rows),
     killTerminal: (terminalId: string) => safeIpcRenderer.invoke('terminal-kill', terminalId),
     listTerminals: () => safeIpcRenderer.invoke('terminal-list'),
     getTerminalTTY: (terminalId: string) => safeIpcRenderer.invoke('terminal-get-tty', terminalId),
 
-    onMenuSaveFile: (callback: (...args: any[]) => void) => subscribeIpc('menu-save-file', callback),
-    onApplySettingsPreview: (callback: (...args: any[]) => void) => subscribeIpc('apply-settings-preview', (_event: any, ...args: any[]) => callback(...args)),
-    onSettingsApplied: (callback: (...args: any[]) => void) => subscribeIpc('settings-applied', (_event: any, ...args: any[]) => callback(...args)),
-    onMenuFormatCode: (callback: (...args: any[]) => void) => subscribeIpc('menu-format-code', callback),
-    onMenuFindReplace: (callback: (...args: any[]) => void) => subscribeIpc('menu-find-replace', callback),
-    onMenuCompile: (callback: (...args: any[]) => void) => subscribeIpc('menu-compile', callback),
-    onMenuCompileRun: (callback: (...args: any[]) => void) => subscribeIpc('menu-compile-run', callback),
-    onMenuDebug: (callback: (...args: any[]) => void) => subscribeIpc('menu-debug', callback),
-    onMenuNewTempFile: (callback: (...args: any[]) => void) => subscribeIpc('menu-new-temp-file', callback),
-    onMenuOpenFile: (callback: (...args: any[]) => void) => subscribeIpc('menu-open-file', callback),
-    onMenuOpenFolder: (callback: (...args: any[]) => void) => subscribeIpc('menu-open-folder', callback),
-    onMenuSaveAs: (callback: (...args: any[]) => void) => subscribeIpc('menu-save-as', callback),
-    onMenuOpenTerminal: (callback: (...args: any[]) => void) => subscribeIpc('menu-open-terminal', callback),
-    onMenuOpenBrowser: (callback: (...args: any[]) => void) => subscribeIpc('menu-open-browser', callback),
-    onMenuNewBrowserTab: (callback: (...args: any[]) => void) => subscribeIpc('menu-new-browser-tab', callback),
-    onMenuAbout: (callback: (...args: any[]) => void) => subscribeIpc('menu-about', callback),
-    onMenuSettings: (callback: (...args: any[]) => void) => subscribeIpc('menu-settings', callback),
-    onMenuCheckUpdates: (callback: (...args: any[]) => void) => subscribeIpc('menu-check-updates', callback),
+    onMenuSaveFile: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-save-file', callback),
+    onApplySettingsPreview: (callback: (...args: unknown[]) => void) => subscribeIpc('apply-settings-preview', (_event: unknown, ...args: unknown[]) => callback(...args)),
+    onSettingsApplied: (callback: (...args: unknown[]) => void) => subscribeIpc('settings-applied', (_event: unknown, ...args: unknown[]) => callback(...args)),
+    onMenuFormatCode: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-format-code', callback),
+    onMenuFindReplace: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-find-replace', callback),
+    onMenuCompile: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-compile', callback),
+    onMenuCompileRun: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-compile-run', callback),
+    onMenuDebug: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-debug', callback),
+    onMenuNewTempFile: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-new-temp-file', callback),
+    onMenuOpenFile: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-open-file', callback),
+    onMenuOpenFolder: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-open-folder', callback),
+    onMenuSaveAs: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-save-as', callback),
+    onMenuOpenTerminal: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-open-terminal', callback),
+    onMenuOpenBrowser: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-open-browser', callback),
+    onMenuNewBrowserTab: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-new-browser-tab', callback),
+    onMenuAbout: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-about', callback),
+    onMenuSettings: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-settings', callback),
+    onMenuCheckUpdates: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-check-updates', callback),
     getUpdateDownloadStatus: () => safeIpcRenderer.invoke('get-update-download-status'),
-    onUpdateDownloadStatus: (callback: (payload: any) => void) => subscribeIpc('update-download-status', (_event: any, payload: any) => callback && callback(payload)),
-    onAppToast: (callback: (payload: { message?: string; type?: string }) => void) => subscribeIpc('app-toast', (_event: any, payload: any) => callback && callback(payload)),
+    onUpdateDownloadStatus: (callback: (payload: unknown) => void) => subscribeIpc('update-download-status', (_event: unknown, payload: unknown) => callback && callback(payload)),
+    onAppToast: (callback: (payload: { message?: string; type?: string }) => void) => subscribeIpc('app-toast', (_event: unknown, payload: unknown) => callback && callback(payload as { message?: string; type?: string })),
 
-    onShowDebugDevelopingMessage: (callback: (...args: any[]) => void) => subscribeIpc('show-debug-developing-message', callback),
-    onSettingsChanged: (callback: (...args: any[]) => void) => subscribeIpc('settings-changed', callback),
-    onSettingsReset: (callback: (payload: any) => void) => subscribeIpc('settings-reset', (_e: any, payload: any) => callback(payload)),
-    onSettingsImported: (callback: (payload: any) => void) => subscribeIpc('settings-imported', (_e: any, payload: any) => callback(payload)),
-    onThemeChanged: (callback: (payload: any) => void) => subscribeIpc('theme-changed', (_e: any, payload: any) => callback(payload)),
-    onFileOpened: (callback: (...args: any[]) => void) => subscribeIpc('file-opened', callback),
-    onFileSaved: (callback: (filePath: any, error: any) => void) => subscribeIpc('file-saved', (_event: any, filePath: any, error: any) => callback(filePath, error)),
-    onFolderOpened: (callback: (folderPath: any) => void) => subscribeIpc('folder-opened', (_event: any, folderPath: any) => callback(folderPath)),
+    onShowDebugDevelopingMessage: (callback: (...args: unknown[]) => void) => subscribeIpc('show-debug-developing-message', callback),
+    onSettingsChanged: (callback: (...args: unknown[]) => void) => subscribeIpc('settings-changed', callback),
+    onSettingsReset: (callback: (payload: unknown) => void) => subscribeIpc('settings-reset', (_e: unknown, payload: unknown) => callback(payload)),
+    onSettingsImported: (callback: (payload: unknown) => void) => subscribeIpc('settings-imported', (_e: unknown, payload: unknown) => callback(payload)),
+    onThemeChanged: (callback: (payload: unknown) => void) => subscribeIpc('theme-changed', (_e: unknown, payload: unknown) => callback(payload)),
+    onFileOpened: (callback: (...args: unknown[]) => void) => subscribeIpc('file-opened', callback),
+    onFileSaved: (callback: (filePath: unknown, error: unknown) => void) => subscribeIpc('file-saved', (_event: unknown, filePath: unknown, error: unknown) => callback(filePath, error)),
+    onFolderOpened: (callback: (folderPath: unknown) => void) => subscribeIpc('folder-opened', (_event: unknown, folderPath: unknown) => callback(folderPath)),
     reportWorkspacePath: (folderPath: string) => safeIpcRenderer.send('workspace-path-report', folderPath),
-    onFileOpenedFromArgs: (callback: (data: { path?: string; fileName?: string; content?: string; viewType?: string }) => void) => subscribeIpc('file-opened-from-args', (_event: any, data: any) => callback(data)),
+    onFileOpenedFromArgs: (callback: (data: { path?: string; fileName?: string; content?: string; viewType?: string }) => void) => subscribeIpc('file-opened-from-args', (_event: unknown, data: unknown) => callback(data as { path?: string; fileName?: string; content?: string; viewType?: string })),
     consumeStartupWorkspaceToOpen: () => safeIpcRenderer.invoke('consume-startup-workspace-to-open'),
-    onExternalFileChange: (callback: (payload: any) => void) => {
+    onExternalFileChange: (callback: (payload: unknown) => void) => {
         if (typeof callback !== 'function') return () => { };
-        const listener = (_event: any, payload: any) => callback(payload);
+        const listener = (_event: unknown, payload: unknown) => callback(payload);
         subscribeIpc('external-file-changed', listener);
         return () => ipcRenderer.removeListener('external-file-changed', listener);
     },
-    onSampleTesterCreateProblem: (callback: (data: { problemName?: string; samples?: Array<{ input?: string; output?: string; timeLimit?: number }>; OJ?: string }) => void) => subscribeIpc('sample-tester-create-problem', (_e: any, data: any) => callback && callback(data)),
-    onTerminalData: (callback: (payload: any) => void) => subscribeIpc('terminal-data', (_event: any, payload: any) => callback && callback(payload)),
-    onTerminalExit: (callback: (payload: any) => void) => subscribeIpc('terminal-exit', (_event: any, payload: any) => callback && callback(payload)),
+    onSampleTesterCreateProblem: (callback: (data: { problemName?: string; samples?: Array<{ input?: string; output?: string; timeLimit?: number }>; OJ?: string }) => void) => subscribeIpc('sample-tester-create-problem', (_e: unknown, data: unknown) => callback && callback(data as { problemName?: string; samples?: Array<{ input?: string; output?: string; timeLimit?: number }>; OJ?: string })),
+    onTerminalData: (callback: (payload: unknown) => void) => subscribeIpc('terminal-data', (_event: unknown, payload: unknown) => callback && callback(payload)),
+    onTerminalExit: (callback: (payload: unknown) => void) => subscribeIpc('terminal-exit', (_event: unknown, payload: unknown) => callback && callback(payload)),
 
     getCpuThreads: () => safeIpcRenderer.invoke('get-cpu-threads'),
 
@@ -834,17 +848,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getLanguage: () => safeIpcRenderer.invoke('get-language'),
     getLanguageFile: (langCode: string) => safeIpcRenderer.invoke('get-language-file', langCode),
     getAvailableLanguages: () => safeIpcRenderer.invoke('get-available-languages'),
-    onLanguageChanged: (callback: (langCode: string) => void) => subscribeIpc('language-changed', (_event: any, langCode: string) => callback && callback(langCode)),
+    onLanguageChanged: (callback: (langCode: unknown) => void) => subscribeIpc('language-changed', (_event: unknown, langCode: unknown) => callback && callback(langCode as string)),
 
     startIdeLogin: () => safeIpcRenderer.invoke('ide-login-start'),
     getIdeLoginStatus: () => safeIpcRenderer.invoke('ide-login-status'),
     logoutIdeAccount: () => safeIpcRenderer.invoke('ide-logout'),
-    cloudSyncRequest: (payload: Record<string, any>) => safeIpcRenderer.invoke('cloud-sync-request', payload),
+    cloudSyncRequest: (payload: Record<string, unknown>) => safeIpcRenderer.invoke('cloud-sync-request', payload),
     backupSettingsToCloud: () => safeIpcRenderer.invoke('backup-settings-to-cloud'),
     getSettingsBackupInfo: () => safeIpcRenderer.invoke('get-settings-backup-info'),
     syncSettingsFromCloud: () => safeIpcRenderer.invoke('sync-settings-from-cloud'),
-    onIdeLoginUpdated: (callback: (payload: { loggedIn?: boolean; user?: any; message?: string }) => void) => subscribeIpc('ide-login-updated', (_event: any, payload: any) => callback && callback(payload)),
-    onIdeLoginError: (callback: (payload: { message?: string }) => void) => subscribeIpc('ide-login-error', (_event: any, payload: any) => callback && callback(payload)),
+    onIdeLoginUpdated: (callback: (payload: { loggedIn?: boolean; user?: unknown; message?: string }) => void) => subscribeIpc('ide-login-updated', (_event: unknown, payload: unknown) => callback && callback(payload as { loggedIn?: boolean; user?: unknown; message?: string })),
+    onIdeLoginError: (callback: (payload: { message?: string }) => void) => subscribeIpc('ide-login-error', (_event: unknown, payload: unknown) => callback && callback(payload as { message?: string })),
 
     getRecentFiles: () => safeIpcRenderer.invoke('get-recent-files'),
     openRecentFile: (filePath: string) => safeIpcRenderer.invoke('open-recent-file', filePath),
@@ -853,9 +867,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     addToFileHistory: (filePath: string) => safeIpcRenderer.invoke('add-to-file-history', filePath),
     openFileFromHistory: (filePath: string) => safeIpcRenderer.invoke('open-file-from-history', filePath),
     clearFileHistory: () => safeIpcRenderer.invoke('clear-file-history'),
-    saveLastOpenTabs: (tabs: any) => safeIpcRenderer.invoke('save-last-open-tabs', tabs),
+    saveLastOpenTabs: (tabs: unknown) => safeIpcRenderer.invoke('save-last-open-tabs', tabs),
     getLastOpenTabs: () => safeIpcRenderer.invoke('get-last-open-tabs'),
-    onMenuOpenFileHistory: (callback: (...args: any[]) => void) => subscribeIpc('menu-open-file-history', callback),
+    onMenuOpenFileHistory: (callback: (...args: unknown[]) => void) => subscribeIpc('menu-open-file-history', callback),
 
     versions: process.versions,
     platform: process.platform,
@@ -865,24 +879,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     clipboardWriteText: (text: string) => safeIpcRenderer.invoke('clipboard-write-text', text),
     clipboardReadText: () => safeIpcRenderer.invoke('clipboard-read-text'),
 
-    walkDirectory: (dirPath: string, options: Record<string, any>) => safeIpcRenderer.invoke('walk-directory', dirPath, options),
+    walkDirectory: (dirPath: string, options: Record<string, unknown>) => safeIpcRenderer.invoke('walk-directory', dirPath, options),
 
-    lspStart: (options: Record<string, any>) => safeIpcRenderer.invoke('lsp-start', options),
+    lspStart: (options: Record<string, unknown>) => safeIpcRenderer.invoke('lsp-start', options),
     lspStop: () => safeIpcRenderer.invoke('lsp-stop'),
-    lspRestart: (options: Record<string, any>) => safeIpcRenderer.invoke('lsp-restart', options),
-    lspRequest: (method: string, params: any, requestId?: any) => safeIpcRenderer.invoke('lsp-request', method, params, requestId),
-    lspCancel: (requestId: any) => safeIpcRenderer.invoke('lsp-cancel', requestId),
-    lspApplyEditResult: (requestId: any, result: any) => safeIpcRenderer.invoke('lsp-apply-edit-result', requestId, result),
-    lspNotify: (method: string, params: any) => safeIpcRenderer.invoke('lsp-notify', method, params),
-    onLspNotification: (callback: (payload: { method?: string; params: Record<string, any> }) => void) => {
+    lspRestart: (options: Record<string, unknown>) => safeIpcRenderer.invoke('lsp-restart', options),
+    lspRequest: (method: string, params: unknown, requestId?: unknown) => safeIpcRenderer.invoke('lsp-request', method, params, requestId),
+    lspCancel: (requestId: unknown) => safeIpcRenderer.invoke('lsp-cancel', requestId),
+    lspApplyEditResult: (requestId: unknown, result: unknown) => safeIpcRenderer.invoke('lsp-apply-edit-result', requestId, result),
+    lspNotify: (method: string, params: unknown) => safeIpcRenderer.invoke('lsp-notify', method, params),
+    onLspNotification: (callback: (payload: { method?: string; params: Record<string, unknown> }) => void) => {
         if (typeof callback !== 'function') return () => {};
-        const listener = (_event: any, payload: any) => callback(payload);
+        const listener = (_event: unknown, payload: unknown) => callback(payload as { method?: string; params: Record<string, unknown> });
         subscribeIpc('lsp-notification', listener);
         return () => ipcRenderer.removeListener('lsp-notification', listener);
     },
-    onLspApplyEdit: (callback: (payload: { requestId?: any; edit?: any }) => void) => {
+    onLspApplyEdit: (callback: (payload: { requestId?: unknown; edit?: unknown }) => void) => {
         if (typeof callback !== 'function') return () => {};
-        const listener = (_event: any, payload: any) => callback(payload);
+        const listener = (_event: unknown, payload: unknown) => callback(payload as { requestId?: unknown; edit?: unknown });
         subscribeIpc('lsp-apply-edit', listener);
         return () => ipcRenderer.removeListener('lsp-apply-edit', listener);
     },
@@ -893,9 +907,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // === 内置浏览器 API ===
     browserResolveUrl: (url: string) => safeIpcRenderer.invoke('browser-resolve-url', url),
     browserGetPageTitle: (url: string) => safeIpcRenderer.invoke('browser-get-page-title', url),
-    onBrowserOpenNewTab: (callback: (payload: any) => void) => {
+    onBrowserOpenNewTab: (callback: (payload: unknown) => void) => {
         if (typeof callback !== 'function') return () => {};
-        const listener = (_event: any, payload: any) => callback(payload);
+        const listener = (_event: unknown, payload: unknown) => callback(payload);
         subscribeIpc('browser-open-new-tab', listener);
         return () => ipcRenderer.removeListener('browser-open-new-tab', listener);
     }
@@ -904,23 +918,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
 contextBridge.exposeInMainWorld('electronIPC', {
     ...safeIpcRenderer,
     ipcRenderer: safeIpcRenderer,
-    on: (channel: string, listener: (...args: any[]) => void): (() => void) | void => {
+    on: (channel: string, listener: (...args: unknown[]) => void): (() => void) | void => {
         if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
             console.warn('IPC event blocked: ' + channel);
             return;
         }
         if (channel === 'file-saved') {
-            return ipcRenderer.on('file-saved', (event: any, filePath: any, error: any) => listener(event, filePath, error));
+            return ipcRenderer.on('file-saved', (event: unknown, filePath: unknown, error: unknown) => listener(event, filePath, error));
         }
         return ipcRenderer.on(channel, listener);
     },
-    once: (channel: string, listener: (...args: any[]) => void): (() => void) | void => {
+    once: (channel: string, listener: (...args: unknown[]) => void): (() => void) | void => {
         if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
             console.warn('IPC event blocked: ' + channel);
             return;
         }
         if (channel === 'file-saved') {
-            return ipcRenderer.once('file-saved', (event: any, filePath: any, error: any) => listener(event, filePath, error));
+            return ipcRenderer.once('file-saved', (event: unknown, filePath: unknown, error: unknown) => listener(event, filePath, error));
         }
         return ipcRenderer.once(channel, listener);
     }
@@ -941,7 +955,7 @@ contextBridge.exposeInMainWorld('process', {
 const LOG_FLUSH_DELAY_MS = 150;
 const LOG_BATCH_MAX = 200;
 const LOG_QUEUE_MAX = 2000;
-const logQueue: Array<{ level: string; args: any[]; meta?: any }> = [];
+const logQueue: Array<{ level: string; args: unknown[]; meta?: unknown }> = [];
 let logFlushTimer: NodeJS.Timeout | null = null;
 
 const flushLogQueue = (): void => {
@@ -961,9 +975,9 @@ if (typeof window !== 'undefined' && window.addEventListener) {
     window.addEventListener('beforeunload', flushLogQueue);
 }
 
-const safeSendLog = (level: string, args: any[]): void => {
+const safeSendLog = (level: string, args: unknown[]): void => {
     try {
-        let meta: any;
+        let meta: unknown;
         if (level === 'warn' || level === 'error') {
             meta = {
                 source: 'renderer',
@@ -986,11 +1000,11 @@ const safeSendLog = (level: string, args: any[]): void => {
     }
 };
 
-contextBridge.exposeInMainWorld('logInfo', (...args: any[]) => safeSendLog('info', args));
-contextBridge.exposeInMainWorld('logWarn', (...args: any[]) => safeSendLog('warn', args));
-contextBridge.exposeInMainWorld('logError', (...args: any[]) => safeSendLog('error', args));
-contextBridge.exposeInMainWorld('logwarn', (...args: any[]) => safeSendLog('warn', args));
-contextBridge.exposeInMainWorld('logerror', (...args: any[]) => safeSendLog('error', args));
+contextBridge.exposeInMainWorld('logInfo', (...args: unknown[]) => safeSendLog('info', args));
+contextBridge.exposeInMainWorld('logWarn', (...args: unknown[]) => safeSendLog('warn', args));
+contextBridge.exposeInMainWorld('logError', (...args: unknown[]) => safeSendLog('error', args));
+contextBridge.exposeInMainWorld('logwarn', (...args: unknown[]) => safeSendLog('warn', args));
+contextBridge.exposeInMainWorld('logerror', (...args: unknown[]) => safeSendLog('error', args));
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {};

@@ -5937,7 +5937,7 @@ function setupIPC() {
             if (!skipPreKill && process.platform === 'win32') {
                 const target = typeof executablePath === 'string' ? executablePath : '';
                 if (target) {
-                    const resolvedTarget = require('path').resolve(target);
+                    const resolvedTarget = (require('path')).resolve(target);
                     // 两个清理动作互不依赖，并发执行省掉一次 PowerShell 冷启的等待
                     await Promise.all([
                         killByExePathWindows(resolvedTarget),
@@ -9780,7 +9780,7 @@ async function runExecutable(options: Record<string, unknown>) {
 
     try {
         if (process.platform === 'win32') {
-            const abs = require('path').resolve(executablePath);
+            const abs = (require('path')).resolve(executablePath);
             await Promise.all([
                 killByExePathWindows(abs),
                 killConsolePauserForTargetWindows(abs)
