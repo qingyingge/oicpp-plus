@@ -1631,6 +1631,8 @@
     "executableNotFoundForDebug": "可执行文件不存在: {path}。请先编译代码（需要包含 -g 参数）。",
     "consolePauserNoCompiler": "编译器不可用，无法自动构建consolepauser.exe",
     "consolePauserBuildFailed": "自动构建consolepauser.exe失败。{details}",
+    "memWatchNoCompiler": "编译器不可用，无法自动构建memwatch.exe",
+    "memWatchBuildFailed": "自动构建memwatch.exe失败。{details}",
     "consolePauserMissing": "未找到consolepauser.exe，无法启动程序。请确保%userprofile%/.oicpp-plus/consolepauser.exe已正确生成。",
     "noTerminalEmulator": "未找到可用的终端模拟器（gnome-terminal/konsole/xfce4-terminal/x-terminal-emulator/xterm）",
     "launchFailed": "启动程序失败: {message}",

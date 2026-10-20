@@ -432,9 +432,9 @@ function makePauserSandbox(options = {}) {
         JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Map, Set
     });
     const names = [
-        'findConsolePauser', 'getConsolePauserTargetPath', 'getConsolePauserFingerprintPath',
-        'getConsolePauserSourceFingerprint', 'getCompilerRuntimeBinPaths',
-        'ensureConsolePauserExecutable'
+        'findConsolePauser', 'getConsolePauserTargetPath', 'getHelperFingerprintPath',
+        'getHelperSourceFingerprint', 'getCompilerRuntimeBinPaths',
+        'ensureHelperExecutable', 'ensureConsolePauserExecutable'
     ];
     const { fns, missing } = compileFuncs(opts.src, names, ctx);
     const attempt = (compilerPath) => fns.ensureConsolePauserExecutable(
@@ -1693,16 +1693,15 @@ function makeModel(lines, state = {}) {
     {
         const ps = (o = {}) => makePauserSandbox({ src: mainSource, userDataDirName: USER_DATA_DIR_NAME, ...o });
         const ok = ps();
-        const FIRST = String(ok.fns.getConsolePauserSourceFingerprint &&
-            ok.fns.getConsolePauserSourceFingerprint());
+        const FIRST = String(ok.fns.getHelperSourceFingerprint('PAUSER-C-SOURCE'));
         check('consolepauser 构建链抽取成功（函数抽不到就别再往下断言）',
             ok.missing.length === 0 && typeof ok.fns.ensureConsolePauserExecutable === 'function',
             JSON.stringify({ missing: ok.missing }));
         check('指纹文件挂在 exe 旁边，内容就是当前 C 源码的 sha256',
             ok.fns.getConsolePauserTargetPath() === ok.targetPath &&
-                ok.fns.getConsolePauserFingerprintPath() === `${ok.targetPath}.src.sha256` &&
+                ok.fns.getHelperFingerprintPath(ok.targetPath) === `${ok.targetPath}.src.sha256` &&
                 FIRST === ok.fingerprintOf('PAUSER-C-SOURCE') && FIRST.length === 64,
-            JSON.stringify({ fp: FIRST.slice(0, 12), path: ok.fns.getConsolePauserFingerprintPath() }));
+            JSON.stringify({ fp: FIRST.slice(0, 12), path: ok.fns.getHelperFingerprintPath(ok.targetPath) }));
         await ok.attempt();
         check('第一次编译就带 -static（静态链接，免得用户机器缺 libgcc/libstdc++ DLL）',
             ok.builds.length === 1 && ok.argsAt(0).includes('-static') &&

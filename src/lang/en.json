@@ -1631,6 +1631,8 @@
     "executableNotFoundForDebug": "Executable does not exist: {path}. Compile the code first (the -g flag is required).",
     "consolePauserNoCompiler": "Compiler is unavailable, cannot build consolepauser.exe automatically",
     "consolePauserBuildFailed": "Failed to build consolepauser.exe automatically. {details}",
+    "memWatchNoCompiler": "Compiler unavailable, cannot auto-build memwatch.exe",
+    "memWatchBuildFailed": "Auto-building memwatch.exe failed. {details}",
     "consolePauserMissing": "consolepauser.exe not found, cannot start the program. Make sure %userprofile%/.oicpp-plus/consolepauser.exe was generated correctly.",
     "noTerminalEmulator": "No usable terminal emulator found (gnome-terminal/konsole/xfce4-terminal/x-terminal-emulator/xterm)",
     "launchFailed": "Failed to start program: {message}",

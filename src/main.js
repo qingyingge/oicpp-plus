@@ -22,6 +22,7 @@ catch (_) {
 const logger = require('./utils/logger');
 const { t, setLanguage } = require('./lang');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
+const MEMWATCH_SOURCE = require('./utils/memwatch-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
 const { normalizeClangFormatStyle, generateClangFormatText } = require('./utils/clang-format-options');
@@ -41,11 +42,15 @@ const LSP_REQUEST_TIMEOUT_MS = 30000;
 const LSP_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 // 诊断推送节流窗口：同一 uri 的 publishDiagnostics 在窗口内只下发最新一份
 const LSP_DIAGNOSTICS_THROTTLE_MS = 60;
-// 内存采样间隔：设了内存上限时需要较密地盯 MLE，没设上限只为上报峰值。
+// 内存采样间隔：仅在 memwatch 不可用（未配置编译器 / 构建失败）时才会走到的
+// 兜底路径。设了内存上限时需要较密地盯 MLE，没设上限只为上报峰值。
 // Windows 上每次采样都要 spawn 一次 tasklist，间隔过密会让一次批量测试
 // 产生几十次进程创建，8 worker 并行时更甚。
 const MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT = 500;
 const MEMORY_SAMPLE_INTERVAL_MS_PLAIN = 2000;
+// memwatch 上报结果的最长等待：目标进程退出后 watcher 最多再轮询一个周期，
+// 但目标卡在不可终止状态时需要兜底，避免 close 事件被拖死。
+const MEMWATCH_REPORT_TIMEOUT_MS = 3000;
 // 环境里是否存在 objdump：不存在时后续调试启动可完全跳过调试信息检查
 let objdumpAvailable = true;
 // 语言包在进程生命周期内只读盘解析一次：切换语言时主进程与渲染层会各请求一次，
@@ -2623,14 +2628,17 @@ function findConsolePauser() {
     }
     return null;
 }
+function getHelperFingerprintPath(targetPath) {
+    return `${targetPath}.src.sha256`;
+}
+function getHelperSourceFingerprint(source) {
+    return crypto.createHash('sha256').update(source, 'utf8').digest('hex');
+}
 function getConsolePauserTargetPath() {
     return path.join(os.homedir(), USER_DATA_DIR_NAME, 'consolepauser.exe');
 }
-function getConsolePauserFingerprintPath() {
-    return `${getConsolePauserTargetPath()}.src.sha256`;
-}
-function getConsolePauserSourceFingerprint() {
-    return crypto.createHash('sha256').update(CONSOLE_PAUSER_SOURCE, 'utf8').digest('hex');
+function getMemWatchTargetPath() {
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'memwatch.exe');
 }
 function getCompilerRuntimeBinPaths(compilerPath) {
     if (!compilerPath || !fs.existsSync(compilerPath)) {
@@ -2645,30 +2653,29 @@ function getCompilerRuntimeBinPaths(compilerPath) {
         path.join(compilerRoot, 'mingw32', 'bin')
     ].filter(p => fs.existsSync(p));
 }
-async function ensureConsolePauserExecutable(compilerPath) {
-    if (process.platform !== 'win32') {
-        return null;
-    }
-    const consolePauserPath = getConsolePauserTargetPath();
-    const fingerprint = getConsolePauserSourceFingerprint();
-    const fingerprintPath = getConsolePauserFingerprintPath();
-    if (fs.existsSync(consolePauserPath)) {
+// 内嵌 C++ 源码 -> 落盘 -> 用用户配置的编译器现场编译 -> 写指纹。
+// consolepauser 与 memwatch 共用这条管线，只有源码、产物名和错误文案不同。
+async function ensureHelperExecutable(options) {
+    const { label, targetPath, sourceFileName, source, compilerPath, noCompilerMessage, buildFailedMessage } = options;
+    const fingerprint = getHelperSourceFingerprint(source);
+    const fingerprintPath = getHelperFingerprintPath(targetPath);
+    if (fs.existsSync(targetPath)) {
         let recorded = '';
         try {
             recorded = fs.readFileSync(fingerprintPath, 'utf8').trim();
         }
         catch (_) { }
         if (recorded === fingerprint) {
-            return consolePauserPath;
+            return targetPath;
         }
-        logInfo('[ConsolePauser] 源码指纹不匹配，重新构建:', consolePauserPath);
+        logInfo(`[${label}] 源码指纹不匹配，重新构建:`, targetPath);
     }
     if (!compilerPath || !fs.existsSync(compilerPath)) {
-        throw new Error(t('error.consolePauserNoCompiler'));
+        throw new Error(noCompilerMessage);
     }
-    const oicppDir = path.dirname(consolePauserPath);
+    const oicppDir = path.dirname(targetPath);
     fs.mkdirSync(oicppDir, { recursive: true });
-    const sourcePath = path.join(oicppDir, 'consolepauser.cpp');
+    const sourcePath = path.join(oicppDir, sourceFileName);
     const { spawn } = require('child_process');
     const decodeBufferAuto = (buffer) => {
         if (!buffer || buffer.length === 0)
@@ -2690,14 +2697,14 @@ async function ensureConsolePauserExecutable(compilerPath) {
     const writeSource = (mode) => {
         if (mode === 'gbk') {
             const iconv = require('iconv-lite');
-            const gbkBuffer = iconv.encode(CONSOLE_PAUSER_SOURCE, 'gbk');
+            const gbkBuffer = iconv.encode(source, 'gbk');
             fs.writeFileSync(sourcePath, gbkBuffer);
             return;
         }
-        fs.writeFileSync(sourcePath, CONSOLE_PAUSER_SOURCE, 'utf8');
+        fs.writeFileSync(sourcePath, source, 'utf8');
     };
     const compileOnce = async (extraArgs = []) => {
-        const baseArgs = ['-O2', '-o', consolePauserPath, sourcePath];
+        const baseArgs = ['-O2', '-o', targetPath, sourcePath];
         const args = [...extraArgs, ...baseArgs];
         const env = {
             ...process.env,
@@ -2754,19 +2761,169 @@ async function ensureConsolePauserExecutable(compilerPath) {
         }
         writeSource(strategy.sourceMode);
         const result = await compileOnce(strategy.args);
-        if (result.code === 0 && fs.existsSync(consolePauserPath)) {
+        if (result.code === 0 && fs.existsSync(targetPath)) {
             try {
                 fs.writeFileSync(fingerprintPath, fingerprint, 'utf8');
             }
             catch (fingerprintError) {
-                logWarn('[ConsolePauser] 写入源码指纹失败:', fingerprintError?.message || fingerprintError);
+                logWarn(`[${label}] 写入源码指纹失败:`, fingerprintError?.message || fingerprintError);
             }
-            logInfo('[ConsolePauser] 自动构建成功:', { strategy: strategy.name, path: consolePauserPath });
-            return consolePauserPath;
+            logInfo(`[${label}] 自动构建成功:`, { strategy: strategy.name, path: targetPath });
+            return targetPath;
         }
         failures.push(`[${strategy.name}] exit=${result.code} stderr=${(result.stderr || '').trim()}`);
     }
-    throw new Error(t('error.consolePauserBuildFailed', { details: failures.join(' | ') }));
+    throw new Error(buildFailedMessage(failures.join(' | ')));
+}
+async function ensureConsolePauserExecutable(compilerPath) {
+    if (process.platform !== 'win32') {
+        return null;
+    }
+    return await ensureHelperExecutable({
+        label: 'ConsolePauser',
+        targetPath: getConsolePauserTargetPath(),
+        sourceFileName: 'consolepauser.cpp',
+        source: CONSOLE_PAUSER_SOURCE,
+        compilerPath,
+        noCompilerMessage: t('error.consolePauserNoCompiler'),
+        buildFailedMessage: (details) => t('error.consolePauserBuildFailed', { details })
+    });
+}
+async function ensureMemWatchExecutable(compilerPath) {
+    if (process.platform !== 'win32') {
+        return null;
+    }
+    return await ensureHelperExecutable({
+        label: 'MemWatch',
+        targetPath: getMemWatchTargetPath(),
+        sourceFileName: 'memwatch.cpp',
+        source: MEMWATCH_SOURCE,
+        compilerPath,
+        noCompilerMessage: t('error.memWatchNoCompiler'),
+        buildFailedMessage: (details) => t('error.memWatchBuildFailed', { details })
+    });
+}
+let memWatchBuildPromise = null;
+const activeMemWatchProcesses = new Set();
+function findMemWatch() {
+    const memWatchPath = getMemWatchTargetPath();
+    try {
+        if (fs.existsSync(memWatchPath)) {
+            return memWatchPath;
+        }
+    }
+    catch (_) { }
+    return null;
+}
+function warmUpMemWatch() {
+    if (process.platform !== 'win32') {
+        return Promise.resolve(null);
+    }
+    if (memWatchBuildPromise) {
+        return memWatchBuildPromise;
+    }
+    memWatchBuildPromise = ensureMemWatchExecutable(settings.compilerPath || '')
+        .then((memWatchPath) => {
+        logInfo('[MemWatch] 峰值内存观测器就绪:', memWatchPath);
+        return memWatchPath;
+    })
+        .catch((error) => {
+        logWarn('[MemWatch] 不可用，回退到 tasklist 采样:', error?.message || error);
+        return null;
+    });
+    return memWatchBuildPromise;
+}
+function parseMemWatchReport(text) {
+    const raw = String(text || '').trim();
+    if (!raw || raw.startsWith('attach-failed')) {
+        return null;
+    }
+    const parts = raw.split(/\s+/);
+    if (parts.length < 4) {
+        return null;
+    }
+    const peakBytes = Number(parts[0]);
+    const privateBytes = Number(parts[1]);
+    const ok = Number(parts[3]) === 1;
+    if (!ok || !Number.isFinite(peakBytes) || !Number.isFinite(privateBytes)) {
+        return null;
+    }
+    return {
+        peakBytes,
+        privateBytes,
+        exceeded: Number(parts[2]) === 1
+    };
+}
+function startMemWatch(pid, limitBytes = 0) {
+    if (process.platform !== 'win32' || !pid) {
+        return null;
+    }
+    const memWatchPath = findMemWatch();
+    if (!memWatchPath) {
+        return null;
+    }
+    const { spawn } = require('child_process');
+    const limit = Math.max(0, Math.floor(Number(limitBytes) || 0));
+    let child;
+    try {
+        child = spawn(memWatchPath, [String(pid), String(limit)], {
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+            shell: false
+        });
+    }
+    catch (_) {
+        return null;
+    }
+    const chunks = [];
+    child.stdout?.on('data', (data) => {
+        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+    });
+    const report = new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled)
+                return;
+            settled = true;
+            resolve(Buffer.concat(chunks).toString('utf8'));
+        };
+        const timer = setTimeout(finish, MEMWATCH_REPORT_TIMEOUT_MS);
+        if (typeof timer.unref === 'function')
+            timer.unref();
+        child.on('close', () => {
+            clearTimeout(timer);
+            finish();
+        });
+        child.on('error', () => {
+            clearTimeout(timer);
+            finish();
+        });
+    });
+    activeMemWatchProcesses.add(child);
+    const forget = () => activeMemWatchProcesses.delete(child);
+    child.on('close', forget);
+    child.on('error', forget);
+    return { child, report };
+}
+async function resolveMemWatchReport(handle) {
+    if (!handle) {
+        return null;
+    }
+    try {
+        return parseMemWatchReport(await handle.report);
+    }
+    catch (_) {
+        return null;
+    }
+}
+function killAllMemWatch() {
+    for (const child of activeMemWatchProcesses) {
+        try {
+            child.kill();
+        }
+        catch (_) { }
+    }
+    activeMemWatchProcesses.clear();
 }
 function findCompilerExecutable(baseDir) {
     logInfo('[查找编译器] 开始在目录中查找:', baseDir);
@@ -5767,6 +5924,9 @@ function setupIPC() {
             const memoryLimitBytes = effectiveMemoryLimitMb > 0
                 ? effectiveMemoryLimitMb * 1024 * 1024
                 : 0;
+            // memwatch 附着后由它给出内核维护的峰值，并在超限时终止目标；
+            // 它在位时不再启动 tasklist 轮询（那套采样既慢又会漏掉短命进程的峰值）。
+            const memWatchHandle = startMemWatch(childProcess.pid, memoryLimitBytes);
             const readMemoryBytes = () => new Promise((resolve) => {
                 const pid = childProcess?.pid;
                 if (!pid)
@@ -5911,6 +6071,13 @@ function setupIPC() {
             };
             childProcess.on('spawn', () => {
                 startTime = performance.now();
+                if (memWatchHandle) {
+                    try {
+                        logInfo('[运行程序][启动] 子进程已启动（memwatch 观测中）');
+                    }
+                    catch (_) { }
+                    return;
+                }
                 sampleMemory();
                 memoryTimer = setInterval(sampleMemory, memoryLimitBytes > 0
                     ? MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT
@@ -5940,6 +6107,31 @@ function setupIPC() {
                 if (memorySamplePromise) {
                     try {
                         await memorySamplePromise;
+                    }
+                    catch (_) { }
+                }
+                // memwatch 的判定优先于退出码：超限时它已经终止了目标，
+                // 此时 code 只是被强杀的副产物，不能拿它反推 MLE。
+                const memWatchReport = await resolveMemWatchReport(memWatchHandle);
+                if (memWatchReport) {
+                    peakMemoryBytes = Math.max(peakMemoryBytes, memWatchReport.peakBytes);
+                    if (memWatchReport.exceeded && !memoryLimitExceeded) {
+                        memoryLimitExceeded = true;
+                        memoryLimitTriggered = true;
+                        timeout = false;
+                        try {
+                            logWarn('[运行程序][MLE][memwatch]', {
+                                limitBytes: memoryLimitBytes,
+                                peakBytes: memWatchReport.peakBytes,
+                                privateBytes: memWatchReport.privateBytes
+                            });
+                        }
+                        catch (_) { }
+                    }
+                }
+                else if (memWatchHandle) {
+                    try {
+                        logWarn('[运行程序][memwatch] 未取得峰值数据');
                     }
                     catch (_) { }
                 }
@@ -6158,6 +6350,8 @@ function setupIPC() {
             let killTimer = null;
             let settled = false;
             let processError = '';
+            let contestantMemWatch = null;
+            let graderMemWatch = null;
             const startTime = performance.now();
             const closeInput = (stream) => {
                 try {
@@ -6226,6 +6420,8 @@ function setupIPC() {
                 ? memoryLimit * 1024 * 1024
                 : 0;
             const sampleMemory = () => {
+                if (contestantMemWatch || graderMemWatch)
+                    return memoryPromise || Promise.resolve();
                 if (memoryPromise)
                     return memoryPromise;
                 memoryPromise = readMemory().then((bytes) => {
@@ -6288,6 +6484,23 @@ function setupIPC() {
                 const contestantStderr = decode(contestantErr);
                 const graderStdout = decode(graderOut);
                 const graderStderr = decode(graderErr);
+                const contestantMemReport = await resolveMemWatchReport(contestantMemWatch);
+                const graderMemReport = await resolveMemWatchReport(graderMemWatch);
+                if (contestantMemReport) {
+                    peakMemoryBytes = Math.max(peakMemoryBytes, contestantMemReport.peakBytes);
+                    if (contestantMemReport.exceeded && !memoryLimitExceeded) {
+                        memoryLimitExceeded = true;
+                        timeout = false;
+                        try {
+                            logWarn('[运行程序][交互器][MLE][memwatch]', {
+                                limitBytes: memoryLimitBytes,
+                                peakBytes: contestantMemReport.peakBytes,
+                                privateBytes: contestantMemReport.privateBytes
+                            });
+                        }
+                        catch (_) { }
+                    }
+                }
                 // output 只放 stdout：stderr 单独走 stderr 字段，避免样例测试器「程序输出」混入错误流
                 const parts = [];
                 if (graderStdout)
@@ -6325,6 +6538,10 @@ function setupIPC() {
             contestant.stderr.on('data', (data) => append(data, contestantErr));
             grader.stdout.on('data', (data) => forward(data, contestant, graderOut));
             grader.stderr.on('data', (data) => append(data, graderErr));
+            // 限额只作用于选手程序：交互器是我们自己的基础设施，它占多少都不该
+            // 算进选手的 MLE 判定，所以它只观测不设限。
+            contestantMemWatch = startMemWatch(contestant.pid, memoryLimitBytes);
+            graderMemWatch = startMemWatch(grader.pid, 0);
             contestant.stdin.on('error', () => { });
             grader.stdin.on('error', () => { });
             contestant.on('error', (error) => {
@@ -6350,10 +6567,12 @@ function setupIPC() {
                 }
                 finish();
             });
-            memoryTimer = setInterval(sampleMemory, memoryLimitBytes > 0
-                ? MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT
-                : MEMORY_SAMPLE_INTERVAL_MS_PLAIN);
-            sampleMemory();
+            if (!contestantMemWatch && !graderMemWatch) {
+                memoryTimer = setInterval(sampleMemory, memoryLimitBytes > 0
+                    ? MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT
+                    : MEMORY_SAMPLE_INTERVAL_MS_PLAIN);
+                sampleMemory();
+            }
         });
     });
     ipcMain.handle('check-file-exists', async (event, filePath) => {
@@ -9545,6 +9764,11 @@ app.whenReady().then(() => {
             }
         }).catch(() => { });
     }, 3000);
+    // memwatch 也要现场编译（体积很小，但首次仍要几秒）。同样延到首屏之后预热，
+    // 失败只记日志：run-program 会自动退回 tasklist 采样。
+    setTimeout(() => {
+        warmUpMemWatch().catch(() => { });
+    }, 3000);
     handleCommandLineArgs();
     // startHeartbeatService();  // OICPP-Plus: 已禁用云服务（认证/云同步/心跳），避免依赖原作者服务器
     app.on('activate', () => {
@@ -9555,6 +9779,7 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => {
     stopHeartbeatService();
+    killAllMemWatch();
     app.quit();
 });
 app.on('web-contents-created', (event, contents) => {
