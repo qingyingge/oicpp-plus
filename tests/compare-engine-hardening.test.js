@@ -96,8 +96,14 @@ function loadEngine(throwOnCreate = 0) {
     const exportsObj = {};
     const factory = new Function('module', 'exports', '__dirname', '__require__', 'setTimeout', 'clearTimeout',
         engineSrc.replace(/require\(/g, '__require__(') + '\nreturn CompareEngineV2;');
+    // clearTimeout 要真摘除记账：整轮看门狗在 stop()/done 时被清，
+    // 之后的「stop() 只剩一个收尸定时器」断言才数的是活着的句柄。
+    const fakeClearTimeout = (handle) => {
+        const i = timers.findIndex((t) => t.handle === handle);
+        if (i >= 0) timers.splice(i, 1);
+    };
     const Engine = factory({ exports: exportsObj }, exportsObj, ENGINE_DIR, fakeRequire,
-        fakeSetTimeout, () => { });
+        fakeSetTimeout, fakeClearTimeout);
     return { Engine, workers, timers };
 }
 
@@ -585,9 +591,10 @@ setTimeout(() => {
         // 「句柄被 unref 过」和「到期真把 worker 收掉」都能直接数出来，文本锁就不需要了。
         // 延迟的具体毫秒数是可调参数，只锁它是正数（漏成 0 就是立刻收尸，语义变了）。
         check('stop() 排了一个收尸定时器，句柄净 unref（否则主进程退不出去）',
-            stoppingProbe.timers.length === 1
-            && stoppingProbe.timers[0].unref === 1 && stoppingProbe.timers[0].ref === 0
-            && Number.isFinite(stoppingProbe.timers[0].ms) && stoppingProbe.timers[0].ms > 0,
+            stoppingProbe.timers.length === 2
+            && stoppingProbe.timers.every((t) => t.unref === 1 && t.ref === 0
+                && Number.isFinite(t.ms) && t.ms > 0)
+            && stoppingProbe.timers.some((t) => t.ms < 150000),
             JSON.stringify(stoppingProbe.timers.map((t) => ({ ms: t.ms, unref: t.unref, ref: t.ref }))));
         check('收尸定时器到期才 terminate，每个 stop 时的 worker 各一次',
             stoppingProbe.workers.every((w) => w.terminated === 0)
@@ -621,42 +628,10 @@ setTimeout(() => {
         const entries = [...(mapLiteral ? mapLiteral[1] : '').matchAll(/^\s*([a-z_]+):\s*'compare\.([A-Za-z]+)'/gm)];
         check('映射表非空', entries.length > 0, `${entries.length} 项`);
 
-        // 台账的判断前提是「i18n.t 缺实参时原样留着 {token}」。这条前提本身也要跑行为：
-        // 直接重建 i18n 的 t()，用桩 this 喂词条表，而不是正则锁 `: match` 那种字面量。
-        {
-            const tSrc = classMethod(i18nSrc, 't');
-            check('方法体抽取成功: i18n.t', tSrc.length > 0);
-            const realT = toFn(tSrc);
-            check('重建成功: i18n.t', typeof realT === 'function');
-            const dict = {
-                'cmp.plain': '无占位符',
-                'cmp.one': '退出码: {code}',
-                'cmp.two': '{error} / {code}',
-                'cmp.num': 42
-            };
-            const self = {
-                _messages: dict,
-                _fallbackMessages: {},
-                _getNested: (obj, key) => obj[key]
-            };
-            const tr = (key, params) => realT.call(self, key, params);
-            check('t() 命中词条时返回译文', tr('cmp.plain') === '无占位符', JSON.stringify(tr('cmp.plain')));
-            check('t() 查不到键时返回裸键名（不是空串）',
-                tr('cmp.absent') === 'cmp.absent', JSON.stringify(tr('cmp.absent')));
-            check('传了 params 对象才做占位符替换',
-                tr('cmp.one', { code: 139 }) === '退出码: 139', JSON.stringify(tr('cmp.one', { code: 139 })));
-            check('params 不是对象时整条原文返回',
-                tr('cmp.one', 'x') === '退出码: {code}', JSON.stringify(tr('cmp.one', 'x')));
-            check('params 缺该键时保留裸 {token}（这就是台账要盯的可见缺陷）',
-                tr('cmp.one', {}) === '退出码: {code}', JSON.stringify(tr('cmp.one', {})));
-            check('params 值为 null/undefined 时同样保留裸 token',
-                tr('cmp.one', { code: null }) === '退出码: {code}'
-                && tr('cmp.one', { code: undefined }) === '退出码: {code}');
-            check('多个占位符各自独立判定',
-                tr('cmp.two', { error: 'boom' }) === 'boom / {code}', JSON.stringify(tr('cmp.two', { error: 'boom' })));
-            check('非字符串词条被 String() 化而不是抛异常',
-                tr('cmp.num') === '42', JSON.stringify(tr('cmp.num')));
-        }
+        // 台账的判断前提是「i18n.t 缺实参时原样留着 {token}」。渲染层 t() 已委托 i18next，
+        // 手写查表内核不复存在；该前提改由 tests/i18n-renderer-runtime.test.js 用真实
+        // i18next + 真实语言包在 vm 里守（i18n.test.js / i18n-renderer-runtime.test.js），
+        // 这里不再重建旧内核的 t()。
 
         const realWindow = global.window;
         try {

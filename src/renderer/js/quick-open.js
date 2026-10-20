@@ -77,7 +77,11 @@ else {
     }
     function search(query) {
         if (!query) {
-            render(allFiles.slice(0, 100));
+            // 空查询走的是浏览列表，必须同步 lastList/activeIndex：否则回车和方向键
+            // 仍会按上一次搜索的结果操作（界面显示的和被打开的不是同一批文件）。
+            lastList = allFiles.slice(0, 100);
+            activeIndex = lastList.length ? 0 : -1;
+            render(lastList);
             return;
         }
         const ranked = allFiles.map(f => ({ ...f, __s: fuzzyScore(query, f.path) }))
@@ -235,6 +239,11 @@ else {
                 markIndexDirty();
         });
         window.electronIPC.on('file-pasted', (_event, _sourcePath, _targetPath, _operation, error) => {
+            if (!error)
+                markIndexDirty();
+        });
+        // 重命名/移动同样会改变索引里的路径，主进程 main.js 里就发这个通道
+        window.electronIPC.on('file-moved', (_event, _sourcePath, _targetPath, error) => {
             if (!error)
                 markIndexDirty();
         });

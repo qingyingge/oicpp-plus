@@ -7,12 +7,12 @@ const E = (t, c, txt) => {
         e.textContent = txt;
     return e;
 };
-const _t = (key, fallback) => (window.i18n && typeof window.i18n.t === 'function') ? window.i18n.t(key) : fallback;
+const _t = (key) => window.i18n?.t?.(key) || key;
 const norm = (...ps) => ps.join('/').replace(/\\/g, '/').replace(/\/+/g, '/');
 function buildBreadcrumb(path, bar, onChange) {
     bar.innerHTML = '';
     const upBtn = E('button', 'folder-picker-up', '⬆');
-    upBtn.title = _t('folderPicker.parentDir', 'Parent Directory');
+    upBtn.title = _t('folderPicker.parentDir');
     upBtn.onclick = () => {
         if (path === '/' || /^[A-Za-z]:\/$/.test(path))
             return;
@@ -44,29 +44,33 @@ function buildBreadcrumb(path, bar, onChange) {
         bar.appendChild(c);
     }
 }
-function getQuickAccess() {
+function getQuickAccess(homeDir) {
     const list = [];
-    const home = (process.platform === 'win32' ? process.env['USERPROFILE'] : process.env['HOME']) || '';
-    if (home)
-        list.push({ name: _t('folderPicker.homeDir', 'Home'), path: home.replace(/\\/g, '/') });
+    if (homeDir)
+        list.push({ name: _t('folderPicker.homeDir'), path: norm(homeDir) });
     if (process.platform !== 'win32')
-        list.push({ name: _t('folderPicker.rootDir', '/ (Root)'), path: '/' });
+        list.push({ name: _t('folderPicker.rootDir'), path: '/' });
     return list;
 }
 if (typeof window !== 'undefined' && !window.folderPicker) {
     const module = {
-        show(opts = {}) {
+        async show(opts = {}) {
+            const homeDir = await (window.electronAPI?.getUserHome?.() || '');
             return new Promise((resolve) => {
                 const theme = (window.oicppApp?.settings?.theme) || 'dark';
                 const isLightTheme = String(theme).toLowerCase().includes('light');
-                let cur = opts.startPath || window.oicppApp?.settings?.lastOpen || ((process.platform === 'win32') ? (process.env['USERPROFILE'] || 'C:/') : '/');
+                // norm 统一反斜杠为正斜杠、折叠重复分隔符：来自 startPath/lastOpen 的
+                // Windows 路径必须加 norm，否则 buildBreadcrumb 把 `C:\Users\foo` 切成
+                // 单个片段，面包屑只剩一级。同时 USERPROFILE 不再走 process.env（只暴露
+                // NODE_ENV/CI），改走已有的 getUserHome IPC。
+                let cur = norm(opts.startPath || window.oicppApp?.settings?.lastOpen || (process.platform === 'win32' ? (homeDir || 'C:') : '/'));
                 if (!cur)
                     cur = '/';
                 const backdrop = E('div', 'folder-picker-backdrop');
                 const panel = E('div', 'folder-picker ' + (isLightTheme ? 'light' : ''));
                 backdrop.appendChild(panel);
                 const header = E('div', 'folder-picker-header');
-                header.appendChild(E('span', null, _t('folderPicker.selectWorkspace', 'Select Workspace Folder')));
+                header.appendChild(E('span', null, _t('folderPicker.selectWorkspace')));
                 const close = E('span', 'folder-picker-close', '✕');
                 close.onclick = () => { clean(); resolve(null); };
                 header.appendChild(close);
@@ -80,9 +84,9 @@ if (typeof window !== 'undefined' && !window.folderPicker) {
                 const treeWrap = E('div', 'folder-picker-tree');
                 body.appendChild(treeWrap);
                 const quick = E('div', 'folder-picker-quick');
-                quick.appendChild(E('div', 'folder-picker-quick-title', _t('folderPicker.quickAccess', 'Quick Access')));
+                quick.appendChild(E('div', 'folder-picker-quick-title', _t('folderPicker.quickAccess')));
                 const quickList = E('div', 'folder-picker-quick-list');
-                getQuickAccess().forEach(q => {
+                getQuickAccess(homeDir).forEach(q => {
                     const it = E('div', 'folder-picker-quick-item', q.name);
                     it.title = q.path;
                     it.onclick = () => { cur = q.path; reload(); };
@@ -91,12 +95,12 @@ if (typeof window !== 'undefined' && !window.folderPicker) {
                 quick.appendChild(quickList);
                 side.appendChild(quick);
                 const search = E('input', 'folder-picker-search');
-                search.placeholder = _t('folderPicker.filterDir', 'Filter current directory');
+                search.placeholder = _t('folderPicker.filterDir');
                 side.appendChild(search);
                 const createWrap = E('div', 'folder-picker-create');
                 const createInput = E('input');
-                createInput.placeholder = _t('folderPicker.createFolder', 'New Folder');
-                const createBtn = E('button', null, _t('folderPicker.create', 'Create'));
+                createInput.placeholder = _t('folderPicker.createFolder');
+                const createBtn = E('button', null, _t('folderPicker.create'));
                 createBtn.onclick = async () => {
                     const name = createInput.value.trim();
                     if (!name)
@@ -109,13 +113,13 @@ if (typeof window !== 'undefined' && !window.folderPicker) {
                 createWrap.appendChild(createBtn);
                 side.appendChild(createWrap);
                 const footer = E('div', 'folder-picker-footer');
-                const tip = E('div', null, _t('folderPicker.selectHint', 'Select and click "Choose This Directory"'));
+                const tip = E('div', null, _t('folderPicker.selectHint'));
                 tip.style.fontSize = '12px';
                 tip.style.opacity = '.7';
                 tip.style.flex = '1';
                 const actions = E('div', 'folder-picker-actions');
-                const cancel = E('button', 'folder-picker-btn secondary', _t('folderPicker.cancel', 'Cancel'));
-                const choose = E('button', 'folder-picker-btn', _t('folderPicker.selectThis', 'Choose This Directory'));
+                const cancel = E('button', 'folder-picker-btn secondary', _t('folderPicker.cancel'));
+                const choose = E('button', 'folder-picker-btn', _t('folderPicker.selectThis'));
                 cancel.onclick = () => { clean(); resolve(null); };
                 choose.onclick = () => { clean(); resolve(cur); };
                 actions.appendChild(cancel);
@@ -130,7 +134,7 @@ if (typeof window !== 'undefined' && !window.folderPicker) {
                 async function reload() {
                     choose.disabled = true;
                     buildBreadcrumb(cur, bar, p => { cur = p; reload(); });
-                    treeWrap.innerHTML = '<div class="folder-picker-loading">' + _t('folderPicker.loading', 'Loading...') + '</div>';
+                    treeWrap.innerHTML = '<div class="folder-picker-loading">' + _t('folderPicker.loading') + '</div>';
                     let entries = [], error = null;
                     try {
                         entries = await window.electronAPI?.readDirectory?.(cur);
@@ -143,8 +147,8 @@ if (typeof window !== 'undefined' && !window.folderPicker) {
                     treeWrap.innerHTML = '';
                     if (error) {
                         const err = E('div', 'folder-picker-error');
-                        err.innerHTML = '<div>' + _t('folderPicker.noAccess', 'Cannot access this directory (permission denied)') + '</div>';
-                        const backBtn = E('button', 'folder-picker-btn secondary', _t('folderPicker.goBack', 'Go Back'));
+                        err.innerHTML = '<div>' + _t('folderPicker.noAccess') + '</div>';
+                        const backBtn = E('button', 'folder-picker-btn secondary', _t('folderPicker.goBack'));
                         backBtn.onclick = () => {
                             const parent = cur.replace(/[\\/]+$/, '').replace(/[/\\][^/\\]+$/, '') || '/';
                             cur = parent;
@@ -157,7 +161,7 @@ if (typeof window !== 'undefined' && !window.folderPicker) {
                     }
                     const list = folders.filter(d => !f || (d.name ?? '').toLowerCase().includes(f));
                     if (list.length === 0) {
-                        treeWrap.appendChild(E('div', 'folder-picker-empty', _t('folderPicker.emptyDir', '(Empty Directory)')));
+                        treeWrap.appendChild(E('div', 'folder-picker-empty', _t('folderPicker.emptyDir')));
                     }
                     list.forEach(d => {
                         const item = E('div', 'folder-picker-item folder');

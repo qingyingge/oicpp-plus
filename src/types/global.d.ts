@@ -66,8 +66,6 @@ interface Window {
     enableAutoTranslate: () => void;
     setLanguage: (langCode: string) => Promise<void>;
     getAvailableLanguages: () => Promise<Array<{ code: string; name: string; nameEn: string }>>;
-    translate: (key: string, params?: Record<string, unknown>) => string;
-    applyTranslation: () => void;
   };
   electronIPC: {
     send: (channel: string, ...args: unknown[]) => void;
@@ -144,7 +142,15 @@ interface Window {
   uiIcons: { svg: (name: string) => string; hydrate: (root?: Document | Element) => void };
   folderPicker: { show: (opts?: { startPath?: string }) => Promise<string | null> };
   quickOpen: { open: () => void; close: () => void; ensureIndex: () => Promise<boolean> };
-  cppFormatter: { format: (code: string, options?: Record<string, unknown>) => string };
+  clangFormatOptions: {
+    OPTION_DEFS: Record<string, { type: string; values?: string[]; default: unknown }>;
+    PRESET_STYLES: Set<string>;
+    getDefaultClangFormatStyle: () => Record<string, unknown>;
+    normalizeClangFormatStyle: (raw: unknown) => Record<string, unknown>;
+    serializeClangFormatStyle: (style: unknown) => string;
+    parseClangFormatText: (text: string) => Record<string, unknown>;
+    generateClangFormatText: (style: unknown) => string;
+  };
   applySettings: (settings: Record<string, unknown>) => void;
   updateSettings: (newSettings: Record<string, unknown>) => Promise<boolean>;
   getCurrentSettings: () => Promise<Record<string, unknown>>;
@@ -153,7 +159,6 @@ interface Window {
   debugUIInitialized: boolean;
   debugIPCInitialized: boolean;
   __oicppDiscardClose: boolean;
-  __: (key: string, params?: unknown) => string;
   FitAddon: { FitAddon: typeof import('@xterm/addon-fit').FitAddon };
   Unicode11Addon: { Unicode11Addon: typeof import('@xterm/addon-unicode11').Unicode11Addon };
   webkitRequestAnimationFrame?: (callback: FrameRequestCallback) => number;

@@ -1437,6 +1437,11 @@ class CompilerSettings {
         window.close();
     }
 }
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+    // 必须 await：init() 要经 IPC 拉语言包，未完成时 t() 只会返回 key 本身，
+    // 而下面的 textContent/title 是直接赋值、不走 data-i18n，_applyToDOM 救不回来。
+    if (window.i18n && typeof window.i18n.init === 'function') {
+        await window.i18n.init();
+    }
     new CompilerSettings();
 });

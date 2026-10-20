@@ -22,6 +22,12 @@ class TitlebarManager {
         this.applyPlatformLayout();
         this.setupWindowControls();
         this.setupElectronEvents();
+        // 最大化/还原按钮的 title 是 JS 直接写的。必须延后一拍：i18n 在
+        // _notifyListeners() 之后才跑 _applyToDOM()，而本按钮带
+        // data-i18n-title，同步执行会被覆写成静态的「最大化」。
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.updateMaximizeButton(), 0);
+        });
         logInfo('标题栏管理器已初始化');
     }
 
@@ -131,6 +137,16 @@ class TitlebarManager {
     async _requestCloseInternal({ source }: { source: 'button' | 'system' } = { source: 'button' }): Promise<void> {
         if (this._closeConfirmInProgress) return;
         if (!window.electronIPC) return;
+
+        // 关闭前先持久化当前打开的标签页。标签页状态平时靠 2s 防抖保存，
+        // 快速关闭时可能来不及写入，导致下次启动恢复成更早的旧会话。
+        try {
+            if (window.oicppApp && typeof window.oicppApp.saveCurrentOpenTabs === 'function') {
+                await window.oicppApp.saveCurrentOpenTabs();
+            }
+        } catch (err) {
+            logWarn('关闭前保存标签页失败:', err);
+        }
 
         const tempFilesHandled = await this._confirmTemporaryFilesBeforeClose();
         if (!tempFilesHandled) {

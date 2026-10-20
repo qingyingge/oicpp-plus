@@ -1554,25 +1554,30 @@ class FileExplorer {
                 if (window.electronIPC) {
                     const filePath = this.currentPath + '/' + fileName;
                     logInfo('创建文件:', filePath);
-                    window.electronIPC.send('create-file', filePath, defaultContent);
-                    const handleFileCreated = /** @type {((event: unknown, createdPath: string, error: unknown) => void) & { _handled?: boolean }} */ ((event, createdPath, error) => {
-                        if (!handleFileCreated._handled && createdPath && createdPath.startsWith(this.currentPath + '/')) {
-                            handleFileCreated._handled = true;
-                            if (error) {
-                                logError('创建文件失败:', error);
-                                this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
-                            }
-                            else {
-                                logInfo('文件创建成功:', createdPath);
-                                this.refresh();
-                                if (window.tabManager) {
-                                    const createdName = createdPath.substring(createdPath.lastIndexOf('/') + 1).replace(/^.*\\/, '');
-                                    window.tabManager.openFile(createdName, defaultContent, false, createdPath);
-                                }
-                            }
-                            window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
+                    // 同一目录里连续/并发创建文件时，只认自己那次请求的回执：
+                    // 原来按 currentPath 前缀匹配会把别人的事件也消费掉（用错的模板内容打开文件），
+                    // 路径不匹配时监听器还会永久累积。
+                    const requestId = 'cf-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+                    window.electronIPC.send('create-file', filePath, defaultContent, requestId);
+                    const handleFileCreated = (event, createdPath, error, replyId) => {
+                        if (handleFileCreated._handled || replyId !== requestId) {
+                            return;
                         }
-                    });
+                        handleFileCreated._handled = true;
+                        window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
+                        if (error) {
+                            logError('创建文件失败:', error);
+                            this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
+                        }
+                        else {
+                            logInfo('文件创建成功:', createdPath);
+                            this.refresh();
+                            if (window.tabManager) {
+                                const createdName = createdPath.substring(createdPath.lastIndexOf('/') + 1).replace(/^.*\\/, '');
+                                window.tabManager.openFile(createdName, defaultContent, false, createdPath);
+                            }
+                        }
+                    };
                     window.electronIPC.on('file-created', handleFileCreated);
                 }
                 else {
@@ -1679,21 +1684,24 @@ class FileExplorer {
                 }
                 if (window.electronIPC) {
                     const filePath = folder.path + '/' + fileName;
-                    window.electronIPC.send('create-file', filePath, defaultContent);
-                    const handleFileCreated = (event, createdPath, error) => {
-                        if (createdPath === filePath) {
-                            if (error) {
-                                logError('创建文件失败:', error);
-                                this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
+                    const requestId = 'cf-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+                    window.electronIPC.send('create-file', filePath, defaultContent, requestId);
+                    const handleFileCreated = (event, createdPath, error, replyId) => {
+                        if (handleFileCreated._handled || replyId !== requestId) {
+                            return;
+                        }
+                        handleFileCreated._handled = true;
+                        window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
+                        if (error) {
+                            logError('创建文件失败:', error);
+                            this.showError(window.i18n.t('fileExplorer.createFileFail', { error }));
+                        }
+                        else {
+                            logInfo('在文件夹', folder.name, '中创建文件:', fileName);
+                            this.refresh();
+                            if (window.tabManager) {
+                                window.tabManager.openFile(fileName, defaultContent, false, createdPath);
                             }
-                            else {
-                                logInfo('在文件夹', folder.name, '中创建文件:', fileName);
-                                this.refresh();
-                                if (window.tabManager) {
-                                    window.tabManager.openFile(fileName, defaultContent, false, createdPath);
-                                }
-                            }
-                            window.electronIPC.ipcRenderer.removeListener('file-created', handleFileCreated);
                         }
                     };
                     window.electronIPC.on('file-created', handleFileCreated);

@@ -21,13 +21,24 @@ const { t, setLanguage } = require('./lang');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
+const {
+    normalizeClangFormatStyle,
+    generateClangFormatText
+} = require('./utils/clang-format-options');
+const {
+    SETTINGS_KEYS,
+    SETTINGS_MERGE_KEYS,
+    SETTINGS_WRITABLE_KEYS
+} = require('./utils/settings-schema');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
 const clangdCompileFlags = require('./utils/clangd-compile-flags');
+const { filterGccPrivateIncludes } = require('./utils/compiler-paths');
 
 const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
+const { samePath } = require('./utils/path-identity');
 
 // 业务错误：Error 之上携带 code/errno/syscall/path（Node 风格）或 lspCode（LSP 风格）
 type OicppError = NodeJS.ErrnoException & { lspCode?: number };
@@ -465,15 +476,36 @@ function resolveClangdRootFromBundle() {
     return null;
 }
 
-function getUserClangdRoot() {
-    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP');
+// 用户侧工具目录：随包分发的二进制（clangd、可能的 clang-format）都扁平地放这里，
+// 不再套一层 bin/，也不再按功能拆成 LSP/ 之类会误导的子目录。
+function getUserToolsRoot() {
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'bin');
+}
+
+// 旧版把工具放在 <userData>/LSP/bin 下，升级时需要把它搬过来
+function getLegacyUserToolsRoot() {
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP', 'bin');
 }
 
 function resolveClangdExecutable(rootDir: string) {
     if (!rootDir) return null;
     const exeName = getClangdExecutableName();
-    const candidate = path.join(rootDir, 'bin', exeName);
+    const candidate = path.join(rootDir, exeName);
     return fs.existsSync(candidate) ? candidate : null;
+}
+
+function findClangdExecutableOnPath() {
+    const exeName = getClangdExecutableName();
+    const entries = String(process.env['PATH'] || '').split(path.delimiter).filter(Boolean);
+    for (const entry of entries) {
+        const candidate = path.join(entry.replace(/^"|"$/g, ''), exeName);
+        try {
+            if (fs.statSync(candidate).isFile()) {
+                return candidate;
+            }
+        } catch (_) { }
+    }
+    return null;
 }
 
 function getClangFormatExecutableName() {
@@ -489,8 +521,12 @@ function resolveClangFormatRootFromBundle() {
 
 function resolveClangFormatExecutable(rootDir: string) {
     if (!rootDir) return null;
-    const candidate = path.join(rootDir, 'bin', getClangFormatExecutableName());
-    return fs.existsSync(candidate) ? candidate : null;
+    const exeName = getClangFormatExecutableName();
+    // 打包目录（resources/clang-format）里还套着一层 bin/；用户工具目录 a7a70a6 起扁平（bin 本身就是根）。
+    const nested = path.join(rootDir, 'bin', exeName);
+    if (fs.existsSync(nested)) return nested;
+    const flat = path.join(rootDir, exeName);
+    return fs.existsSync(flat) ? flat : null;
 }
 
 function findClangFormatExecutableOnPath() {
@@ -507,7 +543,7 @@ function findClangFormatExecutableOnPath() {
     return null;
 }
 
-// 打包目录 → 用户 LSP 目录（与 clangd 同级）→ 系统 PATH，逐级回退，避免单点缺失导致格式化完全不可用
+// 打包目录 → 用户工具目录 → 系统 PATH，逐级回退，避免单点缺失导致格式化完全不可用
 // 解析结果与进程生命周期无关，缓存一次即可，避免每次格式化都遍历整个 PATH
 let cachedClangFormatExecutablePath: string | null;
 let clangFormatExecutablePathResolved = false;
@@ -518,7 +554,7 @@ function resolveClangFormatExecutablePath() {
     }
     cachedClangFormatExecutablePath =
         resolveClangFormatExecutable(resolveClangFormatRootFromBundle())
-        || resolveClangFormatExecutable(getUserClangdRoot())
+        || resolveClangFormatExecutable(getUserToolsRoot())
         || findClangFormatExecutableOnPath();
     clangFormatExecutablePathResolved = true;
     return cachedClangFormatExecutablePath;
@@ -530,7 +566,7 @@ function describeClangFormatSearchPaths() {
         : path.join(__dirname, '..', 'build', 'clang-format', getClangdPlatformKey());
     return [
         path.join(bundled, 'bin', getClangFormatExecutableName()),
-        path.join(getUserClangdRoot(), 'bin', getClangFormatExecutableName()),
+        path.join(getUserToolsRoot(), getClangFormatExecutableName()),
         'PATH'
     ].join(' | ');
 }
@@ -539,14 +575,46 @@ function describeClangFormatSearchPaths() {
 // 期间终端、编译、文件读写、clangd stdin 全部无响应。改为异步拷贝并做在途去重。
 let clangdBundlePromise: Promise<ClangdBundleResult> | null = null;
 
-function ensureClangdUserBundle() {
+// 旧版把工具装在 <userData>/LSP/bin，1.6 起改为 <userData>/bin。
+// 升级后若新目录还没有 clangd 而旧目录有，把旧目录内容平移过来，避免用户重新下载 96MB。
+async function migrateLegacyUserTools() {
+    const legacyRoot = getLegacyUserToolsRoot();
+    try {
+        if (!fs.existsSync(legacyRoot)) {
+            return;
+        }
+        const userRoot = getUserToolsRoot();
+        if (resolveClangdExecutable(userRoot)) {
+            return;
+        }
+        const legacyExe = resolveClangdExecutable(legacyRoot);
+        if (!legacyExe) {
+            return;
+        }
+        await fs.promises.mkdir(userRoot, { recursive: true });
+        for (const entry of await fs.promises.readdir(legacyRoot)) {
+            const from = path.join(legacyRoot, entry);
+            if (!(await fs.promises.stat(from)).isFile()) continue;
+            await fs.promises.copyFile(from, path.join(userRoot, entry));
+        }
+        logInfo('[LSP] 已从旧目录迁移工具:', legacyRoot, '->', userRoot);
+        const legacyParent = path.dirname(legacyRoot);
+        await fs.promises.rm(legacyParent, { recursive: true, force: true });
+        logInfo('[LSP] 已移除旧工具目录:', legacyParent);
+    } catch (error) {
+        logWarn('[LSP] 迁移旧工具目录失败:', (error as Error)?.message || error);
+    }
+}
+
+async function ensureClangdUserBundle() {
     if (clangdBundlePromise) {
         return clangdBundlePromise;
     }
 
     const promise = (async () => {
         try {
-            const userRoot = getUserClangdRoot();
+            await migrateLegacyUserTools();
+            const userRoot = getUserToolsRoot();
             const userExe = resolveClangdExecutable(userRoot);
             if (userExe) {
                 logInfo('[LSP] clangd 已存在于用户目录:', userExe);
@@ -555,13 +623,24 @@ function ensureClangdUserBundle() {
 
             const bundledRoot = resolveClangdRootFromBundle();
             if (!bundledRoot) {
-                logWarn('[LSP] 未找到打包的 clangd，用户可能不会获得 LSP 支持');
+                logInfo('[LSP] 未找到打包的 clangd，将尝试用户目录/系统 PATH 回退');
                 return { ok: false, error: 'clangd bundle not found' };
             }
 
             logInfo('[LSP] 从安装包复制 clangd 到用户目录:', bundledRoot, '->', userRoot);
             await fs.promises.mkdir(userRoot, { recursive: true });
-            await fs.promises.cp(bundledRoot, userRoot, { recursive: true });
+            // 打包目录保持 <root>/bin/clangd 的上游结构，用户目录已扁平化，
+            // 这里搬 bin/ 的内容、lib/clang/（resource-dir 所需），并把 root 下的附属文件（如 LICENSE.TXT）一并带过去
+            await fs.promises.cp(path.join(bundledRoot, 'bin'), userRoot, { recursive: true });
+            const libClangSrc = path.join(bundledRoot, 'lib', 'clang');
+            const libClangDst = path.join(userRoot, 'lib', 'clang');
+            if (fs.existsSync(libClangSrc)) {
+                await fs.promises.cp(libClangSrc, libClangDst, { recursive: true });
+            }
+            for (const entry of await fs.promises.readdir(bundledRoot, { withFileTypes: true })) {
+                if (!entry.isFile()) continue;
+                await fs.promises.copyFile(path.join(bundledRoot, entry.name), path.join(userRoot, entry.name));
+            }
             const copiedExe = resolveClangdExecutable(userRoot);
             logInfo('[LSP] clangd 已复制到用户目录:', copiedExe || userRoot);
             return { ok: true, root: userRoot };
@@ -583,12 +662,78 @@ function ensureClangdUserBundle() {
  * 运行编译器获取其内置 include 路径 和 target triple
  * 执行 g++ -E -x c++ - -v 并解析输出
  */
-function queryCompilerInfo(compilerPath: string, extraArgs: string[] = []) {
-    return new Promise<CompilerInfo>((resolve) => {
-        const result: CompilerInfo = { includePaths: [], target: '' };
+const COMPILER_INFO_CACHE_VERSION = 2;
+
+function getCompilerInfoCacheFile() {
+    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP', 'compiler-info-cache.json');
+}
+
+/**
+ * queryCompilerInfo 的持久化缓存。
+ * 探测要 fork 一个 g++ 并读它的 stderr，冷启动实测 0.2s~1.9s（波动来自磁盘
+ * I/O 冷热），而 include 路径 / target 只跟「编译器可执行文件 + -std/-m 参数」
+ * 有关，几周内不会变。落盘缓存避免每次启动都付这份成本，也避免在首屏关键
+ * 路径上和 clangd 抢 CPU 与磁盘。
+ * 失效判据：schema 版本、编译器 mtime/size、参数串任一变化就重新探测。
+ */
+function readPersistedCompilerInfo(compilerPath: string, extraArgs: string[]) {
+    try {
+        const stat = fs.statSync(compilerPath);
+        const store = JSON.parse(fs.readFileSync(getCompilerInfoCacheFile(), 'utf8'));
+        if (!store || store.version !== COMPILER_INFO_CACHE_VERSION) return null;
+        const entry = store.entries && store.entries[path.resolve(compilerPath)];
+        if (!entry) return null;
+        if (entry.compilerMtimeMs !== stat.mtimeMs || entry.compilerSize !== stat.size) return null;
+        if (entry.argsKey !== extraArgs.join(' ')) return null;
+        if (!entry.target || !Array.isArray(entry.includePaths) || entry.includePaths.length === 0) return null;
+        return { includePaths: entry.includePaths, target: entry.target };
+    } catch (_) {
+        return null;
+    }
+}
+
+function writePersistedCompilerInfo(compilerPath: string, extraArgs: string[], info: CompilerInfo | null | undefined) {
+    // 只在拿到有效结果时才落盘：一次瞬时失败不该被固化成长期缓存。
+    if (!info || !info.target || !Array.isArray(info.includePaths) || info.includePaths.length === 0) return;
+    try {
+        const stat = fs.statSync(compilerPath);
+        const file = getCompilerInfoCacheFile();
+        let store = { version: COMPILER_INFO_CACHE_VERSION, entries: {} as Record<string, unknown> };
+        try {
+            const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (parsed && parsed.version === COMPILER_INFO_CACHE_VERSION && parsed.entries) {
+                store = parsed;
+            }
+        } catch (_) { }
+        store.entries[path.resolve(compilerPath)] = {
+            compilerMtimeMs: stat.mtimeMs,
+            compilerSize: stat.size,
+            argsKey: extraArgs.join(' '),
+            target: info.target,
+            includePaths: info.includePaths
+        };
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(store, null, 2), 'utf8');
+    } catch (err) {
+        logWarn('[LSP] 写入编译器信息缓存失败:', (err as Error)?.message || err);
+    }
+}
+
+async function queryCompilerInfo(compilerPath: string, extraArgs: string[] = []) {
+    if (compilerPath && fs.existsSync(compilerPath)) {
+        const persisted = readPersistedCompilerInfo(compilerPath, extraArgs);
+        if (persisted) {
+            logInfo('[LSP] 复用编译器信息缓存:', persisted.target,
+                '(' + persisted.includePaths.length + ' 个 include)');
+            return persisted;
+        }
+    }
+
+    const result = await new Promise<CompilerInfo>((resolve) => {
+        const probe: CompilerInfo = { includePaths: [], target: '' };
 
         if (!compilerPath || !fs.existsSync(compilerPath)) {
-            resolve(result);
+            resolve(probe);
             return;
         }
 
@@ -621,7 +766,7 @@ function queryCompilerInfo(compilerPath: string, extraArgs: string[] = []) {
 
         const timer = setTimeout(() => {
             timedOut = true;
-            try { proc.kill(); } catch (_) {}
+            try { proc.kill(); } catch (_) { }
         }, 10000);
 
         proc.stderr.on('data', (data: Buffer) => {
@@ -636,7 +781,7 @@ function queryCompilerInfo(compilerPath: string, extraArgs: string[] = []) {
             clearTimeout(timer);
             if (timedOut) {
                 logWarn('[LSP] 查询编译器信息超时');
-                resolve(result);
+                resolve(probe);
                 return;
             }
 
@@ -644,8 +789,8 @@ function queryCompilerInfo(compilerPath: string, extraArgs: string[] = []) {
 
             const targetMatch = output.match(/^Target:\s*(\S+)/m);
             if (targetMatch) {
-                result.target = targetMatch[1] ?? '';
-                logInfo('[LSP] 从编译器获取 target:', result.target);
+                probe.target = targetMatch[1] ?? '';
+                logInfo('[LSP] 从编译器获取 target:', probe.target);
             }
 
             const lines = output.split(/\r?\n/);
@@ -665,33 +810,43 @@ function queryCompilerInfo(compilerPath: string, extraArgs: string[] = []) {
                         const cleanPath = trimmed.replace(/\s+$/, '');
                         const normalized = path.resolve(cleanPath);
                         if (fs.existsSync(normalized)) {
-                            result.includePaths.push(normalized);
+                            probe.includePaths.push(normalized);
                         } else if (fs.existsSync(cleanPath)) {
-                            result.includePaths.push(cleanPath);
+                            probe.includePaths.push(cleanPath);
                         }
                     }
                 }
             }
 
-            if (result.includePaths.length > 0) {
-                logInfo('[LSP] 从编译器获取到 ' + result.includePaths.length + ' 个 include 路径');
+            // Filter out GCC private builtin include directories (lib/gcc/<triple>/<ver>/include and include-fixed)
+            // These contain GCC-specific intrinsics headers (x86intrin.h, ia32intrin.h, etc.) that conflict with clang's own builtins.
+            // clang provides its own equivalents via -resource-dir; keeping GCC's private headers only causes false diagnostics.
+            // Important: we must NOT filter out libstdc++ paths like .../include/c++ or .../include/c++/<triple>
+            // which are needed for bits/stdc++.h etc.
+            probe.includePaths = filterGccPrivateIncludes(probe.includePaths);
+
+            if (probe.includePaths.length > 0) {
+                logInfo('[LSP] 从编译器获取到 ' + probe.includePaths.length + ' 个 include 路径');
             } else {
                 logWarn('[LSP] 未能从编译器提取 include 路径 (code=' + code + ')');
             }
 
-            resolve(result);
+            resolve(probe);
         });
 
         proc.on('error', (err: Error) => {
             clearTimeout(timer);
             logWarn('[LSP] 查询编译器信息失败:', err?.message || err);
-            resolve(result);
+            resolve(probe);
         });
 
         if (proc.stdin) {
             proc.stdin.end();
         }
     });
+
+    writePersistedCompilerInfo(compilerPath, extraArgs, result);
+    return result;
 }
 
 class ClangdLspManager {
@@ -817,15 +972,20 @@ class ClangdLspManager {
     async _startClangdInternal(options: LspStartOptions = {}) {
         const ensured = await ensureClangdUserBundle();
         if (!ensured.ok) {
-            logError('[LSP] 启动 clangd 失败:', ensured.error || 'clangd bundle missing');
-            return { ok: false, error: ensured.error || 'clangd missing' };
+            logInfo('[LSP] 打包/用户目录无 clangd，尝试系统 PATH:', ensured.error || '');
         }
 
-        const clangdRoot = ensured.root || getUserClangdRoot();
-        const clangdPath = resolveClangdExecutable(clangdRoot);
+        const clangdRoot = ensured.root || getUserToolsRoot();
+        let clangdPath = resolveClangdExecutable(clangdRoot);
         if (!clangdPath) {
-            logError('[LSP] 未找到 clangd 可执行文件，路径:', clangdRoot);
-            return { ok: false, error: 'clangd executable not found' };
+            clangdPath = findClangdExecutableOnPath();
+            if (clangdPath) {
+                logInfo('[LSP] 用户目录无 clangd，回退系统 PATH:', clangdPath);
+            }
+        }
+        if (!clangdPath) {
+            logError('[LSP] 未找到 clangd 可执行文件，路径:', clangdRoot, '(打包/用户目录与系统 PATH 均未命中)');
+            return { ok: false, error: ensured.ok ? 'clangd executable not found' : (ensured.error || 'clangd missing') };
         }
 
         const args = [
@@ -835,6 +995,45 @@ class ClangdLspManager {
             '--header-insertion=iwyu',
             '--pch-storage=memory'
         ];
+
+        // 添加 --resource-dir 以消除 clangd 启动警告
+        // clangd 需要 resource directory (lib/clang/<version>) 来查找内置头文件
+        // 优先检查打包的完整 clangd（含 lib/clang），其次检查用户目录
+        let resourceDir: string | null = null;
+        const checkResourceDir = (root: string | null): string | null => {
+            if (!root) return null;
+            const libClangDir = path.join(root, 'lib', 'clang');
+            if (!fs.existsSync(libClangDir)) return null;
+            try {
+                const versions = fs.readdirSync(libClangDir).filter((v: string) => fs.statSync(path.join(libClangDir, v)).isDirectory());
+                if (versions.length > 0) {
+                    return path.join(libClangDir, versions[0]);
+                }
+            } catch (_) { }
+            return null;
+        };
+
+        // 1. 优先用打包的完整 clangd（CI 构建时由 download-clangd.js 下载完整版）
+        const bundledRoot = resolveClangdRootFromBundle();
+        resourceDir = checkResourceDir(bundledRoot);
+
+        // 2. 回退到用户目录（仅含二进制的精简版通常没有 lib/clang）
+        if (!resourceDir) {
+            resourceDir = checkResourceDir(clangdRoot);
+        }
+
+        // 3. 最后尝试 PATH 上 clangd 的安装前缀（系统 LLVM：bin/../lib/clang/<ver>）
+        if (!resourceDir && clangdPath) {
+            resourceDir = checkResourceDir(path.dirname(path.dirname(clangdPath)));
+        }
+
+        if (resourceDir) {
+            args.push(`--resource-dir=${resourceDir.replace(/\\/g, '/')}`);
+            logInfo('[LSP] 配置 resource-dir:', resourceDir);
+        } else {
+            // 精简版无 resource-dir，抑制该特定错误的日志输出
+            logInfo('[LSP] 未找到 resource-dir (lib/clang)，clangd 将报告自动探测失败，属预期行为');
+        }
         const compilerPath = options.compilerPath || '';
         if (compilerPath && typeof compilerPath === 'string' && fs.existsSync(compilerPath)) {
             const normalized = compilerPath.replace(/\\/g, '/');
@@ -922,7 +1121,29 @@ class ClangdLspManager {
         this.canceledIds.clear();
         proc.stdout.on('data', (data: Buffer) => this._handleData(data));
         proc.stderr.on('data', (data: Buffer) => {
-            try { logWarn('[clangd]', data.toString('utf8').trim()); } catch (_) {}
+            try {
+                const text = data.toString('utf8').trim();
+                if (!text) return;
+                // clangd 使用 I[ / W[ / E[ 前缀表示 Info/Warning/Error
+                // 解析前缀并按相应级别记录，避免将所有输出都记为 WARN
+                const lines = text.split('\n');
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    // 抑制精简版 clangd 必然出现的 resource-dir 探测失败错误
+                    if (trimmed.includes('Failed to auto-detect resource directory')) {
+                        continue;
+                    }
+                    if (trimmed.startsWith('E[') || trimmed.startsWith('ERROR')) {
+                        logError('[clangd]', trimmed);
+                    } else if (trimmed.startsWith('W[') || trimmed.startsWith('WARNING')) {
+                        logWarn('[clangd]', trimmed);
+                    } else {
+                        // I[ 或其他视为 INFO
+                        logInfo('[clangd]', trimmed);
+                    }
+                }
+            } catch (_) { }
         });
         proc.on('exit', (code: string, signal: string) => {
             if (generation !== this.procGeneration) {
@@ -1357,6 +1578,18 @@ class ClangdLspManager {
                 if (diagCount > 0) {
                     const uri = (message.params?.uri || '').replace(/^file:\/\//, '').split('/').pop();
                     logInfo('[LSP] 收到诊断: ' + diagCount + ' 条, 文件: ' + uri);
+                    // Debug: log diagnostic messages for troubleshooting (e.g. bits/stdc++.h issues)
+                    try {
+                        const diags = message.params?.diagnostics || [];
+                        for (const raw of diags) {
+                            const d = raw as LspMessageParams | undefined;
+                            const msg = d?.['message'] ? String(d['message']).slice(0, 200) : '';
+                            const sev = d?.['severity'] ?? 0;
+                            if (msg) {
+                                logInfo('[LSP] 诊断详情: ' + uri + ' | severity=' + sev + ' | ' + msg);
+                            }
+                        }
+                    } catch (_) { }
                 }
                 this._queueDiagnostics(message.params?.uri || '', message.params || null);
                 return;
@@ -1550,7 +1783,7 @@ async function handleIdeLoginCallback(req: import('http').IncomingMessage, res: 
     if (!state || state !== ideLoginState) {
         logWarn('[登录] 状态校验失败:', { hasState: !!state, match: state === ideLoginState });
         sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginStateMismatch'));
-        broadcastIdeLoginError('状态校验失败');
+        broadcastIdeLoginError(t('main.loginStateMismatch'));
         clearIdeLoginServer();
         return;
     }
@@ -1564,7 +1797,7 @@ async function handleIdeLoginCallback(req: import('http').IncomingMessage, res: 
             service: service || ''
         });
         sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginBadParams'));
-        broadcastIdeLoginError('回调参数不完整');
+        broadcastIdeLoginError(t('main.loginBadParams'));
         clearIdeLoginServer();
         return;
     }
@@ -1578,7 +1811,7 @@ async function handleIdeLoginCallback(req: import('http').IncomingMessage, res: 
                 error: verifyResult?.error || (verifyResult as Error)?.message || ''
             });
             sendLoginHtml(res, t('main.loginFailedTitle'), verifyResult?.error || t('main.loginVerifyFailed'));
-            broadcastIdeLoginError(verifyResult?.error || '验证失败');
+            broadcastIdeLoginError(verifyResult?.error || t('main.loginVerifyFailed'));
             clearIdeLoginServer();
             return;
         }
@@ -1595,8 +1828,8 @@ async function handleIdeLoginCallback(req: import('http').IncomingMessage, res: 
                 hasVerifyLoginToken: !!verifyResult?.login_token,
                 hasVerifyToken: !!verifyResult?.token
             });
-            sendLoginHtml(res, t('main.loginFailedTitle'), '未获取到登录凭证。');
-            broadcastIdeLoginError('未获取到登录凭证');
+            sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginNoCredential'));
+            broadcastIdeLoginError(t('main.loginNoCredential'));
             clearIdeLoginServer();
             return;
         }
@@ -1615,13 +1848,13 @@ async function handleIdeLoginCallback(req: import('http').IncomingMessage, res: 
             sendHeartbeat('start', verifyResult.user?.username || '');
         } catch (_) { }
 
-        sendLoginHtml(res, t('main.loginSuccess'), '已完成登录。');
+        sendLoginHtml(res, t('main.loginSuccess'), t('main.loginCompleted'));
         broadcastIdeLoginState({ loggedIn: true, user: verifyResult.user, message: t('main.loginSuccess') });
         clearIdeLoginServer();
     } catch (err) {
         logError('[登录] 验证请求失败:', (err as Error)?.message || err);
-        sendLoginHtml(res, t('main.loginFailedTitle'), '验证请求失败。');
-        broadcastIdeLoginError('验证请求失败');
+        sendLoginHtml(res, t('main.loginFailedTitle'), t('main.loginVerifyRequestFailed'));
+        broadcastIdeLoginError(t('main.loginVerifyRequestFailed'));
         clearIdeLoginServer();
     }
 }
@@ -1641,7 +1874,7 @@ function startIdeLoginFlow() {
 
         (ideLoginServer as import('http').Server).on('error', (err: Error) => {
             logError('[登录] 本地回调服务失败:', err?.message || err);
-            broadcastIdeLoginError('本地回调服务启动失败');
+            broadcastIdeLoginError(t('main.loginServerStartFailed'));
             clearIdeLoginServer();
         });
 
@@ -1652,7 +1885,7 @@ function startIdeLoginFlow() {
                 const loginUrl = `${AUTH_BASE}${AUTH_LOGIN_PATH}?redirect=${encodeURIComponent(redirect)}&service=${encodeURIComponent(AUTH_SERVICE)}&state=${encodeURIComponent(state)}`;
                 await shell.openExternal(loginUrl);
                 ideLoginTimeout = setTimeout(() => {
-                    broadcastIdeLoginError('登录超时，请重试');
+                    broadcastIdeLoginError(t('main.loginTimeout'));
                     clearIdeLoginServer();
                 }, IDE_LOGIN_TIMEOUT_MS);
                 resolve({ ok: true });
@@ -2154,7 +2387,7 @@ const ALLOWED_REMOTE_API_PATHS = new Set([
 ]);
 
 function getDefaultSettings() {
-    let compilerArgs = '-std=c++14 -O2 -static';
+    let compilerArgs = '-std=c++14 -O2 -Wall';
     let cppTemplate = '';
     const compileAndRunShortcut = process.platform === 'darwin' ? 'Ctrl+F11' : 'F11';
 
@@ -2238,79 +2471,6 @@ function getDefaultSettings() {
     };
 }
 
-function getDefaultClangFormatStyle() {
-    return {
-        BasedOnStyle: 'LLVM',
-        IndentWidth: 4,
-        TabWidth: 4,
-        UseTab: 'Never',
-        ColumnLimit: 0,
-        BreakBeforeBraces: 'Attach',
-        AllowShortIfStatementsOnASingleLine: 'Never',
-        AllowShortFunctionsOnASingleLine: 'Empty',
-        IndentCaseLabels: false,
-        PointerAlignment: 'Left',
-        SpaceBeforeParens: 'ControlStatements',
-        SortIncludes: true,
-        AlignConsecutiveAssignments: false,
-        AlignConsecutiveDeclarations: false
-    };
-}
-
-function normalizeClangFormatStyle(raw: Partial<ClangFormatStyle> | null = null): ClangFormatStyle {
-    const defaults = getDefaultClangFormatStyle();
-    const normalized: ClangFormatStyle = { ...defaults };
-    if (!raw || typeof raw !== 'object') {
-        return normalized;
-    }
-
-    const toInt = (value: unknown, fallback: number) => {
-        const parsed = parseInt(String(value), 10);
-        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-    };
-    const toBool = (value: unknown, fallback: boolean) => {
-        if (typeof value === 'boolean') return value;
-        if (typeof value === 'string') {
-            const lowered = value.trim().toLowerCase();
-            if (['true', 'yes', 'on'].includes(lowered)) return true;
-            if (['false', 'no', 'off'].includes(lowered)) return false;
-        }
-        return fallback;
-    };
-    const toEnum = (value: unknown, allowed: string[], fallback: string) => {
-        const rawValue = String(value || '').trim();
-        if (!rawValue) return fallback;
-        const matched = allowed.find((item: string) => item.toLowerCase() === rawValue.toLowerCase());
-        return matched || fallback;
-    };
-
-    normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-    normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-    normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-    normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-    normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-    normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-    normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-    normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-    normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-    normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-    normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-    normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-    normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-    normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
-
-    if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-        const legacyStyle = String(raw.formatterIndentStyle || '').trim().toLowerCase();
-        if (legacyStyle === 'tabs') {
-            normalized.UseTab = 'Always';
-        } else if (legacyStyle === 'spaces') {
-            normalized.UseTab = 'Never';
-        }
-    }
-
-    return normalized;
-}
-
 function normalizeSettingsRuntimeShape(nextSettings: unknown) {
     if (!nextSettings || typeof nextSettings !== 'object') {
         return nextSettings;
@@ -2319,22 +2479,7 @@ function normalizeSettingsRuntimeShape(nextSettings: unknown) {
     const style = normalizeClangFormatStyle((settingsBag['clangFormatStyle'] || settingsBag['clangFormat'] || null) as Partial<ClangFormatStyle> | null);
     settingsBag.clangFormatStyle = style;
     if (typeof settingsBag.clangFormatRaw !== 'string' || !settingsBag.clangFormatRaw.trim()) {
-        settingsBag.clangFormatRaw = [
-            `BasedOnStyle: ${style.BasedOnStyle}`,
-            `IndentWidth: ${style.IndentWidth}`,
-            `TabWidth: ${style.TabWidth}`,
-            `UseTab: ${style.UseTab}`,
-            `ColumnLimit: ${style.ColumnLimit}`,
-            `BreakBeforeBraces: ${style.BreakBeforeBraces}`,
-            `AllowShortIfStatementsOnASingleLine: ${style.AllowShortIfStatementsOnASingleLine}`,
-            `AllowShortFunctionsOnASingleLine: ${style.AllowShortFunctionsOnASingleLine}`,
-            `IndentCaseLabels: ${style.IndentCaseLabels ? 'true' : 'false'}`,
-            `PointerAlignment: ${style.PointerAlignment}`,
-            `SpaceBeforeParens: ${style.SpaceBeforeParens}`,
-            `SortIncludes: ${style.SortIncludes ? 'true' : 'false'}`,
-            `AlignConsecutiveAssignments: ${style.AlignConsecutiveAssignments ? 'true' : 'false'}`,
-            `AlignConsecutiveDeclarations: ${style.AlignConsecutiveDeclarations ? 'true' : 'false'}`
-        ].join('\n');
+        settingsBag.clangFormatRaw = generateClangFormatText(style);
     }
     if (!settingsBag['formatterIndentStyle']) {
         settingsBag['formatterIndentStyle'] = style.UseTab === 'Always' ? 'tabs' : 'editor';
@@ -2941,6 +3086,25 @@ ipcMain.handle('get-build-info', () => {
         logger.logwarn('读取构建信息失败:', error);
     }
     return { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh (修改: qingyingge)' };
+});
+
+// 第三方许可正文只允许读白名单里的两个文件，参数不参与路径拼接
+const THIRD_PARTY_LICENSE_FILES = new Set([
+    'THIRD-PARTY-NOTICES.md',
+    'llvm-apache-2.0-with-llvm-exception.txt'
+]);
+
+ipcMain.handle('read-third-party-license', (_event: Electron.IpcMainInvokeEvent, name: unknown) => {
+    const fileName = String(name || '');
+    if (!THIRD_PARTY_LICENSE_FILES.has(fileName)) {
+        return null;
+    }
+    try {
+        return fs.readFileSync(path.join(__dirname, '..', 'third-party', 'licenses', fileName), 'utf8');
+    } catch (error) {
+        logger.logwarn('读取第三方许可文件失败:', error);
+        return null;
+    }
 });
 
 function requestSaveAllAndClose(context = '关闭窗口') {
@@ -3567,6 +3731,7 @@ interface SampleTestCaseInput {
     input: string;
     output: string;
     timeLimit?: number;
+    memoryLimit?: number;
 }
 
 interface SampleTesterPayloadInput {
@@ -3576,6 +3741,7 @@ interface SampleTesterPayloadInput {
     source?: unknown;
     url?: unknown;
     timeLimit?: unknown;
+    memoryLimit?: unknown;
     problemName?: unknown;
     tests?: SampleTestCaseInput[];
     samples?: SampleTestCaseInput[];
@@ -3622,11 +3788,37 @@ function normalizeCompetitiveCompanionPayload(data: SampleTesterPayloadInput | n
         timeLimitMs = data.timeLimit <= 50 ? Math.round(data.timeLimit * 1000) : Math.round(data.timeLimit);
     }
 
-    const samples = data.tests.map((t: SampleTestCaseInput, idx: number) => ({
-        id: idx + 1,
+    // 空间限制（MB）。Competitive Companion 约定单位为 MB（TaskBuilder.setMemoryLimit 已统一取整，
+    // 其 140+ 个 OJ parser 见到 KB/kB 都显式换算、见到 GB 都乘 1024），实测不会出现字节量级。
+    // 上限仅作兜底：超出视为脏数据丢弃（解析失败序列化成 null、显式 0、字节量级等），
+    // 由渲染端回退到样例测试器的全局默认内存限制，避免把离谱值写进样例文件。
+    let memoryLimitMb: number | undefined;
+    if (typeof data.memoryLimit === 'number' && Number.isFinite(data.memoryLimit)
+        && data.memoryLimit > 0 && data.memoryLimit <= 65536) {
+        memoryLimitMb = Math.round(data.memoryLimit * 100) / 100;
+    }
+
+    const rawSamples = data.tests.map((t: SampleTestCaseInput) => ({
         input: typeof t?.input === 'string' ? t.input : '',
         output: typeof t?.output === 'string' ? t.output : '',
-        timeLimit: timeLimitMs
+        timeLimit: timeLimitMs,
+        memoryLimit: memoryLimitMb
+    }));
+
+    // 过滤掉「见附件中的 zoo/zoo3.in」这类附件引用样例：
+    // 它们只是指向附件的占位文本，并没有真正的输入/输出，导入后无法运行。
+    const filteredSamples = rawSamples.filter((s) => !isPlaceholderCompanionSample(s.input, s.output));
+    const usableSamples = filteredSamples.length > 0 ? filteredSamples : rawSamples;
+    if (usableSamples.length !== rawSamples.length) {
+        try { logger.logInfo(`[CompetitiveCompanion] 已自动过滤 ${rawSamples.length - usableSamples.length} 个附件引用占位样例`); } catch (_) { }
+    }
+
+    const samples = usableSamples.map((s, idx: number) => ({
+        id: idx + 1,
+        input: s.input,
+        output: s.output,
+        timeLimit: s.timeLimit,
+        memoryLimit: s.memoryLimit
     }));
 
     const payload = {
@@ -3636,6 +3828,15 @@ function normalizeCompetitiveCompanionPayload(data: SampleTesterPayloadInput | n
     };
 
     return { ok: true, payload };
+}
+
+// 部分 OJ（如某些中文题库）会把样例写成「见附件中的 zoo/zoo3.in」，
+// Competitive Companion 会把这段说明当作样例内容抓取下来。这里识别这类附件引用占位样例。
+const PLACEHOLDER_SAMPLE_PATTERN = /(?:见|参见|参阅)\s*附\s*件|附\s*件\s*中|see\s+(?:the\s+)?attach|refer(?:s|red)?\s+to\s+(?:the\s+)?attach/i;
+
+function isPlaceholderCompanionSample(input: string, output: string) {
+    const text = `${input || ''}\n${output || ''}`;
+    return PLACEHOLDER_SAMPLE_PATTERN.test(text);
 }
 
 function createCompetitiveCompanionServer(port: number, tagLabel: string) {
@@ -3776,6 +3977,7 @@ function validateSampleTesterPayload(data: SampleTesterPayloadInput | null | und
         if (typeof s.output !== 'string') return { valid: false, message: 'output must be string', invalidField: 'output' };
         if (s.output.length > 1024 * 1024) return { valid: false, message: 'output is too large', invalidField: 'output' };
         if (s.timeLimit !== undefined && (!Number.isInteger(s.timeLimit) || s.timeLimit <= 0)) return { valid: false, message: 'timeLimit must be positive integer', invalidField: 'timeLimit' };
+        if (s.memoryLimit !== undefined && (!Number.isFinite(s.memoryLimit) || s.memoryLimit < 0)) return { valid: false, message: 'memoryLimit must be non-negative number', invalidField: 'memoryLimit' };
     }
     return { valid: true };
 }
@@ -3991,6 +4193,14 @@ function setupIPC() {
     ipcMain.handle('update-settings', async (event: Electron.IpcMainEvent, newSettings: unknown) => {
         try {
             const incomingSettings: Record<string, unknown> = { ...(newSettings || {}) };
+            logInfo('update-settings 收到键:', Object.keys(incomingSettings).join(','), '| 调用栈:', (new Error('update-settings-call-site')).stack);
+            const rejectedKeys = Object.keys(incomingSettings).filter((key) => !SETTINGS_WRITABLE_KEYS.includes(key));
+            if (rejectedKeys.length > 0) {
+                logInfo(`拒绝非法设置键: ${rejectedKeys.join(', ')}`);
+                for (const key of rejectedKeys) {
+                    delete incomingSettings[key];
+                }
+            }
             if (Object.prototype.hasOwnProperty.call(incomingSettings, 'runMode')) {
                 incomingSettings['runMode'] = normalizeRunModeForPlatform(incomingSettings['runMode']);
             }
@@ -3998,6 +4208,7 @@ function setupIPC() {
                 incomingSettings['compilerArgs'] = normalizeCompilerArgsForPlatform(incomingSettings['compilerArgs']);
             }
 
+            const prevLanguage = settings.language;
             settings = { ...settings, ...incomingSettings };
             
             if (mainWindow && !mainWindow.isDestroyed()) {
@@ -4011,8 +4222,10 @@ function setupIPC() {
             if (incomingSettings && Object.prototype.hasOwnProperty.call(incomingSettings, 'keybindings')) {
                 createMenuBar();
             }
+            // 语言是所有设置页保存时的公共字段，必须走这里广播，否则只写盘不生效
+            await applyLanguageChange(settings.language, prevLanguage);
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-applied', settings);
+                mainWindow.webContents.send('settings-applied', settings, Object.keys(incomingSettings));
             }
 
             return { success: true };
@@ -4148,7 +4361,7 @@ function setupIPC() {
             if (!executablePath) {
                 return {
                     ok: false,
-                    error: `clang-format not found. Searched: ${describeClangFormatSearchPaths()}. Reinstall the app, or place ${getClangFormatExecutableName()} into ${path.join(getUserClangdRoot(), 'bin')}.`
+                    error: `clang-format not found. Searched: ${describeClangFormatSearchPaths()}. Reinstall the app, or place ${getClangFormatExecutableName()} into ${getUserToolsRoot()}.`
                 };
             }
             // clang-format 每次格式化都要 spawn 一个新进程（Windows 上 30~150ms），
@@ -4265,18 +4478,9 @@ function setupIPC() {
     }
 
     ipcMain.handle('lsp-request', async (_event: Electron.IpcMainEvent, method: string, params: unknown, requestId: string) => {
-        logInfo('[LSP] 请求: ' + method);
+        // 生命周期/完成日志只在渲染端 lsp-client.js 记一套，主进程不再逐请求打印
         try {
-            const result = await clangdLspManager.request(method, params || {}, requestId) as LspInitializeResult | null | undefined;
-            if (method === 'initialize') {
-                const caps = result?.capabilities;
-                const version = result?.serverInfo?.version || '?';
-                logInfo('[LSP] 初始化完成, 服务器:', result?.serverInfo?.name || 'clangd', '版本:', version);
-                if (caps?.semanticTokensProvider) {
-                    const legend = caps.semanticTokensProvider.legend;
-                    logInfo('[LSP] 语义令牌支持: ' + (legend?.tokenTypes?.length || 0) + ' 种类型, ' + (legend?.tokenModifiers?.length || 0) + ' 种修饰符');
-                }
-            }
+            const result = await clangdLspManager.request(method, params || {}, requestId);
             return result;
         } catch (err) {
             // clangd 在文档被修改时会正常取消进行中的 semanticTokens 等请求（LSP -32800），
@@ -4555,48 +4759,40 @@ function setupIPC() {
         });
     });
 
-    ipcMain.on('debug-add-breakpoint', (event: Electron.IpcMainEvent, breakpoint: { file?: string; line?: number }) => {
+    // 断点走 invoke/handle：渲染层要拿到回执才能确认红点状态，
+    // send/on 的火后不顾无法区分「GDB 真的删了」和「消息根本没到」。
+    ipcMain.handle('debug-set-breakpoint', async (event: Electron.IpcMainEvent, breakpoint: { file?: string; line?: number }) => {
         logInfo('[主进程] 收到添加断点请求:', breakpoint);
-        addBreakpoint(breakpoint).then(result => {
-            logInfo('[主进程] 断点添加成功:', result);
-            event.reply('debug-output', { message: t('main.debugBreakpointSet', { file: breakpoint.file, line: breakpoint.line }), type: 'info' });
-            event.reply('debug-breakpoint-set', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: true
-            });
-        }).catch(error => {
+        try {
+            const result = await addBreakpoint(breakpoint);
+            if (event.sender) {
+                event.sender.send('debug-output', { message: t('main.debugBreakpointSet', { file: result.file, line: result.line }), type: 'info' });
+            }
+            return result;
+        } catch (error) {
             logError('[主进程] 断点添加失败:', error);
-            event.reply('debug-error', (error as Error)?.message);
-            event.reply('debug-breakpoint-set', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: false,
-                error: (error as Error)?.message
-            });
-        });
+            if (event.sender) {
+                event.sender.send('debug-error', (error as Error).message);
+            }
+            return { success: false, file: breakpoint?.file, line: breakpoint?.line, error: (error as Error).message };
+        }
     });
 
-    ipcMain.on('debug-remove-breakpoint', (event: Electron.IpcMainEvent, breakpoint: { file?: string; line?: number }) => {
+    ipcMain.handle('debug-remove-breakpoint', async (event: Electron.IpcMainEvent, breakpoint: { file?: string; line?: number }) => {
         logInfo('[主进程] 收到移除断点请求:', breakpoint);
-        removeBreakpoint(breakpoint).then(result => {
-            logInfo('[主进程] 断点移除成功:', result);
-            event.reply('debug-output', { message: t('main.debugBreakpointRemoved', { file: breakpoint.file, line: breakpoint.line }), type: 'info' });
-            event.reply('debug-breakpoint-removed', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: true
-            });
-        }).catch(error => {
+        try {
+            const result = await removeBreakpoint(breakpoint);
+            if (event.sender) {
+                event.sender.send('debug-output', { message: t('main.debugBreakpointRemoved', { file: result.file, line: result.line }), type: 'info' });
+            }
+            return result;
+        } catch (error) {
             logError('[主进程] 断点移除失败:', error);
-            event.reply('debug-error', (error as Error)?.message);
-            event.reply('debug-breakpoint-removed', {
-                file: breakpoint.file,
-                line: breakpoint.line,
-                success: false,
-                error: (error as Error)?.message
-            });
-        });
+            if (event.sender) {
+                event.sender.send('debug-error', (error as Error).message);
+            }
+            return { success: false, file: breakpoint?.file, line: breakpoint?.line, error: (error as Error).message };
+        }
     });
 
     ipcMain.on('debug-request-variables', (event: Electron.IpcMainEvent) => {
@@ -5282,7 +5478,7 @@ function setupIPC() {
 
     ipcMain.handle('walk-directory', async (event: Electron.IpcMainEvent, dirPath: string, options: WalkDirectoryOptions = {}) => {
         const {
-            includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py'],
+            includeExts = ['.cpp', '.c', '.h', '.hpp', '.cc', '.cxx', '.txt', '.md', '.json', '.in', '.out', '.ans', '.py', '.pdf'],
             excludeGlobs = ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode', '.dsym'],
             maxFiles = 5000
         } = (options || {}) as WalkDirectoryOptions;
@@ -5404,6 +5600,14 @@ function setupIPC() {
                 }
             }
             assertSafeIoPath(newPath);
+            // 重命名会把源文件搬离工作区，所以目标也必须留在工作区内。绝对路径分支
+            // 直接采用未校验的 newName，没有这道边界时渲染层可把文件搬到任意位置。
+            const renameTargetResolved = path.resolve(newPath);
+            if (!isPathInsideTempRoots(renameTargetResolved)
+                && !(currentExternalWorkspacePath && isPathInsideDir(renameTargetResolved, currentExternalWorkspacePath))) {
+                logWarn('[主进程] 拒绝重命名到工作区之外的路径:', renameTargetResolved);
+                throw new Error(t('error.outsideWorkspace'));
+            }
             fs.renameSync(oldPath, newPath);
             try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('file-renamed', oldPath, newPath, null); } catch (_) { }
             return { success: true, filePath: newPath };
@@ -5443,13 +5647,13 @@ function setupIPC() {
         }
     });
 
-    ipcMain.on('create-file', async (event: Electron.IpcMainEvent, filePath: string, content = '') => {
+    ipcMain.on('create-file', async (event: Electron.IpcMainEvent, filePath: string, content = '', requestId: string | null = null) => {
         try {
             // Validate the file name
             const fileName = path.basename(filePath);
             const validation = validateFileName(fileName);
             if (!validation.valid) {
-                event.reply('file-created', filePath, validation.error);
+                event.reply('file-created', filePath, validation.error, requestId);
                 logWarn('文件创建失败 - 非法名称:', fileName, '-', validation.error);
                 return;
             }
@@ -5467,11 +5671,11 @@ function setupIPC() {
 
             markLocalSave(filePath);
             fs.writeFileSync(filePath, content, 'utf8');
-            event.reply('file-created', filePath, null);
+            event.reply('file-created', filePath, null, requestId);
             logInfo('文件创建成功:', filePath);
         } catch (error) {
             logError('创建文件失败:', error);
-            event.reply('file-created', filePath, (error as Error)?.message);
+            event.reply('file-created', filePath, (error as Error)?.message, requestId);
         }
     });
 
@@ -5627,10 +5831,7 @@ function setupIPC() {
                     delete importedSettings.account;
                 }
 
-                const previousAccount = settings.account;
-                const defaultSettings = getDefaultSettings();
-                settings = mergeSettings(defaultSettings, importedSettings);
-                settings.account = previousAccount;
+                settings = mergeSettingsPreservingLocal(importedSettings);
 
                 saveSettings();
 
@@ -6009,7 +6210,7 @@ function setupIPC() {
 
                 const effectiveExitCode = outputLimitExceeded ? (code ?? -3) : code;
                 const measuredTime = useTimeouts ? Math.max(0, Math.min(executionTime, effectiveTimeLimit + 100)) : Math.max(0, executionTime);
-                const timedOut = outputLimitExceeded ? false : (useTimeouts ? timeout : false);
+                const timedOut = (outputLimitExceeded || memoryLimitExceeded) ? false : (useTimeouts ? timeout : false);
 
                 const result = {
                     output: finalOutput,
@@ -6076,6 +6277,11 @@ function setupIPC() {
                 resolve(errorResult);
             });
 
+            // 被测程序先退出时写 stdin 会触发 EPIPE，这条流没有 error 监听会冒泡成
+            // uncaughtException（run-interactive 的两个 stdin 同样处理）
+            childProcess.stdin.on('error', (stdinError: Error) => {
+                try { logWarn('[运行程序] 写入 stdin 失败:', stdinError?.message || stdinError); } catch (_) { }
+            });
             if (input !== undefined && input !== null && input !== '') {
                 childProcess.stdin.write(input);
             }
@@ -6571,10 +6777,12 @@ function setupIPC() {
                 return [];
             }
 
-            const versions = fs.readdirSync(compilersDir).filter((item: unknown ) => {
-                const itemPath = path.join(compilersDir, item);
-                return fs.statSync(itemPath).isDirectory();
-            });
+            // 与 get-downloaded-testlibs 保持一致：用 withFileTypes 而不是 statSync。单个坏条目
+            //（断开的链接、无权限目录）会让 statSync 抛错，外层 catch 把列表变成空数组，
+            // 用户以为编译器全没了
+            const versions = fs.readdirSync(compilersDir, { withFileTypes: true })
+                .filter((dirent: import('fs').Dirent) => dirent.isDirectory())
+                .map((dirent: import('fs').Dirent) => dirent.name);
 
             logInfo('[获取已下载编译器] 找到的版本:', versions);
             return versions;
@@ -6595,10 +6803,22 @@ function setupIPC() {
             return { success: false, error: '缺少必要的下载参数' };
         }
 
+        const versionNameCheck = validateFileName(version);
+        if (!versionNameCheck.valid) {
+            logError('[编译器下载] 版本名非法:', { version, error: versionNameCheck.error });
+            return { success: false, error: versionNameCheck.error };
+        }
+
         return new Promise(async (resolve) => {
             const userHome = os.homedir();
             const compilersDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers');
             const versionDir = path.join(compilersDir, version);
+
+            if (!isPathInsideDir(versionDir, compilersDir) || path.resolve(versionDir) === path.resolve(compilersDir)) {
+                logError('[编译器下载] 版本路径越界:', { version, versionDir });
+                resolve({ success: false, error: t('error.invalidPath') });
+                return;
+            }
 
             logInfo('[编译器下载] 目录路径:', { compilersDir, versionDir });
 
@@ -6617,6 +6837,7 @@ function setupIPC() {
             let downloadCompleted = false;
             let progressWindow: Electron.BrowserWindow | null = null;
             let downloader: { download(url: string, outputFile: string): Promise<void>; cancel(): void; } | null = null;
+            let tempFile = '';
 
             function updateProgress(message: string, percent: number | null = null, speed: string | null = null) {
                 try {
@@ -6784,6 +7005,15 @@ function setupIPC() {
                             if (downloader) {
                                 downloader.cancel();
                             }
+                            // 清理已下载的部分压缩包，避免残留在 Compilers 目录
+                            try {
+                                if (tempFile && fs.existsSync(tempFile)) {
+                                    fs.unlinkSync(tempFile);
+                                    logInfo('[编译器下载] 已清理部分下载文件:', tempFile);
+                                }
+                            } catch (cleanupError) {
+                                logWarn('[编译器下载] 清理部分下载文件失败:', (cleanupError as Error).message);
+                            }
                             resolve({ success: false, error: '用户取消下载' });
                             (progressWindow as Electron.BrowserWindow).destroy();
                             return;
@@ -6826,8 +7056,8 @@ function setupIPC() {
                     const urlParts = url.split('.');
                     fileExtension = (urlParts[urlParts.length - 1] as string).toLowerCase();
                 }
-                if (!fileExtension) throw new Error(t('error.unknownDownloadFileType'));
-                const tempFile = path.join(compilersDir, `${version}.${fileExtension}`);
+                if (!/^[a-z0-9]+$/.test(fileExtension)) throw new Error(t('error.unknownDownloadFileType'));
+                tempFile = path.join(compilersDir, `${version}.${fileExtension}`);
 
                 interface DownloadProgressData {
                     type?: string;
@@ -6909,7 +7139,7 @@ function setupIPC() {
                 };
 
                 if (backgroundDownload) {
-                    notifyUser('编译器下载完成', `${name} ${version} 已下载并安装完成。`, 'success');
+                    notifyUser(t('compiler.downloadCompleteTitle'), t('compiler.downloadSuccess', { name, version }), 'success');
                 }
 
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
@@ -6924,6 +7154,23 @@ function setupIPC() {
 
             } catch (error) {
                 downloadCompleted = true;
+
+                // 取消/下载失败/解压失败时清理残留：避免半残的 versionDir 被
+                // get-downloaded-compilers/list 当成已安装版本，避免部分下载的 zip
+                // 残留在 Compilers 目录。（本处理器只在 versionDir 不存在时才进入下载，
+                // 因此 catch 里的 versionDir 一定是本次尝试建立的、未完成的目录。）
+                try {
+                    if (tempFile && fs.existsSync(tempFile)) {
+                        fs.unlinkSync(tempFile);
+                        logInfo('[编译器下载] 已清理临时下载文件:', tempFile);
+                    }
+                    if (fs.existsSync(versionDir)) {
+                        fs.rmSync(versionDir, { recursive: true, force: true });
+                        logInfo('[编译器下载] 已清理未完成的版本目录:', versionDir);
+                    }
+                } catch (cleanupError) {
+                    logWarn('[编译器下载] 清理残留文件失败:', (cleanupError as Error).message);
+                }
 
                 const isCancelled = isDownloadCancelled(error);
                 const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: (error as Error)?.message });
@@ -7007,10 +7254,22 @@ function setupIPC() {
             return { success: false, error: '缺少必要的下载参数' };
         }
 
+        const versionNameCheck = validateFileName(version);
+        if (!versionNameCheck.valid) {
+            logError('[testlib下载] 版本名非法:', { version, error: versionNameCheck.error });
+            return { success: false, error: versionNameCheck.error };
+        }
+
         return new Promise(async (resolve) => {
             const userHome = os.homedir();
             const testlibsDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs');
             const versionDir = path.join(testlibsDir, version);
+
+            if (!isPathInsideDir(versionDir, testlibsDir) || path.resolve(versionDir) === path.resolve(testlibsDir)) {
+                logError('[testlib下载] 版本路径越界:', { version, versionDir });
+                resolve({ success: false, error: t('error.invalidPath') });
+                return;
+            }
 
             logInfo('[testlib下载] 目录路径:', { testlibsDir, versionDir });
 
@@ -7029,6 +7288,7 @@ function setupIPC() {
             let downloadCompleted = false;
             let progressWindow: Electron.BrowserWindow | null = null;
             let downloader: { download(url: string, outputFile: string): Promise<void>; cancel(): void; } | null = null;
+            let tempFile = '';
 
             function updateProgress(message: string, percent: number | null = null, speed: string | null = null) {
                 try {
@@ -7196,6 +7456,14 @@ function setupIPC() {
                             if (downloader) {
                                 downloader.cancel();
                             }
+                            try {
+                                if (tempFile && fs.existsSync(tempFile)) {
+                                    fs.unlinkSync(tempFile);
+                                    logInfo('[testlib下载] 已清理部分下载文件:', tempFile);
+                                }
+                            } catch (cleanupError) {
+                                logWarn('[testlib下载] 清理部分下载文件失败:', (cleanupError as Error).message);
+                            }
                             resolve({ success: false, error: '用户取消下载' });
                             (progressWindow as Electron.BrowserWindow).destroy();
                             return;
@@ -7238,8 +7506,8 @@ function setupIPC() {
                     const urlParts = url.split('.');
                     fileExtension = (urlParts[urlParts.length - 1] as string).toLowerCase();
                 }
-                if (!fileExtension) throw new Error(t('error.unknownDownloadFileType'));
-                const tempFile = path.join(testlibsDir, `${version}.${fileExtension}`);
+                if (!/^[a-z0-9]+$/.test(fileExtension)) throw new Error(t('error.unknownDownloadFileType'));
+                tempFile = path.join(testlibsDir, `${version}.${fileExtension}`);
 
                 interface DownloadProgressData {
                     type?: string;
@@ -7315,7 +7583,7 @@ function setupIPC() {
                 };
 
                 if (backgroundDownload) {
-                    notifyUser('testlib 下载完成', `${name} ${version} 已下载并安装完成。`, 'success');
+                    notifyUser(t('compiler.testlibDownloadCompleteTitle'), t('compiler.downloadSuccess', { name, version }), 'success');
                 }
 
                 if (!backgroundDownload && progressWindow && !progressWindow.isDestroyed()) {
@@ -7330,6 +7598,19 @@ function setupIPC() {
 
             } catch (error) {
                 downloadCompleted = true;
+
+                try {
+                    if (tempFile && fs.existsSync(tempFile)) {
+                        fs.unlinkSync(tempFile);
+                        logInfo('[testlib下载] 已清理临时下载文件:', tempFile);
+                    }
+                    if (fs.existsSync(versionDir)) {
+                        fs.rmSync(versionDir, { recursive: true, force: true });
+                        logInfo('[testlib下载] 已清理未完成的版本目录:', versionDir);
+                    }
+                } catch (cleanupError) {
+                    logWarn('[testlib下载] 清理残留文件失败:', (cleanupError as Error).message);
+                }
 
                 const isCancelled = isDownloadCancelled(error);
                 const errorMessage = isCancelled ? t('downloader.cancelled') : t('downloader.failed', { message: (error as Error)?.message });
@@ -7391,18 +7672,19 @@ function setupIPC() {
     });
 
     ipcMain.handle('test-compiler', async (event: Electron.IpcMainEvent, compilerPath: string) => {
+        let testDir: string | null = null;
+        let testCppFile: string | null = null;
+        let testExeFile: string | null = null;
         try {
             if (!compilerPath || !fs.existsSync(compilerPath)) {
                 return { success: false, message: t('main.compilerPathInvalid') };
             }
 
-            const testDir = path.join(os.tmpdir(), 'oicpp-test');
-            if (!fs.existsSync(testDir)) {
-                fs.mkdirSync(testDir, { recursive: true });
-            }
+            // 每次调用独立目录：固定共享路径会让并发的「测试」互相覆盖与互删
+            testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oicpp-test-'));
 
-            const testCppFile = path.join(testDir, 'test.cpp');
-            const testExeFile = path.join(testDir, 'test.exe');
+            testCppFile = path.join(testDir, 'test.cpp');
+            testExeFile = path.join(testDir, 'test.exe');
             const cppContent = '#include <iostream>\nint main() { std::cout << "oicpp-test-success"; return 0; }';
 
             fs.writeFileSync(testCppFile, cppContent, 'utf8');
@@ -7448,21 +7730,42 @@ function setupIPC() {
                     }
                 }
 
-                const proc = spawn(testExeFile, [], {
-                    env: testEnv,
-                    timeout: 10000  // 10秒超时
+                const proc = spawn(testExeFile!, [], {
+                    env: testEnv
                 });
                 let output = '';
                 let stderr = '';
+                let settled = false;
+
+                const finish = (result: unknown) => {
+                    if (settled) return;
+                    settled = true;
+                    clearTimeout(timeoutTimer);
+                    resolve(result);
+                };
+
+                // spawn 不支持 timeout 选项（只有 exec/spawnSync 认），超时必须自己兜底，
+                // 否则进程不退出时这个 invoke 永久挂起
+                const timeoutTimer = setTimeout(() => {
+                    try {
+                        proc.kill();
+                    } catch (killError) {
+                        logWarn('终止超时测试程序失败:', killError);
+                    }
+                    finish({
+                        success: false,
+                        message: t('main.testProgramTimeout')
+                    });
+                }, 10000);
 
                 proc.stdout.on('data', (data: Buffer) => output += data.toString());
                 proc.stderr.on('data', (data: Buffer) => stderr += data.toString());
 
                 proc.on('close', (code: number) => {
                     if (code === 0 && output.includes('oicpp-test-success')) {
-                        resolve({ success: true });
+                        finish({ success: true });
                     } else {
-                        resolve({
+                        finish({
                             success: false,
                             message: t('main.testProgramFailed', { code: code }),
                             details: stderr || output || '程序无输出'
@@ -7472,22 +7775,22 @@ function setupIPC() {
 
                 proc.on('error', (error: Error) => {
                     let errorMessage = `运行测试程序失败: ${(error as Error)?.message}`;
-                    resolve({ success: false, message: errorMessage });
+                    finish({ success: false, message: errorMessage });
                 });
             });
-
-            try {
-                fs.unlinkSync(testCppFile);
-                if (fs.existsSync(testExeFile)) {
-                    fs.unlinkSync(testExeFile);
-                }
-            } catch (cleanupError) {
-                logWarn('清理测试文件失败:', cleanupError);
-            }
 
             return runResult;
         } catch (error) {
             return { success: false, message: (error as Error)?.message };
+        } finally {
+            // 进程退出后再删，否则 Windows 上 exe 仍被占用
+            if (testDir) {
+                try {
+                    fs.rmSync(testDir, { recursive: true, force: true });
+                } catch (cleanupError) {
+                    logWarn('清理测试文件失败:', cleanupError);
+                }
+            }
         }
     });
 
@@ -7556,16 +7859,16 @@ function setupIPC() {
         });
         engine.on('stopped', (data: Record<string, unknown>) => {
             try { mainWindow?.webContents.send('compare-complete', { ...data, stopped: true }); } catch(_) {}
-            activeEngine = null;
+            if (activeEngine === engine) activeEngine = null;
         });
         engine.on('complete', (data: unknown) => {
             try { mainWindow?.webContents.send('compare-complete', data); } catch(_) {}
-            activeEngine = null;
+            if (activeEngine === engine) activeEngine = null;
         });
 
         engine.start(config).catch((err: Error) => {
             try { mainWindow?.webContents.send('compare-error', { testNumber: 0, type: 'engine', message: (err as Error)?.message }); } catch(_) {}
-            activeEngine = null;
+            if (activeEngine === engine) activeEngine = null;
         });
 
         return { started: true };
@@ -8183,6 +8486,95 @@ interface PendingUpdateInfo {
     installerArgs?: string[];
 }
 
+// 编译缓存按签名成对存放（<sig>.<ext> + <sig>.oicpp-cache），而签名里含源文件 mtime，
+// 每次保存都会产生新的一对文件。若不回收，compile-cache 目录会按编译次数无界增长。
+const COMPILE_CACHE_MAX_ENTRIES = 60;
+const COMPILE_CACHE_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
+const COMPILE_CACHE_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+let lastCompileCachePruneAt = 0;
+
+function pruneCompileCache(cacheDir: string | null) {
+    type CacheGroup = { hasPayload: boolean; hasMetadata: boolean; mtimeMs: number; bytes: number; files: string[] };
+    try {
+        const now = Date.now();
+        if (now - lastCompileCachePruneAt < COMPILE_CACHE_PRUNE_INTERVAL_MS) return;
+        lastCompileCachePruneAt = now;
+        if (!cacheDir || !fs.existsSync(cacheDir)) return;
+
+        // 按签名聚合：签名是 64 位 sha256 十六进制，产物为 <sig>.<ext>（.exe/.out 等），
+        // 元数据为 <sig>.oicpp-cache，成对存在才可能命中缓存
+        const grouped = new Map<string, CacheGroup>();
+        for (const entry of fs.readdirSync(cacheDir, { withFileTypes: true })) {
+            if (!entry.isFile()) continue;
+            const isMetadata = entry.name.endsWith('.oicpp-cache');
+            const dotIndex = entry.name.lastIndexOf('.');
+            if (dotIndex <= 0) continue;
+            const signature = entry.name.slice(0, dotIndex);
+            // 非签名命名的文件不归我们管，避免误删同目录下的其它东西
+            if (!/^[0-9a-f]{64}$/i.test(signature)) continue;
+            const filePath = path.join(cacheDir, entry.name);
+            let stats: import('fs').Stats | null = null;
+            try {
+                stats = fs.statSync(filePath);
+            } catch (statsError) {
+                continue;
+            }
+            let group = grouped.get(signature);
+            if (!group) {
+                group = { hasPayload: false, hasMetadata: false, mtimeMs: 0, bytes: 0, files: [] };
+                grouped.set(signature, group);
+            }
+            group.files.push(filePath);
+            group.bytes += (stats as import('fs').Stats).size;
+            group.mtimeMs = Math.max(group.mtimeMs, (stats as import('fs').Stats).mtimeMs);
+            if (isMetadata) group.hasMetadata = true;
+            else group.hasPayload = true;
+        }
+
+        const toRemove: CacheGroup[] = [];
+        // 只有一半的残缺条目永远无法命中缓存，直接清掉
+        for (const group of grouped.values()) {
+            if (!group.hasPayload || !group.hasMetadata) {
+                toRemove.push(group);
+            }
+        }
+        const complete = [...grouped.values()]
+            .filter((group) => group.hasPayload && group.hasMetadata)
+            .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+        // 从新到旧保留：条目数或容量任一触顶后，其余全部回收
+        let keptCount = 0;
+        let keptBytes = 0;
+        for (const group of complete) {
+            if (keptCount < COMPILE_CACHE_MAX_ENTRIES && keptBytes + group.bytes <= COMPILE_CACHE_MAX_TOTAL_BYTES) {
+                keptCount += 1;
+                keptBytes += group.bytes;
+                continue;
+            }
+            toRemove.push(group);
+        }
+
+        let removedBytes = 0;
+        let removedFiles = 0;
+        for (const group of toRemove) {
+            for (const filePath of group.files) {
+                try {
+                    fs.unlinkSync(filePath);
+                    removedFiles += 1;
+                    removedBytes += group.bytes;
+                } catch (unlinkError) {
+                    logWarn('[编译缓存] 删除缓存文件失败:', filePath, (unlinkError as Error)?.message || unlinkError);
+                }
+            }
+        }
+        if (removedFiles > 0) {
+            logInfo(`[编译缓存] 回收 ${removedFiles} 个文件，释放约 ${Math.round(removedBytes / 1024 / 1024)}MB`);
+        }
+    } catch (error) {
+        logWarn('[编译缓存] 回收旧缓存时出错:', (error as Error)?.message || error);
+    }
+}
+
 function promptLinuxManualInstall(pendingUpdate: unknown) {
     if (!pendingUpdate || !(pendingUpdate as PendingUpdateInfo).installerPath) return;
     const updateDesc = String((pendingUpdate as PendingUpdateInfo).description || '').replace(/\\n/g, '\n').trim();
@@ -8356,7 +8748,7 @@ function checkPendingUpdate() {
         if (fs.existsSync(pendingUpdate.installerPath)) {
             if (process.platform === 'win32') {
                 armPendingUpdateSilentInstallOnQuit('启动恢复待安装更新');
-                notifyUser('更新已准备就绪', `版本 ${pendingUpdate.version || ''} 将在退出 OICPP-Plus 时自动安装。`, 'info');
+                notifyUser(t('main.updateReadyTitle'), t('main.updateReadyMessage', { version: pendingUpdate.version || '' }), 'info');
             } else {
                 setTimeout(() => {
                     promptLinuxManualInstall(pendingUpdate);
@@ -8387,7 +8779,7 @@ function loadSettings() {
 
         if (fs.existsSync(settingsPath)) {
             const savedSettings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'lastOpen', 'recentFiles', 'fileHistory', 'lastOpenTabs', 'lastUpdateCheck', 'pendingUpdate', 'postInstallNotice', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'];
+            const validKeys = SETTINGS_KEYS;
             let needsSaveAfterMigration = false;
 
             for (const key of validKeys) {
@@ -8492,7 +8884,7 @@ function mergeSettings(defaultSettings: unknown, userSettings: unknown) {
     const result: Record<string, unknown> = JSON.parse(JSON.stringify(defaultSettings));
     const base = defaultSettings as Record<string, unknown>;
     const user = userSettings as Record<string, unknown>;
-    const validKeys = ['compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'markdownMode', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'];
+    const validKeys = SETTINGS_MERGE_KEYS;
 
     const isPlainObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v);
     const deepMerge = (target: Record<string, unknown>, source: Record<string, unknown>) => {
@@ -8521,6 +8913,23 @@ function mergeSettings(defaultSettings: unknown, userSettings: unknown) {
     return result as MainSettings;
 }
 
+// 只属于本机、不该被「导入设置 / 云端恢复」覆盖的键：它们不在 SETTINGS_MERGE_KEYS 里，
+// merge 后会回落成默认值。pendingUpdate 尤其关键——已下载待静默安装的更新会被永久遗忘。
+const LOCAL_ONLY_SETTINGS_KEYS = ['pendingUpdate', 'postInstallNotice', 'lastOpen', 'recentFiles', 'lastUpdateCheck'];
+
+function mergeSettingsPreservingLocal(importedSettings: unknown) {
+    const previous = settings;
+    const merged = mergeSettings(getDefaultSettings(), importedSettings);
+    // 登录凭据只属于当前设备（导入文件/云备份里的 account 一律忽略）
+    merged.account = previous?.account || null;
+    for (const key of LOCAL_ONLY_SETTINGS_KEYS) {
+        if (previous && (previous as Record<string, unknown>)[key] !== undefined) {
+            (merged as Record<string, unknown>)[key] = (previous as Record<string, unknown>)[key];
+        }
+    }
+    return merged;
+}
+
 function saveSettings() {
     try {
         const settingsPath = getSettingsPath();
@@ -8530,7 +8939,7 @@ function saveSettings() {
     }
 }
 
-function updateSettings(settingsType: string | null, newSettings: unknown) {
+async function updateSettings(settingsType: string | null, newSettings: unknown) {
     try {
         // newSettings 是渲染进程传过来的 unknown，可以整参不传或传 null。
         // null 时下面那个 for...in 只是空转，但再往下 hasOwnProperty.call(patch, 'keybindings')
@@ -8540,13 +8949,8 @@ function updateSettings(settingsType: string | null, newSettings: unknown) {
             ? newSettings as Record<string, unknown>
             : {};
 
-        const validKeys = [
-            'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme',
-            'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'fontLigaturesEnabled', 'cppTemplate', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'autoSave', 'autoSaveInterval',
-            'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'markdownMode', 'keybindings',
-            'fileHistory', 'lastOpenTabs', 'autoOpenLastWorkspace', 'language', 'autoBackupSettings', 'receiveBetaUpdates',
-            'runAllSamples'
-        ];
+        const validKeys = SETTINGS_WRITABLE_KEYS;
+        const prevLanguage = settings.language;
 
         for (const key in patch) {
             if (validKeys.includes(key)) {
@@ -8572,12 +8976,7 @@ function updateSettings(settingsType: string | null, newSettings: unknown) {
             createMenuBar();
         }
 
-        if (typeof patch['language'] === 'string') {
-            setLanguage(patch['language']);
-            createMenuBar();
-        }
-
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('settings-changed', null, settings);
         }
 
@@ -8585,33 +8984,23 @@ function updateSettings(settingsType: string | null, newSettings: unknown) {
             if (mainWindow && !mainWindow.isDestroyed()) {
                 mainWindow.setBackgroundColor(getThemeBackgroundColor(String(patch['theme'])));
             }
-            if (compilerSettingsWindow) {
+            if (compilerSettingsWindow && !compilerSettingsWindow.isDestroyed()) {
                 compilerSettingsWindow.webContents.send('theme-changed', patch['theme']);
             }
-            if (editorSettingsWindow) {
+            if (editorSettingsWindow && !editorSettingsWindow.isDestroyed()) {
                 editorSettingsWindow.webContents.send('theme-changed', patch['theme']);
             }
-            if (codeTemplatesWindow) {
+            if (codeTemplatesWindow && !codeTemplatesWindow.isDestroyed()) {
                 codeTemplatesWindow.webContents.send('theme-changed', patch['theme']);
             }
-            if (backupSettingsWindow) {
+            if (backupSettingsWindow && !backupSettingsWindow.isDestroyed()) {
                 backupSettingsWindow.webContents.send('theme-changed', patch['theme']);
             }
         }
 
-        if (patch['language']) {
-            if (editorSettingsWindow) {
-                editorSettingsWindow.webContents.send('language-changed', patch['language']);
-            }
-            if (compilerSettingsWindow) {
-                compilerSettingsWindow.webContents.send('language-changed', patch['language']);
-            }
-            if (codeTemplatesWindow) {
-                codeTemplatesWindow.webContents.send('language-changed', patch['language']);
-            }
-            if (backupSettingsWindow) {
-                backupSettingsWindow.webContents.send('language-changed', patch['language']);
-            }
+        const newLanguage = patch['language'];
+        if (typeof newLanguage === 'string') {
+            await applyLanguageChange(newLanguage, prevLanguage);
         }
 
         logInfo('设置已更新:', settings);
@@ -8632,10 +9021,49 @@ function getResettableSettingsKeys() {
     ];
 }
 
-function resetSettings(settingsType: string | null = null) {
+/**
+ * 切换应用语言：更新 i18next 实例、重建菜单栏，并把变更广播给主窗口与所有
+ * 设置子窗口。
+ *
+ * 所有设置页（编辑器 / 编译器 / 模板 / 备份）保存时走的都是 `update-settings`
+ * handler；若那里只写 settings.json 而不调用本函数，语言就只在「下次打开
+ * 窗口」时才生效，主窗口、设置窗口和菜单栏都不会变。
+ *
+ * @param langCode 新语言代码
+ * @param prevLang 切换前的语言代码；相同则不重复广播
+ */
+async function applyLanguageChange(langCode: string, prevLang: string) {
+    if (!langCode || langCode === prevLang) return;
+    // 整体兜底：本函数可能被同步调用方（importSettings）以 fire-and-forget
+    // 方式调用，绝不能抛出未处理的 Promise rejection
+    try {
+        // lang/index.js 的 setLanguage 返回 i18next.changeLanguage 的 Promise，
+        // 必须 await：否则紧随其后的 createMenuBar() 会用旧语言重建菜单。
+        await setLanguage(langCode);
+        createMenuBar();
+        const targets = [
+            mainWindow,
+            editorSettingsWindow,
+            compilerSettingsWindow,
+            codeTemplatesWindow,
+            backupSettingsWindow
+        ];
+        for (const win of targets) {
+            if (win && !win.isDestroyed()) {
+                win.webContents.send('language-changed', langCode);
+            }
+        }
+        logInfo('语言已切换:', prevLang, '->', langCode);
+    } catch (error) {
+        logError('切换语言失败:', error);
+    }
+}
+
+async function resetSettings(settingsType: string | null = null) {
     try {
         const defaultSettings = getDefaultSettings() as Record<string, unknown>;
         const resettableKeys = getResettableSettingsKeys();
+        const prevLanguage = settings.language;
 
         for (const key of resettableKeys) {
             if (Object.prototype.hasOwnProperty.call(defaultSettings, key)) {
@@ -8647,10 +9075,13 @@ function resetSettings(settingsType: string | null = null) {
 
         saveSettings();
 
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
 
             mainWindow.webContents.send('settings-reset', settings);
         }
+
+        // 'language' 在可重置键里，重置会改回默认语言，必须同步广播
+        await applyLanguageChange(settings.language, prevLanguage);
 
         logInfo('所有设置已重置为默认值');
         return { success: true, settings };
@@ -8689,6 +9120,7 @@ function importSettings(filePath: string) {
             throw new Error(t('error.invalidSettingsFormat'));
         }
 
+        const prevLanguage = settings.language;
         const validKeys = ['compilerPath', 'compilerArgs', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'fontLigaturesEnabled', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'autoSave', 'autoSaveInterval', 'language', 'autoBackupSettings', 'receiveBetaUpdates', 'cppTemplate', 'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'keybindings', 'runAllSamples'];
         const defaultSettings = getDefaultSettings() as Record<string, unknown>;
         const imported = importData.settings;
@@ -8705,9 +9137,12 @@ function importSettings(filePath: string) {
 
         saveSettings();
 
-        if (mainWindow) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('settings-imported', settings);
         }
+
+        // 导入文件里带 language 时必须同步广播，否则界面停留在旧语言
+        applyLanguageChange(settings.language, prevLanguage);
 
         logInfo('设置已导入自:', filePath);
         return { success: true, settings: settings };
@@ -10556,11 +10991,8 @@ async function syncSettingsFromCloud() {
     const prevSuppress = suppressAutoBackup;
     suppressAutoBackup = true;
     try {
-        const defaults = getDefaultSettings();
-        const currentAccount = settings?.account || null;
-        settings = mergeSettings(defaults, parsed);
-        // 云端备份可能没有 account，或包含其他设备的旧凭据；始终保留本机登录态。
-        settings.account = currentAccount;
+        const prevLanguage = settings.language;
+        settings = mergeSettingsPreservingLocal(parsed);
         normalizeSettingsRuntimeShape(settings);
         saveSettings();
         if (mainWindow && !mainWindow.isDestroyed() && typeof settings.windowOpacity === 'number') {
@@ -10570,6 +11002,7 @@ async function syncSettingsFromCloud() {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('settings-applied', settings);
         }
+        await applyLanguageChange(settings.language, prevLanguage);
     } finally {
         suppressAutoBackup = prevSuppress;
     }
@@ -11015,18 +11448,12 @@ ipcMain.handle('clipboard-read-text', async (event: Electron.IpcMainEvent) => {
     }
 });
 
-// 渲染进程可写设置键白名单（与 updateSettings 的 validKeys 保持一致），防止任意键写入（如 account/compilerPath 注入）
-const SETTINGS_WRITABLE_KEYS = new Set([
-    'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath', 'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled', 'lineHeight', 'theme',
-    'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor', 'syntaxColors', 'enableAutoCompletion', 'foldingEnabled', 'stickyScrollEnabled', 'fontLigaturesEnabled', 'cppTemplate', 'tabSize', 'formatterIndentStyle', 'clangFormatStyle', 'clangFormatRaw', 'autoSave', 'autoSaveInterval',
-    'codeSnippets', 'windowOpacity', 'glassEffectEnabled', 'backgroundImage', 'markdownMode', 'keybindings',
-    'fileHistory', 'lastOpenTabs', 'autoOpenLastWorkspace', 'language', 'autoBackupSettings', 'receiveBetaUpdates',
-    'runAllSamples'
-]);
+// 渲染进程可写设置键白名单（唯一来源 ./utils/settings-schema），防止任意键写入（如 account/compilerPath 注入）
+const SETTINGS_WRITABLE_KEYS_SET = new Set(SETTINGS_WRITABLE_KEYS);
 
 ipcMain.handle('save-setting', async (event: Electron.IpcMainEvent, key: string, value: unknown) => {
     try {
-        if (typeof key !== 'string' || !SETTINGS_WRITABLE_KEYS.has(key)) {
+        if (typeof key !== 'string' || !SETTINGS_WRITABLE_KEYS_SET.has(key)) {
             logInfo(`拒绝保存无效设置键: ${String(key)}`);
             return { success: false, error: 'invalid setting key' };
         }
@@ -11477,15 +11904,14 @@ async function startDebugSession(filePath: string, options: DebugSessionOptions 
             logInfo('[主进程] 设置断点:', options.breakpoints);
             for (const breakpoint of options.breakpoints) {
                 try {
-                    if (typeof breakpoint === 'object' && breakpoint.line) {
-                        await gdbDebugger.setBreakpoint(filePath, breakpoint.line);
-                        logInfo(`[主进程] 断点设置成功: ${filePath}:${breakpoint.line}`);
-                        hasBreakpoints = true;
-                    } else if (typeof breakpoint === 'number') {
-                        await gdbDebugger.setBreakpoint(filePath, breakpoint);
-                        logInfo(`[主进程] 断点设置成功: ${filePath}:${breakpoint}`);
-                        hasBreakpoints = true;
-                    }
+                    // 走 addBreakpoint 同一套记账，否则启动时设的断点不进 breakpoints Map，
+                    // 调试中途取消它们会走到「未找到断点」分支。
+                    const target = (typeof breakpoint === 'object' && breakpoint)
+                        ? { file: breakpoint.file || filePath, line: breakpoint.line }
+                        : { file: filePath, line: breakpoint };
+                    if (!target.line) continue;
+                    await addBreakpoint(target);
+                    hasBreakpoints = true;
                 } catch (error) {
                     logWarn('[主进程] 设置断点失败:', (error as Error)?.message);
                 }
@@ -11635,6 +12061,7 @@ async function stopDebugSession() {
         debugSessionRootDir = null;
         lastDebugCommand = null;
         autoSkipInternalCounter = 0;
+        breakpoints.clear();
         broadcastPendingWatchSnapshot();
 
         logInfo('调试会话已停止');
@@ -11648,6 +12075,7 @@ async function stopDebugSession() {
         debugSessionRootDir = null;
         lastDebugCommand = null;
         autoSkipInternalCounter = 0;
+        breakpoints.clear();
         throw error;
     }
 }
@@ -11869,6 +12297,7 @@ function setupDebuggerEvents() {
         debugSessionRootDir = null;
         lastDebugCommand = null;
         autoSkipInternalCounter = 0;
+        breakpoints.clear();
         try {
             if (gdbDebugger && typeof gdbDebugger.getVariables === 'function') {
                 const vars = gdbDebugger.getVariables() || {};
@@ -12036,6 +12465,20 @@ async function sendDebugInput(input: string) {
     }
 }
 
+// 断点身份判定：GDB 侧 file 经 _normalizePath 处理过，与渲染层传来的原始路径
+// 在分隔符/大小写/8.3 短名上常不一致，所以一律走 samePath 而不是字符串相等。
+// 行号允许 ±1：-break-insert 可能把断点吸附到最近的真实语句。
+function findBreakpointEntry(file: string, line: number) {
+    const target = Number(line);
+    for (const [key, entry] of breakpoints) {
+        if (!samePath(entry.file, file)) continue;
+        if (entry.line === target || Math.abs(entry.line - target) <= 1) {
+            return { key, entry };
+        }
+    }
+    return null;
+}
+
 async function addBreakpoint(breakpoint: { file?: string; line?: number }) {
     logInfo('[主进程] 添加断点:', breakpoint);
 
@@ -12048,17 +12491,21 @@ async function addBreakpoint(breakpoint: { file?: string; line?: number }) {
             throw new Error(t('error.breakpointArgsIncomplete'));
         }
 
-        await gdbDebugger.setBreakpoint(breakpoint.file, breakpoint.line);
+        // GDB 返回的 bp 带权威 number/file/line（file 已 normalize）。
+        // 丢掉它就得在删除时靠 file+line 反查，那正是匹配失败的老路。
+        const bp = await gdbDebugger.setBreakpoint(breakpoint.file, breakpoint.line);
 
-        const breakpointKey = `${breakpoint.file}:${breakpoint.line}`;
+        const breakpointKey = `${bp.file}:${bp.line}`;
         breakpoints.set(breakpointKey, {
-            file: breakpoint.file,
-            line: breakpoint.line,
-            enabled: true
+            file: bp.file,
+            line: bp.line,
+            enabled: true,
+            number: bp.number,
+            pending: !!bp.pending
         });
 
-        logInfo('[主进程] 断点添加成功:', breakpointKey);
-        return { success: true, file: breakpoint.file, line: breakpoint.line };
+        logInfo('[主进程] 断点添加成功:', breakpointKey, '#' + bp.number);
+        return { success: true, file: bp.file, line: bp.line, number: bp.number, pending: !!bp.pending };
 
     } catch (error) {
         logError('[主进程] 添加断点失败:', error);
@@ -12078,29 +12525,35 @@ async function removeBreakpoint(breakpoint: { file?: string; line?: number }) {
             throw new Error(t('error.breakpointArgsIncomplete'));
         }
 
-        const breakpointKey = `${breakpoint.file}:${breakpoint.line}`;
-
-        const gdbBreakpoints = gdbDebugger.getBreakpoints();
-        let breakpointNumber = null;
-
-        for (const bp of gdbBreakpoints) {
-            if (bp.file === breakpoint.file && bp.line === breakpoint.line) {
-                breakpointNumber = bp.number;
-                break;
-            }
+        const found = findBreakpointEntry(breakpoint.file, breakpoint.line);
+        if (!found) {
+            // 找不到就不删 Map、不报 success：上一版在这里静默返回 true，
+            // 渲染层据此认为取消成功，GDB 端断点其实还在。
+            throw new Error(t('error.breakpointNotFound', {
+                file: breakpoint.file,
+                line: breakpoint.line
+            }));
         }
 
-        if (breakpointNumber) {
-            await gdbDebugger.removeBreakpoint(breakpointNumber);
-            logInfo(`[主进程] 移除断点 #${breakpointNumber}: ${breakpointKey}`);
-        } else {
-            logWarn(`[主进程] 未找到断点: ${breakpointKey}`);
+        const { key, entry } = found;
+        let breakpointNumber = entry.number;
+        if (!breakpointNumber) {
+            const fallback = gdbDebugger.getBreakpoints().find(bp => samePath(bp.file, entry.file) && bp.line === entry.line);
+            breakpointNumber = fallback ? fallback.number : null;
         }
 
-        breakpoints.delete(breakpointKey);
+        if (!breakpointNumber) {
+            throw new Error(t('error.breakpointNotFound', {
+                file: entry.file,
+                line: entry.line
+            }));
+        }
 
-        logInfo('[主进程] 断点移除成功:', breakpointKey);
-        return { success: true, file: breakpoint.file, line: breakpoint.line };
+        await gdbDebugger.removeBreakpoint(breakpointNumber);
+        breakpoints.delete(key);
+
+        logInfo(`[主进程] 移除断点 #${breakpointNumber}: ${key}`);
+        return { success: true, file: entry.file, line: entry.line, number: breakpointNumber };
 
     } catch (error) {
         logError('[主进程] 移除断点失败:', error);

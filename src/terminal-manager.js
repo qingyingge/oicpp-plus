@@ -600,7 +600,7 @@ class IntegratedTerminalManager {
                     });
                 }
                 catch (fallbackError) {
-                    fallbackErrors.push(`${fallbackShell} -> ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+                    fallbackErrors.push(`${fallbackShell} -> ${fallbackError?.message || String(fallbackError)}`);
                 }
             }
             const errorDetail = fallbackErrors.join(' || ') || (0, lang_1.t)('terminal.unknownError');
@@ -660,7 +660,7 @@ class IntegratedTerminalManager {
                     });
                 }
                 catch (fallbackError) {
-                    fallbackErrors.push(`${candidateShell} -> ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+                    fallbackErrors.push(`${candidateShell} -> ${fallbackError?.message || String(fallbackError)}`);
                 }
             }
             const detail = lastSpawnError
@@ -785,7 +785,7 @@ class IntegratedTerminalManager {
             return false;
         }
         try {
-            session.pty.kill();
+            (0, process_supervisor_1.terminateProcessTree)(session.pty);
         }
         catch (_) { }
         this.sessions.delete(terminalId);

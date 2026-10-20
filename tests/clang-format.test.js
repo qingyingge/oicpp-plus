@@ -1110,7 +1110,8 @@ function makeModel(lines, state = {}) {
     const CACHE_LIMIT = Number((mainSource.match(/^const CLANG_FORMAT_RESULT_CACHE_LIMIT\s*=\s*(\d+)/m) || [])[1]);
 
     const RESOLVER_NAMES = [
-        'getClangdPlatformKey', 'getUserClangdRoot', 'getClangFormatExecutableName',
+        'getClangdPlatformKey', 'getUserToolsRoot', 'getClangFormatExecutableName',
+        'migrateLegacyUserTools',
         'resolveClangFormatRootFromBundle', 'resolveClangFormatExecutable',
         'findClangFormatExecutableOnPath', 'describeClangFormatSearchPaths',
         'resolveClangFormatExecutablePath', 'cacheClangFormatResult'
@@ -1129,10 +1130,12 @@ function makeModel(lines, state = {}) {
             pathThrows = []
         } = opts;
         const fsCalls = { exists: [], stat: [] };
-        const existsSet = new Set(exists);
-        const fileSet = new Set(pathFiles);
-        const dirSet = new Set(pathDirs);
-        const throwSet = new Set(pathThrows);
+        // 场景清单可能是 posix 字面量，而 win32 上 path.join 产出反斜杠 —— 两侧都折叠分隔符再比对
+        const norm = (p) => String(p).split(String.fromCharCode(92)).join('/');
+        const existsSet = new Set(exists.map(norm));
+        const fileSet = new Set(pathFiles.map(norm));
+        const dirSet = new Set(pathDirs.map(norm));
+        const throwSet = new Set(pathThrows.map(norm));
         const logErrors = [];
         const ctx = vm.createContext({
             __fns: {},
@@ -1147,12 +1150,15 @@ function makeModel(lines, state = {}) {
             clangFormatResultCache: new Map(),
             logError: (...a) => { logErrors.push(a.map(String)); },
             fs: {
-                existsSync: (candidate) => { fsCalls.exists.push(candidate); return existsSet.has(candidate); },
+                // exists/stat 的清单是正斜杠字面量；win32 上 path.join 会产出反斜杠，
+                // 统一折叠分隔符后再比对（否则同一目录在两套写法下各查各的，Linux 绿 Windows 红）。
+                existsSync: (candidate) => { fsCalls.exists.push(candidate); return existsSet.has(String(candidate).replace(/\\/g, '/')); },
                 statSync: (candidate) => {
                     fsCalls.stat.push(candidate);
-                    if (throwSet.has(candidate)) throw new Error(`ENOENT: no such file, '${candidate}'`);
-                    if (dirSet.has(candidate)) return { isFile: () => false };
-                    if (fileSet.has(candidate)) return { isFile: () => true };
+                    const norm = String(candidate).replace(/\\/g, '/');
+                    if (throwSet.has(norm)) throw new Error(`ENOENT: no such file, '${candidate}'`);
+                    if (dirSet.has(norm)) return { isFile: () => false };
+                    if (fileSet.has(norm)) return { isFile: () => true };
                     throw new Error(`ENOENT: no such file, '${candidate}'`);
                 }
             }
@@ -1190,8 +1196,8 @@ function makeModel(lines, state = {}) {
     }
 
     const HOME = '/home/tester';
-    const userRoot = () => path.join(HOME, USER_DATA_DIR_NAME, 'LSP');
-    const userExe = (exe = 'clang-format') => path.join(userRoot(), 'bin', exe);
+    const userRoot = () => path.join(HOME, USER_DATA_DIR_NAME, 'bin');
+    const userExe = (exe = 'clang-format') => path.join(userRoot(), exe);
     const devRoot = (key = 'linux') => path.join('/app/src', '..', 'build', 'clang-format', key);
     const devExe = (exe = 'clang-format') => path.join(devRoot(), 'bin', exe);
     const pkgExe = (exe = 'clang-format') => path.join('/pkg/resources', 'clang-format', 'bin', exe);
@@ -1230,7 +1236,7 @@ function makeModel(lines, state = {}) {
 
         {
             const order = makeMainFormatSandbox({ exists: [userRoot(), userExe()] });
-            check('包内目录缺失时回退到用户 LSP 目录（与 clangd 同级）',
+            check('包内目录缺失时回退到用户工具目录（扁平 bin）',
                 order.fns.resolveClangFormatExecutablePath() === userExe(),
                 String(order.fns.resolveClangFormatExecutablePath()));
             const both = makeMainFormatSandbox({
@@ -1246,16 +1252,16 @@ function makeModel(lines, state = {}) {
                 pathFiles: ['/usr/bin/clang-format']
             });
             check('两处都没有时退到 PATH，逐条试到命中为止',
-                onPath.fns.resolveClangFormatExecutablePath() === '/usr/bin/clang-format' &&
+                onPath.fns.resolveClangFormatExecutablePath() === path.join('/usr/bin', 'clang-format') &&
                 JSON.stringify(onPath.fsCalls.stat) ===
-                    JSON.stringify(['/opt/llvm/bin/clang-format', '/usr/bin/clang-format']),
+                    JSON.stringify(['/opt/llvm/bin', '/usr/bin'].map((d) => path.join(d, 'clang-format'))),
                 JSON.stringify(onPath.fsCalls.stat));
             const quoted = makeMainFormatSandbox({
                 env: { PATH: `"${path.sep}opt${path.sep}my dir"${path.delimiter}/usr/bin` },
                 pathFiles: [`/opt/my dir${path.sep}clang-format`]
             });
             check('PATH 里带引号/空格的条目能正确还原',
-                quoted.fns.resolveClangFormatExecutablePath() === `/opt/my dir${path.sep}clang-format`,
+                quoted.fns.resolveClangFormatExecutablePath() === path.join('/opt/my dir', 'clang-format'),
                 String(quoted.fns.resolveClangFormatExecutablePath()));
             const dirEntry = makeMainFormatSandbox({
                 env: { PATH: ['/first', '/second'].join(path.delimiter) },
@@ -1263,7 +1269,7 @@ function makeModel(lines, state = {}) {
                 pathFiles: ['/second/clang-format']
             });
             check('PATH 命中的是个目录时继续往下找（不当成可执行文件返回）',
-                dirEntry.fns.resolveClangFormatExecutablePath() === '/second/clang-format' &&
+                dirEntry.fns.resolveClangFormatExecutablePath() === path.join('/second', 'clang-format') &&
                 dirEntry.fsCalls.stat.length === 2,
                 JSON.stringify(dirEntry.fsCalls.stat));
             const broken = makeMainFormatSandbox({
@@ -1272,7 +1278,7 @@ function makeModel(lines, state = {}) {
                 pathFiles: ['/second/clang-format']
             });
             check('PATH 条目 stat 抛错被吞掉、空条目不产出候选',
-                broken.fns.resolveClangFormatExecutablePath() === '/second/clang-format' &&
+                broken.fns.resolveClangFormatExecutablePath() === path.join('/second', 'clang-format') &&
                 broken.fsCalls.stat.length === 2,
                 JSON.stringify(broken.fsCalls.stat));
             const none = makeMainFormatSandbox({ env: { PATH: '/usr/bin' } });

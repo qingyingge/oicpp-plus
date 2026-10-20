@@ -92,15 +92,7 @@ class DebugPanel {
         this.bound = true;
         const $ = (id) => this.root && this.root.querySelector(id);
         const send = (ch, ...args) => this._ipcSend(ch, ...args);
-        $('#dbg-start')?.addEventListener('click', () => {
-            // 旧写法是 (a?.() || b?.())：startDebug 返回 void，|| 右侧永为真值分支，
-            // 两条路径都会被调用一次；改成显式的优先级回退。
-            if (window.oicppApp?.startDebug) {
-                window.oicppApp.startDebug();
-                return;
-            }
-            window.app?.startDebug?.();
-        });
+        $('#dbg-start')?.addEventListener('click', () => window.oicppApp?.startDebug?.());
         $('#dbg-continue')?.addEventListener('click', () => send('debug-continue'));
         $('#dbg-step-over')?.addEventListener('click', () => send('debug-step-over'));
         $('#dbg-step-into')?.addEventListener('click', () => send('debug-step-into'));

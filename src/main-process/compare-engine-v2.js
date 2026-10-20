@@ -43,6 +43,13 @@ const events_1 = require("events");
 const worker_threads_1 = require("worker_threads");
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
+// 时限为 0（不限时）时给每个测试点留的兜底预算：三个程序各跑这么久还没结束，
+// 基本就是死循环，而不是用户真的想让它跑这么久
+const UNLIMITED_TEST_BUDGET_MS = 60 * 1000;
+// 整轮墙钟预算之外的固定余量（进程启动、生成器、写盘等）
+const WATCHDOG_SLACK_MS = 30 * 1000;
+// 不限时且测试点很多时预算会线性膨胀，用硬上限兜住，避免看门狗形同虚设
+const WATCHDOG_HARD_CAP_MS = 6 * 60 * 60 * 1000;
 class CompareEngineV2 extends events_1.EventEmitter {
     // 轮次序号：start() 用 ++CompareEngineV2._runCounter 分配本轮 _runId，
     // 配合 isCurrentRun() 把上一轮 worker 的迟到消息挡在门外。
@@ -76,6 +83,7 @@ class CompareEngineV2 extends events_1.EventEmitter {
         this._runId = ++CompareEngineV2._runCounter;
         const runId = this._runId;
         const isCurrentRun = () => this._runId === runId;
+        let watchdog = null;
         try {
             const totalTests = Number(config.totalTests);
             if (!Number.isInteger(totalTests) || totalTests <= 0 || totalTests > 100000) {
@@ -109,6 +117,35 @@ class CompareEngineV2 extends events_1.EventEmitter {
                 throw new Error('Missing executable paths: gen=' + genDesc + ' std=' + stdPath + ' test=' + testPath);
             }
             const donePromises = [];
+            const settleFns = [];
+            // 看门狗：worker 卡在同步 native 调用（fastspawn 的 runPair）里时，
+            // postMessage('stop') 不会被处理，terminate() 也打不断，
+            // Promise.all 于是永不 settle —— UI 永远转圈，worker 与被测程序一起泄漏。
+            // 这里给整轮兜一个墙钟上限：到点后主动收束，让本轮一定结束。
+            const perTestBudget = runTimeout > 0
+                ? (runTimeout * 3 + genTimeout)
+                : UNLIMITED_TEST_BUDGET_MS;
+            const rounds = Math.ceil(totalTests / threadCount);
+            const watchdogMs = Math.min(rounds * perTestBudget + WATCHDOG_SLACK_MS, WATCHDOG_HARD_CAP_MS);
+            watchdog = setTimeout(() => {
+                if (!isCurrentRun())
+                    return;
+                this._stopRequested = true;
+                this._state = 'stopping';
+                this.emit('warning', {
+                    testNumber: 0,
+                    type: 'engine_timeout',
+                    code: 'engine_timeout',
+                    completed: this._completed,
+                    total: this._total,
+                    message: '',
+                    input: ''
+                });
+                for (const settle of settleFns)
+                    settle();
+            }, watchdogMs);
+            if (typeof watchdog.unref === 'function')
+                watchdog.unref();
             for (let t = 0; t < threadCount; t++) {
                 const startIdx = t * perThread + 1;
                 const count = Math.min(perThread, totalTests - startIdx + 1);
@@ -123,6 +160,7 @@ class CompareEngineV2 extends events_1.EventEmitter {
                         worker.removeListener('exit', onWorkerExit);
                         resolve(undefined);
                     };
+                    settleFns.push(settle);
                     const handler = (msg) => {
                         // 上一轮遗留的迟到消息：不再计入本轮状态，也不再向上广播
                         if (!isCurrentRun()) {
@@ -221,6 +259,7 @@ class CompareEngineV2 extends events_1.EventEmitter {
             this.emit('error', { testNumber: 0, type: 'engine', code: 'engine_start', message: error.message, input: '' });
         }
         finally {
+            clearTimeout(watchdog);
             this._workers.forEach(w => { try {
                 w.terminate();
             }

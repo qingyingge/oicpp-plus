@@ -1736,6 +1736,30 @@ class TabManager {
 
         this.initializeEditorManagerReference();
         this.bindExternalFileWatcher();
+
+        // 欢迎页文案全部由 t() 写入 innerHTML（无 data-i18n），语言切换需整体重建
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.refreshWelcomeTranslations(), 0);
+        });
+    }
+
+    /**
+     * 语言切换后重渲染欢迎页。整页文案都来自 t()，所以重建 innerHTML 是完整做法；
+     * 随后必须重跑最近文件列表，否则刚异步填入的内容会被清空。
+     */
+    refreshWelcomeTranslations(): void {
+        const container = document.getElementById('welcome-container');
+        if (!container || container.style.display === 'none') {
+            return;
+        }
+        try {
+            container.innerHTML = this.getWelcomePageContent();
+            if (window.uiIcons && typeof window.uiIcons.hydrate === 'function') {
+                window.uiIcons.hydrate(container);
+            }
+            this.setupWelcomeEventListeners(container);
+            this.loadRecentFiles(container);
+        } catch (_) { }
     }
 
     initializeEditorManagerReference() {
@@ -1773,13 +1797,6 @@ class TabManager {
         if (window.oicppApp && window.oicppApp.editorManager) {
             this.monacoEditorManager = window.oicppApp.editorManager;
             logInfo('TabManager: 从oicppApp获取到编辑器管理器引用');
-            this.registerGroupsWithEditorManager();
-            return true;
-        }
-
-        if (window.app && window.app.editorManager) {
-            this.monacoEditorManager = window.app.editorManager;
-            logInfo('TabManager: 从app获取到编辑器管理器引用');
             this.registerGroupsWithEditorManager();
             return true;
         }
@@ -2044,9 +2061,6 @@ class TabManager {
             }
             if (!fileExplorer && sidebar?.panels?.files) {
                 fileExplorer = sidebar.panels.files;
-            }
-            if (!fileExplorer && window.app?.fileExplorer) {
-                fileExplorer = window.app.fileExplorer as FileExplorer;
             }
             if (!fileExplorer && window.fileExplorer) {
                 fileExplorer = window.fileExplorer as FileExplorer;
@@ -2407,6 +2421,10 @@ class TabManager {
 
         const content = this.getTabContentForSave(currentTab);
         if (typeof content === 'string') {
+            // 内容与上次记录一致时跳过保存链：避免无改动切标签触发 saveFile IPC、
+            // 主进程写盘比对、file-saved 广播与样例测试器刷新
+            if (content === currentTab.content) return;
+
             const isCloudPath = (p: string | null | undefined) => {
                 if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
                     return window.oicppApp.isCloudFilePath(p);
@@ -3133,7 +3151,7 @@ class TabManager {
 
         const loader = document.createElement('div');
         loader.className = 'pdf-viewer-loading';
-        loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.loading') || 'PDF 加载中…') + '</div>';
+        loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.loading')) + '</div>';
 
         const iframe = document.createElement('iframe');
         iframe.className = 'pdf-viewer-frame';
@@ -3146,7 +3164,7 @@ class TabManager {
         if (viewerSrc) {
             iframe.src = viewerSrc;
         } else {
-            loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.notFound') || '未找到 PDF 文件') + '</div>';
+            loader.innerHTML = '<div class="spinner"></div><div>' + (window.i18n?.t?.('pdfViewer.notFound')) + '</div>';
         }
 
         iframe.addEventListener('load', () => {
@@ -3862,7 +3880,7 @@ class TabManager {
         if (window.markdownAPI) {
             (container as HTMLElement).innerHTML = window.markdownAPI.render(content || '', filePath as string);
         } else {
-            (container as HTMLElement).textContent = 'Markdown API not available';
+            (container as HTMLElement).textContent = window.i18n.t('tabs.markdownApiUnavailable');
         }
     }
 
@@ -5510,7 +5528,7 @@ void hello() {
                     this._welcomeVersionLabel = label;
                     // 已渲染的欢迎页同步刷新
                     document.querySelectorAll('.welcome-version').forEach((el) => {
-                        el.textContent = `${window.i18n?.t?.('app.version') || ''} ${label}`;
+                        el.textContent = `${window.i18n?.t?.('app.version')} ${label}`;
                     });
                 })
                 .catch(() => { });

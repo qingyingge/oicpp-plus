@@ -1,5 +1,6 @@
 'use strict';
-
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SETTINGS_KEYS_SET = exports.SETTINGS_WRITABLE_KEYS_SET = exports.SETTINGS_MERGE_KEYS = exports.SETTINGS_WRITABLE_KEYS = exports.SETTINGS_KEYS = void 0;
 /**
  * Single source of truth for settings keys / whitelists.
  *
@@ -17,8 +18,7 @@
  *
  * Pure module (CommonJS). Main process only.
  */
-
-const SETTINGS_KEYS = [
+exports.SETTINGS_KEYS = [
     'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath',
     'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled',
     'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor',
@@ -29,8 +29,7 @@ const SETTINGS_KEYS = [
     'lastOpenTabs', 'lastUpdateCheck', 'pendingUpdate', 'postInstallNotice', 'windowOpacity',
     'glassEffectEnabled', 'backgroundImage', 'keybindings', 'autoOpenLastWorkspace', 'runAllSamples'
 ];
-
-const SETTINGS_WRITABLE_KEYS = [
+exports.SETTINGS_WRITABLE_KEYS = [
     'compilerPath', 'pythonInterpreterPath', 'compilerArgs', 'runMode', 'testlibPath',
     'font', 'fontSize', 'terminalFontSize', 'terminalStartupCommand', 'syntaxCheckEnabled',
     'lineHeight', 'theme', 'syntaxColorsByTheme', 'syntaxFontStyles', 'unifiedPreprocessorColor',
@@ -41,13 +40,15 @@ const SETTINGS_WRITABLE_KEYS = [
     'keybindings', 'fileHistory', 'lastOpenTabs', 'autoOpenLastWorkspace', 'language',
     'autoBackupSettings', 'receiveBetaUpdates', 'runAllSamples'
 ];
-
-const SETTINGS_MERGE_KEYS = SETTINGS_WRITABLE_KEYS.filter((key) => key !== 'fileHistory' && key !== 'lastOpenTabs');
-
-module.exports = {
-    SETTINGS_KEYS,
-    SETTINGS_WRITABLE_KEYS,
-    SETTINGS_MERGE_KEYS,
-    SETTINGS_WRITABLE_KEYS_SET: new Set(SETTINGS_WRITABLE_KEYS),
-    SETTINGS_KEYS_SET: new Set(SETTINGS_KEYS)
-};
+exports.SETTINGS_MERGE_KEYS = exports.SETTINGS_WRITABLE_KEYS.filter((key) => key !== 'fileHistory' && key !== 'lastOpenTabs');
+exports.SETTINGS_WRITABLE_KEYS_SET = new Set(exports.SETTINGS_WRITABLE_KEYS);
+exports.SETTINGS_KEYS_SET = new Set(exports.SETTINGS_KEYS);
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        SETTINGS_KEYS: exports.SETTINGS_KEYS,
+        SETTINGS_WRITABLE_KEYS: exports.SETTINGS_WRITABLE_KEYS,
+        SETTINGS_MERGE_KEYS: exports.SETTINGS_MERGE_KEYS,
+        SETTINGS_WRITABLE_KEYS_SET: exports.SETTINGS_WRITABLE_KEYS_SET,
+        SETTINGS_KEYS_SET: exports.SETTINGS_KEYS_SET
+    };
+}

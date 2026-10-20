@@ -164,7 +164,9 @@ class SampleTester {
                                     input: s.input || '',
                                     output: s.output || '',
                                     timeLimit: s.timeLimit && Number.isInteger(s.timeLimit) ? s.timeLimit : 1000,
-                                    memoryLimit: this.sanitizeMemoryLimit(this.globalSettings.defaultMemoryLimit, 0),
+                                    memoryLimit: this.sanitizeMemoryLimit((typeof s.memoryLimit === 'number' && Number.isFinite(s.memoryLimit) && s.memoryLimit > 0)
+                                        ? s.memoryLimit
+                                        : this.globalSettings.defaultMemoryLimit, 0),
                                     showInput: true,
                                     showOutput: true,
                                     inputType: 'userinput',
@@ -971,44 +973,44 @@ class SampleTester {
         this.applyDynamicTranslations();
     }
     applyDynamicTranslations() {
-        const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
+        const t = (key, params) => window.i18n?.t?.(key, params) || key;
         document.querySelectorAll('.sample-title').forEach((el) => {
             const group = el.closest('.sample-group');
             const id = (group instanceof HTMLElement ? group.dataset['sampleId'] : '') || '';
-            el.textContent = t('tester.testGroup', { i: id }, `Test ${id}`);
+            el.textContent = t('tester.testGroup', { i: id });
         });
         document.querySelectorAll('.sample-run-btn').forEach((el) => {
             if (!(el instanceof HTMLElement))
                 return;
-            el.textContent = t('tester.run', null, 'Run');
-            el.title = t('tester.runSample', null, 'Run Sample');
+            el.textContent = t('tester.run');
+            el.title = t('tester.runSample');
         });
         document.querySelectorAll('.sample-delete-btn').forEach((el) => {
             if (el instanceof HTMLElement)
-                el.title = t('tester.deleteSample', null, 'Delete Sample');
+                el.title = t('tester.deleteSample');
         });
         document.querySelectorAll('.sample-io-label [data-i18n]').forEach((el) => {
             if (el instanceof HTMLElement)
-                el.textContent = t(el.dataset['i18n'], null, el.textContent);
+                el.textContent = t(el.dataset['i18n'], null);
         });
         document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
             if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-                el.placeholder = t(el.dataset['i18nPlaceholder'], null, el.placeholder);
+                el.placeholder = t(el.dataset['i18nPlaceholder'], null);
             }
         });
         document.querySelectorAll('.sample-io-group .file-btn').forEach((el) => {
             if (!(el instanceof HTMLElement))
                 return;
             const key = el.classList.contains('switch-btn') ? 'tester.manualInput' : 'tester.readFromFile';
-            el.textContent = t(key, null, el.textContent.trim());
-            el.title = t(key, null, el.title);
+            el.textContent = t(key, null);
+            el.title = t(key, null);
         });
         document.querySelectorAll('.export-output-btn').forEach((el) => {
             if (el.classList.contains('expand-output-btn')) {
-                el.textContent = t('tester.expand', null, 'Expand');
+                el.textContent = t('tester.expand');
             }
             else {
-                el.textContent = t('tester.export', null, 'Export');
+                el.textContent = t('tester.export');
             }
         });
     }
@@ -1018,7 +1020,7 @@ class SampleTester {
         div.dataset['sampleId'] = sample.id;
         let statusBadge = '';
         if (sample.result && sample.result.status) {
-            statusBadge = `<span class="status-badge status-${sample.result.status.toLowerCase()}">${sample.result.status}</span>`;
+            statusBadge = `<span class="status-badge status-${this.escapeHtml(sample.result.status.toLowerCase())}">${this.escapeHtml(sample.result.status)}</span>`;
             if (sample.result.time !== undefined) {
                 statusBadge += `<span style="color: #858585; font-size: 11px;">${sample.result.time}ms</span>`;
             }
@@ -1091,16 +1093,16 @@ class SampleTester {
                             </div>
                         </div>
             <div class="program-output-container" id="output-container-${sample.id}">
-                            <textarea class="program-output" readonly spellcheck="false" data-i18n-placeholder="tester.outputPlaceholder" placeholder="运行程序后显示输出..." id="output-${sample.id}">${processedProgramOutput}</textarea>
+                            <textarea class="program-output" readonly spellcheck="false" data-i18n-placeholder="tester.outputPlaceholder" placeholder="运行程序后显示输出..." id="output-${sample.id}">${this.escapeHtml(processedProgramOutput)}</textarea>
                         </div>
                     </div>
                     <div class="program-output-group stderr-output-group" style="display: ${sample.result?.stderr ? '' : 'none'};">
                         <div class="sample-io-header"><span class="sample-io-label">${window.i18n.t('tester.stderrLabel')}</span></div>
-                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.stderrPlaceholder')}" id="stderr-${sample.id}">${sample.result?.stderr || ''}</textarea></div>
+                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.stderrPlaceholder')}" id="stderr-${sample.id}">${this.escapeHtml(sample.result?.stderr || '')}</textarea></div>
                     </div>
                     <div class="program-output-group spj-output-group" style="display: ${sample.result?.spjOutput ? '' : 'none'};">
                         <div class="sample-io-header"><span class="sample-io-label">${window.i18n.t('tester.spjOutputLabel')}</span></div>
-                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.spjOutputPlaceholder')}" id="spj-output-${sample.id}">${sample.result?.spjOutput || ''}</textarea></div>
+                        <div class="program-output-container"><textarea class="program-output" readonly spellcheck="false" placeholder="${window.i18n.t('tester.spjOutputPlaceholder')}" id="spj-output-${sample.id}">${this.escapeHtml(sample.result?.spjOutput || '')}</textarea></div>
                     </div>
                 </div>
                 <div class="sample-settings">
@@ -1120,13 +1122,13 @@ class SampleTester {
                     </div>
                     <div class="setting-group">
                         <span class="setting-label"><span data-i18n="tester.inputFile">输入文件:</span></span>
-                        <input type="text" class="setting-input setting-input-wide" value="${sample.freopenInputFile || ''}"
+                        <input type="text" class="setting-input setting-input-wide" value="${this.escapeHtml(sample.freopenInputFile || '')}"
                                data-i18n-placeholder="tester.freopenInputPlaceholder" placeholder="如 sample.in"
                                onchange="sampleTester.updateSampleSetting(${sample.id}, 'freopenInputFile', this.value)">
                     </div>
                     <div class="setting-group">
                         <span class="setting-label"><span data-i18n="tester.outputFile">输出文件:</span></span>
-                        <input type="text" class="setting-input setting-input-wide" value="${sample.freopenOutputFile || ''}"
+                        <input type="text" class="setting-input setting-input-wide" value="${this.escapeHtml(sample.freopenOutputFile || '')}"
                                data-i18n-placeholder="tester.freopenOutputPlaceholder" placeholder="如 sample.out"
                                onchange="sampleTester.updateSampleSetting(${sample.id}, 'freopenOutputFile', this.value)">
                     </div>
@@ -1163,20 +1165,19 @@ class SampleTester {
             const filePath = type === 'input' ? sample.input : sample.output;
             const abbreviatedPath = this.abbreviateFilePath(filePath);
             const icon = (window.uiIcons && typeof window.uiIcons.svg === 'function') ? window.uiIcons.svg('folder') : '';
-            return `<div class="file-reference" title="${filePath}"><span class="file-reference-icon" aria-hidden="true">${icon}</span><span>file: ${abbreviatedPath}</span></div>`;
+            return `<div class="file-reference" title="${this.escapeHtml(filePath)}"><span class="file-reference-icon" aria-hidden="true">${icon}</span><span>file: ${this.escapeHtml(abbreviatedPath)}</span></div>`;
         }
         else {
             const content = type === 'input' ? sample.input : sample.output;
             const lines = (content || '').split('\n').length;
             const autoHeight = lines <= 1 ? 'auto-height' : '';
             const placeholderKey = type === 'input' ? 'tester.inputPlaceholder' : 'tester.expectedOutputPlaceholder';
-            const placeholderFallback = type === 'input' ? 'Enter test data...' : 'Enter expected output...';
             return `<textarea class="sample-textarea ${autoHeight}" spellcheck="false"
-           data-i18n-placeholder="${placeholderKey}" placeholder="${window.i18n?.t?.(placeholderKey) || placeholderFallback}"
+           data-i18n-placeholder="${placeholderKey}" placeholder="${window.i18n?.t?.(placeholderKey)}"
            onfocus="sampleTester.expandTextarea(this)"
            onblur="sampleTester.collapseTextarea(this)"
            oninput="sampleTester.autoResizeTextarea(this); sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)"
-           onchange="sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)">${content || ''}</textarea>`;
+           onchange="sampleTester.updateSampleContent(${sample.id}, '${type}', this.value)">${this.escapeHtml(content || '')}</textarea>`;
         }
     }
     abbreviateFilePath(filePath, maxLength = 10) {
@@ -1539,6 +1540,13 @@ class SampleTester {
         }
     }
     async deleteSample(id) {
+        // 运行期间禁止删除：deleteSample 会 splice this.samples 并把全部样例 id 重编（index+1），
+        // 而 runSample/runAllSamples 持有同一数组引用并按 sample.id 回写结果，删除会导致索引错位、
+        // 结果写错行、甚至并行 worker 越界。等所有样例跑完再删除。
+        if ((this._runningSampleIds?.size ?? 0) > 0 || this._runningAllSamples) {
+            window.alert?.(window.i18n.t('tester.runningBusy'));
+            return;
+        }
         this.isOperating = true;
         try {
             const sampleIndex = this.samples.findIndex(s => s.id === id);
@@ -1939,26 +1947,46 @@ class SampleTester {
         const button = elButton(`run-btn-${id}`);
         if (!button || button.disabled)
             return;
-        await this.autoSaveCurrentFile();
-        button.disabled = true;
-        button.classList.add('running');
+        // 面板在运行期间可能整体重渲染（renderSamples 清空 innerHTML、updateSampleDisplay
+        // replaceChild），旧按钮节点会脱离文档，写回它等于没写，界面上的按钮会永久卡在禁用态。
+        // 因此所有按钮操作都现取元素，并在途状态改用 id 判定。
+        if (!this._runningSampleIds)
+            this._runningSampleIds = new Set();
+        if (this._runningSampleIds.has(id))
+            return;
+        this._runningSampleIds.add(id);
+        const getButton = () => elButton(`run-btn-${id}`);
+        const setButtonText = (text) => {
+            const el = getButton();
+            if (el)
+                el.textContent = text;
+        };
+        const setButtonRunning = (running) => {
+            const el = getButton();
+            if (!el)
+                return;
+            el.disabled = running;
+            el.classList.toggle('running', running);
+        };
         try {
-            button.textContent = window.i18n.t('tester.compileStatus');
+            setButtonRunning(true);
+            await this.autoSaveCurrentFile();
+            setButtonText(window.i18n.t('tester.compileStatus'));
             const result = await this.executeSample(sample, (status) => {
                 if (status === 'compiling') {
-                    button.textContent = window.i18n.t('tester.compileStatus');
+                    setButtonText(window.i18n.t('tester.compileStatus'));
                 }
                 else if (status === 'cached-main') {
-                    button.textContent = window.i18n.t('tester.reuseCompile');
+                    setButtonText(window.i18n.t('tester.reuseCompile'));
                 }
                 else if (status === 'cached-spj') {
-                    button.textContent = window.i18n.t('tester.reuseSpj');
+                    setButtonText(window.i18n.t('tester.reuseSpj'));
                 }
                 else if (status === 'cached-grader') {
-                    button.textContent = window.i18n.t('tester.reuseGrader');
+                    setButtonText(window.i18n.t('tester.reuseGrader'));
                 }
                 else if (status === 'running') {
-                    button.textContent = window.i18n.t('tester.running');
+                    setButtonText(window.i18n.t('tester.running'));
                 }
             });
             sample.result = result;
@@ -1980,9 +2008,9 @@ class SampleTester {
             }
         }
         finally {
-            button.disabled = false;
-            button.textContent = window.i18n.t('tester.run');
-            button.classList.remove('running');
+            this._runningSampleIds.delete(id);
+            setButtonRunning(false);
+            setButtonText(window.i18n.t('tester.run'));
         }
     }
     async runAllSamples() {
@@ -1991,7 +2019,18 @@ class SampleTester {
         const runCurrentFile = this.currentFile;
         if (runSamples.length === 0)
             return;
-        await this.autoSaveCurrentFile();
+        // 在途标记必须早于第一个 await 置位，否则并发点击会同时跑两轮全量编译+判题
+        if (this._runningAllSamples)
+            return;
+        this._runningAllSamples = true;
+        try {
+            await this.autoSaveCurrentFile();
+        }
+        catch (error) {
+            // 下面还没进 finally，这里失败要自己复位，否则按钮永远点不动
+            this._runningAllSamples = false;
+            throw error;
+        }
         const runAllBtn = elButton('run-all-samples-btn');
         if (runAllBtn) {
             runAllBtn.disabled = true;
@@ -2154,6 +2193,7 @@ class SampleTester {
             await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
         }
         finally {
+            this._runningAllSamples = false;
             this.deferSpjTempCleanup = false;
             await this.cleanupSpjTempFiles();
             // 主程序编译结果会被缓存复用，这里不删除可执行文件。
@@ -2855,21 +2895,21 @@ class SampleTester {
     getDifferenceInfo(actual, expected) {
         const actualLines = actual.split('\n');
         const expectedLines = expected.split('\n');
-        for (let i = 0; i < Math.max(actualLines.length, expectedLines.length); i++) {
+        const maxCompareLines = Math.max(actualLines.length, expectedLines.length);
+        for (let i = 0; i < maxCompareLines; i++) {
             const actualLine = actualLines[i] || '';
             const expectedLine = expectedLines[i] || '';
-            if (actualLine !== expectedLine) {
-                for (let j = 0; j < Math.max(actualLine.length, expectedLine.length); j++) {
-                    if (actualLine[j] !== expectedLine[j]) {
-                        return {
-                            line: i + 1,
-                            char: j + 1
-                        };
-                    }
+            // 与 createHighlightedOutput 的比较口径保持一致（忽略行尾空白），
+            // 否则会报出「第 N 行第 M 字符有差异」却一个字符都不高亮
+            if (actualLine.trimEnd() !== expectedLine.trimEnd()) {
+                let diffChar = 0;
+                const minLength = Math.min(actualLine.length, expectedLine.length);
+                while (diffChar < minLength && actualLine[diffChar] === expectedLine[diffChar]) {
+                    diffChar++;
                 }
                 return {
                     line: i + 1,
-                    char: Math.min(actualLine.length, expectedLine.length) + 1
+                    char: diffChar + 1
                 };
             }
         }
@@ -2878,7 +2918,9 @@ class SampleTester {
     escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;
-        return div.innerHTML;
+        return div.innerHTML
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
     createHighlightedOutput(actual, expected) {
         const safeActual = this.truncateOutput(actual || '');
@@ -2939,7 +2981,7 @@ class SampleTester {
         if (!element)
             return;
         const statusContainer = element.querySelector('.sample-status');
-        let statusBadge = `<span class="status-badge status-${result.status.toLowerCase()}">${result.status}</span>`;
+        let statusBadge = `<span class="status-badge status-${this.escapeHtml(result.status.toLowerCase())}">${this.escapeHtml(result.status)}</span>`;
         if (result.time !== undefined) {
             statusBadge += `<span style="color: #858585; font-size: 11px; margin-left: 8px;">${result.time}ms</span>`;
         }
@@ -3360,7 +3402,9 @@ class SampleTester {
         }
         catch (error) {
             logError('SPJ判题失败:', error);
-            return { status: 'Error', output: error?.message || String(error) };
+            // 只能用已定义的状态码：updateSummary 的 counts 里没有 'Error'，
+            // 旧值会被当成 PENDING 累加，导致总览永远显示「运行中」
+            return { status: 'RE', output: error?.message || String(error) };
         }
     }
     async cleanupSpjTempFiles(files = null) {

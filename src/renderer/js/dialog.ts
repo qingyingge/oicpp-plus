@@ -32,6 +32,20 @@ class DialogManager {
             } catch (_) {
             }
         });
+
+        // ESC 用于取消对话（相当于点击 ×/点击遮罩），适用于全部 show* 对话框。
+        // 此前只有 showSpringFestivalGreeting/showConfirmDialog 调 attachEscapeToClose，
+        // showInputDialog/showActionDialog 没有 → ESC 失效。统一在这里监听一次即可
+        // （hideDialog 会清 _keydownHandler，这个 listener 持续生效不受影响）。
+        document.addEventListener('keydown', (e) => {
+            try {
+                if (e.key === 'Escape' && this.currentDialog) {
+                    e.preventDefault();
+                    this.hideDialog();
+                }
+            } catch (_) {
+            }
+        });
     }
 
     resetDialogState(): void {

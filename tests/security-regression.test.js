@@ -664,9 +664,14 @@ check('workflows do not depend on the Node 22-only system CA flag', !workflows.i
         const writes = [];
         const reads = [];
         const renderCalls = [];
-        mdCtx.window = hasApi
-            ? { markdownAPI: { render: (c, f) => { renderCalls.push([c, f]); return rendered; } } }
-            : {};
+        mdCtx.window = Object.assign(
+            hasApi
+                ? { markdownAPI: { render: (c, f) => { renderCalls.push([c, f]); return rendered; } } }
+                : {},
+            // 缺席兜底走 window.i18n.t('tabs.markdownApiUnavailable')（main 3f33954 之后的形状），
+            // 沙箱必须给 i18n，否则这条测的是 ReferenceError 而不是兜底写法
+            { i18n: { t: (k) => 'I18N:' + k } }
+        );
         const container = new Proxy({}, {
             set(target, key, value) { writes.push([String(key), String(value)]); target[key] = value; return true; },
             get(target, key) { reads.push(String(key)); return target[key]; }

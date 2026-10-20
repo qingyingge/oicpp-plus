@@ -37,10 +37,12 @@ check('resolveClangdExecutable reads the directory root',
     !!resolveClangdExecutable &&
     resolveClangdExecutable[0].includes('path.join(rootDir, exeName)') &&
     !resolveClangdExecutable[0].includes("'bin'"));
+// 用户工具目录扁平（exe 直接在根）必须命中；打包目录（resources/clang-format）上游结构里还套着
+// 一层 bin/，合并版把 nested 作为回退探测 —— 只锁扁平会让打包态永远解析不到 clang-format。
 check('resolveClangFormatExecutable reads the directory root',
     !!resolveClangFormatExecutable &&
-    resolveClangFormatExecutable[0].includes('path.join(rootDir, getClangFormatExecutableName())') &&
-    !resolveClangFormatExecutable[0].includes("'bin'"));
+    /path\.join\(rootDir,\s*(exeName|getClangFormatExecutableName\(\))\)/.test(resolveClangFormatExecutable[0]) &&
+    resolveClangFormatExecutable[0].includes('fs.existsSync'));
 
 // 打包目录仍保持上游的 <root>/bin 结构，只在拷进用户目录时拍平
 const ensureClangdUserBundle = /async function ensureClangdUserBundle\(\) \{[\s\S]*?\n\}/.exec(mainSource);

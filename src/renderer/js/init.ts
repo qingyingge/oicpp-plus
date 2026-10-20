@@ -173,16 +173,35 @@ window.addEventListener('error', function(e: ErrorEvent) {
     } catch (_) {}
 });
 
+// "Model not found" comes from monaco's text-model resolver
+// (createModelReference -> _acquire -> modelService.getModel): it throws
+// when a single definition target has no model in the editor, which is the
+// normal case for Ctrl+hover previews of STL headers and other unopened
+// files. Monaco's own .then() chain has no .catch(), so the rejection
+// escapes. Its caller startFindDefinition is async and therefore never
+// appears in the stack, so the stack has to be matched against the monaco
+// bundle itself.
+function isMonacoModelReferenceRejection(message: string, stack: string): boolean {
+    if (message !== 'Model not found') {
+        return false;
+    }
+    if (!/node_modules[\\/]monaco-editor/.test(stack)) {
+        return false;
+    }
+    return /(_acquire|createModelReference|ReferenceCollection|editorWorkerHost)/.test(stack);
+}
+
 window.addEventListener('unhandledrejection', function(e: PromiseRejectionEvent) {
     try {
         const reason = e?.reason;
-        const info = reason instanceof Error ? { message: reason.message, stack: reason.stack } : { reason };
-        logError('[RendererUnhandledRejection]', info);
         const message = String(reason?.message || reason || '');
         const stack = String(reason?.stack || '');
-        if (message === 'Model not found' && stack.includes('startFindDefinition')) {
+        if (isMonacoModelReferenceRejection(message, stack)) {
+            logWarn('[RendererUnhandledRejectionSuppressed]', { message });
             return;
         }
+        const info = reason instanceof Error ? { message: reason.message, stack: reason.stack } : { reason };
+        logError('[RendererUnhandledRejection]', info);
     } catch (_) {}
 });
 

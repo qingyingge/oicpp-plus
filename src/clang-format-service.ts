@@ -2,35 +2,22 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawn } from 'child_process';
+const {
+    serializeClangFormatStyle
+} = require('./utils/clang-format-options') as { serializeClangFormatStyle: (style: unknown) => string };
 
 const CLANG_FORMAT_TIMEOUT_MS = 10000;
 const CLANG_FORMAT_MAX_INPUT_BYTES = 5 * 1024 * 1024;
 const CLANG_FORMAT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 const CLANG_FORMAT_MAX_STYLE_BYTES = 256 * 1024;
-const PRESET_STYLES = new Set(['LLVM', 'GNU', 'Google', 'Chromium', 'Microsoft', 'Mozilla', 'WebKit']);
 
-function serializeClangFormatStyle(style: unknown): string {
-    if (style === null || style === undefined || style === '') {
-        return 'file';
+async function removeTempRoot(tempRoot: string | null): Promise<void> {
+    if (!tempRoot) return;
+    try {
+        await fs.promises.rm(tempRoot, { recursive: true, force: true });
+    } catch (_) {
+        // 临时目录清理失败不阻断格式化结果
     }
-    if (typeof style === 'string') {
-        const value = style.trim();
-        if (value.toLowerCase() === 'file') return 'file';
-        const preset = Array.from(PRESET_STYLES).find((item) => item.toLowerCase() === value.toLowerCase());
-        if (preset) return preset;
-        if (value.startsWith('{')) {
-            const parsed = JSON.parse(value);
-            if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
-                throw new Error('clang-format style must be a JSON object');
-            }
-            return JSON.stringify(parsed);
-        }
-        throw new Error(`Unsupported clang-format style: ${value}`);
-    }
-    if (typeof style === 'object' && !Array.isArray(style)) {
-        return JSON.stringify(style);
-    }
-    throw new Error('clang-format style must be an object, preset name, or file');
 }
 
 interface ClangFormatArgsOptions {
@@ -97,7 +84,7 @@ interface ClangFormatResult {
     args: string[];
 }
 
-function formatCodeWithClangFormat({
+async function formatCodeWithClangFormat({
     executablePath,
     content,
     filePath,
@@ -110,18 +97,18 @@ function formatCodeWithClangFormat({
     spawnImpl = spawn
 }: ClangFormatOptions = {}): Promise<ClangFormatResult> {
     if (!executablePath || typeof executablePath !== 'string') {
-        return Promise.reject(new Error('clang-format executable is unavailable'));
+        throw new Error('clang-format executable is unavailable');
     }
     if (typeof content !== 'string') {
-        return Promise.reject(new Error('clang-format input must be a string'));
+        throw new Error('clang-format input must be a string');
     }
 
     const input = Buffer.from(content, 'utf8');
     if (input.length > CLANG_FORMAT_MAX_INPUT_BYTES) {
-        return Promise.reject(new Error(`clang-format input exceeds ${CLANG_FORMAT_MAX_INPUT_BYTES} bytes`));
+        throw new Error(`clang-format input exceeds ${CLANG_FORMAT_MAX_INPUT_BYTES} bytes`);
     }
     if (typeof styleRaw === 'string' && Buffer.byteLength(styleRaw, 'utf8') > CLANG_FORMAT_MAX_STYLE_BYTES) {
-        return Promise.reject(new Error(`clang-format style exceeds ${CLANG_FORMAT_MAX_STYLE_BYTES} bytes`));
+        throw new Error(`clang-format style exceeds ${CLANG_FORMAT_MAX_STYLE_BYTES} bytes`);
     }
 
     const hasRange = startLine !== undefined || endLine !== undefined;
@@ -132,17 +119,17 @@ function formatCodeWithClangFormat({
 
     try {
         if (hasRawStyle || hasRange) {
-            tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'oicpp-clang-format-'));
+            tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'oicpp-clang-format-'));
             if (hasRawStyle) {
                 styleFilePath = path.join(tempRoot, '.clang-format');
-                fs.writeFileSync(styleFilePath, styleRaw, 'utf8');
+                await fs.promises.writeFile(styleFilePath, styleRaw, 'utf8');
             }
             if (hasRange) {
                 const sourceExtension = typeof filePath === 'string' && /\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$/i.test(filePath)
                     ? path.extname(filePath)
                     : '.cpp';
                 inputFilePath = path.join(tempRoot, `source${sourceExtension}`);
-                fs.writeFileSync(inputFilePath, input);
+                await fs.promises.writeFile(inputFilePath, input);
             }
         }
 
@@ -226,16 +213,12 @@ function formatCodeWithClangFormat({
             }
         });
 
-        return run.finally(() => {
-            if (tempRoot) {
-                fs.rmSync(tempRoot, { recursive: true, force: true });
-            }
-        });
+        const result = await run;
+        await removeTempRoot(tempRoot);
+        return result;
     } catch (error) {
-        if (tempRoot) {
-            fs.rmSync(tempRoot, { recursive: true, force: true });
-        }
-        return Promise.reject(error);
+        await removeTempRoot(tempRoot);
+        throw error;
     }
 }
 

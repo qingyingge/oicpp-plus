@@ -879,16 +879,17 @@ class GDBDebugger extends events_1.EventEmitter {
      * @param filePath - The file path to normalize.
      * @returns The normalized path string.
      */
+    // 归一化必须全平台都做。旧实现非 win32 直接原样返回，于是 GDB 回的
+    // file 和渲染层传来的 file 在 Linux 上可能一个是相对/带 ./ 一个是绝对，
+    // 后续按路径匹配断点就会漏。realpath 解析不了时退化成 resolve+normalize。
     _normalizePath(filePath) {
         if (!filePath)
             return '';
-        if (process.platform !== 'win32')
-            return filePath;
         try {
             return fs_1.default.realpathSync.native ? fs_1.default.realpathSync.native(filePath) : fs_1.default.realpathSync(filePath);
         }
         catch (_) {
-            return path_1.default.normalize(filePath);
+            return path_1.default.resolve(filePath);
         }
     }
     /**

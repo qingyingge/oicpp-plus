@@ -71,7 +71,14 @@ if (!overlay || !input || !results || !titleTrigger) {
     }
 
     function search(query: string): void {
-        if (!query) { render(allFiles.slice(0, 100)); return; }
+        if (!query) {
+            // 空查询走的是浏览列表，必须同步 lastList/activeIndex：否则回车和方向键
+            // 仍会按上一次搜索的结果操作（界面显示的和被打开的不是同一批文件）。
+            lastList = allFiles.slice(0, 100);
+            activeIndex = lastList.length ? 0 : -1;
+            render(lastList);
+            return;
+        }
         const ranked = allFiles.map(f => ({ ...f, __s: fuzzyScore(query, f.path) }))
             .filter(x => (x.__s ?? 0) > 0)
             .sort((a, b) => (b.__s ?? 0) - (a.__s ?? 0) || a.path.length - b.path.length);
@@ -214,6 +221,10 @@ if (!overlay || !input || !results || !titleTrigger) {
             if (!error) markIndexDirty();
         });
         window.electronIPC.on('file-pasted', (_event: unknown, _sourcePath: unknown, _targetPath: unknown, _operation: unknown, error: unknown) => {
+            if (!error) markIndexDirty();
+        });
+        // 重命名/移动同样会改变索引里的路径，主进程 main.js 里就发这个通道
+        window.electronIPC.on('file-moved', (_event: unknown, _sourcePath: unknown, _targetPath: unknown, error: unknown) => {
             if (!error) markIndexDirty();
         });
     }

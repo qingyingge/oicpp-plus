@@ -228,7 +228,9 @@ class CodeComparer {
                 const compareFileSection = (document.getElementById('compare-file-section'));
                 if (hasCompiler) {
                     noCompilerMessage.style.display = 'none';
-                    compareFileSection.style.display = 'block';
+                    // 不要写死 display:block：.compare-file-section 在 CSS 里是 flex 列布局，
+                    // 内联的 block 会覆盖它并让 gap 失效，导致各区块紧紧贴在一起。
+                    compareFileSection.style.display = '';
                 }
                 else {
                     noCompilerMessage.style.display = 'flex';
@@ -1820,7 +1822,9 @@ class CodeComparer {
         const completedTests = (document.getElementById('completed-tests'));
         const completeInfo = completeSection?.querySelector('.complete-info span');
         if (completeSection) {
-            completeSection.style.display = 'flex';
+            // 交给 CSS 控制（.compare-complete 是 block + 居中的卡片）；
+            // 写成 flex 会变成横向排列，把图标/文字/信息挤在一行。
+            completeSection.style.display = '';
         }
         if (completedTests) {
             completedTests.textContent = completedCount;
@@ -2073,7 +2077,8 @@ class CodeComparer {
         return safeOutput;
     }
     getTruncationText() {
-        return window.i18n?.t?.('compare.outputTruncated') || '[truncated]';
+        const translated = window.i18n?.t?.('compare.outputTruncated');
+        return translated || '[truncated]';
     }
     formatCompareOutput(currentOutput, otherOutput, outputType, upstreamTruncated = false) {
         const currentLines = currentOutput.split('\n');

@@ -787,6 +787,8 @@ async function main() {
             });
             const scope = makeScope({
                 settings: settingsObj,
+                // main.js 顶层解构的白名单数组：抽出的函数体引用它，沙箱必须给真模块
+                SETTINGS_WRITABLE_KEYS: require('../src/utils/settings-schema').SETTINGS_WRITABLE_KEYS,
                 mainWindow: win('main'),
                 compilerSettingsWindow: win('compiler'),
                 editorSettingsWindow: win('editor'),
@@ -804,12 +806,16 @@ async function main() {
             });
             return { scope, trace, settingsObj };
         };
-        const runUpdate = (patch, extra) => {
+        const runUpdate = async (patch, extra) => {
             const env = makeSettingsScope(extra);
             const compiled = compileFn('updateSettings', env.scope);
+            // 语言切换广播在 main 里收敛进了独立顶层函数 applyLanguageChange，
+            // 同样抽出来接进沙箱，让 setLanguage→menuBar 的顺序断言继续跑真实现。
+            const ac = compileFn('applyLanguageChange', env.scope);
+            if (typeof ac.fn === 'function') env.scope.ctx.applyLanguageChange = ac.fn;
             // 抽取失败时 fn 是 undefined，直接调用会把整份测试带 stack trace 崩掉，
             // 后半段断言就没了 —— 让它在这里停住，由「抽取成功」那条报出来。
-            const result = typeof compiled.fn === 'function' ? compiled.fn(null, patch) : undefined;
+            const result = typeof compiled.fn === 'function' ? await compiled.fn(null, patch) : undefined;
             return { ...env, ...compiled, result };
         };
         // 只要求这些步骤都出现、且先后顺序不颠倒；中间多插别的步骤不算失败
@@ -823,7 +829,7 @@ async function main() {
             });
         };
 
-        const nulled = runUpdate(null);
+        const nulled = await runUpdate(null);
         check('函数抽取成功: updateSettings',
             nulled.body.length > 0 && typeof nulled.fn === 'function', `${nulled.body.length} 字符`);
         check('补丁是 null 时返回成功，而不是被自己的 catch 折成 {success:false}',
@@ -834,19 +840,19 @@ async function main() {
             nulled.trace.join(' → '));
 
         for (const junk of [null, undefined]) {
-            const env = runUpdate(junk);
+            const env = await runUpdate(junk);
             check(`整参传 ${String(junk)} 时既不抛也不写坏 settings`,
                 env.result && env.result.success === true
                 && Object.keys(env.settingsObj).filter((k) => k !== 'normalized').sort().join(',') === 'font,theme',
                 JSON.stringify(env.result));
         }
-        const junkShape = runUpdate('font=Consolas');
+        const junkShape = await runUpdate('font=Consolas');
         check('传进来的是字符串这种非对象形状时当空补丁处理（for...in 会把每个下标当成一个无效键）',
             junkShape.result.success === true && junkShape.settingsObj.font === 'Consolas'
             && junkShape.trace.includes('main.settings-changed'),
             JSON.stringify({ settings: junkShape.settingsObj, result: junkShape.result }));
 
-        const applied = runUpdate({ font: 'Courier New', runMode: 'external', compilerArgs: '-O2', evil: 'x' });
+        const applied = await runUpdate({ font: 'Courier New', runMode: 'external', compilerArgs: '-O2', evil: 'x' });
         check('白名单内的键写进 settings，runMode / compilerArgs 过平台归一化而不是原样落库',
             applied.settingsObj.font === 'Courier New'
             && applied.settingsObj.runMode === 'runMode(external)'
@@ -856,15 +862,15 @@ async function main() {
             applied.settingsObj.evil === undefined && !('evil' in applied.settingsObj),
             JSON.stringify(Object.keys(applied.settingsObj)));
 
-        const rebound = runUpdate({ keybindings: { 'Ctrl+S': 'save' } });
+        const rebound = await runUpdate({ keybindings: { 'Ctrl+S': 'save' } });
         check('改动里带 keybindings 就重画一次原生菜单',
             rebound.trace.filter((s) => s === 'menuBar').length === 1, rebound.trace.join(' → '));
-        const speak = runUpdate({ language: 'en' });
+        const speak = await runUpdate({ language: 'en' });
         check('改语言先 setLanguage 再重画菜单（否则切换只对界面正文生效，菜单栏还是旧语言）',
             speak.trace.includes('setLanguage:en')
             && speak.trace.filter((s) => s === 'menuBar').length === 1
             && speak.settingsObj.language === 'en', speak.trace.join(' → '));
-        const painted = runUpdate({ theme: 'light' });
+        const painted = await runUpdate({ theme: 'light' });
         check('换主题把窗口底色改掉，并通知四个设置子窗口（子窗口不跟着换就是半屏旧色）',
             painted.trace.includes('main.bg=bg(light)')
             && ['compiler', 'editor', 'templates', 'backup'].every((w) => painted.trace.includes(`${w}.theme-changed`)),
@@ -872,7 +878,7 @@ async function main() {
 
         // 反向对照：catch 不能因为上面那道兜底变成「怎么都成功」。落盘真炸的时候必须报失败，
         // 而且广播不许发出去 —— 磁盘没写成却告诉渲染进程改好了，比抛错更糟。
-        const diskFull = runUpdate({ font: 'Courier New' }, { saveSettings: () => { throw new Error('disk full'); } });
+        const diskFull = await runUpdate({ font: 'Courier New' }, { saveSettings: () => { throw new Error('disk full'); } });
         check('落盘失败仍然如实返回 {success:false} + 错误正文（兜底没把 catch 变成万能成功）',
             diskFull.result && diskFull.result.success === false && diskFull.result.error === 'disk full',
             JSON.stringify(diskFull.result));

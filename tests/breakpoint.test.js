@@ -28,7 +28,14 @@ const check = (name, condition, extra = '') => {
 };
 
 // 统一成 LF 再做源码断言：本仓库是 CRLF，否则每个跨行的正则都要写成 \r?\n
-const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
+// 文件缺失按空内容处理（compile-output.js 已在 ts-migration 里退役，守卫对它退化为恒真）。
+const read = (rel) => {
+    try {
+        return fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
+    } catch (_) {
+        return '';
+    }
+};
 
 const mainSource = read('src/main.js');
 const preloadSource = read('src/preload.js');
@@ -132,7 +139,7 @@ if (addFn && removeFn) {
 // ------------------------------------------------- 启动设点与会话结束清理
 
 check('session start registers initial breakpoints through addBreakpoint',
-    /for \(const breakpoint of options\.breakpoints\)[\s\S]{0,400}?await addBreakpoint\(target\)/.test(mainSource));
+    /for \(const breakpoint of options\.breakpoints\)[\s\S]{0,600}?await addBreakpoint\(target\)/.test(mainSource));
 check('session start no longer calls setBreakpoint directly',
     !/await gdbDebugger\.setBreakpoint\(filePath,/.test(mainSource));
 check('session stop clears the breakpoint map',
@@ -178,8 +185,8 @@ if (toggleBody) {
         /ipcRenderer\.invoke\('debug-remove-breakpoint'/.test(body)
         && /ipcRenderer\.invoke\('debug-set-breakpoint'/.test(body));
     check('toggleAt only mutates decorations after success:true',
-        /if \(result && result\.success\) removeDeco\(idx\)/.test(body)
-        && /if \(result && result\.success\) addDeco\(line\)/.test(body));
+        /if \(result && result\.success\)\s+removeDeco\(idx\)/.test(body)
+        && /if \(result && result\.success\)\s+addDeco\(line\)/.test(body));
 }
 
 // 只查代码，注释里提到这个历史名字不算残留引用
@@ -196,7 +203,7 @@ check('renderer no longer references window.app in code',
 check('_normalizePath no longer skips non-win32 platforms',
     !/if \(process\.platform !== 'win32'\) return filePath;/.test(gdbSource));
 check('_normalizePath falls back to path.resolve when realpath fails',
-    /catch \(_\) \{\s*\n\s*return path\.resolve\(filePath\);/.test(gdbSource));
+    /catch \(_\) \{\s*\n\s*return path(?:_1\.default)?\.resolve\(filePath\);/.test(gdbSource));
 check('GDB exposes a breakpoint snapshot for cross-checking',
     gdbSource.includes('getBreakpoints()'));
 

@@ -39,6 +39,16 @@ type ClangFormatStyle = {
     AlignConsecutiveDeclarations: boolean;
 };
 
+// clang-format-options UMD (utils/clang-format-options.js) 挂到 window.clangFormatOptions。
+// 这里只声明形状，用类型断言就地收窄（断言会完全擦除，emit 与 main 的 .js 逐字一致），
+// 避免改动全局 Window 声明。
+type ClangFormatOptionsApi = {
+    getDefaultClangFormatStyle?: () => ClangFormatStyle;
+    normalizeClangFormatStyle?: (raw?: ClangFormatStyleRaw | null) => ClangFormatStyle;
+    parseClangFormatText?: (text?: string) => RawRecord;
+    generateClangFormatText?: (style?: RawRecord | ClangFormatStyle | null) => string;
+};
+
 type EditorSettingsState = {
     font?: string;
     fontSize?: number;
@@ -227,7 +237,7 @@ class EditorSettings {
     }
 
     getDefaultClangFormatStyle() {
-        return {
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.getDefaultClangFormatStyle?.() || {
             BasedOnStyle: 'LLVM',
             IndentWidth: 4,
             TabWidth: 4,
@@ -246,114 +256,15 @@ class EditorSettings {
     }
 
     normalizeClangFormatStyle(raw: ClangFormatStyleRaw | null = null): ClangFormatStyle {
-        const defaults = this.getDefaultClangFormatStyle();
-        const normalized: ClangFormatStyle = { ...defaults };
-        if (!raw || typeof raw !== 'object') {
-            return normalized;
-        }
-
-        const toInt = (value: unknown, fallback: number): number => {
-            const parsed = parseInt(String(value ?? ''), 10);
-            return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-        };
-        const toBool = (value: unknown, fallback: boolean): boolean => {
-            if (typeof value === 'boolean') return value;
-            if (typeof value === 'string') {
-                const lowered = value.trim().toLowerCase();
-                if (['true', 'yes', 'on'].includes(lowered)) return true;
-                if (['false', 'no', 'off'].includes(lowered)) return false;
-            }
-            return fallback;
-        };
-        const toEnum = (value: unknown, allowed: string[], fallback: string): string => {
-            const rawValue = String(value ?? '').trim();
-            if (!rawValue) return fallback;
-            const matched = allowed.find((item) => item.toLowerCase() === rawValue.toLowerCase());
-            return matched || fallback;
-        };
-
-        normalized.BasedOnStyle = toEnum(raw.BasedOnStyle, ['LLVM', 'Google', 'Mozilla', 'Chromium', 'Microsoft', 'WebKit'], defaults.BasedOnStyle);
-        normalized.IndentWidth = toInt(raw.IndentWidth, defaults.IndentWidth);
-        normalized.TabWidth = toInt(raw.TabWidth, normalized.IndentWidth);
-        normalized.UseTab = toEnum(raw.UseTab, ['Never', 'ForIndentation', 'ForContinuationAndIndentation', 'Always'], defaults.UseTab);
-        normalized.ColumnLimit = toInt(raw.ColumnLimit, defaults.ColumnLimit);
-        normalized.BreakBeforeBraces = toEnum(raw.BreakBeforeBraces, ['Attach', 'LLVM', 'Stroustrup', 'Allman', 'GNU', 'Mozilla', 'WebKit', 'Custom'], defaults.BreakBeforeBraces);
-        normalized.AllowShortIfStatementsOnASingleLine = toEnum(raw.AllowShortIfStatementsOnASingleLine, ['Never', 'WithoutElse', 'OnlyFirstIf', 'AllIfsAndElse', 'Always'], defaults.AllowShortIfStatementsOnASingleLine);
-        normalized.AllowShortFunctionsOnASingleLine = toEnum(raw.AllowShortFunctionsOnASingleLine, ['None', 'Empty', 'Inline', 'All'], defaults.AllowShortFunctionsOnASingleLine);
-        normalized.IndentCaseLabels = toBool(raw.IndentCaseLabels, defaults.IndentCaseLabels);
-        normalized.PointerAlignment = toEnum(raw.PointerAlignment, ['Left', 'Right', 'Middle'], defaults.PointerAlignment);
-        normalized.SpaceBeforeParens = toEnum(raw.SpaceBeforeParens, ['Never', 'ControlStatements', 'Always', 'Custom'], defaults.SpaceBeforeParens);
-        normalized.SortIncludes = toBool(raw.SortIncludes, defaults.SortIncludes);
-        normalized.AlignConsecutiveAssignments = toBool(raw.AlignConsecutiveAssignments, defaults.AlignConsecutiveAssignments);
-        normalized.AlignConsecutiveDeclarations = toBool(raw.AlignConsecutiveDeclarations, defaults.AlignConsecutiveDeclarations);
-
-        if (Object.prototype.hasOwnProperty.call(raw, 'formatterIndentStyle') && !Object.prototype.hasOwnProperty.call(raw, 'UseTab')) {
-            const legacyStyle = String(raw.formatterIndentStyle ?? '').trim().toLowerCase();
-            if (legacyStyle === 'tabs') {
-                normalized.UseTab = 'Always';
-            } else if (legacyStyle === 'spaces') {
-                normalized.UseTab = 'Never';
-            }
-        }
-
-        return normalized;
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.normalizeClangFormatStyle?.(raw) ?? this.getDefaultClangFormatStyle();
     }
 
     parseClangFormatText(text: string = ''): RawRecord {
-        const parsed: RawRecord = {};
-        String(text || '').split(/\r?\n/).forEach((line) => {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith('#') || trimmed === '---' || trimmed === '...') {
-                return;
-            }
-            const match = trimmed.match(/^([A-Za-z][A-Za-z0-9]*)\s*:\s*(.+)$/);
-            if (!match) {
-                return;
-            }
-            const key = match[1] as string;
-            const text = (match[2]!.trim());
-            const value = (text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))
-                ? text.slice(1, -1)
-                : text;
-            if (/^(true|false)$/i.test(value)) {
-                parsed[key] = value.toLowerCase() === 'true';
-            } else if (/^-?\d+$/.test(value)) {
-                parsed[key] = parseInt(value, 10);
-            } else {
-                parsed[key] = value;
-            }
-        });
-        return parsed;
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.parseClangFormatText?.(text) || {};
     }
 
     generateClangFormatText(style: RawRecord | null = null): string {
-        const normalized = this.normalizeClangFormatStyle(style || this.settings.clangFormatStyle || this.getDefaultClangFormatStyle());
-        const serialize = (value: unknown): string => {
-            if (typeof value === 'boolean') return value ? 'true' : 'false';
-            if (typeof value === 'number') return String(value);
-            const text = String(value ?? '');
-            if (/\s/.test(text)) {
-                return `"${text.replace(/"/g, '\\"')}"`;
-            }
-            return text;
-        };
-
-        return [
-            `BasedOnStyle: ${serialize(normalized.BasedOnStyle)}`,
-            `IndentWidth: ${serialize(normalized.IndentWidth)}`,
-            `TabWidth: ${serialize(normalized.TabWidth)}`,
-            `UseTab: ${serialize(normalized.UseTab)}`,
-            `ColumnLimit: ${serialize(normalized.ColumnLimit)}`,
-            `BreakBeforeBraces: ${serialize(normalized.BreakBeforeBraces)}`,
-            `AllowShortIfStatementsOnASingleLine: ${serialize(normalized.AllowShortIfStatementsOnASingleLine)}`,
-            `AllowShortFunctionsOnASingleLine: ${serialize(normalized.AllowShortFunctionsOnASingleLine)}`,
-            `IndentCaseLabels: ${serialize(normalized.IndentCaseLabels)}`,
-            `PointerAlignment: ${serialize(normalized.PointerAlignment)}`,
-            `SpaceBeforeParens: ${serialize(normalized.SpaceBeforeParens)}`,
-            `SortIncludes: ${serialize(normalized.SortIncludes)}`,
-            `AlignConsecutiveAssignments: ${serialize(normalized.AlignConsecutiveAssignments)}`,
-            `AlignConsecutiveDeclarations: ${serialize(normalized.AlignConsecutiveDeclarations)}`
-        ].join('\n');
+        return (window as unknown as { clangFormatOptions?: ClangFormatOptionsApi }).clangFormatOptions?.generateClangFormatText?.(style || this.settings.clangFormatStyle || null) || '';
     }
 
     applyClangFormatStyleToUI(style: RawRecord | null = null, options: { rawText?: string } = {}): void {

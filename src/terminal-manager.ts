@@ -667,7 +667,7 @@ class IntegratedTerminalManager {
                         name: options.name
                     });
                 } catch (fallbackError) {
-                    fallbackErrors.push(`${fallbackShell} -> ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+                    fallbackErrors.push(`${fallbackShell} -> ${(fallbackError as Error)?.message || String(fallbackError)}`);
                 }
             }
 
@@ -732,7 +732,7 @@ class IntegratedTerminalManager {
                         name: options.name
                     });
                 } catch (fallbackError) {
-                    fallbackErrors.push(`${candidateShell} -> ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+                    fallbackErrors.push(`${candidateShell} -> ${(fallbackError as Error)?.message || String(fallbackError)}`);
                 }
             }
 
@@ -872,7 +872,7 @@ class IntegratedTerminalManager {
         }
 
         try {
-            session.pty.kill();
+            terminateProcessTree(session.pty);
         } catch (_) { }
         this.sessions.delete(terminalId);
         return true;

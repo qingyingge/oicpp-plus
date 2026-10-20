@@ -63,6 +63,7 @@ import { terminateProcessTree } from '../utils/process-supervisor';
 interface ProcResult {
     exitCode: number;
     error?: string;
+    signal?: string | null;
     outputTruncated?: boolean;
     timeout?: boolean;
 }
@@ -82,6 +83,7 @@ interface RunResult {
     outputTruncated?: boolean;
     timeout?: boolean;
     error?: string | null;
+    signal?: string | null;
     ms: number;
 }
 
@@ -197,7 +199,10 @@ function spawnProcess(exePath: string, args?: string[], cwd?: string): Promise<W
         proc._done = false;
         proc._result = null;
         proc._collectors = [];
-        proc.on('close', (code: number) => { activeProcesses.delete(proc); proc._result = { exitCode: code, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
+        // close(code, signal)：子进程被信号杀死时 code 为 null，这是唯一没被归一化的退出状态。
+        // 下游 `code !== 0 && code !== null` 会把它当成成功，于是拿崩溃前截断的输出继续与
+        // 标准程序比对（恰好相同就误判成通过）。这里折算成 -1，与 error/超时分支一致。
+        proc.on('close', (code: number | null, signal: NodeJS.Signals | null) => { activeProcesses.delete(proc); proc._result = { exitCode: (typeof code === 'number' ? code : -1), signal: signal || null, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
         proc.on('error', (err: Error) => { activeProcesses.delete(proc); proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors) cb(proc._result); proc._collectors = []; });
         resolve(proc);
     });
@@ -234,6 +239,25 @@ function waitForResult(proc: WorkerProc, timeout: number): Promise<ProcResult> {
 
 function killProc(proc: WorkerProc): void { terminateProcessTree(proc); }
 
+// 不限时（0）时给 native 同步调用兜一个墙钟上限：fastspawn 会把 0 当成
+// NO_DEADLINE(=INT64_MAX)，此时死循环的程序永远不返回，worker 线程被占死，
+// postMessage('stop') 与 worker.terminate() 都打不断，整轮对拍就此挂死。
+// 60s 远大于任何正常测试点，又足以把死循环判成 TLE。
+const UNLIMITED_RUN_FALLBACK_MS = 60 * 1000;
+
+function effectiveRunTimeout(timeout: number): number {
+    return (Number.isFinite(timeout) && timeout > 0) ? timeout : UNLIMITED_RUN_FALLBACK_MS;
+}
+
+// worker 被 terminate 时不会执行 stop 消息，Windows 回退路径下的子进程
+// 会变成孤儿继续跑；进程退出钩子是唯一能兜住它们的时机
+process.on('exit', () => {
+    for (const proc of activeProcesses) {
+        try { killProc(proc); } catch (_) {}
+    }
+    activeProcesses.clear();
+});
+
 function writeInput(proc: WorkerProc, input: Buffer | string): Promise<boolean> {
     return new Promise((resolve) => {
         // 子进程可能在读完输入前就退出（编译失败、std 先崩），此时 write 触发
@@ -258,7 +282,7 @@ async function runJs(exePath: string, input: Buffer | string | null, timeout: nu
     if (input !== null && input !== undefined) await writeInput(proc, input);
     const r = await waitForResult(proc, timeout);
     const output = (r.exitCode === -1 || r.exitCode === -3) ? null : proc._collect();
-    return { code: r.exitCode, output, outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(), timeout: !!r.timeout, error: r.error, ms: Date.now() - t0 };
+    return { code: r.exitCode, output, outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(), timeout: !!r.timeout, error: r.error, signal: r.signal || null, ms: Date.now() - t0 };
 }
 
 function runFast(exePath: string, input: Buffer | string | null, timeout: number): RunResult {
@@ -266,7 +290,7 @@ function runFast(exePath: string, input: Buffer | string | null, timeout: number
         return { code: -1, output: null, timeout: false, error: 'fastspawn module not loaded', ms: 0 };
     }
     const t0 = Date.now();
-    const r = fast.run(exePath, input, timeout);
+    const r = fast.run(exePath, input, effectiveRunTimeout(timeout));
     // 截断标志由 native 侧回报。原先靠 output.length >= MAX_WORKER_OUTPUT_BYTES 猜，
     // 而 native 的 MAX_OUTPUT(64MB) 与 JS 的 MAX_WORKER_OUTPUT_BYTES(32MB) 不等，
     // 落在两者之间的截断完全察觉不到，会拿残缺输出判等。
@@ -284,7 +308,7 @@ function runFastPair(stdPath: string, testPath: string, input: Buffer | string |
         return { code1: -1, code2: -1, out1: null, out2: null, ms: 0, error: 'fastspawn module not loaded' };
     }
     const t0 = Date.now();
-    const r = fast.runPair(stdPath, testPath, input, timeout);
+    const r = fast.runPair(stdPath, testPath, input, effectiveRunTimeout(timeout));
     const ms = Date.now() - t0;
     return {
         code1: r.code1, code2: r.code2,
@@ -351,9 +375,9 @@ const activeProcesses = new Set<WorkerProc>();
                 genOut = await runGenerator(gen, genTimeout);
                 if (!running) break;
                 lastGenMs = genOut.ms || 0;
-                if (genOut.timeout || genOut.error || genOut.code !== 0) {
-                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error ? 'gen_error' : 'gen_exit'),
-                        genOut.error || ('generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
+                if (genOut.timeout || genOut.error || genOut.signal || genOut.code !== 0) {
+                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error || genOut.signal ? 'gen_error' : 'gen_exit'),
+                        genOut.error || (genOut.signal ? 'generator killed by ' + genOut.signal : 'generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
                     continue;
                 }
 
@@ -390,9 +414,11 @@ const activeProcesses = new Set<WorkerProc>();
 
                     const spawnExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
                     if (stdR.timeout) { fail(i, 'std_tle', 'std_timeout', 'standard program timed out', spawnExtra); continue; }
-                    if (stdR.error || (stdR.code !== 0 && stdR.code !== null)) { fail(i, 'std_re', stdR.error ? 'std_error' : 'std_exit', stdR.error || ('standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code }); continue; }
+                    // signal 分支要在退出码分支之前：被信号杀死时 exitCode 已被折算成 -1，
+                    // 只看退出码会把 SIGSEGV/SIGABRT 报成普通的「退出码 -1」
+                    if (stdR.error || stdR.signal || (stdR.code !== 0 && stdR.code !== null)) { fail(i, 'std_re', (stdR.error || stdR.signal) ? 'std_error' : 'std_exit', stdR.error || (stdR.signal ? 'standard program killed by ' + stdR.signal : 'standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code }); continue; }
                     if (testR.timeout) { fail(i, 'test_tle', 'test_timeout', 'test program timed out', spawnExtra); continue; }
-                    if (testR.error || (testR.code !== 0 && testR.code !== null)) { fail(i, 'test_re', testR.error ? 'test_error' : 'test_exit', testR.error || ('test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code }); continue; }
+                    if (testR.error || testR.signal || (testR.code !== 0 && testR.code !== null)) { fail(i, 'test_re', (testR.error || testR.signal) ? 'test_error' : 'test_exit', testR.error || (testR.signal ? 'test program killed by ' + testR.signal : 'test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code }); continue; }
                     if (stdR.outputTruncated || testR.outputTruncated) { fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', spawnExtra); continue; }
 
                     if (!outputsEqual(stdR.output, testR.output)) {

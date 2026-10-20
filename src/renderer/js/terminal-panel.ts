@@ -130,7 +130,36 @@ class IntegratedTerminalPanel {
 
         this.bindEvents();
         await this.refreshFeatureStatus();
+        // 标签文案与空状态是 JS 直接写的，data-i18n 覆盖不到。延后一拍执行，
+        // 避开 i18n 的 _applyToDOM()（它在 _notifyListeners() 之后同步跑）。
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => this.refreshTranslations(), 0);
+        });
         this.initialized = true;
+    }
+
+    /**
+     * 语言切换后重建 JS 写入的译文：终端标签页与空状态提示。
+     * 终端回滚缓冲里的历史文本无法改写，属预期行为。
+     */
+    refreshTranslations(): void {
+        try {
+            if (this.tabs) {
+                this.tabs.querySelectorAll('.integrated-terminal-tab').forEach((tab) => {
+                    const counter = Number((tab as HTMLElement).dataset['terminalCounter']);
+                    const label = tab.querySelector('.terminal-tab-label');
+                    // t() 取不到键时返回键名本身，不需要再写 || 兜底（I5 会拦）
+                    if (label && Number.isFinite(counter)) {
+                        label.textContent = window.i18n.t('terminal.tabLabel', { counter });
+                    }
+                    const close = tab.querySelector('.terminal-tab-close');
+                    if (close) {
+                        close.setAttribute('aria-label', window.i18n.t('terminal.closeTerminal'));
+                    }
+                });
+            }
+            this.renderEmptyState();
+        } catch (_) { }
     }
 
     bindEvents() {
@@ -411,8 +440,10 @@ class IntegratedTerminalPanel {
         tab.type = 'button';
         tab.className = 'integrated-terminal-tab pending';
         tab.dataset['terminalId'] = tabId;
-        const tabLabel = window.i18n?.t?.('terminal.tabLabel', { counter: this.counter }) || `终端 ${this.counter}`;
-        const closeLabel = window.i18n?.t?.('terminal.closeTerminal') || '关闭终端';
+        // 记录序号，供语言切换后重建标签（标签文案里带 counter）
+        tab.dataset['terminalCounter'] = String(this.counter);
+        const tabLabel = window.i18n?.t?.('terminal.tabLabel', { counter: this.counter });
+        const closeLabel = window.i18n?.t?.('terminal.closeTerminal');
         tab.innerHTML = `<span class="terminal-tab-label">${tabLabel}</span><span class="terminal-tab-close" aria-label="${closeLabel}">×</span>`;
 
         const pane = document.createElement('div');
@@ -477,16 +508,12 @@ class IntegratedTerminalPanel {
         try {
             created = await window.electronAPI.createTerminal(createPayload) as TerminalCreateResult | null;
         } catch (error) {
-            terminal.writeln(window.i18n.t('terminal.createFailed', { error: String((error as { message?: unknown })?.message || error) }));
-            tab.classList.remove('pending');
-            this.renderEmptyState();
+            this.handleTerminalCreateFailure(tabId, window.i18n.t('terminal.createFailed', { error: String((error as { message?: unknown })?.message || error) }));
             return;
         }
 
         if (!created?.ok || !created?.terminalId) {
-            terminal.writeln(`\r\n[Error] ${created?.error || window.i18n.t('panel.terminalCreateFailed')}`);
-            tab.classList.remove('pending');
-            this.renderEmptyState();
+            this.handleTerminalCreateFailure(tabId, `\r\n[Error] ${created?.error || window.i18n.t('panel.terminalCreateFailed')}`);
             return;
         }
 
@@ -494,11 +521,6 @@ class IntegratedTerminalPanel {
         provisionalSession.remoteId = remoteId;
         provisionalSession.cwd = created.cwd || null;
         provisionalSession.shell = created.shell || null;
-
-        const labelNode = tab.querySelector('.terminal-tab-label');
-        if (labelNode) {
-            labelNode.textContent = window.i18n.t('terminal.tabLabel', { counter: this.sessions.size });
-        }
 
         tab.classList.remove('pending');
         tab.dataset['terminalId'] = remoteId;
@@ -1156,6 +1178,21 @@ class IntegratedTerminalPanel {
             : (signal ? window.i18n.t('terminal.exitSignal', { signal }) : window.i18n.t('terminal.exitedNoInfo'));
         session.terminal.writeln(window.i18n.t('terminal.exited', { info: suffix }));
         session.tab.classList.add('exited');
+    }
+
+    // 创建失败时必须把占位会话、标签页和面板一起清掉：只保留它们会让 sessions.size
+    // 一直大于 0（影响 renderEmptyState 与 createIfNone 判断），并让后续终端编号错乱。
+    handleTerminalCreateFailure(tabId: string, message: string): void {
+        const session = this.sessions.get(tabId);
+        if (session?.terminal) {
+            try {
+                session.terminal.writeln(message);
+            } catch (_) { }
+        }
+        try {
+            logError('[Terminal] 创建失败:', message);
+        } catch (_) { }
+        this.closeTerminal(tabId);
     }
 
     async closeTerminal(terminalId: string) {

@@ -106,12 +106,12 @@ class SidebarManager {
         });
     }
 
-    setupLanguageListener(): void {
-        document.addEventListener('i18n-language-changed', () => {
+    async setupLanguageListener(): Promise<void> {
+        document.addEventListener('i18n-language-changed', async () => {
             this.updateCloudPanelLocks();
             const panel = this.panels[this.currentPanel];
             if (panel && typeof panel.activate === 'function') {
-                panel.activate();
+                await panel.activate();
             }
         });
     }
@@ -445,7 +445,7 @@ class SidebarManager {
         });
     }
 
-    showPanel(panelName: string): void {
+    async showPanel(panelName: string): Promise<void> {
         logInfo('showPanel called, panelName:', panelName, 'isCollapsed:', this.isCollapsed);
         this.updateCloudPanelLocks();
         if (this.isCloudFileActive() && ['debug', 'samples', 'compare'].includes(panelName)) {
@@ -491,7 +491,7 @@ class SidebarManager {
 
         if (this.panels[panelName]) {
             logInfo('正在激活面板管理器:', panelName);
-            this.panels[panelName].activate();
+            await this.panels[panelName].activate();
             logInfo('面板管理器激活完成:', panelName);
         } else {
             logWarn('面板管理器不存在:', panelName);

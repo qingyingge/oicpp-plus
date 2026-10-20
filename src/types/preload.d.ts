@@ -50,6 +50,7 @@ interface ElectronAPI {
   openBackupSettings(): Promise<unknown>;
   getPlatform(): Promise<string>;
   getUserHome(): Promise<string>;
+  readThirdPartyLicense(name: string): Promise<string>;
   getUserIconPath(): Promise<string>;
   getBuildInfo(): Promise<{ version: string; buildTime: string; author: string; buildTag?: string; buildVersion?: string; buildNo?: string } | null>;
   getDownloadedCompilers(): Promise<Array<unknown>>;

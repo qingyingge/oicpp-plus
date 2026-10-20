@@ -31,7 +31,7 @@ const getNewTabPageHtml = (): string => {
     const fg = isDark ? '#cccccc' : '#333333';
     const muted = isDark ? '#6a6a6a' : '#999999';
     const accent = '#007acc';
-    const _t = window.__ || ((k: string) => k);
+    const _t = (k: string) => window.i18n?.t?.(k) || k;
     const title = _t('browser.title');
     const welcomeHint = _t('browser.welcomeHint');
     const splitHint = _t('browser.splitHint');
@@ -243,7 +243,7 @@ class BrowserManager {
         const urlInput = document.createElement('input');
         urlInput.type = 'text';
         urlInput.className = 'browser-url-input';
-        urlInput.setAttribute('placeholder', ('browser.urlPlaceholder'));
+        urlInput.setAttribute('placeholder', window.i18n.t('browser.urlPlaceholder'));
         urlInput.value = initialUrl?.startsWith('data:text/html') ? '' : (initialUrl || '');
         urlInput.setAttribute('spellcheck', 'false');
         urlInput.setAttribute('autocomplete', 'off');

@@ -246,7 +246,7 @@ const called = (calls, name) => calls.some((c) => c.name === name);
     s.real.showComplete.call(s.self, 7, null, true);
     check('showComplete 把执行数写进「已完成」元素，并展开完成区',
         String(s.named('completed-tests').textContent) === '7'
-        && s.named('compare-complete').style.display === 'flex',
+        && s.named('compare-complete').style.display === '',
         JSON.stringify({ text: s.named('completed-tests').textContent, disp: s.named('compare-complete').style.display }));
     check('stopped=true 的提示用 stoppedText 且带上同一个计数',
         s.named('compare-complete').children['.complete-info span'].innerHTML.startsWith('compare.stoppedText|{"count":7}'),

@@ -58,8 +58,10 @@ function loadManagerClass(spawnImpl = undefined, mainWindow = null, overrides = 
         // These are only needed if a future test exercises start(); keeping the
         // harness small makes it safe to use the class without booting Electron.
         ensureClangdUserBundle: async () => ({ ok: true, root: '/fake/clangd' }),
+        resolveClangdRootFromBundle: () => null,
         resolveClangdExecutable: () => '/fake/clangd/bin/clangd',
-        getUserClangdRoot: () => '/fake/clangd',
+        findClangdExecutableOnPath: () => null,
+        getUserToolsRoot: () => '/fake/clangd',
         getCompilerRuntimeBinPaths: () => [],
         queryCompilerInfo: async () => ({ includePaths: [], target: '' }),
         compilerInfoCache: new Map(),
@@ -314,23 +316,33 @@ class FakeProc extends EventEmitter {
         const seen = { cp: [], cpSync: [], mkdir: [] };
         const saved = {
             fs: global.fs, logInfo: global.logInfo, logWarn: global.logWarn,
-            getUserClangdRoot: global.getUserClangdRoot,
+            getUserToolsRoot: global.getUserToolsRoot,
             resolveClangdExecutable: global.resolveClangdExecutable,
             resolveClangdRootFromBundle: global.resolveClangdRootFromBundle,
+            migrateLegacyUserTools: global.migrateLegacyUserTools,
+            path: global.path,
             clangdBundlePromise: global.clangdBundlePromise
         };
         global.fs = {
+            // 合并后（a7a70a6 扁平 bin）的函数体会查 lib/clang 与根下附属文件：
+            // existsSync 恒 false、readdir 空表，让拷贝只剩 bin/ 那一条主路径
+            existsSync: () => false,
             promises: {
                 mkdir: async (p) => { seen.mkdir.push(p); },
-                cp: async (from, to) => { seen.cp.push([from, to]); }
+                cp: async (from, to) => { seen.cp.push([from, to]); },
+                readdir: async () => []
             },
             cpSync: () => { seen.cpSync.push(1); }
         };
         // 拷贝完成前用户目录里没有 clangd，拷完才有 —— 复刻真实时序，
         // 也顺带验证「已存在就短路」这条路径不会重复拷贝
-        global.getUserClangdRoot = () => '/user/clangd';
+        global.getUserToolsRoot = () => '/user/clangd';
         global.resolveClangdExecutable = () => (seen.cp.length ? '/user/clangd/bin/clangd' : null);
         global.resolveClangdRootFromBundle = () => '/bundle/clangd';
+        // a7a70a6 后 ensureClangdUserBundle 首步先迁旧目录；迁移本身由 user-tools-dir 测试守
+        global.migrateLegacyUserTools = async () => { };
+        // toFn 用 new Function 重建，只能看见全局；合并后的函数体用到 path.join
+        global.path = require('path');
         global.logInfo = () => {};
         global.logWarn = () => {};
         global.clangdBundlePromise = null;
@@ -350,7 +362,7 @@ class FakeProc extends EventEmitter {
             check('M55: 两个调用者拿到同一个结果对象', first === second && first.ok === true,
                 JSON.stringify(first));
             check('M55: 拷贝走的是 fs.promises.cp',
-                seen.cp.length === 1 && JSON.stringify(seen.cp[0]) === '["/bundle/clangd","/user/clangd"]' &&
+                seen.cp.length === 1 && JSON.stringify(seen.cp[0]) === JSON.stringify([path.join('/bundle/clangd', 'bin'), '/user/clangd']) &&
                 seen.mkdir.length === 1, `cp=${JSON.stringify(seen.cp)}`);
             const third = await run();
             check('M55: 落定后再调用，靠「已存在」短路而不是再拷一次',
@@ -906,14 +918,14 @@ class FakeProc extends EventEmitter {
             cachedClangFormatExecutablePath: global.cachedClangFormatExecutablePath,
             resolveClangFormatExecutable: global.resolveClangFormatExecutable,
             resolveClangFormatRootFromBundle: global.resolveClangFormatRootFromBundle,
-            getUserClangdRoot: global.getUserClangdRoot,
+            getUserToolsRoot: global.getUserToolsRoot,
             findClangFormatExecutableOnPath: global.findClangFormatExecutableOnPath
         };
         global.clangFormatExecutablePathResolved = false;
         global.cachedClangFormatExecutablePath = null;
         global.clangFormatPathProbe = { bundleFail: false, userFail: false };
         global.resolveClangFormatRootFromBundle = () => { seen.fromBundle++; return '/bundle'; };
-        global.getUserClangdRoot = () => '/user/clangd';
+        global.getUserToolsRoot = () => '/user/clangd';
         global.findClangFormatExecutableOnPath = () => { seen.onPath++; return '/usr/bin/clang-format'; };
         global.resolveClangFormatExecutable = (root) => {
             seen.resolve++;
@@ -987,7 +999,7 @@ class FakeProc extends EventEmitter {
                 resolveClangFormatExecutablePath: exePath,
                 describeClangFormatSearchPaths: () => '<search paths>',
                 getClangFormatExecutableName: () => 'clang-format.exe',
-                getUserClangdRoot: () => '/fake/clangd',
+                getUserToolsRoot: () => '/fake/clangd',
                 logError: () => { },
                 formatCodeWithClangFormat: async (spec) => {
                     calls.push(spec);

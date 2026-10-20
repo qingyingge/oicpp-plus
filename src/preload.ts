@@ -531,7 +531,7 @@ const ALLOWED_INVOKE_CHANNELS = new Set([
     'test-compiler', 'get-language-file', 'get-workspace-info',
     'get-font-list', 'check-font-exists', 'get-installed-fonts',
     'get-global-settings', 'save-global-settings', 'get-user-data-path',
-    'get-app-version', 'get-app-path', 'check-for-updates',
+    'get-app-version', 'get-app-path', 'check-for-updates', 'read-third-party-license',
     'get-all-settings', 'update-settings', 'update-top-level-settings',
     'open-backup-settings', 'check-gdb-availability', 'fetch-remote-json',
     'open-editor-settings', 'open-compiler-settings',
@@ -544,6 +544,7 @@ const ALLOWED_EVENT_CHANNELS = new Set([
     // 调试会话
     'debug-started', 'debug-stopped', 'debug-running', 'debug-program-exited',
     'debug-ready-waiting', 'debug-breakpoint-hit', 'debug-error',
+    'debug-breakpoint-set', 'debug-breakpoint-removed',
     'debug-variables-updated', 'debug-callstack-updated', 'debug-terminal-output',
     'debug-variable-expanded', 'goto-source-location',
     // 设置与主题
@@ -726,6 +727,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getUserHome: () => safeIpcRenderer.invoke('get-user-home'),
     getUserIconPath: () => safeIpcRenderer.invoke('get-user-icon-path'),
     getBuildInfo: () => safeIpcRenderer.invoke('get-build-info'),
+    readThirdPartyLicense: (name: string) => safeIpcRenderer.invoke('read-third-party-license', name),
 
     getDownloadedCompilers: () => safeIpcRenderer.invoke('get-downloaded-compilers'),
     downloadCompiler: (config: Record<string, any>) => safeIpcRenderer.invoke('download-compiler', config),
