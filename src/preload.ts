@@ -298,7 +298,7 @@ function ensureMarkdown(): MdLite | null {
         const mk = require('@iktakahiro/markdown-it-katex');
         const taskLists = require('markdown-it-task-lists');
         const imageFigures = require('markdown-it-image-figures');
-        const hljs = /** @type {import('highlight.js').HLJSApi} */ (/** @type {unknown} */ (require('highlight.js')));
+        const hljs = require('highlight.js') as unknown as import('highlight.js').HLJSApi;
 
         md = new MarkdownIt({
             html: false,

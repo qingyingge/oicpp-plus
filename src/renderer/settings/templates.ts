@@ -379,7 +379,7 @@ class TemplatesSettings {
 
         // 如果是编辑模式，加载已有数据
         if (editIndex >= 0 && editIndex < this.snippets.length) {
-            const item = this.snippets[editIndex]!;
+            const item = this.snippets[editIndex] as (typeof this.snippets)[number];
             if (kwEl) kwEl.value = item.keyword || '';
             if (descEl) descEl.value = item.description || '';
             if (contentEl) contentEl.value = item.content || '';

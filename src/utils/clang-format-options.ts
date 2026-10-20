@@ -75,7 +75,7 @@
     function getDefaultClangFormatStyle(): ClangFormatStyleObject {
         const defaults = {} as ClangFormatStyleObject;
         Object.keys(OPTION_DEFS).forEach((key) => {
-            defaults[key] = OPTION_DEFS[key]!.default;
+            defaults[key] = (OPTION_DEFS[key] as ClangFormatOptionDef).default;
         });
         return defaults;
     }
@@ -111,13 +111,13 @@
 
         Object.keys(OPTION_DEFS).forEach((key) => {
             if (!Object.prototype.hasOwnProperty.call(raw, key)) return;
-            const def = OPTION_DEFS[key]!;
+            const def = OPTION_DEFS[key] as ClangFormatOptionDef;
             if (def.type === 'enum') {
-                normalized[key] = toEnum(raw[key], def.values!, defaults[key]!);
+                normalized[key] = toEnum(raw[key], def.values as string[], defaults[key] as ClangFormatValue);
             } else if (def.type === 'bool') {
-                normalized[key] = toBool(raw[key], defaults[key]!);
+                normalized[key] = toBool(raw[key], defaults[key] as ClangFormatValue);
             } else {
-                normalized[key] = toInt(raw[key], defaults[key]!);
+                normalized[key] = toInt(raw[key], defaults[key] as ClangFormatValue);
             }
         });
 
@@ -181,8 +181,8 @@
             }
             const match = trimmed.match(/^([A-Za-z][A-Za-z0-9]*)\s*:\s*(.+)$/);
             if (!match) return;
-            const key = match[1]!;
-            let value: ClangFormatValue = match[2]!.trim();
+            const key = match[1] as string;
+            let value: ClangFormatValue = (match[2] as string).trim();
             if (((value as string).startsWith('"') && (value as string).endsWith('"')) || ((value as string).startsWith("'") && (value as string).endsWith("'"))) {
                 value = (value as string).slice(1, -1);
             }

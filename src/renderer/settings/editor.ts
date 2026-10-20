@@ -83,13 +83,11 @@ type EditorSettingsState = {
     keybindings?: Keybindings;
 }
 
-/** @type {(id: string) => HTMLElement | null} */
-const elById = (id: string) => {
+const elById = (id: string): HTMLElement | null => {
     const el = document.getElementById(id);
     return el instanceof HTMLElement ? el : null;
 };
-/** @type {(id: string) => HTMLSelectElement | null} */
-const elSelect = (id: string) => {
+const elSelect = (id: string): HTMLSelectElement | null => {
     const el = document.getElementById(id);
     return el instanceof HTMLSelectElement ? el : null;
 };
@@ -713,8 +711,8 @@ class EditorSettings {
                 const legacyKeys = key === 'variable' ? ['localVariable', 'globalVariable'] : [];
                 const style = this.resolveSyntaxTokenValue(raw, key, legacyKeys);
                 if (style && typeof style === 'object') {
-                    normalized[key]!.bold = !!(style as { bold?: unknown }).bold;
-                    normalized[key]!.italic = !!(style as { italic?: unknown }).italic;
+                    (normalized[key] as { bold?: boolean }).bold = !!(style as { bold?: unknown }).bold;
+                    (normalized[key] as { italic?: boolean }).italic = !!(style as { italic?: unknown }).italic;
                 }
             });
         }
@@ -845,10 +843,10 @@ class EditorSettings {
             const boldInput = elCheckbox(`syntax-style-${key}-bold`);
             const italicInput = elCheckbox(`syntax-style-${key}-italic`);
             if (boldInput) {
-                result[key]!.bold = !!boldInput.checked;
+                (result[key] as { bold?: boolean }).bold = !!boldInput.checked;
             }
             if (italicInput) {
-                result[key]!.italic = !!italicInput.checked;
+                (result[key] as { italic?: boolean }).italic = !!italicInput.checked;
             }
         });
         return this.normalizeSyntaxFontStyles(result);
@@ -1178,7 +1176,7 @@ class EditorSettings {
                     });
                     
                     if (result && !result.canceled && (result.filePaths as string[]).length > 0) {
-                        bgImageInput.value = (result.filePaths as string[])[0]!;
+                        bgImageInput.value = (result.filePaths as string[])[0] as string;
                     }
                 } catch (error) {
                     logError('选择背景图片失败:', error);
@@ -1202,7 +1200,7 @@ class EditorSettings {
 
     setupThemeListener() {
         if (window.electronIPC && window.electronIPC.on) {
-            window.electronIPC.on('theme-changed', /** @param {unknown} event @param {string} theme */ (event, theme) => {
+            window.electronIPC.on('theme-changed', (event: unknown, theme: string) => {
                 logInfo('编辑器设置页面收到主题变更:', theme);
                 this.settings.theme = theme as string;
                 this.applyTheme(theme);
@@ -1940,7 +1938,7 @@ class EditorSettings {
         if (fontSelect && this.settings.font) {
             let fontValue = this.settings.font;
             if (fontValue.includes(',')) {
-                fontValue = fontValue.split(',')[0]!.trim().replace(/["']/g, '');
+                fontValue = (fontValue.split(',')[0] as string).trim().replace(/["']/g, '');
             }
             const options = Array.from(fontSelect.options);
             const matchingOption = options.find(option => option.value === fontValue);

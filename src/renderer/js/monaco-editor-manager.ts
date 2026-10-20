@@ -1400,7 +1400,6 @@ class MonacoEditorManager {
         this._lspProviders.set(`command:${id}`, disposable);
     }
 
-    /** @returns {import('monaco-editor').languages.CompletionItem & { deprecated?: unknown }} */
     _mapLspCompletionItem(item: RawLspCompletionItem, options: {
         kindMap?: Record<number, monaco.languages.CompletionItemKind>;
         wordRange?: monaco.Range | null;
@@ -1516,7 +1515,7 @@ class MonacoEditorManager {
                         return { suggestions: [] };
                     }
 
-                    const result = /** @type {{ items?: Array<{ label?: unknown }>; isIncomplete?: boolean }} */ (await this.lspClient.request('textDocument/completion', {
+                    const result = (await this.lspClient.request('textDocument/completion', {
                         textDocument: { uri },
                         position: {
                             line: position.lineNumber - 1,
@@ -1526,7 +1525,7 @@ class MonacoEditorManager {
                             triggerKind: context.triggerKind,
                             triggerCharacter: context.triggerCharacter
                         } : undefined
-                    }, token));
+                    }, token)) as { items?: Array<{ label?: unknown }>; isIncomplete?: boolean };
 
                     if (!this._isModelValid(model, token)) return { suggestions: [] };
                     const resultObj = result as { items?: unknown[]; isIncomplete?: boolean } | null;

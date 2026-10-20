@@ -1060,7 +1060,6 @@ class MonacoEditorManager {
         });
         this._lspProviders.set(`command:${id}`, disposable);
     }
-    /** @returns {import('monaco-editor').languages.CompletionItem & { deprecated?: unknown }} */
     _mapLspCompletionItem(item, options = {}) {
         const rawLabel = String(item?.label || '').trim();
         if (!rawLabel)
@@ -1167,7 +1166,7 @@ class MonacoEditorManager {
                     if (!uri) {
                         return { suggestions: [] };
                     }
-                    const result = /** @type {{ items?: Array<{ label?: unknown }>; isIncomplete?: boolean }} */ (await this.lspClient.request('textDocument/completion', {
+                    const result = (await this.lspClient.request('textDocument/completion', {
                         textDocument: { uri },
                         position: {
                             line: position.lineNumber - 1,

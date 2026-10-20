@@ -168,12 +168,12 @@ function outputsEqual(left: Buffer | string | null | undefined, right: Buffer | 
 
 function spawnProcess(exePath: string, args?: string[], cwd?: string): Promise<WorkerProc> {
     return new Promise((resolve) => {
-        const proc = (/** @type {WorkerProc} */ (spawn(exePath, args || [], {
+        const proc = (spawn(exePath, args || [], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
             detached: process.platform !== 'win32',
             cwd
-        }) as WorkerProc));
+        }) as WorkerProc);
         activeProcesses.add(proc);
         const stdout: Buffer[] = [], stderr: Buffer[] = [];
         let outputBytes = 0;

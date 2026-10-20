@@ -59,7 +59,7 @@ class FontDetector {
         const lower = cleanFontName.toLowerCase();
         if (aliasMap[lower]) cleanFontName = aliasMap[lower];
 
-        const firstFont = cleanFontName.split(',')[0]!.trim();
+        const firstFont = (cleanFontName.split(',')[0] as string).trim();
         if (['monospace', 'serif', 'sans-serif'].includes(firstFont.toLowerCase())) {
             return firstFont;
         }

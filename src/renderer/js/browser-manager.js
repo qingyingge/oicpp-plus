@@ -65,10 +65,7 @@ class BrowserManager {
     /**
      * 创建一个浏览器标签页容器
      * @param {object} options
-     * @param {string} options.groupId - 所属编辑器分组 ID
-     * @param {string} options.uniqueKey - 标签唯一键
-     * @param {string} options.url - 初始 URL
-     * @returns {HTMLElement} browserContainer
+     * 参数即解构签名里的 groupId/uniqueKey/url；返回新建的 browserContainer 元素。
      */
     createBrowserContainer({ groupId, uniqueKey, url }) {
         // 未指定 URL 时使用内置新标签页

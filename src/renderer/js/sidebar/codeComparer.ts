@@ -486,7 +486,7 @@ class CodeComparer {
             }) as DialogResult;
 
             if (!result.canceled && result.filePaths.length > 0) {
-                this.standardCodePath = result.filePaths[0]!;
+                this.standardCodePath = result.filePaths[0] as string;
                 this.updateFilePath('std-code-path', this.standardCodePath);
 
                 const task = this.getActiveTask();
@@ -516,7 +516,7 @@ class CodeComparer {
             }) as DialogResult;
 
             if (!result.canceled && result.filePaths.length > 0) {
-                this.testCodePath = result.filePaths[0]!;
+                this.testCodePath = result.filePaths[0] as string;
                 this.updateFilePath('test-code-path', this.testCodePath);
 
                 const prevConfig = prevTask?.config ? { ...prevTask.config } : {
@@ -556,7 +556,7 @@ class CodeComparer {
             }) as DialogResult;
 
             if (!result.canceled && result.filePaths.length > 0) {
-                this.generatorPath = result.filePaths[0]!;
+                this.generatorPath = result.filePaths[0] as string;
                 this.updateFilePath('generator-path', this.generatorPath);
 
                 const task = this.getActiveTask();
@@ -581,7 +581,7 @@ class CodeComparer {
             }) as DialogResult;
 
             if (!result.canceled && result.filePaths.length > 0) {
-                this.spjPath = result.filePaths[0]!;
+                this.spjPath = result.filePaths[0] as string;
                 const spjPathInput = ccInput('compare-spj-path');
                 if (spjPathInput) {
                     spjPathInput.value = this.spjPath;
@@ -2316,7 +2316,7 @@ class CodeComparer {
 
         for (let i = 0; i < lines.length; i++) {
             const lineNum = i + 1;
-            const line = lines[i]!;
+            const line = lines[i] as string;
             result += `<div class="diff-line"><span class="line-number">${lineNum.toString().padStart(4)} </span>${this.escapeHtml(line)}</div>`;
         }
 

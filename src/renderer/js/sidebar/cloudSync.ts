@@ -1,10 +1,6 @@
 declare function logWarn(...args: unknown[]): void;
 
-/**
- * 从事件目标向上找 .tree-item 祖先元素（收窄类型）。
- * @param {Event} e
- * @returns {HTMLElement | null}
- */
+// 从事件目标向上找 .tree-item 祖先元素（收窄类型）。
 function csTreeItem(e: Event): HTMLElement | null {
     if (!(e.target instanceof Element)) return null;
     const el = e.target.closest('.tree-item');

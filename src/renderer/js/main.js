@@ -400,9 +400,9 @@ class OICPPApp {
         this.updateAccountMenu();
     }
     updateAccountMenu() {
-        const loginItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="ide-login"]'));
-        const accountItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="ide-account"]'));
-        const logoutItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="ide-logout"]'));
+        const loginItem = document.querySelector('.menu-dropdown-item[data-action="ide-login"]');
+        const accountItem = document.querySelector('.menu-dropdown-item[data-action="ide-account"]');
+        const logoutItem = document.querySelector('.menu-dropdown-item[data-action="ide-logout"]');
         try {
             if (window.sidebarManager && typeof window.sidebarManager.setCloudPanelVisible === 'function') {
                 window.sidebarManager.setCloudPanelVisible(this.accountLoggedIn);
@@ -475,7 +475,7 @@ class OICPPApp {
     updatePlatformSpecificMenu() {
         try {
             const isWindows = !!(window.process && window.process.platform === 'win32');
-            const cloudMenuItem = /** @type {HTMLElement | null} */ (document.querySelector('.menu-dropdown-item[data-action="cloud-compile"]'));
+            const cloudMenuItem = document.querySelector('.menu-dropdown-item[data-action="cloud-compile"]');
             if (cloudMenuItem) {
                 cloudMenuItem.style.display = isWindows ? '' : 'none';
                 if (!isWindows) {

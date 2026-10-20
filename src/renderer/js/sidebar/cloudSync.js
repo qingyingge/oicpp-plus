@@ -1,9 +1,5 @@
 "use strict";
-/**
- * 从事件目标向上找 .tree-item 祖先元素（收窄类型）。
- * @param {Event} e
- * @returns {HTMLElement | null}
- */
+// 从事件目标向上找 .tree-item 祖先元素（收窄类型）。
 function csTreeItem(e) {
     if (!(e.target instanceof Element))
         return null;

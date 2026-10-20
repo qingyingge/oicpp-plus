@@ -62,11 +62,7 @@ class FileExplorer {
         this.setupKeyboardShortcuts();
     }
 
-    /**
-     * Validates file or folder name for illegal characters
-     * @param {string} name - The file or folder name to validate
-     * @returns {Object} - { valid: boolean, error: string }
-     */
+    // Validates file or folder name for illegal characters（返回 { valid, error }）
     validateFileName(name: string) {
         if (!name || typeof name !== 'string') {
             return { valid: false, error: window.i18n.t('fileExplorer.nameRequired')};

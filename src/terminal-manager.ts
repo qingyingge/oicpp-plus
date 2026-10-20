@@ -22,9 +22,6 @@ function tryLoadPty(moduleId: string): PtyModule | null {
 
 /**
  * 创建带业务错误码的 Error。调用方用 error.code 判断失败类型，而非匹配 message 文本。
- * @param {string} message
- * @param {string} code
- * @returns {Error & { code: string }}
  */
 function errorWithCode(message: string, code: string): Error & { code: string } {
     const err = new Error(message) as Error & { code: string };

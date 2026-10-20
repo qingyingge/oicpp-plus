@@ -1,10 +1,8 @@
 "use strict";
-/** @type {(id: string) => HTMLElement | null} */
 const elById = (id) => {
     const el = document.getElementById(id);
     return el instanceof HTMLElement ? el : null;
 };
-/** @type {(id: string) => HTMLSelectElement | null} */
 const elSelect = (id) => {
     const el = document.getElementById(id);
     return el instanceof HTMLSelectElement ? el : null;
@@ -1017,7 +1015,7 @@ class EditorSettings {
     }
     setupThemeListener() {
         if (window.electronIPC && window.electronIPC.on) {
-            window.electronIPC.on('theme-changed', /** @param {unknown} event @param {string} theme */ (event, theme) => {
+            window.electronIPC.on('theme-changed', (event, theme) => {
                 logInfo('编辑器设置页面收到主题变更:', theme);
                 this.settings.theme = theme;
                 this.applyTheme(theme);
