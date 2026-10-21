@@ -1913,7 +1913,7 @@ class TabManager {
                     case 'w':
                         e.preventDefault();
                         try {
-                            const active = this.getTabByFileName(this.activeTab);
+                            const active = this.getActiveTabData();
                             const mgr = window.monacoEditorManager || window.editorManager;
                             const ed = mgr?.currentEditor;
                             const content = ed?.getValue?.();
@@ -2413,10 +2413,29 @@ class TabManager {
         }
         this.refreshTabLabels();
     }
-    closeActiveTab() {
-        if (this.activeTab) {
-            this.closeTab(this.activeTab);
+    // activeTab 在多数激活路径（activateTab / activateTabByUniqueKey / 分组切换等）里
+    // 被赋成整个 TabRecord，少数路径赋 fileName 字符串。直接把它传给
+    // getTabByFileName 会因 `tabData.fileName === fileName` 永远失配而查不到 tab，
+    // 这里统一归一化，避免每个调用点各自判断。
+    getActiveTabData() {
+        if (this.activeTab && typeof this.activeTab === 'object') {
+            return this.activeTab;
         }
+        if (typeof this.activeTab === 'string') {
+            const byName = this.getTabByFileName(this.activeTab);
+            if (byName)
+                return byName;
+        }
+        if (this.activeTabKey) {
+            return this.tabs.get(this.activeTabKey) || null;
+        }
+        return null;
+    }
+    closeActiveTab() {
+        const tabData = this.getActiveTabData();
+        if (!tabData)
+            return;
+        this.closeTab(tabData.fileName, { uniqueKeyOverride: tabData.uniqueKey });
     }
     createNewTab() {
         this.createNewCppFile();

@@ -894,9 +894,33 @@ function makeModel(lines, state = {}) {
             check('整文档格式化产出一条编辑，正文来自桥',
                 Array.isArray(edits) && edits.length === 1 && edits[0].text === 'FORMATTED',
                 JSON.stringify(edits));
-            check('整文档格式化的 range 就是模型的完整范围（沙箱里没有 clangd，能算出来即证明没走 LSP）',
+            check('整文档格式化走最小编辑（单行全差异文档恰好落在完整模型范围；沙箱里没有 clangd，能算出来即证明没走 LSP）',
                 JSON.stringify(edits[0].range) === JSON.stringify(model.getFullModelRange()),
                 JSON.stringify(edits[0].range));
+        }
+
+        {
+            // 全文档格式化不许退回整模型替换：公共首尾行必须被剥掉，
+            // 否则每次格式化都产生巨型 undo + 全文重排 + 全文 didChange 连锁。
+            bridge.reply = () => 'keep\nint x = 1;\nkeep2';
+            const model2 = makeModel(['keep', 'int  x=1;', 'keep2']);
+            const edits2 = await provideFull(model2, {}, LIVE);
+            check('多行文档的整文档格式化只改写差异行，首尾公共行不进 range',
+                edits2.length === 1 &&
+                edits2[0].range.startLineNumber === 2 && edits2[0].range.startColumn === 1 &&
+                edits2[0].range.endLineNumber === 3 && edits2[0].range.endColumn === 1 &&
+                edits2[0].text === 'int x = 1;\n',
+                JSON.stringify(edits2));
+        }
+
+        {
+            // 格式化结果与原文一致时必须零编辑：旧实现照常返回整文档替换，
+            // 会凭空多出一条巨型 undo。
+            bridge.reply = () => 'int main() { }';
+            const model3 = makeModel(['int main() { }']);
+            const edits3 = await provideFull(model3, {}, LIVE);
+            check('格式化无变化时不产生任何编辑', edits3.length === 0, JSON.stringify(edits3));
+            bridge.reply = () => 'FORMATTED';
         }
 
         {

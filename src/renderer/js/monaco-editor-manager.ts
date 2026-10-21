@@ -2592,12 +2592,13 @@ class MonacoEditorManager {
                 provideDocumentFormattingEdits: async (model, _options, token) => {
                     try {
                         if (!model || model.isDisposed?.() || token?.isCancellationRequested) return [];
+                        const original = model.getValue();
                         const content = await this.requestClangFormattedCode(model);
                         if (content === null || token?.isCancellationRequested || model.isDisposed?.()) return [];
-                        return [{
-                            range: model.getFullModelRange(),
-                            text: content
-                        }];
+                        // 与范围格式化同理走最小编辑：整模型范围替换会凭空产生巨型
+                        // undo 记录、光标跳变与全文重排，clang-format 本身只要 150~300ms，
+                        // 体感延迟全部出在这一步之后的重排与 LSP 连锁上。
+                        return this.buildMinimalFormatEdits(model, original, content);
                     } catch (error) {
                         logWarn('[clang-format] 文档格式化失败:', (error as Error)?.message || error);
                         return [];
