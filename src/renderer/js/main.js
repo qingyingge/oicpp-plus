@@ -3642,11 +3642,20 @@ class OICPPApp {
     }
     showOpenSourceLicenses() {
         const t = (key, params) => window.i18n?.t?.(key, params) || key;
+        // 从构建信息读取实际版本，运行时动态显示
+        let clangdVersion = 'unknown';
+        let clangFormatVersion = 'unknown';
+        try {
+            const buildInfo = require('../../build-info.json');
+            clangdVersion = buildInfo.clangdVersion || 'unknown';
+            clangFormatVersion = buildInfo.clangFormatVersion || 'unknown';
+        }
+        catch (_) { }
         const openSourceLibs = [
             { name: 'Electron', license: 'MIT', url: 'https://github.com/electron/electron' },
             { name: 'Monaco Editor', license: 'MIT', url: 'https://github.com/microsoft/monaco-editor' },
-            { name: 'LLVM clangd 23.1.0', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clangd.llvm.org/', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
-            { name: 'LLVM clang-format 23.1.2', license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clang.llvm.org/docs/ClangFormat.html', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
+            { name: `LLVM clangd ${clangdVersion}`, license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clangd.llvm.org/', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
+            { name: `LLVM clang-format ${clangFormatVersion}`, license: 'Apache-2.0 WITH LLVM-exception', url: 'https://clang.llvm.org/docs/ClangFormat.html', licenseFile: 'llvm-apache-2.0-with-llvm-exception.txt' },
             { name: 'xterm.js', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
             { name: '@xterm/addon-fit', license: 'MIT', url: 'https://github.com/xtermjs/xterm.js' },
             { name: 'node-pty', license: 'MIT', url: 'https://github.com/nicely-bot/node-pty' },

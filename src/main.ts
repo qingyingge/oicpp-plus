@@ -1114,6 +1114,14 @@ class ClangdLspManager {
         }
 
         logInfo('[LSP] 正在启动 clangd:', clangdPath, args.join(' '));
+        // 记录 clangd 版本
+        try {
+            const versionResult = spawnSync(clangdPath, ['--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+            if (versionResult.status === 0 && versionResult.stdout) {
+                const versionLine = versionResult.stdout.trim().split('\n')[0];
+                logInfo('[LSP] clangd 版本:', versionLine);
+            }
+        } catch (_) {}
         const proc = spawn(clangdPath, args, {
             stdio: 'pipe',
             detached: process.platform !== 'win32',

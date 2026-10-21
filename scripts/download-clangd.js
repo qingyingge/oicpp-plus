@@ -22,22 +22,6 @@ const normalizePlatform = (raw) => {
     return value || process.platform;
 };
 
-const version = readArg('version', process.env.CLANGD_VERSION || '23.1.0');
-const tag = readArg('tag', process.env.CLANGD_TAG || version);
-const repo = readArg('repo', process.env.CLANGD_REPO || 'clangd/clangd');
-const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANGD_PLATFORM || process.platform));
-const outputRoot = path.resolve(readArg('output', process.env.CLANGD_OUTPUT || path.join(__dirname, '..', 'build', 'clangd')));
-const directUrl = readArg('url', process.env.CLANGD_DOWNLOAD_URL || '');
-const skipSslVerify = process.env.NODE_ENV === 'development' && process.env.OICPP_SKIP_SSL_VERIFY === '1';
-const tempRoot = path.join(outputRoot, '_download');
-const { requestJson, ensureDownload } = createReleaseDownloader({
-    label: 'clangd',
-    userAgent: 'oicpp-clangd-downloader',
-    skipSslVerify,
-    maxBytes: 512 * 1024 * 1024,
-    maxRedirects: 10
-});
-
 // clangd 的 release 包只带 bin/clangd(.exe)，没有许可正文；随包二进制再分发要求
 // 随附一份副本，缺了会让 resources/clangd 里的 clangd 没有出处说明
 const fallbackLicense = path.join(__dirname, '..', 'third-party', 'licenses', 'llvm-apache-2.0-with-llvm-exception.txt');
@@ -121,6 +105,23 @@ const walkForClangdRoot = (baseDir) => {
 };
 
 const main = async () => {
+    // 读取命令行参数和环境变量（移入 main 避免模块作用域副作用）
+    const versionArg = readArg('version', process.env.CLANGD_VERSION || '');
+    const tagArg = readArg('tag', process.env.CLANGD_TAG || '');
+    const repo = readArg('repo', process.env.CLANGD_REPO || 'clangd/clangd');
+    const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANGD_PLATFORM || process.platform));
+    const outputRoot = path.resolve(readArg('output', process.env.CLANGD_OUTPUT || path.join(__dirname, '..', 'build', 'clangd')));
+    const directUrl = readArg('url', process.env.CLANGD_DOWNLOAD_URL || '');
+    const skipSslVerify = process.env.NODE_ENV === 'development' && process.env.OICPP_SKIP_SSL_VERIFY === '1';
+    const tempRoot = path.join(outputRoot, '_download');
+    const { requestJson, ensureDownload } = createReleaseDownloader({
+        label: 'clangd',
+        userAgent: 'oicpp-clangd-downloader',
+        skipSslVerify,
+        maxBytes: 512 * 1024 * 1024,
+        maxRedirects: 10
+    });
+
     if (!platformPatterns[platform]) {
         throw new Error(`Unsupported platform: ${platform}`);
     }
@@ -132,8 +133,13 @@ const main = async () => {
     const targetRoot = path.join(outputRoot, platform);
     const targetBinary = path.join(targetRoot, 'bin', platform === 'win32' ? 'clangd.exe' : 'clangd');
     const targetLicense = path.join(targetRoot, 'LICENSE.TXT');
+    const targetVersionFile = path.join(targetRoot, 'version.txt');
     if (fs.existsSync(targetBinary) && fs.existsSync(targetLicense)) {
         console.log(`[clangd] Target exists: ${targetBinary}, skipping`);
+        // 如果已有二进制但没有 version.txt，补写
+        if (!fs.existsSync(targetVersionFile) && versionArg) {
+            fs.writeFileSync(targetVersionFile, versionArg, 'utf8');
+        }
         return;
     }
     // 二进制已就位、只差许可正文时不必重下 96MB 工具链，直接用仓库里的同一份补齐
@@ -141,6 +147,7 @@ const main = async () => {
         ensureDir(targetRoot);
         fs.copyFileSync(fallbackLicense, targetLicense);
         console.log(`[clangd] Filled in missing license from ${fallbackLicense}`);
+        if (versionArg) fs.writeFileSync(targetVersionFile, versionArg, 'utf8');
         return;
     }
     if (fs.existsSync(targetBinary)) {
@@ -154,9 +161,45 @@ const main = async () => {
         }
     }
 
+    // 版本解析：支持 "latest"/"auto" 从 GitHub API 获取最新 release
+    // 优先级：显式 --version > 显式 --tag 推导 > auto/latest > 默认 23.1.0
+    // 只有当未显式指定 --version 且未显式指定 --tag 时才自动获取最新版
+    const isAutoVersion = (!versionArg && !tagArg) || versionArg.toLowerCase() === 'latest' || versionArg.toLowerCase() === 'auto';
+
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
     const patterns = platformPatterns[platform] || [];
     let selected = null;
+
+    // 自动获取最新版本
+    let version = versionArg;
+    let tag = tagArg;
+    if (isAutoVersion) {
+        try {
+            const latestUrl = `https://api.github.com/repos/${repo}/releases/latest`;
+            console.log(`[clangd] Fetching latest release ${latestUrl}`);
+            const latestRelease = await requestJson(latestUrl, token || undefined);
+            tag = latestRelease.tag_name;
+            // tag 通常是 "23.1.0" 或 "v23.1.0"，统一去掉 v 前缀作为 version
+            version = tag.replace(/^v/, '');
+            console.log(`[clangd] Latest version: ${version} (tag: ${tag})`);
+        } catch (err) {
+            console.warn(`[clangd] Failed to fetch latest release: ${err?.message || err}, falling back to default 23.1.0`);
+            version = '23.1.0';
+            tag = version;
+        }
+    } else if (!versionArg && tagArg) {
+        // 仅指定了 --tag，从 tag 推导 version
+        version = tagArg.replace(/^v/, '');
+        tag = tagArg;
+    } else if (!versionArg) {
+        // 既没指定 --version 也没指定 --tag，用默认版本
+        version = '23.1.0';
+        tag = version;
+    }
+    // 如果有 version 但没 tag，tag 默认为 version（clangd tag 通常无 v 前缀）
+    if (!tag && version) {
+        tag = version;
+    }
 
     if (directUrl) {
         const parsedUrl = new URL(directUrl);
@@ -182,6 +225,7 @@ const main = async () => {
                 throw new Error(`clangd asset not found for ${platform}. Assets: ${names}`);
             }
         } catch (err) {
+            // fallback 资产名使用归一化后的 version（无 v 前缀），与官方命名一致
             const fallbackAssetNames = {
                 win32: `clangd-windows-${version}.zip`,
                 darwin: `clangd-mac-${version}.zip`,
@@ -240,6 +284,9 @@ const main = async () => {
     }
 
     console.log(`[clangd] Installed ${versionCheck.stdout.trim()}`);
+    // 写入版本文件供构建信息读取
+    fs.writeFileSync(targetVersionFile, version, 'utf8');
+    console.log(`[clangd] Written version.txt: ${version}`);
 };
 
 main().catch((err) => {

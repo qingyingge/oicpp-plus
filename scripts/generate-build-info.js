@@ -48,9 +48,26 @@ function formatDateTimeInTimeZone(date, timeZone) {
     ].join(':');
 }
 
+// 读取构建时下载的 clangd/clang-format 版本
+function readToolVersion(toolName) {
+    const platform = process.platform === 'win32' ? 'win32' : (process.platform === 'darwin' ? 'darwin' : 'linux');
+    const versionFile = path.join(__dirname, '..', 'build', toolName, platform, 'version.txt');
+    try {
+        if (fs.existsSync(versionFile)) {
+            return fs.readFileSync(versionFile, 'utf8').trim();
+        }
+    } catch (_) {}
+    return null;
+}
+
+const clangdVersion = readToolVersion('clangd');
+const clangFormatVersion = readToolVersion('clang-format');
+
 const buildInfo = {
     version: packageJson.version,
     buildTime: formatDateTimeInTimeZone(new Date(), 'Asia/Shanghai'),
+    clangdVersion,
+    clangFormatVersion,
     author: packageJson.author.name + (packageJson.contributors && packageJson.contributors.length
         ? ' (修改: ' + packageJson.contributors.map(c => c.name).join(', ') + ')'
         : '')
@@ -61,4 +78,6 @@ fs.writeFileSync(outputPath, JSON.stringify(buildInfo, null, 2), 'utf8');
 
 console.log(`version: ${buildInfo.version}`);
 console.log(`buildTime: ${buildInfo.buildTime}`);
+console.log(`clangdVersion: ${buildInfo.clangdVersion || 'not found'}`);
+console.log(`clangFormatVersion: ${buildInfo.clangFormatVersion || 'not found'}`);
 

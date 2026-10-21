@@ -21,45 +21,6 @@ const normalizePlatform = (raw) => {
     return value || process.platform;
 };
 
-// 点名过的项要能区分「用户点了」和「用了内置默认」：Intel mac 的回退只看这两项，
-// 只要点过 version 或 tag 里的任何一个就不再擅自换版本。
-const pinnedVersion = readArg('version', process.env.CLANG_FORMAT_VERSION || '');
-const pinnedTag = readArg('tag', process.env.CLANG_FORMAT_TAG || '');
-// 只点 tag 不点 version 时，版本号从 tag 里推 —— 资产名和 releaseTag 必须来自同一次选择，
-// 否则拿 llvmorg-20.1.0 去配 LLVM-23.1.2-... 的资产名，找不着资产又拼出个 404 的直链。
-const version = pinnedVersion || (pinnedTag ? pinnedTag.replace(/^llvmorg-/i, '') : '23.1.2');
-const tag = pinnedTag || `llvmorg-${version}`;
-const repo = readArg('repo', process.env.CLANG_FORMAT_REPO || 'llvm/llvm-project');
-const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANG_FORMAT_PLATFORM || process.platform));
-const architecture = String(readArg('arch', process.env.OICPP_CLANG_FORMAT_ARCH || process.arch)).toLowerCase();
-const isIntelMac = platform === 'darwin' && architecture === 'x64';
-const usesIntelMacFallback = isIntelMac && !pinnedVersion && !pinnedTag;
-const assetVersion = usesIntelMacFallback ? '19.1.7' : version;
-const releaseTag = usesIntelMacFallback ? 'llvmorg-19.1.7' : tag;
-if (usesIntelMacFallback) {
-    console.warn(`[clang-format] x86_64 macOS 且没有点名版本：取上游最后一个 Intel macOS 包 19.1.7（默认的 ${version} 没有这个资产）`);
-}
-if (isIntelMac && !usesIntelMacFallback && releaseTag !== 'llvmorg-19.1.7') {
-    console.warn(`[clang-format] 按你点名的 ${releaseTag} / ${assetVersion} 取，不再自动换成 19.1.7 —— 上游从 20 起不发 x86_64 macOS 包，取不到是预期结果`);
-}
-const outputRoot = path.resolve(readArg('output', process.env.CLANG_FORMAT_OUTPUT || path.join(__dirname, '..', 'build', 'clang-format')));
-const directUrl = readArg('url', process.env.CLANG_FORMAT_DOWNLOAD_URL || '');
-const expectedDigest = String(readArg('digest', process.env.CLANG_FORMAT_SHA256 || '')).replace(/^sha256:/i, '').toLowerCase();
-// 校验值是给「你以为要下的那个包」上的锁。回退把包换成另一份时，这把锁要么永远对不上
-// （下载到一半才失败，报个和真实原因无关的 checksum 错），要么被悄悄摘掉（装了没验过的东西）。
-// 两个都不能接受，所以在这里当场拒掉，并把怎么解写进报错。给了 --url 就不算冲突：
-// 那时候下的是你指定的那个文件，回退只改了本地临时文件名。
-const digestConflictsWithFallback = usesIntelMacFallback && !!expectedDigest && !directUrl;
-const skipSslVerify = process.env.NODE_ENV === 'development' && process.env.OICPP_SKIP_SSL_VERIFY === '1';
-const tempRoot = path.join(outputRoot, '_download');
-const { requestJson, ensureDownload } = createReleaseDownloader({
-    label: 'clang-format',
-    userAgent: 'oicpp-clang-format-downloader',
-    skipSslVerify,
-    maxBytes: 4 * 1024 * 1024 * 1024,
-    maxRedirects: 10
-});
-
 // 官方压缩包内的 LICENSE.TXT 才是与该二进制严格对应的副本；但它并非每次都存在，
 // 缺了就会因为「二进制在、许可不在」而重下整个工具链。仓库内这份是同一份正文
 // （Apache-2.0 WITH LLVM-exception，随 LLVM 版本更新），仅在压缩包里抽不到时兜底。
@@ -76,14 +37,14 @@ const resolveLicenseSource = (extractedLicense) => {
     return null;
 };
 
-const assetNames = {
-    'win32-x64': `clang+llvm-${assetVersion}-x86_64-pc-windows-msvc.tar.xz`,
-    'win32-arm64': `clang+llvm-${assetVersion}-aarch64-pc-windows-msvc.tar.xz`,
-    'darwin-x64': `LLVM-${assetVersion}-macOS-x86_64.tar.xz`,
-    'darwin-arm64': `LLVM-${assetVersion}-macOS-ARM64.tar.xz`,
-    'linux-x64': `LLVM-${assetVersion}-Linux-X64.tar.xz`,
-    'linux-arm64': `LLVM-${assetVersion}-Linux-ARM64.tar.xz`
-};
+const assetNames = (ver) => ({
+    'win32-x64': `clang+llvm-${ver}-x86_64-pc-windows-msvc.tar.xz`,
+    'win32-arm64': `clang+llvm-${ver}-aarch64-pc-windows-msvc.tar.xz`,
+    'darwin-x64': `LLVM-${ver}-macOS-x86_64.tar.xz`,
+    'darwin-arm64': `LLVM-${ver}-macOS-ARM64.tar.xz`,
+    'linux-x64': `LLVM-${ver}-Linux-X64.tar.xz`,
+    'linux-arm64': `LLVM-${ver}-Linux-ARM64.tar.xz`
+});
 
 const ensureDir = (dirPath) => {
     fs.mkdirSync(dirPath, { recursive: true });
@@ -149,59 +110,127 @@ const findFile = (baseDir, fileName) => {
     return null;
 };
 
-const getAssetName = () => {
-    const name = assetNames[`${platform}-${architecture}`];
+const getAssetName = (ver, platform, architecture) => {
+    const name = assetNames(ver)[`${platform}-${architecture}`];
     if (!name) {
         throw new Error(`Unsupported clang-format platform: ${platform}-${architecture}`);
     }
     return name;
 };
 
-const selectReleaseAsset = async (token) => {
-    const assetName = getAssetName();
-    if (directUrl) {
-        return {
-            name: assetName,
-            browser_download_url: directUrl,
-            digest: expectedDigest ? `sha256:${expectedDigest}` : null
-        };
-    }
-
-    const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${releaseTag}`;
-    console.log(`[clang-format] Fetching release ${releaseUrl}`);
-    try {
-        const release = await requestJson(releaseUrl, token || undefined);
-        const asset = (release.assets || []).find((candidate) => candidate.name === assetName);
-        if (!asset) {
-            const names = (release.assets || []).map((candidate) => candidate.name).join(', ');
-            throw new Error(`asset not found: ${assetName}. Assets: ${names}`);
-        }
-        return asset;
-    } catch (error) {
-        console.warn(`[clang-format] Release API unavailable, using the official asset URL: ${error?.message || error}`);
-        return {
-            name: assetName,
-            browser_download_url: `https://github.com/${repo}/releases/download/${releaseTag}/${encodeURIComponent(assetName)}`,
-            digest: expectedDigest ? `sha256:${expectedDigest}` : null
-        };
-    }
-};
-
 const main = async () => {
+    // 读取命令行参数和环境变量（移入 main 避免模块作用域副作用）
+    const versionArg = readArg('version', process.env.CLANG_FORMAT_VERSION || '');
+    const tagArg = readArg('tag', process.env.CLANG_FORMAT_TAG || '');
+    const repo = readArg('repo', process.env.CLANG_FORMAT_REPO || 'llvm/llvm-project');
+    const platform = normalizePlatform(readArg('platform', process.env.OICPP_CLANG_FORMAT_PLATFORM || process.platform));
+    const architecture = String(readArg('arch', process.env.OICPP_CLANG_FORMAT_ARCH || process.arch)).toLowerCase();
+    const outputRoot = path.resolve(readArg('output', process.env.CLANG_FORMAT_OUTPUT || path.join(__dirname, '..', 'build', 'clang-format')));
+    const directUrl = readArg('url', process.env.CLANG_FORMAT_DOWNLOAD_URL || '');
+    const expectedDigest = String(readArg('digest', process.env.CLANG_FORMAT_SHA256 || '')).replace(/^sha256:/i, '').toLowerCase();
+    const skipSslVerify = process.env.NODE_ENV === 'development' && process.env.OICPP_SKIP_SSL_VERIFY === '1';
+    const tempRoot = path.join(outputRoot, '_download');
+    const { requestJson, ensureDownload } = createReleaseDownloader({
+        label: 'clang-format',
+        userAgent: 'oicpp-clang-format-downloader',
+        skipSslVerify,
+        maxBytes: 4 * 1024 * 1024 * 1024,
+        maxRedirects: 10
+    });
+
+    // 版本解析：支持 "latest"/"auto" 从 GitHub API 获取最新 release
+    // 优先级：显式 --version > 显式 --tag 推导 > auto/latest > 默认 23.1.2
+    // 只有当未显式指定 --version 且未显式指定 --tag 时才自动获取最新版
+    const isAutoVersion = (!versionArg && !tagArg) || versionArg.toLowerCase() === 'latest' || versionArg.toLowerCase() === 'auto';
+    const isIntelMac = platform === 'darwin' && architecture === 'x64';
+
+    // token 供 selectReleaseAsset 和 auto-version fetch 使用
+    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
+
+    // 自动获取最新版本
+    let assetVersion = versionArg;
+    let releaseTag = tagArg;
+    if (isAutoVersion) {
+        try {
+            const latestUrl = `https://api.github.com/repos/${repo}/releases/latest`;
+            console.log(`[clang-format] Fetching latest release ${latestUrl}`);
+            const latestRelease = await requestJson(latestUrl, token || undefined);
+            releaseTag = latestRelease.tag_name;
+            assetVersion = releaseTag.replace(/^llvmorg-/i, '');
+            console.log(`[clang-format] Latest version: ${assetVersion} (tag: ${releaseTag})`);
+        } catch (err) {
+            console.warn(`[clang-format] Failed to fetch latest release: ${err?.message || err}, falling back to default 23.1.2`);
+            assetVersion = '23.1.2';
+            releaseTag = `llvmorg-${assetVersion}`;
+        }
+    } else if (!versionArg && tagArg) {
+        // 仅指定了 --tag，从 tag 推导 version（保持原有行为）
+        assetVersion = tagArg.replace(/^llvmorg-/i, '');
+    } else if (!versionArg) {
+        // 既没指定 --version 也没指定 --tag，用默认版本
+        assetVersion = '23.1.2';
+    }
+    if (!releaseTag) {
+        releaseTag = `llvmorg-${assetVersion}`;
+    }
+
+    // Intel Mac 回退：仅当自动获取版本且最新版无 x86_64 macOS 资产时
+    const isIntelMacFallback = isIntelMac && isAutoVersion && assetVersion !== '19.1.7';
+    // 注意：这里无法预知最新版是否有 x86_64 macOS 资产，下载失败时会自然报错
+    // 保留 19.1.7 作为已知可用的最后版本供手动指定
+
+    // 校验值冲突检测：仅当显式指定 digest 且会触发 Intel Mac 回退时
+    const digestConflictsWithFallback = isIntelMacFallback && !!expectedDigest && !directUrl;
+
     if (digestConflictsWithFallback) {
-        throw new Error(`指定的 sha256 属于 ${version} 的包，但 x86_64 macOS 会回退到 19.1.7 —— 二者不可能同时对上。`
+        throw new Error(`指定的 sha256 属于 ${assetVersion} 的包，但 x86_64 macOS 会回退到 19.1.7 —— 二者不可能同时对上。`
             + `请改成 --tag llvmorg-19.1.7 --digest <19.1.7 的 sha256>，或去掉 --digest 改用 Release API 自带的资产校验值`);
     }
     if (skipSslVerify) {
         console.warn('[clang-format] SSL certificate verification disabled (OICPP_SKIP_SSL_VERIFY=1)');
     }
 
+    // selectReleaseAsset 需要访问 requestJson，定义在 main 内部
+    const selectReleaseAsset = async (token, ver, releaseTag, repo, directUrl, expectedDigest, platform, architecture) => {
+        const assetName = getAssetName(ver, platform, architecture);
+        if (directUrl) {
+            return {
+                name: assetName,
+                browser_download_url: directUrl,
+                digest: expectedDigest ? `sha256:${expectedDigest}` : null
+            };
+        }
+
+        const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${releaseTag}`;
+        console.log(`[clang-format] Fetching release ${releaseUrl}`);
+        try {
+            const release = await requestJson(releaseUrl, token || undefined);
+            const asset = (release.assets || []).find((candidate) => candidate.name === assetName);
+            if (!asset) {
+                const names = (release.assets || []).map((candidate) => candidate.name).join(', ');
+                throw new Error(`asset not found: ${assetName}. Assets: ${names}`);
+            }
+            return asset;
+        } catch (error) {
+            console.warn(`[clang-format] Release API unavailable, using the official asset URL: ${error?.message || error}`);
+            return {
+                name: assetName,
+                browser_download_url: `https://github.com/${repo}/releases/download/${releaseTag}/${encodeURIComponent(assetName)}`,
+                digest: expectedDigest ? `sha256:${expectedDigest}` : null
+            };
+        }
+    };
+
     const binaryName = platform === 'win32' ? 'clang-format.exe' : 'clang-format';
     const targetRoot = path.join(outputRoot, platform);
     const targetBinary = path.join(targetRoot, 'bin', binaryName);
     const targetLicense = path.join(targetRoot, 'LICENSE.TXT');
+    const targetVersionFile = path.join(targetRoot, 'version.txt');
     if (fs.existsSync(targetBinary) && fs.existsSync(targetLicense)) {
         console.log(`[clang-format] Target exists: ${targetBinary}, skipping`);
+        if (!fs.existsSync(targetVersionFile) && assetVersion) {
+            fs.writeFileSync(targetVersionFile, assetVersion, 'utf8');
+        }
         return;
     }
     // 二进制已就位、只差许可正文时不必重下 1 GB 工具链，直接用仓库里的同一份补齐
@@ -209,11 +238,11 @@ const main = async () => {
         ensureDir(targetRoot);
         fs.copyFileSync(fallbackLicense, targetLicense);
         console.log(`[clang-format] Filled in missing license from ${fallbackLicense}`);
+        if (assetVersion) fs.writeFileSync(targetVersionFile, assetVersion, 'utf8');
         return;
     }
 
-    const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
-    const asset = await selectReleaseAsset(token);
+    const asset = await selectReleaseAsset(token, assetVersion, releaseTag, repo, directUrl, expectedDigest, platform, architecture);
     const digest = expectedDigest || String(asset.digest || '').replace(/^sha256:/i, '');
     ensureDir(tempRoot);
     const downloadPath = path.join(tempRoot, asset.name);
@@ -262,6 +291,9 @@ const main = async () => {
     fs.rmSync(targetRoot, { recursive: true, force: true });
     fs.renameSync(stagingRoot, targetRoot);
     console.log(`[clang-format] Installed ${versionResult.stdout.trim()}`);
+    // 写入版本文件供构建信息读取
+    fs.writeFileSync(targetVersionFile, assetVersion, 'utf8');
+    console.log(`[clang-format] Written version.txt: ${assetVersion}`);
 };
 
 main().catch((err) => {
