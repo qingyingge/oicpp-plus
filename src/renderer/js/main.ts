@@ -526,7 +526,7 @@ class OICPPApp {
                 this.checkForUpdates();
                 break;
             case 'open-source-licenses':
-                this.showOpenSourceLicenses();
+                await this.showOpenSourceLicenses();
                 break;
             case 'open-file-history':
                 this.openFileHistory();
@@ -3952,32 +3952,24 @@ class OICPPApp {
 
 
     async showAbout() {
-        const fallbackBuildInfo = { version: '1.5.4 (v49)', buildTime: window.i18n?.t?.('message.unknown'), author: 'mywwzh (修改: qingyingge)' };
-        let buildInfo: { version: string; buildTime: string; author: string; buildTag?: string; buildVersion?: string; buildNo?: string } = { ...fallbackBuildInfo };
+        const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+        const unknownText = t('message.unknown');
+        const pickText = (value: unknown, fallback: string) => (typeof value === 'string' && value.trim() ? value.trim() : fallback);
+        let versionLabel = unknownText;
+        let buildTime = unknownText;
+        let author = unknownText;
         try {
             const buildInfoData = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
-            if (buildInfoData) {
-                buildInfo = buildInfoData;
+            versionLabel = pickText(buildInfoData?.version, versionLabel);
+            buildTime = pickText(buildInfoData?.buildTime, buildTime);
+            author = pickText(buildInfoData?.author, author);
+            const tag = buildInfoData?.buildTag || buildInfoData?.buildVersion || buildInfoData?.buildNo;
+            if (typeof tag === 'string' && tag.trim() && !/\(v[^)]+\)/i.test(versionLabel)) {
+                const normalizedTag = tag.trim().startsWith('v') ? tag.trim() : `v${tag.trim()}`;
+                versionLabel = `${versionLabel} (${normalizedTag})`;
             }
         } catch (error) {
             logWarn('无法读取构建信息:', error);
-        }
-
-        let versionLabel = typeof buildInfo.version === 'string' && buildInfo.version.trim()
-            ? buildInfo.version.trim()
-            : fallbackBuildInfo.version;
-
-        if (!/\(v[^)]+\)/i.test(versionLabel)) {
-            const tag = buildInfo.buildTag || buildInfo.buildVersion || buildInfo.buildNo;
-            if (typeof tag === 'string' && tag.trim()) {
-                const normalizedTag = tag.trim().startsWith('v') ? tag.trim() : `v${tag.trim()}`;
-                versionLabel = `${versionLabel} (${normalizedTag})`;
-            } else {
-                const fallbackMatch = fallbackBuildInfo.version.match(/\(v[^)]+\)/i);
-                if (fallbackMatch && fallbackMatch[0]) {
-                    versionLabel = `${versionLabel} ${fallbackMatch[0]}`;
-            }
-            }
         }
 
         const dialog = document.createElement('div');
@@ -3993,8 +3985,8 @@ class OICPPApp {
                 <div class="about-content">
                     <div class="about-info">
                         <p><strong>${window.i18n?.t?.('app.version')}:</strong> ${versionLabel}</p>
-                        <p><strong>${window.i18n?.t?.('app.buildTime')}:</strong> ${buildInfo.buildTime}</p>
-                        <p><strong>${window.i18n?.t?.('app.developer')}:</strong> ${buildInfo.author}</p>
+                        <p><strong>${window.i18n?.t?.('app.buildTime')}:</strong> ${buildTime}</p>
+                        <p><strong>${window.i18n?.t?.('app.developer')}:</strong> ${author}</p>
                         <p><strong>${window.i18n?.t?.('app.description')}:</strong> ${window.i18n?.t?.('app.descriptionText')}</p>
                         <p><strong>${window.i18n?.t?.('app.website')}:</strong> https://github.com/qingyingge/oicpp-plus</p>
                     </div>
@@ -4012,15 +4004,20 @@ class OICPPApp {
         
     }
 
-    showOpenSourceLicenses() {
+    async showOpenSourceLicenses() {
         const t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
-        // 从构建信息读取实际版本，运行时动态显示
-        let clangdVersion = 'unknown';
-        let clangFormatVersion = 'unknown';
+        // 构建信息由主进程读取，渲染层没有 Node 的 require
+        const unknownText = t('message.unknown');
+        let clangdVersion = unknownText;
+        let clangFormatVersion = unknownText;
         try {
-            const buildInfo = require('../../build-info.json');
-            clangdVersion = buildInfo.clangdVersion || 'unknown';
-            clangFormatVersion = buildInfo.clangFormatVersion || 'unknown';
+            const buildInfo = window.electronAPI ? await window.electronAPI.getBuildInfo() : null;
+            if (typeof buildInfo?.clangdVersion === 'string' && buildInfo.clangdVersion.trim()) {
+                clangdVersion = buildInfo.clangdVersion.trim();
+            }
+            if (typeof buildInfo?.clangFormatVersion === 'string' && buildInfo.clangFormatVersion.trim()) {
+                clangFormatVersion = buildInfo.clangFormatVersion.trim();
+            }
         } catch (_) {}
         const openSourceLibs = [
             { name: 'Electron', license: 'MIT', url: 'https://github.com/electron/electron' },

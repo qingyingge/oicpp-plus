@@ -3015,7 +3015,7 @@ ipcMain.handle('get-build-info', () => {
     catch (error) {
         logger.logwarn('读取构建信息失败:', error);
     }
-    return { version: '1.5.4 (v49)', buildTime: '未知', author: 'mywwzh (修改: qingyingge)' };
+    return { version: APP_VERSION, buildTime: t('message.unknown'), author: 'mywwzh (修改: qingyingge)' };
 });
 // 第三方许可正文只允许读白名单里的两个文件，参数不参与路径拼接
 const THIRD_PARTY_LICENSE_FILES = new Set([

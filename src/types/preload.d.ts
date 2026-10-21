@@ -52,7 +52,7 @@ interface ElectronAPI {
   getUserHome(): Promise<string>;
   readThirdPartyLicense(name: string): Promise<string>;
   getUserIconPath(): Promise<string>;
-  getBuildInfo(): Promise<{ version: string; buildTime: string; author: string; buildTag?: string; buildVersion?: string; buildNo?: string } | null>;
+  getBuildInfo(): Promise<{ version?: string; buildTime?: string; author?: string; buildTag?: string; buildVersion?: string; buildNo?: string; clangdVersion?: string | null; clangFormatVersion?: string | null } | null>;
   getDownloadedCompilers(): Promise<Array<unknown>>;
   downloadCompiler(config: Record<string, unknown>): Promise<{ success?: boolean; error?: string; compilerPath?: string } | null>;
   selectCompiler(version: string): Promise<{ success?: boolean; compilerPath?: string; error?: string } | null>;
