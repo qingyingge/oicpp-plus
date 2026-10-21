@@ -730,7 +730,7 @@ class ClangdLspManager {
             '--background-index',
             '--completion-style=detailed',
             '--header-insertion=iwyu',
-            '--pch-storage=memory'
+            '--pch-storage=disk'
         ];
         // 添加 --resource-dir 以消除 clangd 启动警告
         // clangd 需要 resource directory (lib/clang/<version>) 来查找内置头文件
