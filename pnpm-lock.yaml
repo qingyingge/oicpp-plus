@@ -195,8 +195,8 @@ importers:
         specifier: ^11.12.0
         version: 11.12.0
       i18next:
-        specifier: ^26.4.4
-        version: 26.5.2(typescript@7.0.2)
+        specifier: ^26.5.4
+        version: 26.5.4(typescript@7.0.2)
       iconv-lite:
         specifier: ^0.7.3
         version: 0.7.3
@@ -204,11 +204,11 @@ importers:
         specifier: ^0.19.0
         version: 0.19.0
       markdown-it:
-        specifier: ^15.0.2
-        version: 15.0.2
+        specifier: ^15.0.3
+        version: 15.0.3
       markdown-it-image-figures:
         specifier: ^2.1.1
-        version: 2.1.1(markdown-it@15.0.2)
+        version: 2.1.1(markdown-it@15.0.3)
       markdown-it-task-lists:
         specifier: ^2.1.1
         version: 2.1.1
@@ -242,13 +242,13 @@ importers:
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@8.1.1)
       html-webpack-plugin:
         specifier: ^5.6.8
-        version: 5.6.8(webpack@5.111.1)
+        version: 5.6.8(webpack@5.112.0)
       icojs:
         specifier: ^1.0.1
         version: 1.0.1(supports-color@8.1.1)
       monaco-editor-webpack-plugin:
         specifier: ~7.1.1
-        version: 7.1.1(monaco-editor@0.57.0)(webpack@5.111.1)
+        version: 7.1.1(monaco-editor@0.57.0)(webpack@5.112.0)
       sharp:
         specifier: ~0.35.5
         version: 0.35.5(@types/node@26.6.5)
@@ -256,11 +256,11 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       webpack:
-        specifier: ^5.111.1
-        version: 5.111.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
+        specifier: ^5.112.0
+        version: 5.112.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
       webpack-cli:
         specifier: ^7.2.3
-        version: 7.2.3(js-yaml@4.3.2)(json5@2.2.3)(webpack@5.111.1)
+        version: 7.2.3(js-yaml@4.3.2)(json5@2.2.3)(webpack@5.112.0)
 
 packages:
 
@@ -889,8 +889,8 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
-  argparse@3.0.2:
-    resolution: {integrity: sha512-mFdDM6WqWKraGLsVb+C9CahPnzTXOefAOLq3jYcca2YZ8bEWpr++Tzj+zSaKW9+X9L5uSxcm1AZ3Y6aZJ09OhQ==}
+  argparse@3.0.3:
+    resolution: {integrity: sha512-Sn98ftV3KfsO8xfLPHG6oT8y+b0yvbrLgZjgPDXsharNY15tTAjqIsIju4S32nl6/iEUNNE4v+yL2Zhm8ooP3w==}
 
   asn1js@3.0.10:
     resolution: {integrity: sha512-S2s3aOytiKdFRdulw2qPE51MzjzVOisppcVv7jVFR+Kw0kxwvFrDcYA0h7Ndqbmj0HkMIXYWaoj7fli8kgx1eg==}
@@ -1406,8 +1406,8 @@ packages:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
     engines: {node: '>= 14'}
 
-  i18next@26.5.2:
-    resolution: {integrity: sha512-6fIXt//2MZNok3tULyjnypxe3vbsy3pV1bVg8p2x3yKrzZvp7z3T+wXx/88LQsATRdhyJeAUAvUxEtxsHdJ29w==}
+  i18next@26.5.4:
+    resolution: {integrity: sha512-Wg0O1u2xmnsve9gICDwGekLkMe9SIC7+ZiuLYfWUGb/A3TQdRKygQ4OY9ros4raf5D66ZnW9JMrTDtGP2b8a7Q==}
     peerDependencies:
       typescript: ^5 || ^6 || ^7
     peerDependenciesMeta:
@@ -1554,8 +1554,8 @@ packages:
   markdown-it-task-lists@2.1.1:
     resolution: {integrity: sha512-TxFAc76Jnhb2OUu+n3yz9RMu4CwGfaT788br6HhEDlvWfdeJcLUsxk1Hgw2yJio0OXsxv7pyIPmvECY7bMbluA==}
 
-  markdown-it@15.0.2:
-    resolution: {integrity: sha512-q4IGxMv56jCqT4OCRCADBoDP3LO4MhmTXjFbphHPXs4g3j9Xg5RDnxqN8IF/3vIWEU+VCnUq+7JUg/cfy2E6Qw==}
+  markdown-it@15.0.3:
+    resolution: {integrity: sha512-+Az7Ojz3iRGu8KYMvJ6xVhvrxP3eE+vEtJX75Ow88XBpcQNV/0lGX5ZynIIBftREo4DC2jsveAMDaeltmm8QvQ==}
     hasBin: true
 
   marked@14.0.0:
@@ -1608,8 +1608,8 @@ packages:
   minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
 
-  minimizer-webpack-plugin@5.12.0:
-    resolution: {integrity: sha512-PCN1x1OzFeFB2GlP91s46q7Gz8Jf16Z7M45bzpoqrYZlh12QeY6tYVM5h299wbwy1DxnQ69VFmmh8Hb2Ff8mbw==}
+  minimizer-webpack-plugin@5.13.1:
+    resolution: {integrity: sha512-1mhAfvachWYYOm8tpmany5NLuvP+F2wxZWBSX8DC0uFS2wJpM9q3rWgN9wBooAH9d5V12wX0BjyJe4fMjHMarQ==}
     engines: {node: '>= 10.13.0'}
     peerDependencies:
       '@minify-html/node': '*'
@@ -1914,6 +1914,16 @@ packages:
     resolution: {integrity: sha512-zJlMCZ0cAR5p/Y4oVpRoqioDMJcGxaXRrQ/4rP4WyR84vc5z/DolXdbvXeDpTwbtocDFr2rhPqHPErDCUtz2kA==}
     engines: {node: '>= 10.13.0'}
 
+  schema-utils@4.8.1:
+    resolution: {integrity: sha512-x39pYlJPyH7Uge5QO64B9XGP9zLDc9WNmiQZc+CE3IzZPvMu3lHOuAMGpYNoPixEL7MSWlGhYTg5UlLSL8G6iw==}
+    engines: {node: '>= 10.13.0'}
+    hasBin: true
+    peerDependencies:
+      webpack: ^5.112.0
+    peerDependenciesMeta:
+      webpack:
+        optional: true
+
   semver@5.7.2:
     resolution: {integrity: sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g==}
     hasBin: true
@@ -2101,8 +2111,8 @@ packages:
   utila@0.4.0:
     resolution: {integrity: sha512-Z0DbgELS9/L/75wZbro8xAnT50pBVFQZ+hUEueGDU5FN51YSCYM+jdxsfCiHjwNP/4LCDD0i/graKpeBnOXKRA==}
 
-  watchpack@2.5.2:
-    resolution: {integrity: sha512-6i/00NBjP4yGPs+caKSyRfpTF/8Torsu0MOW3mMzIbhgISFder8i7xbqgHlLMwJrdiN8ndBV3UA1/AfzPSr+jg==}
+  watchpack@2.6.3:
+    resolution: {integrity: sha512-s3NZy0QpTY9qGqzc0wtz4qI28z3+5qKbbAec4MV4G9N3CfgZ9wgvQRr0cl2jh/tqkWG1NWHkmVMHZpCamev5Wg==}
     engines: {node: '>=10.13.0'}
 
   webcrypto-core@1.9.2:
@@ -2139,8 +2149,8 @@ packages:
     resolution: {integrity: sha512-EIMmPVvNI0CYXyRPp34F2Qk7W37/BZVZIofS6LAUnrNjCVahS+hO4mxwFJDjQjODTGZDtVzLYoN2+1dYkhk9qA==}
     engines: {node: '>=10.13.0'}
 
-  webpack@5.111.1:
-    resolution: {integrity: sha512-cNypaz0RP+S4cvQVi1M/3bRUkvNP0xZpL0TjFx+c6jg64VbxD+2weWDgY9UnjRI6dhZgtaj8DU76GGFcJ79xPQ==}
+  webpack@5.112.0:
+    resolution: {integrity: sha512-NIBpsRuCll036haDDt/CfcTDfsWNR9Z782nMRMI9D377BsGcYzZDTNU5TyzhCJzPIcihAxMBaMAhq2WSaDrH8Q==}
     engines: {node: '>=10.13.0'}
     hasBin: true
     peerDependencies:
@@ -2802,7 +2812,7 @@ snapshots:
 
   argparse@2.0.1: {}
 
-  argparse@3.0.2: {}
+  argparse@3.0.3: {}
 
   asn1js@3.0.10:
     dependencies:
@@ -3342,7 +3352,7 @@ snapshots:
       relateurl: 0.2.7
       terser: 5.51.2
 
-  html-webpack-plugin@5.6.8(webpack@5.111.1):
+  html-webpack-plugin@5.6.8(webpack@5.112.0):
     dependencies:
       '@types/html-minifier-terser': 6.1.0
       html-minifier-terser: 6.1.0
@@ -3350,7 +3360,7 @@ snapshots:
       pretty-error: 4.0.0
       tapable: 2.3.3
     optionalDependencies:
-      webpack: 5.111.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
+      webpack: 5.112.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
 
   htmlparser2@6.1.0:
     dependencies:
@@ -3380,7 +3390,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  i18next@26.5.2(typescript@7.0.2):
+  i18next@26.5.4(typescript@7.0.2):
     optionalDependencies:
       typescript: 7.0.2
 
@@ -3504,15 +3514,15 @@ snapshots:
     dependencies:
       yallist: 4.0.0
 
-  markdown-it-image-figures@2.1.1(markdown-it@15.0.2):
+  markdown-it-image-figures@2.1.1(markdown-it@15.0.3):
     dependencies:
-      markdown-it: 15.0.2
+      markdown-it: 15.0.3
 
   markdown-it-task-lists@2.1.1: {}
 
-  markdown-it@15.0.2:
+  markdown-it@15.0.3:
     dependencies:
-      argparse: 3.0.2
+      argparse: 3.0.3
       entities: 8.1.0
       linkify-it: 6.1.0
       mdurl: 2.1.0
@@ -3555,13 +3565,13 @@ snapshots:
 
   minimist@1.2.8: {}
 
-  minimizer-webpack-plugin@5.12.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack@5.111.1):
+  minimizer-webpack-plugin@5.13.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack@5.112.0):
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       jest-worker: 27.5.1
-      schema-utils: 4.5.0
+      schema-utils: 4.8.1(webpack@5.112.0)
       terser: 5.51.2
-      webpack: 5.111.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
+      webpack: 5.112.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
     optionalDependencies:
       clean-css: 5.3.3
       html-minifier-terser: 6.1.0
@@ -3577,11 +3587,11 @@ snapshots:
     dependencies:
       minimist: 1.2.8
 
-  monaco-editor-webpack-plugin@7.1.1(monaco-editor@0.57.0)(webpack@5.111.1):
+  monaco-editor-webpack-plugin@7.1.1(monaco-editor@0.57.0)(webpack@5.112.0):
     dependencies:
       loader-utils: 2.0.4
       monaco-editor: 0.57.0
-      webpack: 5.111.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
+      webpack: 5.112.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
 
   monaco-editor@0.57.0:
     dependencies:
@@ -3821,6 +3831,15 @@ snapshots:
       ajv-formats: 3.0.1(ajv@8.20.0)
       ajv-keywords: 5.1.0(ajv@8.20.0)
 
+  schema-utils@4.8.1(webpack@5.112.0):
+    dependencies:
+      '@types/json-schema': 7.0.15
+      ajv: 8.20.0
+      ajv-formats: 3.0.1(ajv@8.20.0)
+      ajv-keywords: 5.1.0(ajv@8.20.0)
+    optionalDependencies:
+      webpack: 5.112.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
+
   semver@5.7.2: {}
 
   semver@7.7.4: {}
@@ -4039,7 +4058,7 @@ snapshots:
 
   utila@0.4.0: {}
 
-  watchpack@2.5.2:
+  watchpack@2.6.3:
     dependencies:
       graceful-fs: 4.2.11
 
@@ -4051,7 +4070,7 @@ snapshots:
       asn1js: 3.0.10
       tslib: 2.8.1
 
-  webpack-cli@7.2.3(js-yaml@4.3.2)(json5@2.2.3)(webpack@5.111.1):
+  webpack-cli@7.2.3(js-yaml@4.3.2)(json5@2.2.3)(webpack@5.112.0):
     dependencies:
       '@discoveryjs/json-ext': 1.1.0
       commander: 14.0.3
@@ -4060,7 +4079,7 @@ snapshots:
       import-local: 3.2.0
       interpret: 3.1.1
       rechoir: 0.8.0
-      webpack: 5.111.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
+      webpack: 5.112.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3)
       webpack-merge: 6.0.1
     optionalDependencies:
       js-yaml: 4.3.2
@@ -4074,7 +4093,7 @@ snapshots:
 
   webpack-sources@3.6.0: {}
 
-  webpack@5.111.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3):
+  webpack@5.112.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack-cli@7.2.3):
     dependencies:
       '@types/estree': 1.0.9
       '@types/json-schema': 7.0.15
@@ -4088,13 +4107,13 @@ snapshots:
       events: 3.3.0
       graceful-fs: 4.2.11
       mime-db: 1.54.0
-      minimizer-webpack-plugin: 5.12.0(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack@5.111.1)
+      minimizer-webpack-plugin: 5.13.1(clean-css@5.3.3)(html-minifier-terser@6.1.0)(sharp@0.35.5(@types/node@26.6.5))(webpack@5.112.0)
       schema-utils: 4.5.0
       tapable: 2.3.3
-      watchpack: 2.5.2
+      watchpack: 2.6.3
       webpack-sources: 3.6.0
     optionalDependencies:
-      webpack-cli: 7.2.3(js-yaml@4.3.2)(json5@2.2.3)(webpack@5.111.1)
+      webpack-cli: 7.2.3(js-yaml@4.3.2)(json5@2.2.3)(webpack@5.112.0)
     transitivePeerDependencies:
       - '@minify-html/node'
       - '@napi-rs/image'
