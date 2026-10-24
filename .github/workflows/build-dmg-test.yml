@@ -16,27 +16,29 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: "npm"
+          node-version-file: '.nvmrc'
+          cache: "pnpm"
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
 
       - name: Prepare clangd bundle
-        run: npm run prebuild:clangd
+        run: pnpm run prebuild:clangd
       - name: Prepare clang-format bundle
-        run: npm run prebuild:clang-format
+        run: pnpm run prebuild:clang-format
       - name: Build optional native helper
-        run: npm run prebuild:native
+        run: pnpm run prebuild:native
 
       - name: Build macOS DMG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm run prebuild:buildinfo
-          npm run prebuild:icons
+          pnpm run prebuild:buildinfo
+          pnpm run prebuild:icons
           test -f build/icons/png/512x512.png
-          npx electron-builder --mac dmg
+          pnpm exec electron-builder --mac dmg
 
       - name: Upload .dmg artifact
         uses: actions/upload-artifact@v4

@@ -42,11 +42,11 @@ jobs:
           node -e "try { require('sharp'); console.log('sharp ok'); } catch (e) { console.log('sharp unavailable, icon generation will fail (build/icons/png has been removed)'); }"
 
       - name: Prepare clangd bundle
-        run: npm run prebuild:clangd
+        run: pnpm run prebuild:clangd
       - name: Prepare clang-format bundle
-        run: npm run prebuild:clang-format
+        run: pnpm run prebuild:clang-format
       - name: Build optional native helper
-        run: npm run prebuild:native
+        run: pnpm run prebuild:native
 
       - name: Verify node-pty linux binary
         run: |
@@ -77,9 +77,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ "${{ github.repository }}" = "mywwzh/oicpp-dev" ]; then
-            npm run build -- --linux deb
+            pnpm run build -- --linux deb
           else
-            npm run build
+            pnpm run build
           fi
 
       - name: Upload Linux Artifacts
@@ -93,7 +93,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Linux packages to remote
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus' && secrets.UPLOAD_API != ''
         env:
           UPLOAD_API: ${{ secrets.UPLOAD_API }}
           UPLOAD_TOKEN: ${{ secrets.UPLOAD_TOKEN }}
@@ -139,11 +139,11 @@ jobs:
           node -e "try { require('sharp'); console.log('sharp ok'); } catch (e) { console.log('sharp unavailable, icon generation will fail (build/icons/png has been removed)'); }"
 
       - name: Prepare clangd bundle
-        run: npm run prebuild:clangd
+        run: pnpm run prebuild:clangd
       - name: Prepare clang-format bundle
-        run: npm run prebuild:clang-format
+        run: pnpm run prebuild:clang-format
       - name: Build optional native helper
-        run: npm run prebuild:native
+        run: pnpm run prebuild:native
 
       - name: Ensure dmg-license is installed
         run: pnpm add --no-save dmg-license
@@ -152,10 +152,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm run prebuild:buildinfo
-          npm run prebuild:icons
+          pnpm run prebuild:buildinfo
+          pnpm run prebuild:icons
           test -f build/icons/png/512x512.png
-          npx electron-builder --mac dmg
+          pnpm exec electron-builder --mac dmg
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
@@ -165,7 +165,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload macOS package to remote
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus' && secrets.UPLOAD_API != ''
         env:
           UPLOAD_API: ${{ secrets.UPLOAD_API }}
           UPLOAD_TOKEN: ${{ secrets.UPLOAD_TOKEN }}
@@ -241,11 +241,11 @@ jobs:
           node -e "try { require('sharp'); console.log('sharp ok'); } catch (e) { console.log('sharp unavailable, icon generation will fail (build/icons/png has been removed)'); }"
 
       - name: Prepare clangd bundle
-        run: npm run prebuild:clangd
+        run: pnpm run prebuild:clangd
       - name: Prepare clang-format bundle
-        run: npm run prebuild:clang-format
+        run: pnpm run prebuild:clang-format
       - name: Build optional native helper
-        run: npm run prebuild:native
+        run: pnpm run prebuild:native
 
       - name: Verify node-pty windows binary
         shell: powershell
@@ -274,12 +274,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm run prebuild:buildinfo
-          npm run prebuild:icons
-          npm run prebuild:native
-          npm run prebuild:clangd
-          npm run prebuild:clang-format
-          npx electron-builder --win dir
+          pnpm run prebuild:buildinfo
+          pnpm run prebuild:icons
+          pnpm run prebuild:native
+          pnpm run prebuild:clangd
+          pnpm run prebuild:clang-format
+          pnpm exec electron-builder --win dir
 
       - name: Verify packaged node-pty in app.asar.unpacked
         shell: powershell
@@ -326,7 +326,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Windows installer to remote
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.repository == 'qingyingge/oicpp-plus' && secrets.UPLOAD_API != ''
         env:
           UPLOAD_API: ${{ secrets.UPLOAD_API }}
           UPLOAD_TOKEN: ${{ secrets.UPLOAD_TOKEN }}
@@ -340,7 +340,8 @@ jobs:
           curl -fsS -X POST -H "Authorization: Bearer $UPLOAD_TOKEN" -F "file=@$FILE" -F "version=$VERSION" -F "platform=windows" "$UPLOAD_API"
 
   release:
-    needs: [build-linux, build-macos, build-windows]
+    # 首版只发 exe + deb：macOS 不在交付范围内，不能让它阻塞 Release
+    needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:

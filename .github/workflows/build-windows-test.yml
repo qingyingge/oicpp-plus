@@ -31,7 +31,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: '.nvmrc'
           cache: "pnpm"
 
       - name: Install NSIS
@@ -68,9 +68,9 @@ jobs:
           pnpm install --frozen-lockfile
 
       - name: Prepare clangd bundle
-        run: npm run prebuild:clangd
+        run: pnpm run prebuild:clangd
       - name: Prepare clang-format bundle
-        run: npm run prebuild:clang-format
+        run: pnpm run prebuild:clang-format
 
       - name: Verify node-pty windows binary
         shell: powershell
@@ -99,12 +99,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm run prebuild:buildinfo
-          npm run prebuild:icons
-          npm run prebuild:native
-          npm run prebuild:clangd
-          npm run prebuild:clang-format
-          npx electron-builder --win dir
+          pnpm run prebuild:buildinfo
+          pnpm run prebuild:icons
+          pnpm run prebuild:native
+          pnpm run prebuild:clangd
+          pnpm run prebuild:clang-format
+          pnpm exec electron-builder --win dir
 
       - name: Verify packaged node-pty in app.asar.unpacked
         shell: powershell

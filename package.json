@@ -188,7 +188,7 @@
     "url": "https://github.com/qingyingge/oicpp-plus/issues"
   },
   "engines": {
-    "node": ">=20.0.0 <25",
+    "node": ">=22.12.0 <27",
     "pnpm": ">=12.0.0"
   }
 }

@@ -16,17 +16,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: "npm"
+          node-version-file: '.nvmrc'
+          cache: "pnpm"
 
       - name: Install dependencies
-        run: npm install
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
 
       - name: Prepare clangd bundle
-        run: npm run prebuild:clangd
+        run: pnpm run prebuild:clangd
 
       - name: Prepare clang-format bundle
-        run: npm run prebuild:clang-format
+        run: pnpm run prebuild:clang-format
 
       - name: Verify node-pty linux binary
         run: |
@@ -49,7 +51,7 @@ jobs:
       - name: Build Linux packages
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build -- --linux deb
+        run: pnpm run build -- --linux deb
 
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
