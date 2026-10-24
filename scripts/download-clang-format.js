@@ -118,8 +118,11 @@ const getAssetName = (ver, platform, architecture) => {
     return name;
 };
 
-const main = async () => {
-    // 读取命令行参数和环境变量（移入 main 避免模块作用域副作用）
+// 纯配置解析：argv > env > 内置默认。读的是模块作用域的 readArg/process/__dirname，
+// 所以同一个沙箱里换一组 argv/env 再调一次就是另一份配置，不需要跑起 main() 才能观察。
+// 抽出来之前这段内联在 main() 里，测试靠「顶层绑定」读它；245e19e 把它挪进 main() 之后
+// 顶层绑定消失，27 处断言在 undefined 上静默真空通过了整整一批（见 tests/clang-format.test.js）。
+const resolveDownloadConfig = () => {
     const versionArg = readArg('version', process.env.CLANG_FORMAT_VERSION || '');
     const tagArg = readArg('tag', process.env.CLANG_FORMAT_TAG || '');
     const repo = readArg('repo', process.env.CLANG_FORMAT_REPO || 'llvm/llvm-project');
@@ -130,6 +133,96 @@ const main = async () => {
     const expectedDigest = String(readArg('digest', process.env.CLANG_FORMAT_SHA256 || '')).replace(/^sha256:/i, '').toLowerCase();
     const skipSslVerify = process.env.NODE_ENV === 'development' && process.env.OICPP_SKIP_SSL_VERIFY === '1';
     const tempRoot = path.join(outputRoot, '_download');
+    // 「点名版本」= 给了真版本号；latest/auto 是「就要最新」，不算点名
+    const wantsLatest = !versionArg || /^(latest|auto)$/i.test(versionArg);
+    const pinnedVersion = !wantsLatest;
+    const pinnedTag = !!tagArg;
+    // 只有既没点名版本又没点名 tag 时才去取最新版（点名 tag 就按 tag 走）
+    const isAutoVersion = wantsLatest && !pinnedTag;
+    const isIntelMac = platform === 'darwin' && architecture === 'x64';
+    return {
+        versionArg, tagArg, repo, platform, architecture, outputRoot, directUrl,
+        expectedDigest, skipSslVerify, tempRoot, pinnedVersion, pinnedTag,
+        isAutoVersion, isIntelMac
+    };
+};
+
+// 版本选择纯函数。fetchedTag = 从 GitHub API 取到的 latest tag，取不到传空。
+// Intel Mac 单列：上游从 LLVM 20 起不再发 x86_64 macOS 包，所以没点名时直接取最后一个
+// 有该资产的 19.1.7，而不是先取 latest 再去下一必然不存在的东西。
+// 一旦回退就是在换包，用户钉的 sha256 必然对不上 —— 在下任何字节之前当场拒掉，
+// 既不悄悄摘校验、也不留一个和真实原因无关的 checksum 错。
+const planVersionSelection = (config, fetchedTag) => {
+    if (config.isIntelMac && !config.pinnedVersion && !config.pinnedTag) {
+        const assetVersion = '19.1.7';
+        return {
+            assetVersion,
+            releaseTag: `llvmorg-${assetVersion}`,
+            usesIntelMacFallback: true,
+            digestConflictsWithFallback: !!config.expectedDigest && !config.directUrl,
+            needsLatestFetch: false
+        };
+    }
+    let assetVersion = config.versionArg;
+    let releaseTag = config.tagArg;
+    if (config.isAutoVersion) {
+        assetVersion = fetchedTag ? String(fetchedTag).replace(/^llvmorg-/i, '') : '23.1.2';
+        releaseTag = fetchedTag || `llvmorg-${assetVersion}`;
+    } else if (!config.pinnedVersion && config.pinnedTag) {
+        // 只点名 tag：版本号从 tag 里推，保证资产名和 releaseTag 出自同一次选择
+        assetVersion = String(config.tagArg).replace(/^llvmorg-/i, '');
+    }
+    if (!releaseTag) {
+        releaseTag = `llvmorg-${assetVersion}`;
+    }
+    return {
+        assetVersion,
+        releaseTag,
+        usesIntelMacFallback: false,
+        digestConflictsWithFallback: false,
+        needsLatestFetch: config.isAutoVersion
+    };
+};
+
+// 挑资产：点了 --url 就完全不碰 API；Release API 命中就用上游那份（自带 digest）；
+// API 挂了、或 release 表里没这个资产，才拼官方直链。两条路径都必须把用户钉的校验值带上，
+// 否则等于下一份没验过的东西。requestJson 作参数传入，所以这段是可单测的纯逻辑。
+const selectReleaseAsset = async (requestJson, token, ver, releaseTag, repo, directUrl, expectedDigest, platform, architecture) => {
+    const assetName = getAssetName(ver, platform, architecture);
+    if (directUrl) {
+        return {
+            name: assetName,
+            browser_download_url: directUrl,
+            digest: expectedDigest ? `sha256:${expectedDigest}` : null
+        };
+    }
+
+    const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${releaseTag}`;
+    console.log(`[clang-format] Fetching release ${releaseUrl}`);
+    try {
+        const release = await requestJson(releaseUrl, token || undefined);
+        const asset = (release.assets || []).find((candidate) => candidate.name === assetName);
+        if (!asset) {
+            const names = (release.assets || []).map((candidate) => candidate.name).join(', ');
+            throw new Error(`asset not found: ${assetName}. Assets: ${names}`);
+        }
+        return asset;
+    } catch (error) {
+        console.warn(`[clang-format] Release API unavailable, using the official asset URL: ${error?.message || error}`);
+        return {
+            name: assetName,
+            browser_download_url: `https://github.com/${repo}/releases/download/${releaseTag}/${encodeURIComponent(assetName)}`,
+            digest: expectedDigest ? `sha256:${expectedDigest}` : null
+        };
+    }
+};
+
+const main = async () => {
+    const config = resolveDownloadConfig();
+    const {
+        repo, platform, architecture, outputRoot, directUrl,
+        expectedDigest, skipSslVerify, tempRoot
+    } = config;
     const { requestJson, ensureDownload } = createReleaseDownloader({
         label: 'clang-format',
         userAgent: 'oicpp-clang-format-downloader',
@@ -138,88 +231,40 @@ const main = async () => {
         maxRedirects: 10
     });
 
-    // 版本解析：支持 "latest"/"auto" 从 GitHub API 获取最新 release
-    // 优先级：显式 --version > 显式 --tag 推导 > auto/latest > 默认 23.1.2
-    // 只有当未显式指定 --version 且未显式指定 --tag 时才自动获取最新版
-    const isAutoVersion = (!versionArg && !tagArg) || versionArg.toLowerCase() === 'latest' || versionArg.toLowerCase() === 'auto';
-    const isIntelMac = platform === 'darwin' && architecture === 'x64';
-
     // token 供 selectReleaseAsset 和 auto-version fetch 使用
     const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || '';
 
-    // 自动获取最新版本
-    let assetVersion = versionArg;
-    let releaseTag = tagArg;
-    if (isAutoVersion) {
+    // 版本解析：显式 --version > 显式 --tag 推导 > auto/latest > 默认 23.1.2，
+    // Intel Mac 未点名则直接锁定 19.1.7（needsLatestFetch 为 false，不去问 API）
+    let selection = planVersionSelection(config, null);
+    if (selection.needsLatestFetch) {
         try {
             const latestUrl = `https://api.github.com/repos/${repo}/releases/latest`;
             console.log(`[clang-format] Fetching latest release ${latestUrl}`);
             const latestRelease = await requestJson(latestUrl, token || undefined);
-            releaseTag = latestRelease.tag_name;
-            assetVersion = releaseTag.replace(/^llvmorg-/i, '');
-            console.log(`[clang-format] Latest version: ${assetVersion} (tag: ${releaseTag})`);
+            selection = planVersionSelection(config, latestRelease.tag_name);
+            console.log(`[clang-format] Latest version: ${selection.assetVersion} (tag: ${selection.releaseTag})`);
         } catch (err) {
             console.warn(`[clang-format] Failed to fetch latest release: ${err?.message || err}, falling back to default 23.1.2`);
-            assetVersion = '23.1.2';
-            releaseTag = `llvmorg-${assetVersion}`;
+            selection = planVersionSelection(config, null);
         }
-    } else if (!versionArg && tagArg) {
-        // 仅指定了 --tag，从 tag 推导 version（保持原有行为）
-        assetVersion = tagArg.replace(/^llvmorg-/i, '');
-    } else if (!versionArg) {
-        // 既没指定 --version 也没指定 --tag，用默认版本
-        assetVersion = '23.1.2';
     }
-    if (!releaseTag) {
-        releaseTag = `llvmorg-${assetVersion}`;
+    const { assetVersion, releaseTag, usesIntelMacFallback, digestConflictsWithFallback } = selection;
+
+    if (usesIntelMacFallback) {
+        console.warn('[clang-format] x86_64 macOS 且没有点名版本：取上游最后一个 Intel macOS 包 19.1.7（默认版本没有这个资产）');
+    } else if (config.isIntelMac && releaseTag !== 'llvmorg-19.1.7') {
+        console.warn(`[clang-format] 按你点名的 ${releaseTag} / ${assetVersion} 取，不再自动换成 19.1.7 —— 上游从 20 起不发 x86_64 macOS 包，取不到是预期结果`);
     }
-
-    // Intel Mac 回退：仅当自动获取版本且最新版无 x86_64 macOS 资产时
-    const isIntelMacFallback = isIntelMac && isAutoVersion && assetVersion !== '19.1.7';
-    // 注意：这里无法预知最新版是否有 x86_64 macOS 资产，下载失败时会自然报错
-    // 保留 19.1.7 作为已知可用的最后版本供手动指定
-
-    // 校验值冲突检测：仅当显式指定 digest 且会触发 Intel Mac 回退时
-    const digestConflictsWithFallback = isIntelMacFallback && !!expectedDigest && !directUrl;
 
     if (digestConflictsWithFallback) {
-        throw new Error(`指定的 sha256 属于 ${assetVersion} 的包，但 x86_64 macOS 会回退到 19.1.7 —— 二者不可能同时对上。`
-            + `请改成 --tag llvmorg-19.1.7 --digest <19.1.7 的 sha256>，或去掉 --digest 改用 Release API 自带的资产校验值`);
+        throw new Error('x86_64 macOS 未点名版本会取 19.1.7（上游最后一个 Intel macOS 包），'
+            + `但你钉的 sha256 属于 ${releaseTag} 之外的另一个包 —— 二者不可能同时对上。`
+            + '请改成 --tag llvmorg-19.1.7 --digest <19.1.7 的 sha256>，或去掉 --digest 改用 Release API 自带的资产校验值');
     }
     if (skipSslVerify) {
         console.warn('[clang-format] SSL certificate verification disabled (OICPP_SKIP_SSL_VERIFY=1)');
     }
-
-    // selectReleaseAsset 需要访问 requestJson，定义在 main 内部
-    const selectReleaseAsset = async (token, ver, releaseTag, repo, directUrl, expectedDigest, platform, architecture) => {
-        const assetName = getAssetName(ver, platform, architecture);
-        if (directUrl) {
-            return {
-                name: assetName,
-                browser_download_url: directUrl,
-                digest: expectedDigest ? `sha256:${expectedDigest}` : null
-            };
-        }
-
-        const releaseUrl = `https://api.github.com/repos/${repo}/releases/tags/${releaseTag}`;
-        console.log(`[clang-format] Fetching release ${releaseUrl}`);
-        try {
-            const release = await requestJson(releaseUrl, token || undefined);
-            const asset = (release.assets || []).find((candidate) => candidate.name === assetName);
-            if (!asset) {
-                const names = (release.assets || []).map((candidate) => candidate.name).join(', ');
-                throw new Error(`asset not found: ${assetName}. Assets: ${names}`);
-            }
-            return asset;
-        } catch (error) {
-            console.warn(`[clang-format] Release API unavailable, using the official asset URL: ${error?.message || error}`);
-            return {
-                name: assetName,
-                browser_download_url: `https://github.com/${repo}/releases/download/${releaseTag}/${encodeURIComponent(assetName)}`,
-                digest: expectedDigest ? `sha256:${expectedDigest}` : null
-            };
-        }
-    };
 
     const binaryName = platform === 'win32' ? 'clang-format.exe' : 'clang-format';
     const targetRoot = path.join(outputRoot, platform);
@@ -242,7 +287,7 @@ const main = async () => {
         return;
     }
 
-    const asset = await selectReleaseAsset(token, assetVersion, releaseTag, repo, directUrl, expectedDigest, platform, architecture);
+    const asset = await selectReleaseAsset(requestJson, token, assetVersion, releaseTag, repo, directUrl, expectedDigest, platform, architecture);
     const digest = expectedDigest || String(asset.digest || '').replace(/^sha256:/i, '');
     ensureDir(tempRoot);
     const downloadPath = path.join(tempRoot, asset.name);

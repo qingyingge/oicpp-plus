@@ -88,13 +88,17 @@ function extractDownloaderBlock(source) {
     return source.slice(0, stop);
 }
 
+// 沙箱尾部自取 requestJson 用的标记 label（requireStub 见它就不记账）
+const SANDBOX_DOWNLOADER_LABEL = 'clang-format-sandbox';
+
+// 顶层可观测的一切。配置与版本选择在 245e19e 之后不再是顶层绑定（挪进了 main() 内部），
+// 所以由 resolveDownloadConfig / planVersionSelection 的返回值铺开进 dl ——
+// 断言读的是真函数的真产物，不是测试自己重算一遍逻辑。
 const DOWNLOADER_BINDINGS = [
-    'args', 'readArg', 'normalizePlatform', 'version', 'tag', 'repo', 'platform',
-    'architecture', 'isIntelMac', 'usesIntelMacFallback', 'assetVersion', 'releaseTag',
-    'digestConflictsWithFallback', 'outputRoot',
-    'directUrl', 'expectedDigest', 'skipSslVerify', 'tempRoot', 'assetNames',
-    'ensureDir', 'run7z', 'extractFromZip', 'extractFromXz', 'findFile',
-    'getAssetName', 'selectReleaseAsset', 'main'
+    'args', 'readArg', 'normalizePlatform', 'ensureDir', 'run7z',
+    'extractFromZip', 'extractFromXz', 'findFile',
+    'createReleaseDownloader', 'resolveDownloadConfig', 'planVersionSelection',
+    'selectReleaseAsset', 'getAssetName', 'main'
 ];
 
 // scripts/download-clang-format.js 的行为沙箱：正文原样跑进 vm，require 全部换成记账桩，
@@ -142,6 +146,10 @@ function makeDownloaderSandbox(options = {}) {
                 if (f === r || f.startsWith(pre)) fileSet.delete(f);
             }
             fsOps.push(`rm ${r}`);
+        },
+        writeFileSync: (p, data) => {
+            fileSet.add(resolve(p));
+            fsOps.push(`write ${resolve(p)} ${String(data)}`);
         },
         copyFileSync: (a, b) => {
             fileSet.add(resolve(b));
@@ -198,16 +206,22 @@ function makeDownloaderSandbox(options = {}) {
         if (id === 'fs') return fsStub;
         if (id === 'path') return path;
         if (id === './lib/release-downloader') {
-            const config = { calls: [] };
-            downloaderConfigs.push(config);
             return {
                 createReleaseDownloader: (cfg) => {
-                    config.cfg = cfg;
+                    // 沙箱尾部为了能拿到 requestJson 自己调的那一次不记账：
+                    // 记了就会把 downloaderConfigs[0] 顶成假配置，那条「上限 4GiB」就没人查了
+                    if (!cfg || cfg.label !== SANDBOX_DOWNLOADER_LABEL) {
+                        const config = { calls: [], cfg };
+                        downloaderConfigs.push(config);
+                    }
                     return {
                         requestJson: async (url, token) => {
                             requestJsonCalls.push({ url, token });
                             if (opts.apiError) throw new Error(opts.apiError);
-                            return { assets: (opts.releaseAssets || []) };
+                            return {
+                                tag_name: opts.latestTag,
+                                assets: (opts.releaseAssets || [])
+                            };
                         },
                         ensureDownload: async (url, dest, token, digest) => {
                             downloadCalls.push({ url, dest: path.resolve(String(dest)), token, digest });
@@ -276,7 +290,22 @@ function makeDownloaderSandbox(options = {}) {
     });
     let runError = null;
     try {
-        vm.runInContext(`${opts.block}\nthis.__dl = { ${DOWNLOADER_BINDINGS.join(', ')} };`, ctx);
+        // 把真函数产出的配置与版本选择铺进 dl，并按老断言的调用形状绑好两个带参函数：
+        // assetNames 取「生效版本」那一份表，getAssetName / selectReleaseAsset 免传参即当前场景。
+        const latestTagExpr = JSON.stringify(opts.latestTag === undefined ? null : opts.latestTag);
+        vm.runInContext(`${opts.block}
+const __cfg = resolveDownloadConfig();
+const __sel = planVersionSelection(__cfg, ${latestTagExpr});
+const __downloader = createReleaseDownloader({ label: 'clang-format-sandbox' });
+this.__dl = Object.assign({ ${DOWNLOADER_BINDINGS.join(', ')} }, __cfg, __sel, {
+    cfg: __cfg,
+    sel: __sel,
+    assetNames: assetNames(__sel.assetVersion),
+    getAssetName: () => getAssetName(__sel.assetVersion, __cfg.platform, __cfg.architecture),
+    selectReleaseAsset: (token, ver, tag) => selectReleaseAsset(
+        __downloader.requestJson, token, ver || __sel.assetVersion, tag || __sel.releaseTag,
+        __cfg.repo, __cfg.directUrl, __cfg.expectedDigest, __cfg.platform, __cfg.architecture)
+});`, ctx);
     } catch (e) {
         runError = e;
     }
@@ -1857,15 +1886,30 @@ function makeModel(lines, state = {}) {
                 err: base.runError && String(base.runError.message),
                 missing: base.missing
             }));
-        check('默认从官方 LLVM 仓库取 23.1.2，tag 按版本推',
-            d.repo === 'llvm/llvm-project' && d.version === '23.1.2' &&
-            d.tag === 'llvmorg-23.1.2' && d.releaseTag === 'llvmorg-23.1.2',
-            JSON.stringify({ repo: d.repo, version: d.version, tag: d.tag, releaseTag: d.releaseTag }));
+        // 这一节里后面每条断言都读这些字段；少一个字段就会级联成「undefined 参与比较」，
+        // 而且抛出去的那条会把整节剩下的断言一起截掉 —— 表现是断言总数悄悄变少，不是变红。
+        // 所以先把契约本身钉住，形状一变当场就知道是谁。
+        const CONTRACT = ['repo', 'platform', 'architecture', 'outputRoot', 'tempRoot', 'directUrl',
+            'expectedDigest', 'skipSslVerify', 'versionArg', 'tagArg', 'pinnedVersion', 'pinnedTag',
+            'isAutoVersion', 'isIntelMac', 'assetVersion', 'releaseTag', 'usesIntelMacFallback',
+            'digestConflictsWithFallback', 'needsLatestFetch', 'assetNames', 'getAssetName',
+            'selectReleaseAsset', 'resolveDownloadConfig', 'planVersionSelection', 'normalizePlatform', 'main'];
+        check('下载器沙箱契约完整（缺一个字段整节就会级联失真，不是变红而是变少）',
+            CONTRACT.filter((name) => d[name] === undefined).length === 0,
+            JSON.stringify(CONTRACT.filter((name) => d[name] === undefined)));
+        check('没点名又拿不到 API 结果时回落 23.1.2，tag 按版本推',
+            d.repo === 'llvm/llvm-project' && d.assetVersion === '23.1.2' &&
+            d.releaseTag === 'llvmorg-23.1.2' && d.needsLatestFetch === true,
+            JSON.stringify({ repo: d.repo, assetVersion: d.assetVersion, releaseTag: d.releaseTag, fetch: d.needsLatestFetch }));
+        check('API 给出 latest 时就用 latest，内置默认只是兜底',
+            makeDownloaderSandbox({ block: downloaderBlock, latestTag: 'llvmorg-24.0.0' }).dl.assetVersion === '24.0.0' &&
+            makeDownloaderSandbox({ block: downloaderBlock, latestTag: 'llvmorg-24.0.0' }).dl.releaseTag === 'llvmorg-24.0.0',
+            makeDownloaderSandbox({ block: downloaderBlock, latestTag: 'llvmorg-24.0.0' }).dl.assetVersion);
 
         {
             const TABLE = [
-                ['version', 'CLANG_FORMAT_VERSION', 'version', '18.1.8', '20.1.0'],
-                ['tag', 'CLANG_FORMAT_TAG', 'tag', 'llvmorg-9.9.9', 'llvmorg-8.8.8'],
+                ['version', 'CLANG_FORMAT_VERSION', 'assetVersion', '18.1.8', '20.1.0'],
+                ['tag', 'CLANG_FORMAT_TAG', 'releaseTag', 'llvmorg-9.9.9', 'llvmorg-8.8.8'],
                 ['repo', 'CLANG_FORMAT_REPO', 'repo', 'someone/else', 'other/else'],
                 ['url', 'CLANG_FORMAT_DOWNLOAD_URL', 'directUrl', 'https://mirror/a.tar.xz', 'https://mirror/b.tar.xz'],
                 ['digest', 'CLANG_FORMAT_SHA256', 'expectedDigest', 'deadbeef', 'cafebabe'],
@@ -1889,7 +1933,7 @@ function makeModel(lines, state = {}) {
             check('每个配置项都是「命令行参数 > 环境变量 > 内置默认」，两级都不能被吞',
                 bad.length === 0, bad.join(' '));
             const defaults = [
-                ['version', d.version, '23.1.2'], ['tag', d.tag, 'llvmorg-23.1.2'],
+                ['assetVersion', d.assetVersion, '23.1.2'], ['releaseTag', d.releaseTag, 'llvmorg-23.1.2'],
                 ['repo', d.repo, 'llvm/llvm-project'], ['directUrl', d.directUrl, ''],
                 ['expectedDigest', d.expectedDigest, ''],
                 ['outputRoot', d.outputRoot, path.resolve('/repo/build/clang-format')],
@@ -1901,8 +1945,8 @@ function makeModel(lines, state = {}) {
             const nearMiss = makeDownloaderSandbox({ block: downloaderBlock, argv: ['--versions', '1.2.3'] }).dl;
             const firstWins = makeDownloaderSandbox({ block: downloaderBlock, argv: ['--version', '1.1.1', '--version', '2.2.2'] }).dl;
             check('flag 取值只认整词、只认第一次出现，后面没跟值就退回默认',
-                dangling.version === '23.1.2' && nearMiss.version === '23.1.2' && firstWins.version === '1.1.1',
-                JSON.stringify({ dangling: dangling.version, nearMiss: nearMiss.version, firstWins: firstWins.version }));
+                dangling.assetVersion === '23.1.2' && nearMiss.assetVersion === '23.1.2' && firstWins.assetVersion === '1.1.1',
+                JSON.stringify({ dangling: dangling.assetVersion, nearMiss: nearMiss.assetVersion, firstWins: firstWins.assetVersion }));
         }
 
         {
@@ -1951,21 +1995,32 @@ function makeModel(lines, state = {}) {
                 tagEnv.usesIntelMacFallback === false && tagEnv.releaseTag === 'llvmorg-20.1.0',
                 JSON.stringify({ byArg: tagArg.releaseTag, byEnv: tagEnv.releaseTag }));
             check('只点 tag 时版本号从 tag 里推，资产名和 releaseTag 必须出自同一次选择',
-                tagArg.version === '20.1.0' && tagArg.assetVersion === '20.1.0' &&
+                tagArg.assetVersion === '20.1.0' &&
                 tagArg.assetNames['darwin-x64'] === 'LLVM-20.1.0-macOS-x86_64.tar.xz',
-                JSON.stringify({ version: tagArg.version, asset: tagArg.assetNames['darwin-x64'], tag: tagArg.releaseTag }));
+                JSON.stringify({ assetVersion: tagArg.assetVersion, asset: tagArg.assetNames['darwin-x64'], tag: tagArg.releaseTag }));
 
-            const loud = (o) => makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'x64', ...o });
+            // 只读选择结果（不跑 main）用 loud；要看 warn 用 loudRun
+            const loud = (o = {}) => makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'x64', ...o });
+            // 这两条提示现在由 main() 发出（选择逻辑本身是纯函数，不写日志），
+            // 所以要真跑一遍才读得到；只看 Intel 相关那几条，别被无关 warn 顶掉。
+            const loudRun = async (o = {}) => {
+                const sb = makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'x64', ...o });
+                await sb.main().catch(() => {});
+                return sb;
+            };
+            const intelWarns = (sb) => sb.logs.warn.filter((line) => /19\.1\.7|Intel/.test(String(line))).join(' ');
+            const fellBack = await loudRun();
             check('回退真的发生了要留一条话：默认版本被换成另一个包，不能静默',
-                loud().logs.warn.join(' ').includes('19.1.7'),
-                JSON.stringify(loud().logs.warn));
+                intelWarns(fellBack).includes('19.1.7'),
+                JSON.stringify(fellBack.logs.warn));
+            const pinnedRun = await loudRun({ argv: ['--tag', 'llvmorg-20.1.0'] });
             check('按点名去取时也要说清「不会被换掉」，取不到是上游没这个包，不是脚本出错',
-                loud({ argv: ['--tag', 'llvmorg-20.1.0'] }).logs.warn.join(' ').includes('llvmorg-20.1.0'),
-                JSON.stringify(loud({ argv: ['--tag', 'llvmorg-20.1.0'] }).logs.warn));
+                intelWarns(pinnedRun).includes('llvmorg-20.1.0'),
+                JSON.stringify(pinnedRun.logs.warn));
+            const armRun = await loudRun({ arch: 'arm64' });
             check('arm64 mac 不该被这两条 Intel 专属提示刷屏',
-                makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'arm64' })
-                    .logs.warn.join(' ').length === 0,
-                JSON.stringify(makeDownloaderSandbox({ block: downloaderBlock, platform: 'darwin', arch: 'arm64' }).logs.warn));
+                intelWarns(armRun).length === 0,
+                JSON.stringify(armRun.logs.warn));
 
             // 回退 + 自定义 sha256 是一对矛盾：锁是给原来那个包上的。
             // 悄悄摘掉等于装没验过的东西，硬留着等于下载到一半报个和真实原因无关的 checksum 错，
@@ -2035,17 +2090,23 @@ function makeModel(lines, state = {}) {
                 makeDownloaderSandbox({ block: downloaderBlock, env }).dl.skipSslVerify !== want);
             check('跳过证书校验要两个开关同时满足（少一个条件就是发布包里能关 TLS）',
                 wrong.length === 0, JSON.stringify(wrong.map(([, want]) => want)));
-            const cfg = base.downloaderConfigs[0].cfg;
+            // 下载库的配置现在在 main() 里创建（不在模块顶层），所以要真跑一遍才记得到；
+            // createReleaseDownloader 在任何 await 之前被调用，所以后面抛错也不影响这条记账。
+            const downloaderCfgOf = async (o = {}) => {
+                const sb = makeDownloaderSandbox({ block: downloaderBlock, ...o });
+                await sb.main().catch(() => {});
+                return sb.downloaderConfigs[0] && sb.downloaderConfigs[0].cfg;
+            };
+            const cfg = await downloaderCfgOf();
             check('下载上限 4GiB / 重定向 10 次 / label 与 UA 都真的传给了下载库',
                 cfg.label === 'clang-format' && cfg.userAgent === 'oicpp-clang-format-downloader' &&
                 cfg.maxBytes === 4 * 1024 * 1024 * 1024 && cfg.maxRedirects === 10 &&
                 cfg.skipSslVerify === false,
                 JSON.stringify(cfg));
             check('开关打开时把 skipSslVerify 一起带给下载库',
-                makeDownloaderSandbox({
-                    block: downloaderBlock,
+                (await downloaderCfgOf({
                     env: { NODE_ENV: 'development', OICPP_SKIP_SSL_VERIFY: '1' }
-                }).downloaderConfigs[0].cfg.skipSslVerify === true);
+                })).skipSslVerify === true);
             check('digest 前缀大小写都剥掉并转小写',
                 makeDownloaderSandbox({ block: downloaderBlock, env: { CLANG_FORMAT_SHA256: 'sha256:DEADBEEF' } }).dl.expectedDigest === 'deadbeef' &&
                 makeDownloaderSandbox({ block: downloaderBlock, env: { CLANG_FORMAT_SHA256: 'DEADBEEF' } }).dl.expectedDigest === 'deadbeef',
