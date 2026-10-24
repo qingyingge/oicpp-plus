@@ -443,7 +443,7 @@ class FakeProc extends EventEmitter {
             '--background-index',
             '--completion-style=detailed',
             '--header-insertion=iwyu',
-            '--pch-storage=memory',
+            '--pch-storage=disk',
             `--query-driver=${binDir.replace(/\\/g, '/')}/g++*`,
             '--log=verbose',
             `--compile-commands-dir=${flagsDir}`
