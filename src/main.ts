@@ -2356,6 +2356,25 @@ function assertSafeIoPath(targetPath: string) {
     return targetPath;
 }
 
+// 登录凭据只用于主进程的云同步签名，渲染层没有任何消费点；
+// get-settings / get-all-settings 下发前必须剥掉（与 get-top-level-settings 的 H4 口径一致）。
+function getPublicSettingsSnapshot(): MainSettings {
+    if (!settings.account) return settings;
+    const safeAccount: AccountInfo = { ...settings.account };
+    delete safeAccount.loginToken;
+    return { ...settings, account: safeAccount };
+}
+
+// renderer 递过来的可执行文件路径在 spawn / -o 之前统一过敏感目录黑名单。
+// fork 沿用 deny-list 口径（不引入工作区 allow-list），但 Windows 目录、
+// Program Files、/etc 这类宿主程序不该由渲染层指定就能跑。
+function assertExecutableAllowed(targetPath: string) {
+    if (!targetPath || typeof targetPath !== 'string') {
+        throw new Error(t('error.invalidPath'));
+    }
+    return assertSafeIoPath(path.resolve(targetPath));
+}
+
 function sanitizeDialogPathOptions(options: Record<string, unknown>) {
     try {
         const defaultPath = options['defaultPath'] as string;
@@ -2527,12 +2546,30 @@ let pendingInstallerLaunchArmed = false;
 let pendingUpdateQuitPromptInProgress = false;
 let allowQuitForPendingUpdateInstall = false;
 
+// settings.json 是磁盘上可被外部改写的文件，而 pendingUpdate.installerPath
+// 会在退出时被 `/S` 静默执行 —— 不做校验就等于把一次任意程序执行交给一个 JSON 字段。
+// 只接受 ~/.oicpp-plus 下、文件名符合安装包模式的记录（与清理旧安装包用的 8745 口径一致）。
+function resolveValidatedInstallerPath(pending: MainSettings['pendingUpdate']) {
+    if (!pending || typeof pending !== 'object') return null;
+    const installerPath = pending.installerPath;
+    if (!installerPath || typeof installerPath !== 'string') return null;
+    const installerDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
+    const base = path.basename(installerPath);
+    const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
+    return isPathInsideDir(installerPath, installerDir) && looksLikeInstaller ? installerPath : null;
+}
+
 function hasPendingUpdateToInstall() {
     const pending = settings?.pendingUpdate;
-    if (!pending || !pending.installerPath) {
+    const installerPath = resolveValidatedInstallerPath(pending);
+    if (!installerPath) {
+        if (pending?.installerPath) {
+            logWarn('[更新] 忽略非法待安装更新记录:', pending.installerPath);
+            delete settings.pendingUpdate;
+        }
         return false;
     }
-    return fs.existsSync(pending.installerPath);
+    return fs.existsSync(installerPath);
 }
 
 function buildWindowsSilentInstallArgs() {
@@ -2549,8 +2586,9 @@ function buildWindowsSilentInstallArgs() {
 function armPendingUpdateSilentInstallOnQuit(reason = '退出应用') {
     if (process.platform !== 'win32') return;
     const pending = settings?.pendingUpdate;
-    if (!pending || !pending.installerPath || !pending.autoInstallOnQuit) return;
-    if (!fs.existsSync(pending.installerPath)) return;
+    if (!pending?.autoInstallOnQuit) return;
+    const installerPath = resolveValidatedInstallerPath(pending);
+    if (!installerPath || !fs.existsSync(installerPath)) return;
 
     settings.postInstallNotice = {
         targetVersion: pending.version || '',
@@ -2560,7 +2598,7 @@ function armPendingUpdateSilentInstallOnQuit(reason = '退出应用') {
     };
     saveSettings();
 
-    armInstallerLaunchOnQuit(pending.installerPath, buildWindowsSilentInstallArgs());
+    armInstallerLaunchOnQuit(installerPath, buildWindowsSilentInstallArgs());
 }
 
 function showPostInstallNoticeIfNeeded() {
@@ -3464,6 +3502,70 @@ function createWindow() {
         }
         callback({ responseHeaders: headers });
     });
+
+    // 渲染层一旦被注入，permission 请求与 <webview> 挂载是两条现成的逃逸路径。
+    // 默认全拒，只放行剪贴板与全屏（内置浏览器、复制样例输出、PDF 都用到）。
+    try {
+        (mainWindow as import('electron').BrowserWindow).webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+            const allowed = permission === 'clipboard-read'
+                || permission === 'clipboard-sanitized-write'
+                || permission === 'fullscreen';
+            callback(!!allowed);
+        });
+    } catch (_) { }
+
+    // webview 的 src 来自 lastOpenTabs / 用户输入，file: 或 javascript: 都会被
+    // 当成受信任上下文加载；同时 guest 不应继承主窗口的 preload 桥。
+    // data: 必须放行：内置浏览器的新标签页就是一段内联 data:text/html（见 browser-manager.ts）。
+    (mainWindow as import('electron').BrowserWindow).webContents.on('will-attach-webview', (event, webPreferences, params) => {
+        const src = String(params?.['src'] || '');
+        let allowed = false;
+        try {
+            const parsed = new URL(src);
+            if (parsed.protocol === 'about:' || parsed.protocol === 'data:'
+                || parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+                allowed = true;
+            } else if (parsed.protocol === 'file:') {
+                const rawPath = decodeURIComponent(parsed.pathname || '');
+                const filePath = process.platform === 'win32' ? rawPath.replace(/^\//, '') : rawPath;
+                allowed = isPathInsideDir(filePath, __dirname);
+            }
+        } catch (_) {
+            allowed = false;
+        }
+        if (!allowed) {
+            event.preventDefault();
+            logWarn('[WebView] 已阻止不安全的 webview src:', src);
+            return;
+        }
+        try {
+            delete webPreferences.preload;
+            webPreferences.nodeIntegration = false;
+            webPreferences.contextIsolation = true;
+            webPreferences.webSecurity = true;
+            webPreferences.allowRunningInsecureContent = false;
+        } catch (_) { }
+    });
+
+    // 主窗口被导航到远程页面后，preload 桥在新文档里依旧生效，等同交出 RCE。
+    const isAllowedAppUrl = (targetUrl: string) => {
+        try {
+            const parsed = new URL(String(targetUrl || ''));
+            if (parsed.protocol !== 'file:') return false;
+            const rawPath = decodeURIComponent(parsed.pathname || '');
+            const filePath = process.platform === 'win32' ? rawPath.replace(/^\//, '') : rawPath;
+            return isPathInsideDir(filePath, __dirname);
+        } catch (_) {
+            return false;
+        }
+    };
+    const blockMainWindowNavigation = (event: { preventDefault: () => void }, targetUrl: string) => {
+        if (isAllowedAppUrl(targetUrl)) return;
+        event.preventDefault();
+        if (/^https?:/i.test(targetUrl)) void openExternalOnce(targetUrl);
+    };
+    (mainWindow as import('electron').BrowserWindow).webContents.on('will-navigate', blockMainWindowNavigation);
+    (mainWindow as import('electron').BrowserWindow).webContents.on('will-redirect', blockMainWindowNavigation);
 
     (mainWindow as import('electron').BrowserWindow).loadFile('src/renderer/index.html');
 
@@ -4438,13 +4540,13 @@ function setupIPC() {
 
 
     ipcMain.handle('get-settings', (event: Electron.IpcMainEvent, settingsType: string) => {
-        return settings;
+        return getPublicSettingsSnapshot();
     });
 
 
 
     ipcMain.handle('get-all-settings', () => {
-        return settings;
+        return getPublicSettingsSnapshot();
     });
 
     ipcMain.handle('get-language', () => {
@@ -5510,9 +5612,20 @@ function setupIPC() {
             const entries = await zip.entries();
             const allowedExts = new Set(['.in', '.out', '.ans', '.txt', '.input', '.output']);
             const files: Array<Record<string, unknown>> = [];
+            // 压缩包是外部输入：条目数、单条目声明大小、总量都要设上限，
+            // 否则一个 zip bomb 就能把解压结果整个读进内存。
+            const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+            const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+            const MAX_ENTRIES = 10000;
+            let totalBytes = 0;
+            let entryCount = 0;
 
             for (const [entryName, entry] of Object.entries(entries)) {
                 if (!entry || (entry as ZipTextFileEntry).isDirectory) continue;
+                entryCount += 1;
+                if (entryCount > MAX_ENTRIES) {
+                    return { success: false, error: t('error.zipTooManyEntries') };
+                }
 
                 const normalizedEntryName = String(entryName || '').replace(/\\/g, '/');
                 if (!normalizedEntryName || normalizedEntryName.includes('__MACOSX/')) continue;
@@ -5522,6 +5635,15 @@ function setupIPC() {
 
                 const ext = path.extname(baseName).toLowerCase();
                 if (!allowedExts.has(ext)) continue;
+
+                const declaredSize = Number.isFinite((entry as ZipTextFileEntry).size)
+                    ? Math.max(0, Number((entry as ZipTextFileEntry).size))
+                    : 0;
+                if (declaredSize > MAX_ENTRY_BYTES) continue;
+                totalBytes += declaredSize;
+                if (totalBytes > MAX_TOTAL_BYTES) {
+                    return { success: false, error: t('error.zipTextTooLarge') };
+                }
 
                 let content = '';
                 try {
@@ -5662,6 +5784,15 @@ function setupIPC() {
             if (!fs.existsSync(normalizedPath)) {
                 throw new Error(t('error.fileNotFound'));
             }
+            // base64 whole-file over IPC：不设上限等于让渲染层一次拖入把主进程撑爆
+            const stat = fs.statSync(normalizedPath);
+            const MAX_BUFFER_BYTES = 32 * 1024 * 1024;
+            if (!stat.isFile()) {
+                throw new Error(t('error.invalidFilePath'));
+            }
+            if (stat.size > MAX_BUFFER_BYTES) {
+                throw new Error(t('error.fileTooLargeToRead', { limit: String(MAX_BUFFER_BYTES / (1024 * 1024)) }));
+            }
             const buffer = fs.readFileSync(normalizedPath);
             return buffer.toString('base64');
         } catch (error) {
@@ -5682,6 +5813,9 @@ function setupIPC() {
             excludeGlobs = ['node_modules', '.git', '.oicpp', '.oicpp-plus', '.vscode', '.dsym'],
             maxFiles = 5000
         } = (options || {}) as WalkDirectoryOptions;
+        // maxFiles 来自渲染层，不给上限就等于让它一次遍历把主进程内存吃光；
+        // 深度同理，避免被指向超大目录树的调用拖死。
+        const effectiveMaxFiles = Math.max(1, Math.min(Number(maxFiles) || 5000, 20000));
 
         const results: Array<Record<string, unknown>> = [];
         try {
@@ -5691,17 +5825,18 @@ function setupIPC() {
                 if (lower.endsWith('.dsym')) return true; // 强制忽略 *.dSYM 目录
                 return excludeGlobs.some((g: string ) => lower.includes(g.toLowerCase()));
             };
-            const walk = (p: string) => {
-                if (results.length >= maxFiles) return;
+            const walk = (p: string, depth = 0) => {
+                if (results.length >= effectiveMaxFiles) return;
+                if (depth > 32) return;
                 let entries = [];
                 try { entries = fs.readdirSync(p, { withFileTypes: true }); } catch { return; }
                 for (const entry of entries) {
-                    if (results.length >= maxFiles) break;
+                    if (results.length >= effectiveMaxFiles) break;
                     const full = path.join(p, entry.name);
                     if (entry.name.startsWith('.') || shouldExclude(full)) continue;
                     try {
                         if (entry.isDirectory()) {
-                            walk(full);
+                            walk(full, depth + 1);
                         } else if (entry.isFile()) {
                             const ext = path.extname(entry.name).toLowerCase();
                             if (includeExts.length === 0 || includeExts.includes(ext) || !ext) {
@@ -6108,6 +6243,7 @@ function setupIPC() {
         if (/^\s*(?:cmd(?:\.exe)?\s+\/c|powershell(?:\.exe)?\s+-command|pwsh(?:\.exe)?\s+-command)/i.test(executablePath)) {
             throw new Error('Shell command strings are disabled; use executablePath and args');
         }
+        assertExecutableAllowed(executablePath);
 
         const compilerPath = settings.compilerPath || '';
         let runtimeEnv = { ...process.env };
@@ -9482,6 +9618,13 @@ async function compileFile(options: Record<string, unknown>) {
     }
     const { inputFile, outputFile, compilerPath, compilerArgs, workingDirectory } = options as unknown as CompileFileFields;
 
+    // outputFile 原样进 `g++ -o`：渲染层一旦被注入，就能把产物写到任意可写目录，
+    // 再由「打开所在目录 / 运行」把它拉起来。编译输出必须过敏感目录黑名单。
+    if (!outputFile || typeof outputFile !== 'string') {
+        throw new Error(t('error.invalidFilePath'));
+    }
+    assertSafeIoPath(outputFile);
+
     // 诊断条目：stderr 逐行解析出来的结构化错误，前端按 file/line/column 定位
     interface CompileFileDiagnosticsEntry {
         file: string | undefined;
@@ -10018,6 +10161,7 @@ async function runExecutable(options: Record<string, unknown>) {
     const path = require('path');
 
     const { executablePath, workingDirectory } = options;
+    assertExecutableAllowed(executablePath as string);
     const normalizedRunMode = normalizeRunModeForPlatform(settings?.runMode, process.platform);
 
     function decodeBufferAuto(buffer: Buffer) {

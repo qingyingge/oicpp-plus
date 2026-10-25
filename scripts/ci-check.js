@@ -738,10 +738,11 @@ for (const f of jsFiles) {
 if (!allowpopupsFound) ok('no <webview allowpopups> usage');
 
 // --- E13-E14, E16: 尚未落地的加固项（存量缺口，ratchet） ------------------------
-// 这三项检查的是"本该有但还没有"的加固，当前全部缺失。它们不是新引入的回归，
+// 这些检查的是"本该有但还没有"的加固。它们不是新引入的回归，
 // 而是待办的安全债，所以按缺口计数 ratchet：新增缺口才 FAIL，修复后调低 baseline。
 // （直接写成 fail() 会让刚引入检查的当天 CI 全红，失去拦截意义。）
-const HARDENING_GAP_BASELINE = 3; // E13 will-navigate + E14 sender 校验 + E16 Fuses
+// E13 已于 1.6.0-beta1 移植批清掉（主窗口 will-navigate/will-redirect + webview 守卫）。
+const HARDENING_GAP_BASELINE = 2; // E14 sender 校验 + E16 Fuses
 let hardeningGaps = 0;
 
 console.log(`\n${Y}[E13] will-navigate handler${R}`);

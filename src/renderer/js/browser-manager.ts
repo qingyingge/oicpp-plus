@@ -89,13 +89,31 @@ class BrowserManager {
     }
 
     /**
+     * 初始地址来自 lastOpenTabs / 分屏继承 / 用户输入，被篡改时可注入
+     * file: 或 javascript:，让 guest 以受信任上下文读本地文件。
+     * data: 必须放行：内置新标签页本身就是一段内联 data:text/html。
+     */
+    _normalizeInitialUrl(raw: string): string {
+        const fallback = getNewTabPageHtml();
+        const candidate = (raw && String(raw).trim()) ? String(raw).trim() : fallback;
+        try {
+            const parsed = new URL(candidate);
+            if (parsed.protocol === 'http:' || parsed.protocol === 'https:'
+                || parsed.protocol === 'about:' || parsed.protocol === 'data:') {
+                return parsed.href;
+            }
+        } catch (_) { }
+        return fallback;
+    }
+
+    /**
      * 创建一个浏览器标签页容器
      * @param {object} options
      * 参数即解构签名里的 groupId/uniqueKey/url；返回新建的 browserContainer 元素。
      */
     createBrowserContainer({ groupId, uniqueKey, url }: { groupId: string; uniqueKey: string; url: string }): HTMLDivElement {
         // 未指定 URL 时使用内置新标签页
-        const initialUrl = (url && url.trim()) ? url.trim() : getNewTabPageHtml();
+        const initialUrl = this._normalizeInitialUrl(url);
         // 主容器
         const container = document.createElement('div');
         container.className = 'browser-container';
@@ -395,6 +413,16 @@ class BrowserManager {
             }
         } catch (_) {}
         if (!url) return;
+        // 解析后仍可能是任意协议（用户直接粘贴 file:/javascript:），loadURL 前再过一遍白名单。
+        try {
+            const parsed = new URL(url);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:' && parsed.protocol !== 'about:') {
+                return;
+            }
+            url = parsed.href;
+        } catch (_) {
+            return;
+        }
         state.currentUrl = url;
         state.webview.loadURL(url).catch(() => {});
         if (state.urlInput) state.urlInput.value = url;

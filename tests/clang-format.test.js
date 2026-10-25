@@ -562,6 +562,12 @@ function makeRunSandbox(options = {}) {
             (platform === 'darwin' || platform === 'linux') ? 'integrated-terminal'
                 : (String(input || '').toLowerCase() === 'integrated-terminal' ? 'integrated-terminal' : 'popup')),
         detectEncoding: () => 'utf8',
+        // runExecutable 现在会先走 assertExecutableAllowed → assertSafeIoPath
+        // → isSensitiveIoPath → getSensitivePathPrefixes 的敏感目录判定。这四个是 main.js
+        // 顶层函数，下面按真函数抽取；桩只补它们需要的 os/app/缓存位（同 settings、t 的做法）。
+        os: { homedir: () => '/home/user' },
+        app: { getPath: () => '/home/user/.config/oicpp-plus-ide' },
+        _cachedSensitivePrefixes: null,
         killByExePathWindows: async (p) => { kills.push(`exe:${p}`); },
         killConsolePauserForTargetWindows: async (p) => { kills.push(`pauser:${p}`); },
         detachedRunProcesses,
@@ -574,7 +580,10 @@ function makeRunSandbox(options = {}) {
         Buffer, EventEmitter,
         JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Promise, Set, Map
     });
-    const { fns, missing } = compileFuncs(opts.src, ['runExecutable'], ctx);
+    const GUARD_NAMES = ['assertExecutableAllowed', 'assertSafeIoPath', 'isSensitiveIoPath', 'getSensitivePathPrefixes'];
+    const { fns, missing } = compileFuncs(opts.src, ['runExecutable', ...GUARD_NAMES], ctx);
+    // compileFuncs 只把抽出来的函数挂到 __fns，而 runExecutable 是按自由标识符调它们的
+    for (const name of GUARD_NAMES) ctx[name] = fns[name];
 
     const start = (over = {}) => fns.runExecutable({
         executablePath: EXE,

@@ -37,6 +37,10 @@ exports.logger = exports.Logger = void 0;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
+const SENSITIVE_KEY_RE = /token|password|passwd|secret|authorization|cookie|credential|apikey|api_key/i;
+// 裸字符串里的 token=xxx / "password": "xxx" 形式，键名收窄为已知敏感词，避免把普通日志抹平
+const SENSITIVE_INLINE_RE = /("?)(token|password|passwd|secret|authorization|cookie|credential|apikey|api_key|login_?token)("?\s*[:=]\s*["']?)([^"'\s,}]+)/gi;
+const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._\-]+/gi;
 class Logger {
     initialized = false;
     logDir;
@@ -140,8 +144,21 @@ class Logger {
         }
         catch (_) { }
     }
+    static redactString(text) {
+        return String(text ?? '')
+            .replace(SENSITIVE_INLINE_RE, '$1$2$3[REDACTED]')
+            .replace(BEARER_RE, '$1[REDACTED]');
+    }
     static stringifyArgs(args, { level = 'info', maxLen = 2000 } = {}) {
-        const redactingReplacer = (_key, value) => value;
+        const redactingReplacer = (key, value) => {
+            if (key && SENSITIVE_KEY_RE.test(key))
+                return '[REDACTED]';
+            if (value instanceof Error)
+                return serializeError(value);
+            if (typeof value === 'string')
+                return Logger.redactString(value);
+            return value;
+        };
         const serializeError = (err) => {
             try {
                 const base = {
@@ -231,8 +248,8 @@ class Logger {
             }
         };
         try {
-            const joined = args.map(level === 'info' ? infoStringify : verbose).join(' ');
-            if (level === 'info' && typeof joined === 'string' && joined.length > maxLen) {
+            const joined = Logger.redactString(args.map(level === 'info' ? infoStringify : verbose).join(' '));
+            if (level === 'info' && joined.length > maxLen) {
                 return `${joined.slice(0, maxLen)} ... [truncated ${joined.length - maxLen} chars]`;
             }
             return joined;

@@ -655,8 +655,20 @@ const safeIpcRenderer = {
         if (ALLOWED_EVENT_CHANNELS.has(channel)) return ipcRenderer.once(channel, listener);
         console.warn('IPC event blocked: ' + channel);
     },
-    removeListener: (channel: string, listener: (...args: unknown[]) => void): void => ipcRenderer.removeListener(channel, listener),
-    removeAllListeners: (channel: string): void => ipcRenderer.removeAllListeners(channel)
+    removeListener: (channel: string, listener: (...args: unknown[]) => void): void => {
+        if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+            console.warn('IPC removeListener blocked: ' + channel);
+            return;
+        }
+        ipcRenderer.removeListener(channel, listener);
+    },
+    removeAllListeners: (channel: string): void => {
+        if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+            console.warn('IPC removeAllListeners blocked: ' + channel);
+            return;
+        }
+        ipcRenderer.removeAllListeners(channel);
+    }
 };
 
 
@@ -679,12 +691,23 @@ const safeOpenExternal = (url: string): Promise<void> => {
     return shell.openExternal(parsed.href);
 };
 
+// shell.openPath 会把扩展名交给 Windows 的关联处理器，.exe/.cmd/.lnk 之类直接拉起程序；
+// 渲染层的「打开文件」入口拿到的是磁盘上的任意路径，不能原样透传。
+const BLOCKED_OPEN_EXTENSIONS = /\.(exe|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|wsh|msi|lnk|reg|hta|jar)$/i;
+const safeOpenPath = (targetPath: string): Promise<string> => {
+    const value = String(targetPath || '');
+    if (BLOCKED_OPEN_EXTENSIONS.test(value)) {
+        return Promise.reject(new Error('refusing to open executable path'));
+    }
+    return shell.openPath(value);
+};
+
 contextBridge.exposeInMainWorld('electron', {
     ipcRenderer: safeIpcRenderer,
     shell: {
         openExternal: safeOpenExternal,
         showItemInFolder: (p: string) => shell.showItemInFolder(p),
-        openPath: (targetPath: string) => shell.openPath(targetPath)
+        openPath: safeOpenPath
     }
 });
 contextBridge.exposeInMainWorld('__electronRequireAvailable', true);
@@ -694,7 +717,7 @@ contextBridge.exposeInMainWorld('getElectronModule', () => {
         shell: {
             openExternal: safeOpenExternal,
             showItemInFolder: (p: string) => shell.showItemInFolder(p),
-            openPath: (targetPath: string) => shell.openPath(targetPath)
+            openPath: safeOpenPath
         }
     };
 });

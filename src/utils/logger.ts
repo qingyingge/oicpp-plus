@@ -4,6 +4,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+const SENSITIVE_KEY_RE = /token|password|passwd|secret|authorization|cookie|credential|apikey|api_key/i;
+// 裸字符串里的 token=xxx / "password": "xxx" 形式，键名收窄为已知敏感词，避免把普通日志抹平
+const SENSITIVE_INLINE_RE = /("?)(token|password|passwd|secret|authorization|cookie|credential|apikey|api_key|login_?token)("?\s*[:=]\s*["']?)([^"'\s,}]+)/gi;
+const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._\-]+/gi;
+
 export class Logger {
     initialized = false;
     logDir: string;
@@ -107,8 +112,19 @@ export class Logger {
         } catch (_) { }
     }
 
+    static redactString(text: unknown): string {
+        return String(text ?? '')
+            .replace(SENSITIVE_INLINE_RE, '$1$2$3[REDACTED]')
+            .replace(BEARER_RE, '$1[REDACTED]');
+    }
+
     static stringifyArgs(args: unknown[], { level = 'info', maxLen = 2000 } = {}): string {
-        const redactingReplacer = (_key: string, value: unknown): unknown => value;
+        const redactingReplacer = (key: string, value: unknown): unknown => {
+            if (key && SENSITIVE_KEY_RE.test(key)) return '[REDACTED]';
+            if (value instanceof Error) return serializeError(value);
+            if (typeof value === 'string') return Logger.redactString(value);
+            return value;
+        };
         const serializeError = (err: unknown): Record<string, unknown> => {
             try {
                 const base: {
@@ -185,8 +201,8 @@ export class Logger {
             try { return JSON.stringify(v, redactingReplacer, 2); } catch (_) { return String(v); }
         };
         try {
-            const joined = args.map(level === 'info' ? infoStringify : verbose).join(' ');
-            if (level === 'info' && typeof joined === 'string' && joined.length > maxLen) {
+            const joined = Logger.redactString(args.map(level === 'info' ? infoStringify : verbose).join(' '));
+            if (level === 'info' && joined.length > maxLen) {
                 return `${joined.slice(0, maxLen)} ... [truncated ${joined.length - maxLen} chars]`;
             }
             return joined;

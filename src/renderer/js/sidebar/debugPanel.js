@@ -773,6 +773,16 @@ class DebugPanel {
         }
         catch (_) { }
     }
+    // 调试面板里的函数名/文件名/变量值全部来自被调试进程的 gdb 输出，
+    // 属攻击者可控输入；拼进 innerHTML 前必须转义（与 js/main.ts 的 escapeDebugHtml 同口径）。
+    _escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
     _renderStack(stack) {
         const root = this.root;
         if (!root)
@@ -790,8 +800,8 @@ class DebugPanel {
             const el = document.createElement('div');
             el.className = 'callstack-item';
             el.innerHTML = `
-        <div class="frame-info"><span class="frame-index">#${i}</span><span class="frame-function">${f.function || window.i18n.t('debug.unknownFunction')}</span></div>
-        <div class="frame-location"><span class="frame-file">${f.file || window.i18n.t('debug.unknownFile')}</span>${f.line ? `<span class="frame-line">:${f.line}</span>` : ''}</div>`;
+        <div class="frame-info"><span class="frame-index">#${i}</span><span class="frame-function">${this._escapeHtml(f.function || window.i18n.t('debug.unknownFunction'))}</span></div>
+        <div class="frame-location"><span class="frame-file">${this._escapeHtml(f.file || window.i18n.t('debug.unknownFile'))}</span>${f.line ? `<span class="frame-line">:${this._escapeHtml(f.line)}</span>` : ''}</div>`;
             c.appendChild(el);
         }
     }

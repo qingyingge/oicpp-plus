@@ -627,8 +627,20 @@ const safeIpcRenderer = {
             return ipcRenderer.once(channel, listener);
         console.warn('IPC event blocked: ' + channel);
     },
-    removeListener: (channel, listener) => ipcRenderer.removeListener(channel, listener),
-    removeAllListeners: (channel) => ipcRenderer.removeAllListeners(channel)
+    removeListener: (channel, listener) => {
+        if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+            console.warn('IPC removeListener blocked: ' + channel);
+            return;
+        }
+        ipcRenderer.removeListener(channel, listener);
+    },
+    removeAllListeners: (channel) => {
+        if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
+            console.warn('IPC removeAllListeners blocked: ' + channel);
+            return;
+        }
+        ipcRenderer.removeAllListeners(channel);
+    }
 };
 // 协议白名单：shell.openExternal 把 URL 直接交给操作系统，
 // file: / ms-settings: / smb: 等能直达系统处理器甚至拉起本地程序。
@@ -649,12 +661,22 @@ const safeOpenExternal = (url) => {
     }
     return shell.openExternal(parsed.href);
 };
+// shell.openPath 会把扩展名交给 Windows 的关联处理器，.exe/.cmd/.lnk 之类直接拉起程序；
+// 渲染层的「打开文件」入口拿到的是磁盘上的任意路径，不能原样透传。
+const BLOCKED_OPEN_EXTENSIONS = /\.(exe|bat|cmd|com|scr|ps1|vbs|vbe|js|jse|wsf|wsh|msi|lnk|reg|hta|jar)$/i;
+const safeOpenPath = (targetPath) => {
+    const value = String(targetPath || '');
+    if (BLOCKED_OPEN_EXTENSIONS.test(value)) {
+        return Promise.reject(new Error('refusing to open executable path'));
+    }
+    return shell.openPath(value);
+};
 contextBridge.exposeInMainWorld('electron', {
     ipcRenderer: safeIpcRenderer,
     shell: {
         openExternal: safeOpenExternal,
         showItemInFolder: (p) => shell.showItemInFolder(p),
-        openPath: (targetPath) => shell.openPath(targetPath)
+        openPath: safeOpenPath
     }
 });
 contextBridge.exposeInMainWorld('__electronRequireAvailable', true);
@@ -664,7 +686,7 @@ contextBridge.exposeInMainWorld('getElectronModule', () => {
         shell: {
             openExternal: safeOpenExternal,
             showItemInFolder: (p) => shell.showItemInFolder(p),
-            openPath: (targetPath) => shell.openPath(targetPath)
+            openPath: safeOpenPath
         }
     };
 });
