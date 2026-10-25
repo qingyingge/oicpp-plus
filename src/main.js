@@ -8123,6 +8123,11 @@ async function readDirectory(dirPath) {
     return items;
 }
 function copyDirectorySync(src, dest) {
+    // 目标落在源目录内部时，递归会把刚建好的目标再读进来，无限套娃直到栈/磁盘爆掉。
+    const rel = path.relative(path.resolve(src), path.resolve(dest));
+    if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+        throw new Error(t('main.copyFolderIntoSelf'));
+    }
     if (!fs.existsSync(dest)) {
         fs.mkdirSync(dest, { recursive: true });
     }
@@ -8273,6 +8278,28 @@ let compilerSettingsWindow = null;
 let editorSettingsWindow = null;
 let codeTemplatesWindow = null;
 let backupSettingsWindow = null;
+// 设置子窗口的标题键：切换语言时按当前语言重新 setTitle（见 applyLanguageChange）。
+const settingsWindowTitleKeys = new WeakMap();
+/**
+ * 页面 <title> 带着 data-i18n，翻译落地前用的是 HTML 里的行内中文，
+ * 它会通过 page-title-updated 覆盖窗口标题 —— 英文环境下闪一下中文（#385）。
+ * 标题一律由主进程按当前语言给定，并压住页面那份。
+ */
+function lockSettingsWindowTitle(targetWindow, titleKey) {
+    if (!targetWindow)
+        return;
+    settingsWindowTitleKeys.set(targetWindow, titleKey);
+    const apply = () => {
+        try {
+            if (!targetWindow.isDestroyed())
+                targetWindow.setTitle(t(titleKey));
+        }
+        catch (_) { }
+    };
+    apply();
+    targetWindow.on('page-title-updated', (event) => event.preventDefault());
+    targetWindow.webContents.on('did-finish-load', apply);
+}
 function openCompilerSettings() {
     if (compilerSettingsWindow) {
         compilerSettingsWindow.focus();
@@ -8297,6 +8324,7 @@ function openCompilerSettings() {
         backgroundColor: getThemeBackgroundColor(settings.theme),
         show: false
     });
+    lockSettingsWindowTitle(compilerSettingsWindow, 'main.compilerSettingsTitle');
     compilerSettingsWindow.loadFile('src/renderer/settings/compiler.html');
     compilerSettingsWindow.once('ready-to-show', () => {
         compilerSettingsWindow.show();
@@ -8332,6 +8360,7 @@ function openEditorSettings() {
         backgroundColor: getThemeBackgroundColor(settings.theme),
         show: false
     });
+    lockSettingsWindowTitle(editorSettingsWindow, 'main.editorSettingsTitle');
     editorSettingsWindow.loadFile('src/renderer/settings/editor.html', { query: { theme: settings.theme } });
     editorSettingsWindow.once('ready-to-show', () => {
         editorSettingsWindow.show();
@@ -8372,6 +8401,7 @@ function openCodeTemplates() {
         backgroundColor: getThemeBackgroundColor(settings.theme),
         show: false
     });
+    lockSettingsWindowTitle(codeTemplatesWindow, 'main.templateSettingsTitle');
     codeTemplatesWindow.loadFile('src/renderer/settings/templates.html');
     codeTemplatesWindow.once('ready-to-show', () => {
         codeTemplatesWindow.show();
@@ -8405,6 +8435,7 @@ function openBackupSettings() {
         backgroundColor: getThemeBackgroundColor(settings.theme),
         show: false
     });
+    lockSettingsWindowTitle(backupSettingsWindow, 'main.backupSettingsTitle');
     backupSettingsWindow.loadFile('src/renderer/settings/backup.html', { query: { theme: settings.theme } });
     backupSettingsWindow.once('ready-to-show', () => {
         backupSettingsWindow.show();
@@ -9063,6 +9094,15 @@ async function applyLanguageChange(langCode, prevLang) {
         for (const win of targets) {
             if (win && !win.isDestroyed()) {
                 win.webContents.send('language-changed', langCode);
+                // 设置子窗口的 <title> 被 page-title-updated 压住了（#385），
+                // 标题只能由主进程按新语言重发；漏掉这一步就永远停在切换前那份。
+                const titleKey = settingsWindowTitleKeys.get(win);
+                if (titleKey) {
+                    try {
+                        win.setTitle(t(titleKey));
+                    }
+                    catch (_) { }
+                }
             }
         }
         logInfo('语言已切换:', prevLang, '->', langCode);

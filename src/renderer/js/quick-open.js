@@ -53,7 +53,7 @@ else {
             results.appendChild(empty);
             return;
         }
-        list.slice(0, 200).forEach((item, idx) => {
+        list.forEach((item, idx) => {
             const row = document.createElement('div');
             row.className = 'quick-open-item';
             if (idx === activeIndex)
@@ -87,9 +87,11 @@ else {
         const ranked = allFiles.map(f => ({ ...f, __s: fuzzyScore(query, f.path) }))
             .filter(x => (x.__s ?? 0) > 0)
             .sort((a, b) => (b.__s ?? 0) - (a.__s ?? 0) || a.path.length - b.path.length);
-        lastList = ranked;
-        activeIndex = ranked.length ? 0 : -1;
-        render(ranked);
+        // 截断必须在 lastList 上发生：render 里再 slice 的话，界面画 200 行、
+        // 键盘导航手里是全部，方向键会走到看不见的那一项、回车打开的是另一个文件。
+        lastList = ranked.slice(0, 200);
+        activeIndex = lastList.length ? 0 : -1;
+        render(lastList);
     }
     async function ensureIndex() {
         const fileExplorer = window.sidebarManager?.panels?.files;
@@ -162,23 +164,23 @@ else {
                 close();
             }
             if (e.key === 'Enter') {
-                const list = lastList.length ? lastList : allFiles;
+                const list = lastList;
                 const picked = list[activeIndex >= 0 && activeIndex < list.length ? activeIndex : 0];
                 if (picked)
                     openFile(picked);
             }
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                const list = lastList.length ? lastList : allFiles;
+                const list = lastList;
                 if (list.length) {
-                    activeIndex = Math.min((activeIndex < 0 ? 0 : activeIndex) + 1, list.length - 1);
+                    activeIndex = Math.min((activeIndex < 0 ? -1 : activeIndex) + 1, list.length - 1);
                     render(list);
                     ensureActiveVisible();
                 }
             }
             if (e.key === 'ArrowUp') {
                 e.preventDefault();
-                const list = lastList.length ? lastList : allFiles;
+                const list = lastList;
                 if (list.length) {
                     activeIndex = Math.max((activeIndex < 0 ? 0 : activeIndex) - 1, 0);
                     render(list);

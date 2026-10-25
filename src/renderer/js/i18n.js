@@ -212,18 +212,33 @@ class I18nManager {
             // Translate text content
             document.querySelectorAll('[data-i18n]').forEach((el) => {
                 const key = el.getAttribute('data-i18n');
-                if (key) {
-                    let params;
-                    const argsAttr = el.getAttribute('data-i18n-args');
-                    if (argsAttr) {
-                        try {
-                            params = JSON.parse(argsAttr);
-                        }
-                        catch (_) {
-                            params = undefined;
-                        }
+                if (!key)
+                    return;
+                let params;
+                const argsAttr = el.getAttribute('data-i18n-args');
+                if (argsAttr) {
+                    try {
+                        params = JSON.parse(argsAttr);
                     }
-                    el.textContent = this.t(key, params);
+                    catch (_) {
+                        params = undefined;
+                    }
+                }
+                const text = this.t(key, params);
+                // 元素里嵌着子节点（复选框、svg、快捷键 kbd 等）时覆盖 textContent 会把它们
+                // 一起删掉，而且删完就再也恢复不回来（模板只渲染一次）。只替换文本节点。
+                if (el.children.length === 0) {
+                    el.textContent = text;
+                    return;
+                }
+                const textNodes = Array.from(el.childNodes).filter((node) => node.nodeType === 3);
+                const target = textNodes.find((node) => String(node.nodeValue ?? '').trim())
+                    || textNodes[textNodes.length - 1];
+                if (target) {
+                    target.nodeValue = text;
+                }
+                else {
+                    el.appendChild(document.createTextNode(text));
                 }
             });
             // Translate placeholders

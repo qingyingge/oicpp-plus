@@ -1155,6 +1155,14 @@ class FileExplorer {
         if (window.electronIPC) {
             this.clipboard.files.forEach(file => {
                 const operation = (this.clipboard as FileClipboard).operation;
+                const normPath = (p: unknown) => String(p ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+                const srcNorm = normPath(file.path);
+                const tgtNorm = normPath(targetPath);
+                // 粘贴到自身或其子目录会让递归把刚建好的目标再读进来，无限套娃。
+                if (file.type === 'folder' && (tgtNorm === srcNorm || tgtNorm.startsWith(srcNorm + '/'))) {
+                    this.showError(window.i18n.t('fileExplorer.pasteIntoSelfForbidden'));
+                    return;
+                }
                 window.electronIPC.send('paste-file', file.path, targetPath, operation);
 
                 const handleFilePasted = async (event: Event, sourcePath: string, destPath: string, operation: string, error: unknown) => {
@@ -1167,7 +1175,15 @@ class FileExplorer {
                             logInfo(`文件${operation === 'copy' ? '复制' : '移动'}成功:`, file.name, '->', destPath);
 
                             if (operation === 'cut' && window.tabManager) {
-                                try { window.tabManager.updateTabPathBySource(sourcePath, destPath); } catch (e) { logWarn('更新标签页路径失败:', e); }
+                                try {
+                                    // 移动的是目录时，它下面所有已打开的标签都要跟着换路径，
+                                    // 只更新目录本身会让子文件的 tab 指向已经不存在的旧位置。
+                                    if (file.type === 'folder' && typeof window.tabManager.updateTabPathsUnderDirectory === 'function') {
+                                        window.tabManager.updateTabPathsUnderDirectory(sourcePath, destPath);
+                                    } else {
+                                        window.tabManager.updateTabPathBySource(sourcePath, destPath);
+                                    }
+                                } catch (e) { logWarn('更新标签页路径失败:', e); }
                             }
 
                             if (operation === 'cut') {
@@ -1243,10 +1259,15 @@ class FileExplorer {
                                 this.refresh();
 
                                 if (window.tabManager) {
-                                    const sep = newPath.includes('\\') ? '\\' : '/';
-                                    const newTitle = newPath.substring(newPath.lastIndexOf(sep) + 1);
-                                    // Keep the tab title, file path, and editor path in one update.
-                                    try { window.tabManager.updateTabPathBySource(oldPath, newPath, newTitle); } catch (_) { }
+                                    if (file.type === 'folder' && typeof window.tabManager.updateTabPathsUnderDirectory === 'function') {
+                                        // 目录改名后它下面每个已打开的标签都要换路径
+                                        window.tabManager.updateTabPathsUnderDirectory(oldPath, newPath);
+                                    } else {
+                                        const sep = newPath.includes('\\') ? '\\' : '/';
+                                        const newTitle = newPath.substring(newPath.lastIndexOf(sep) + 1);
+                                        // Keep the tab title, file path, and editor path in one update.
+                                        try { window.tabManager.updateTabPathBySource(oldPath, newPath, newTitle); } catch (_) { }
+                                    }
                                 }
 
                                 try {
@@ -2010,11 +2031,16 @@ class FileExplorer {
                             }
 
                             if (window.tabManager) {
-                                const normalizedPath = typeof file.path === 'string' ? file.path.replace(/\\/g, '/') : '';
-                                if (normalizedPath && typeof window.tabManager.closeTabByUniqueKey === 'function') {
-                                    window.tabManager.closeTabByUniqueKey(normalizedPath, { skipAutoSave: true });
-                                } else if (typeof window.tabManager.closeTabByFileName === 'function') {
-                                    window.tabManager.closeTabByFileName(file.name, { skipAutoSave: true });
+                                if (file.type === 'folder') {
+                                    // 目录删掉了，它下面的标签还开着就是指向不存在路径的死标签
+                                    this._closeTabsUnderPath(file.path);
+                                } else {
+                                    const normalizedPath = typeof file.path === 'string' ? file.path.replace(/\\/g, '/') : '';
+                                    if (normalizedPath && typeof window.tabManager.closeTabByUniqueKey === 'function') {
+                                        window.tabManager.closeTabByUniqueKey(normalizedPath, { skipAutoSave: true });
+                                    } else if (typeof window.tabManager.closeTabByFileName === 'function') {
+                                        window.tabManager.closeTabByFileName(file.name, { skipAutoSave: true });
+                                    }
                                 }
                             }
 

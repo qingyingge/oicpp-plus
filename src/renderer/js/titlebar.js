@@ -110,16 +110,6 @@ class TitlebarManager {
             }
         }, 100);
     }
-    _escapeHtml(text) {
-        try {
-            const div = document.createElement('div');
-            div.textContent = String(text ?? '');
-            return div.innerHTML;
-        }
-        catch (_) {
-            return String(text ?? '');
-        }
-    }
     async requestClose() {
         return this._requestCloseInternal({ source: 'button' });
     }
@@ -182,8 +172,9 @@ class TitlebarManager {
             const maxShow = 8;
             const shown = unsavedFiles.slice(0, maxShow);
             const moreCount = Math.max(0, unsavedFiles.length - shown.length);
+            // 转义交给 DialogManager.formatMessage（它豁免 <br>），这里再转一次会双重转义
             const listHtml = shown
-                .map((name) => `- ${this._escapeHtml(name)}`)
+                .map((name) => `- ${name ?? ''}`)
                 .join('<br>');
             const moreHtml = moreCount > 0 ? `<br>${window.i18n.t('dialog.unsavedFilesMore', { count: moreCount })}` : '';
             const message = window.i18n.t('dialog.unsavedFiles', { count: unsavedFiles.length, list: listHtml, more: moreHtml });
@@ -226,7 +217,7 @@ class TitlebarManager {
         const tempFiles = Array.from(window.tabManager?.tabs?.values?.() || [])
             .filter((tab) => tab?.isTempFile && tab.viewType !== 'pdf');
         for (const tab of tempFiles) {
-            const fileName = this._escapeHtml(tab.fileName || window.i18n.t('titlebar.tempFileDefault'));
+            const fileName = tab.fileName || window.i18n.t('titlebar.tempFileDefault');
             const result = await window.dialogManager?.showActionDialog?.(window.i18n.t('titlebar.discardTempTitle'), window.i18n.t('titlebar.discardTempMsg', { name: fileName }), [
                 { id: 'save', label: window.i18n.t('titlebar.save'), className: 'dialog-btn-confirm' },
                 { id: 'discard', label: window.i18n.t('titlebar.discard'), className: 'dialog-btn-cancel' },

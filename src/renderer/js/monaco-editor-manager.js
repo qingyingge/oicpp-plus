@@ -5862,50 +5862,54 @@ class MonacoEditorManager {
         }
     }
     async saveFile(fileName) {
-        if (this.currentEditor) {
-            const content = this.currentEditor.getValue();
-            const filePath = this.currentEditor.filePath || this.currentFilePath;
-            if (filePath && window.electronIPC) {
-                try {
-                    const model = this.currentEditor.getModel ? this.currentEditor.getModel() : null;
-                    const uri = model ? await this.getDocumentUriForModel(model, filePath, this.currentFileName) : '';
-                    if (uri && this.lspClient) {
-                        await this.lspClient.notify('textDocument/didSave', {
-                            textDocument: { uri },
-                            text: content
-                        });
-                    }
-                }
-                catch (_) { }
-                let offFileSaved;
-                window.electronIPC.send('save-file', filePath, content);
-                const handleFileSaved = (event, savedPath, error) => {
-                    if (savedPath === filePath) {
-                        if (error) {
-                            logError('保存失败:', error);
-                        }
-                        else {
-                            this.markFileSaved(filePath);
-                        }
-                        // on() 现在返回取消函数。原先把原函数交给 removeListener 是移不掉
-                        // 那层包装的，每保存一次就泄漏一个监听器。
-                        if (typeof offFileSaved === 'function') {
-                            offFileSaved();
-                        }
-                        else {
-                            window.electronIPC.ipcRenderer.removeListener('file-saved', handleFileSaved);
-                        }
-                    }
-                };
-                offFileSaved = window.electronIPC.on('file-saved', handleFileSaved);
+        if (!this.currentEditor) {
+            return { success: false, error: 'no active editor' };
+        }
+        const content = this.currentEditor.getValue();
+        const filePath = this.currentEditor.filePath || this.currentFilePath;
+        if (!filePath) {
+            logWarn('无法保存: 无文件路径');
+            return { success: false, error: 'no file path' };
+        }
+        if (typeof window.electronAPI?.saveFile !== 'function') {
+            logWarn('无法保存: save-file 桥不可用');
+            return { success: false, error: 'save bridge unavailable' };
+        }
+        try {
+            const model = this.currentEditor.getModel ? this.currentEditor.getModel() : null;
+            const uri = model ? await this.getDocumentUriForModel(model, filePath, this.currentFileName) : '';
+            if (uri && this.lspClient) {
+                await this.lspClient.notify('textDocument/didSave', {
+                    textDocument: { uri },
+                    text: content
+                });
             }
-            else {
-                logWarn('无法保存: 无文件路径或非Electron环境');
-            }
+        }
+        catch (_) { }
+        // 落盘走 invoke：原先是 send('save-file') + 监听 file-saved 的事件对，
+        // 调用方拿不到成败（#435），而保存失败时 tab 已被标成干净（#436），
+        // 选「保存并退出」就静默丢掉改动。invoke 会 reject 出真正的错误。
+        try {
+            await window.electronAPI.saveFile(filePath, content);
+            this.markFileSaved(filePath);
+            return { success: true };
+        }
+        catch (error) {
+            const message = error?.message || String(error);
+            logError('保存失败:', message);
+            return { success: false, error: message };
         }
     }
     markFileSaved(filePath) {
         if (window.tabManager) {
+            // tabs 的 key 是路径形式的 uniqueKey；按文件名找回会把同名不同目录的
+            // 另一个标签标成已保存，真正那个还挂着未保存。
+            const key = String(filePath || '').replace(/\\/g, '/');
+            if (key && typeof window.tabManager.markTabAsSavedByUniqueKey === 'function'
+                && window.tabManager.tabs?.has?.(key)) {
+                window.tabManager.markTabAsSavedByUniqueKey(key);
+                return;
+            }
             const fileName = this.getFileNameFromPath(filePath);
             window.tabManager.markTabAsSaved(fileName);
         }
@@ -5963,6 +5967,11 @@ class MonacoEditorManager {
         }
     }
     async createDiffEditor(tabId, options = {}) {
+        // 失败时要把已经建出来的东西收回去，所以它们的声明必须在 try 外面。
+        let container = null;
+        let originalModel = null;
+        let modifiedModel = null;
+        let diffEditor = null;
         try {
             const existing = this.editors.get(tabId);
             if (existing && existing.__isDiffEditor) {
@@ -5975,7 +5984,7 @@ class MonacoEditorManager {
                 return null;
             }
             editorArea.querySelectorAll('.monaco-editor-container').forEach((c) => (c.style.display = 'none'));
-            const container = document.createElement('div');
+            container = document.createElement('div');
             container.className = 'monaco-editor-container diff-editor-container';
             container.dataset['tabId'] = tabId;
             container.dataset['groupId'] = groupId;
@@ -5998,15 +6007,14 @@ class MonacoEditorManager {
             const modifiedFileName = this.getFileNameFromPath(modifiedPath) || options.label || 'modified';
             const originalLanguage = this.getLanguageFromFileName(originalFileName);
             const modifiedLanguage = this.getLanguageFromFileName(modifiedFileName);
-            const originalUri = originalPath
-                ? monaco.Uri.file(originalPath)
-                : monaco.Uri.parse(`inmemory://diff/${tabId}/original`);
-            const modifiedUri = modifiedPath
-                ? monaco.Uri.file(modifiedPath)
-                : monaco.Uri.parse(`inmemory://diff/${tabId}/modified`);
-            const originalModel = monaco.editor.createModel(options.originalContent || '', originalLanguage, originalUri);
-            const modifiedModel = monaco.editor.createModel(options.modifiedContent || '', modifiedLanguage, modifiedUri);
-            const diffEditor = monaco.editor.createDiffEditor(container, {
+            // 不能拿真实文件路径当 model 的 URI：monaco 的 model 池是按 URI 全局唯一的，
+            // 那个文件如果正开在编辑器里，createModel 会撞上 "Model with URI already exists"，
+            // 更糟的是 diff 关闭时 dispose 会把正在编辑的那份模型一起销毁。
+            const originalUri = monaco.Uri.parse(`inmemory://diff/${tabId}/original`);
+            const modifiedUri = monaco.Uri.parse(`inmemory://diff/${tabId}/modified`);
+            originalModel = monaco.editor.createModel(options.originalContent || '', originalLanguage, originalUri);
+            modifiedModel = monaco.editor.createModel(options.modifiedContent || '', modifiedLanguage, modifiedUri);
+            diffEditor = monaco.editor.createDiffEditor(container, {
                 renderSideBySide: true,
                 automaticLayout: true,
                 readOnly: false,
@@ -6017,6 +6025,7 @@ class MonacoEditorManager {
                 useInlineViewWhenSpaceIsLimited: false,
                 renderMarginRevertIcon: false
             });
+            const diffHandle = diffEditor;
             diffEditor.setModel({ original: originalModel, modified: modifiedModel });
             try {
                 await this.openLspDocument(modifiedModel, modifiedPath, modifiedFileName);
@@ -6032,7 +6041,7 @@ class MonacoEditorManager {
             diffEditor.fileName = options.label || `${originalFileName} vs ${modifiedFileName}`;
             diffEditor.getValue = () => {
                 try {
-                    const model = diffEditor.getModel?.();
+                    const model = diffHandle.getModel?.();
                     return model?.modified?.getValue?.() || '';
                 }
                 catch (_) {
@@ -6041,7 +6050,7 @@ class MonacoEditorManager {
             };
             diffEditor.setValue = (val) => {
                 try {
-                    const model = diffEditor.getModel?.();
+                    const model = diffHandle.getModel?.();
                     if (model?.modified?.setValue) {
                         model.modified.setValue(val);
                     }
@@ -6061,6 +6070,28 @@ class MonacoEditorManager {
         }
         catch (error) {
             logError('创建 Diff 编辑器失败:', error);
+            // 回滚已创建的容器与模型：否则留下一个点不开的空白 diff 标签 + 两份泄漏的模型，
+            // 而且容器挂在 editorArea 上会一直占着那块区域。
+            try {
+                if (diffEditor)
+                    diffEditor.dispose();
+            }
+            catch (_) { }
+            try {
+                if (originalModel)
+                    originalModel.dispose();
+            }
+            catch (_) { }
+            try {
+                if (modifiedModel)
+                    modifiedModel.dispose();
+            }
+            catch (_) { }
+            try {
+                if (container && container.parentNode)
+                    container.parentNode.removeChild(container);
+            }
+            catch (_) { }
             return null;
         }
     }

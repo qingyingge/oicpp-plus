@@ -245,9 +245,14 @@ const cloudSource = read('src/renderer/js/sidebar/cloudSync.js');
         String((read('src/renderer/js/main.js').match(/case 'k':/g) || []).length));
 
     const monacoSource = read('src/renderer/js/monaco-editor-manager.js');
-    check('file-saved 用取消函数摘除（原样 removeListener(handleFileSaved) 移不掉包装）',
-        /offFileSaved\(\)/.test(monacoSource)
-        && /offFileSaved = window\.electronIPC\.on\('file-saved', handleFileSaved\)/.test(monacoSource));
+    // 1.6 移植批把落盘从「send + file-saved 事件对」换成 invoke：调用方能拿到成败，
+    // 监听器泄漏从根上没了（原来 removeListener(handleFileSaved) 移不掉那层包装）。
+    check('monaco.saveFile 走 invoke 并返回 {success}',
+        /await window\.electronAPI\.saveFile\(filePath, content\)/.test(monacoSource)
+        && !/electronIPC\.send\('save-file'/.test(monacoSource)
+        && /return \{ success: true \};/.test(monacoSource), '');
+    check('markFileSaved 优先按路径 uniqueKey 标记（同名不同目录不能互相冒领）',
+        /markTabAsSavedByUniqueKey\(key\)/.test(monacoSource));
 }
 
 // --------------------------------------------------------------- 语言包双语齐备

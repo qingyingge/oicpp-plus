@@ -8501,6 +8501,12 @@ async function readDirectory(dirPath: string) {
 }
 
 function copyDirectorySync(src: string, dest: string) {
+    // 目标落在源目录内部时，递归会把刚建好的目标再读进来，无限套娃直到栈/磁盘爆掉。
+    const rel = path.relative(path.resolve(src), path.resolve(dest));
+    if (rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))) {
+        throw new Error(t('main.copyFolderIntoSelf'));
+    }
+
     if (!fs.existsSync(dest)) {
         fs.mkdirSync(dest, { recursive: true });
     }
@@ -8653,6 +8659,27 @@ let editorSettingsWindow: Electron.BrowserWindow | null = null;
 let codeTemplatesWindow: Electron.BrowserWindow | null = null;
 let backupSettingsWindow: Electron.BrowserWindow | null = null;
 
+// 设置子窗口的标题键：切换语言时按当前语言重新 setTitle（见 applyLanguageChange）。
+const settingsWindowTitleKeys = new WeakMap<Electron.BrowserWindow, string>();
+
+/**
+ * 页面 <title> 带着 data-i18n，翻译落地前用的是 HTML 里的行内中文，
+ * 它会通过 page-title-updated 覆盖窗口标题 —— 英文环境下闪一下中文（#385）。
+ * 标题一律由主进程按当前语言给定，并压住页面那份。
+ */
+function lockSettingsWindowTitle(targetWindow: Electron.BrowserWindow | null, titleKey: string) {
+    if (!targetWindow) return;
+    settingsWindowTitleKeys.set(targetWindow, titleKey);
+    const apply = () => {
+        try {
+            if (!targetWindow.isDestroyed()) targetWindow.setTitle(t(titleKey));
+        } catch (_) { }
+    };
+    apply();
+    targetWindow.on('page-title-updated', (event) => event.preventDefault());
+    targetWindow.webContents.on('did-finish-load', apply);
+}
+
 function openCompilerSettings() {
     if (compilerSettingsWindow) {
         compilerSettingsWindow.focus();
@@ -8679,6 +8706,7 @@ function openCompilerSettings() {
         show: false
     });
 
+    lockSettingsWindowTitle(compilerSettingsWindow, 'main.compilerSettingsTitle');
     (compilerSettingsWindow as import('electron').BrowserWindow).loadFile('src/renderer/settings/compiler.html');
 
     (compilerSettingsWindow as import('electron').BrowserWindow).once('ready-to-show', () => {
@@ -8720,6 +8748,7 @@ function openEditorSettings() {
         show: false
     });
 
+    lockSettingsWindowTitle(editorSettingsWindow, 'main.editorSettingsTitle');
     (editorSettingsWindow as import('electron').BrowserWindow).loadFile('src/renderer/settings/editor.html', { query: { theme: settings.theme } });
 
     (editorSettingsWindow as import('electron').BrowserWindow).once('ready-to-show', () => {
@@ -8767,6 +8796,7 @@ function openCodeTemplates() {
         show: false
     });
 
+    lockSettingsWindowTitle(codeTemplatesWindow, 'main.templateSettingsTitle');
     (codeTemplatesWindow as import('electron').BrowserWindow).loadFile('src/renderer/settings/templates.html');
 
     (codeTemplatesWindow as import('electron').BrowserWindow).once('ready-to-show', () => {
@@ -8805,6 +8835,7 @@ function openBackupSettings() {
         show: false
     });
 
+    lockSettingsWindowTitle(backupSettingsWindow, 'main.backupSettingsTitle');
     (backupSettingsWindow as import('electron').BrowserWindow).loadFile('src/renderer/settings/backup.html', { query: { theme: settings.theme } });
 
     (backupSettingsWindow as import('electron').BrowserWindow).once('ready-to-show', () => {
@@ -9474,6 +9505,12 @@ async function applyLanguageChange(langCode: string, prevLang: string) {
         for (const win of targets) {
             if (win && !win.isDestroyed()) {
                 win.webContents.send('language-changed', langCode);
+                // 设置子窗口的 <title> 被 page-title-updated 压住了（#385），
+                // 标题只能由主进程按新语言重发；漏掉这一步就永远停在切换前那份。
+                const titleKey = settingsWindowTitleKeys.get(win as Electron.BrowserWindow);
+                if (titleKey) {
+                    try { win.setTitle(t(titleKey)); } catch (_) { }
+                }
             }
         }
         logInfo('语言已切换:', prevLang, '->', langCode);

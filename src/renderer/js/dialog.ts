@@ -85,13 +85,16 @@ class DialogManager {
             const overlay = (document.getElementById('dialog-overlay'));
             const container = (document.getElementById('dialog-container'));
 
+            const safeTitle = this.escapeHtml(String(title ?? ''));
+            const safePlaceholder = this.escapeAttribute(String(placeholder ?? ''));
+
             container!.innerHTML = `
                 <div class="dialog-header">
-                    <h3>${title}</h3>
+                    <h3>${safeTitle}</h3>
                     <button class="dialog-close" onclick="dialogManager.hideDialog()">&times;</button>
                 </div>
                 <div class="dialog-body">
-                    <input type="text" id="dialog-input" placeholder="${placeholder}" value="${defaultValue}" spellcheck="false" autocapitalize="none" autocomplete="off" autocorrect="off" />
+                    <input type="text" id="dialog-input" placeholder="${safePlaceholder}" value="" spellcheck="false" autocapitalize="none" autocomplete="off" autocorrect="off" />
                 </div>
                 <div class="dialog-footer">
                     <button class="dialog-btn dialog-btn-cancel" onclick="dialogManager.hideDialog()">${window.i18n.t('dialog.cancel')}</button>
@@ -101,7 +104,11 @@ class DialogManager {
 
             overlay!.style.display = 'flex';
 
+            // 默认值走属性而不是拼进 value=""：文件名里带引号就能撕开这个 input 标签。
             const input = (document.getElementById('dialog-input'));
+            if (input instanceof HTMLInputElement) {
+                input.value = String(defaultValue ?? '');
+            }
 
             setTimeout(() => {
                 if (input instanceof HTMLInputElement) {
@@ -154,11 +161,11 @@ class DialogManager {
 
             container!.innerHTML = `
                 <div class="dialog-header">
-                    <h3>${title}</h3>
+                    <h3>${this.escapeHtml(String(title ?? ''))}</h3>
                     <button class="dialog-close" onclick="dialogManager.hideDialog()">&times;</button>
                 </div>
                 <div class="dialog-body">
-                    <p>${message}</p>
+                    <p>${this.formatMessage(message)}</p>
                 </div>
                 <div class="dialog-footer">
                     <button class="dialog-btn dialog-btn-cancel" onclick="dialogManager.cancelDialog()">${window.i18n.t('dialog.cancel')}</button>
@@ -190,11 +197,11 @@ class DialogManager {
 
             container!.innerHTML = `
                 <div class="dialog-header">
-                    <h3>${title}</h3>
+                    <h3>${this.escapeHtml(String(title ?? ''))}</h3>
                     <button class="dialog-close" onclick="dialogManager.hideDialog()">&times;</button>
                 </div>
                 <div class="dialog-body">
-                    <p>${message}</p>
+                    <p>${this.formatMessage(message)}</p>
                 </div>
                 <div class="dialog-footer">
                     ${buttonsHtml}
@@ -388,6 +395,23 @@ class DialogManager {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    escapeAttribute(text: string): string {
+        return this.escapeHtml(String(text ?? ''))
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    /**
+     * 正文一律先转义，再只放回两类「排版用的东西」：显式换行与历史语言包里的 <br>。
+     * 语言包（dialog.* / tester.*）的值里本来就有 <br>，所以豁免必须留，
+     * 但除此之外任何标签都会被转义掉 —— 文件名、路径、报错正文都是从这儿进来的。
+     */
+    formatMessage(message: string): string {
+        return this.escapeHtml(String(message ?? ''))
+            .replace(/&lt;br\s*\/?&gt;/gi, '<br>')
+            .replace(/\r?\n/g, '<br>');
     }
 }
 

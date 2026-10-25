@@ -36,11 +36,23 @@ function createElement() {
         placeholder: '',
         title: '',
         nodeType: 1,
+        // 真实 DOM 元素都有 children / childNodes（哪怕空的），_applyToDOM 现在要看它们
+        children: [],
+        childNodes: [],
+        appendChild(node) {
+            this.childNodes.push(node);
+            if (node && node.nodeType === 1) this.children.push(node);
+            return node;
+        },
         getAttribute(name) { return name in this._attrs ? this._attrs[name] : null; },
         setAttribute(name, value) { this._attrs[name] = value; },
         hasAttribute(name) { return name in this._attrs; },
         querySelector() { return null; },
     };
+}
+
+function createTextNode(value) {
+    return { nodeType: 3, nodeValue: value };
 }
 
 // 建环境：lang 包 + 假 electronAPI，按脚本顺序执行 i18next UMD 与 i18n.js
@@ -65,6 +77,9 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
             this.listeners.get(type).push(fn);
         },
         documentElement: createElement(),
+        // _applyToDOM 在「容器里一个文本节点都没有」时会 createTextNode 补一个
+        createElement: () => createElement(),
+        createTextNode: (v) => createTextNode(v),
     };
 
     const ipc = {
@@ -321,8 +336,19 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
             titleTarget.setAttribute('data-i18n-title', KEY_TITLE);
             const ariaTarget = createElement();
             ariaTarget.setAttribute('data-i18n-aria-label', KEY_ARIA);
+
+            // 带子元素的容器节点：上游 #388/#482 修的正是「覆盖 textContent 连带把
+            // 复选框/svg 一起删掉」，这里必须一起进 [data-i18n] 集合才被守卫到。
+            const containerEl = createElement();
+            containerEl.setAttribute('data-i18n', KEY_TITLE);
+            const embeddedCheckbox = createElement();
+            embeddedCheckbox.setAttribute('type', 'checkbox');
+            const labelNode = createTextNode('旧文案');
+            containerEl.appendChild(labelNode);
+            containerEl.appendChild(embeddedCheckbox);
+
             d2.querySelectorAll = (sel) => ({
-                '[data-i18n]': [target],
+                '[data-i18n]': [target, containerEl],
                 '[data-i18n-placeholder]': [phTarget],
                 '[data-i18n-title]': [titleTarget],
                 '[data-i18n-aria-label]': [ariaTarget],
@@ -340,6 +366,32 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                 check('data-i18n-title is applied', titleTarget.title === flatZh[KEY_TITLE]);
                 check('data-i18n-aria-label is applied', ariaTarget.getAttribute('aria-label') === flatZh[KEY_ARIA]);
                 check('html lang attribute tracks the current language', d2.documentElement.lang === 'zh-cn');
+
+                // 容器节点只换文本子节点，子元素必须原样保留（删掉就再也回不来：模板只渲染一次）
+                check('带子元素的 [data-i18n] 容器不再被子元素一起清掉',
+                    containerEl.children.length === 1 && containerEl.children[0] === embeddedCheckbox,
+                    String(containerEl.children.length));
+                check('容器里的文本节点被翻译成当前语言',
+                    labelNode.nodeValue === flatZh[KEY_TITLE],
+                    `${labelNode.nodeValue} vs ${flatZh[KEY_TITLE]}`);
+                check('没有文本子节点时补一个，而不是覆盖整个容器',
+                    (() => {
+                        const bare = createElement();
+                        bare.setAttribute('data-i18n', KEY_TITLE);
+                        const kid = createElement();
+                        bare.appendChild(kid);
+                        d2.querySelectorAll = (s) => (s === '[data-i18n]' ? [bare] : []);
+                        s2.window.i18n._applyToDOM();
+                        return bare.childNodes.length === 2
+                            && bare.childNodes[0] === kid
+                            && bare.childNodes[1].nodeValue === flatZh[KEY_TITLE];
+                    })(), '');
+                d2.querySelectorAll = (sel) => ({
+                    '[data-i18n]': [target, containerEl],
+                    '[data-i18n-placeholder]': [phTarget],
+                    '[data-i18n-title]': [titleTarget],
+                    '[data-i18n-aria-label]': [ariaTarget],
+                }[sel] || []);
 
                 // --- 7. onLanguageChanged 链路：主进程推语言 → 重翻 ---
                 const langs2 = [];

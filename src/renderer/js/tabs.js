@@ -2056,6 +2056,12 @@ class TabManager {
         const currentTab = currentTabKey ? this.tabs.get(currentTabKey) : this.getTabByFileName(this.activeTab);
         if (!currentTab)
             return;
+        // 磁盘上的版本比编辑器新（外部改过）。这时自动保存会不经确认覆盖掉外部改动，
+        // 而该跳过的保存后面还会在「外部已修改」提示里让用户选一次（#442）。
+        if (currentTab.externalModified) {
+            logInfo('文件已被外部修改，跳过切标签前的自动保存:', currentTab.filePath);
+            return;
+        }
         const content = this.getTabContentForSave(currentTab);
         if (typeof content === 'string') {
             // 内容与上次记录一致时跳过保存链：避免无改动切标签触发 saveFile IPC、
@@ -2203,20 +2209,12 @@ class TabManager {
             return;
         }
         if (!options.force && !options.skipCloseConfirm && tabData.viewType !== 'pdf' && (tabData.modified || tabData.isTempFile)) {
-            const escapeHtml = (text) => {
-                try {
-                    const div = document.createElement('div');
-                    div.textContent = String(text ?? '');
-                    return div.innerHTML;
-                }
-                catch (_) {
-                    return String(text ?? '');
-                }
-            };
-            const safeName = escapeHtml(tabData.fileName || fileName || window.i18n.t('panel.unknownFile'));
+            // 不在这里转义：DialogManager.formatMessage 会对整条正文转义，
+            // 两边都做就会把 a&b 显示成 a&amp;b。
+            const displayName = tabData.fileName || fileName || window.i18n.t('panel.unknownFile');
             const message = tabData.isTempFile
-                ? window.i18n.t('tabs.tempFileUnsaved', { name: safeName })
-                : window.i18n.t('tabs.tabUnsaved', { name: safeName });
+                ? window.i18n.t('tabs.tempFileUnsaved', { name: displayName })
+                : window.i18n.t('tabs.tabUnsaved', { name: displayName });
             const proceedSave = async () => {
                 try {
                     const path = tabData.filePath || (explicitKey && typeof explicitKey === 'string' ? explicitKey : null);
@@ -4766,14 +4764,29 @@ class TabManager {
         }
         return unsavedFiles;
     }
-    saveFile(fileName) {
+    async saveFile(fileName) {
         const tab = this.getTabByFileName(fileName);
-        if (tab) {
-            tab.modified = false;
-            this.refreshTabLabels();
-            if (this.monacoEditorManager) {
-                this.monacoEditorManager.saveFile(fileName);
+        if (!tab)
+            return false;
+        const uniqueKey = tab.uniqueKey || this.findUniqueKeyByFileName(fileName);
+        try {
+            // 原先是先落 modified=false 再叫 monaco 保存：磁盘写失败界面照样显示「已保存」，
+            // 关掉窗口就没了。现在等真实结果，成功才标记。
+            const result = await this.monacoEditorManager?.saveFile?.(fileName);
+            if (result && result.success === false) {
+                throw new Error(String(result.error || window.i18n.t('dialog.saveWriteFailed')));
             }
+            if (uniqueKey) {
+                this.markTabAsSavedByUniqueKey(uniqueKey);
+            }
+            else {
+                this.markTabAsSaved(fileName);
+            }
+            return true;
+        }
+        catch (error) {
+            logError('保存文件失败:', error);
+            return false;
         }
     }
     async saveAllFiles() {
@@ -4973,23 +4986,9 @@ void hello() {
                 break;
         }
         const fileName = this.generateNewFileName();
-        const tabData = null;
-        const uniqueKey = null;
-        let tabId = tabData?.tabId;
-        if (!tabId && uniqueKey) {
-            try {
-                if (this.monacoEditorManager && this.monacoEditorManager.generateTabId) {
-                    const fname = tabData.fileName || uniqueKey.split('/').pop();
-                    tabId = this.monacoEditorManager.generateTabId(fname, uniqueKey);
-                }
-                else {
-                    tabId = uniqueKey.replace(/[\/:]/g, '_'); // 兜底旧逻辑
-                }
-            }
-            catch (_) {
-                tabId = uniqueKey.replace(/[\/:]/g, '_');
-            }
-        }
+        // 下面那段 tabId 推导是死代码（tabData/uniqueKey 恒为 null），而且函数到头
+        // 也没打开文件：模板点了没反应。直接开新标签。
+        this.openFile(fileName, content, true);
     }
     displayWelcomePage() {
         if (this.tabs.has('Welcome')) {
@@ -5314,6 +5313,24 @@ void hello() {
         }
         catch (err) {
             logError('updateTabPathBySource 失败:', err);
+        }
+    }
+    /**
+     * 目录被重命名或剪切后，它下面每一个已打开的标签都要换到新路径。
+     * 只更新目录自身的话，子文件的 tab 会继续指向已经不存在的旧位置，
+     * 保存写回旧路径、文件监视也全部失联。
+     */
+    updateTabPathsUnderDirectory(oldDir, newDir) {
+        const norm = (p) => String(p ?? '').replace(/\\/g, '/');
+        const oldPrefix = norm(oldDir).replace(/\/+$/, '') + '/';
+        const newPrefix = norm(newDir).replace(/\/+$/, '') + '/';
+        const entries = Array.from(this.tabs.entries());
+        for (const [, tab] of entries) {
+            const oldPath = norm(tab.filePath || '');
+            if (!oldPath.startsWith(oldPrefix))
+                continue;
+            const newPath = newPrefix + oldPath.slice(oldPrefix.length);
+            this.updateTabPathBySource(oldPath, newPath, newPath.split('/').pop() || null);
         }
     }
     setFilePath(fileName, filePath) {
