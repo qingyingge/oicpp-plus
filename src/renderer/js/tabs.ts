@@ -2588,32 +2588,54 @@ class TabManager {
                 : window.i18n.t('tabs.tabUnsaved', { name: displayName });
 
             const proceedSave = async () => {
-                try {
-                    const path = tabData.filePath || (explicitKey && typeof explicitKey === 'string' ? explicitKey : null);
-                    const content = this.getTabContentForSave(tabData);
-                    const isCloudPath = (p: string | null | undefined) => {
-                        if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
-                            return window.oicppApp.isCloudFilePath(p);
-                        }
-                        return typeof p === 'string' && /^cloud:/i.test(p);
-                    };
+                const path = tabData.filePath || (explicitKey && typeof explicitKey === 'string' ? explicitKey : null);
+                const content = this.getTabContentForSave(tabData);
+                const isCloudPath = (p: string | null | undefined) => {
+                    if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
+                        return window.oicppApp.isCloudFilePath(p);
+                    }
+                    return typeof p === 'string' && /^cloud:/i.test(p);
+                };
 
+                try {
                     if (tabData.isTempFile) {
-                        if (!window.electronAPI?.saveAsFile) return;
+                        if (!window.electronAPI?.saveAsFile) {
+                            throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
+                        }
                         const savedPath = await window.electronAPI.saveAsFile(content as string);
-                        if (!savedPath) return;
+                        if (!savedPath) return;   // 用户自己取消另存，不算失败
                     } else if (path && typeof content === 'string') {
                         if (isCloudPath(path)) {
                             if (window.oicppApp && typeof window.oicppApp.saveCloudFileToServer === 'function') {
                                 const ok = await window.oicppApp.saveCloudFileToServer(path, content);
-                                if (!ok) return;
+                                if (!ok) throw new Error(window.i18n.t('dialog.cloudSaveFailed'));
+                            } else {
+                                throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
                             }
                         } else if (window.electronAPI?.saveFile) {
-                            await window.electronAPI.saveFile(path, content);
+                            const result = await window.electronAPI.saveFile(path, content);
+                            if (result && (result as Record<string, unknown>)['success'] === false) {
+                                throw new Error(String((result as Record<string, unknown>)['error'] || window.i18n.t('dialog.saveWriteFailed')));
+                            }
+                        } else {
+                            throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
                         }
+                    } else {
+                        throw new Error(path
+                            ? window.i18n.t('dialog.saveNoContent')
+                            : window.i18n.t('error.invalidFilePath'));
                     }
                 } catch (e) {
+                    // 原先这里只 logWarn + return：标签没关掉、也没有任何提示，
+                    // 用户以为点了「保存」就完事了，改动其实还在内存里。
+                    const errorText = (e as Error)?.message || String(e);
                     logWarn('关闭前保存失败:', e);
+                    const title = window.i18n.t('message.saveFailed');
+                    try {
+                        if (window.dialogManager?.showConfirmDialog) {
+                            await window.dialogManager.showConfirmDialog(title, `${title}: ${errorText}`);
+                        }
+                    } catch (_) { }
                     return;
                 }
                 this.closeTab(fileName, { ...options, skipCloseConfirm: true, skipAutoSave: true });
@@ -5393,17 +5415,16 @@ class TabManager {
                     }
                     tasks.push((async () => {
                         try {
+                            // save-as-file 的 handler 已经落盘（writeUtf8FileIfChanged），
+                            // 这里再 saveFile 一次就是同一份内容写两遍，还会多触发一次
+                            // clangd didSave 与 file-saved 广播。
                             const savedPath = await window.electronAPI.saveAsFile(content);
                             if (!savedPath) {
                                 failures.push({ fileName: tab.fileName, error: _t('dialog.saveNoLocation') });
                                 return;
                             }
-                            const writeResult = (await window.electronAPI.saveFile(savedPath, content)) as Record<string, unknown> | undefined;
-                            if (writeResult && writeResult['success'] === false) {
-                                throw new Error(String(writeResult['error'] || _t('dialog.saveWriteFailed')));
-                            }
-                            try { this.updateTabPathBySource(null, String(savedPath)); } catch (_) { }
-                            this.markTabAsSavedByUniqueKey(uniqueKey);
+                            try { this.updateTabPathBySource(null, String(savedPath), null, uniqueKey); } catch (_) { }
+                            this.markTabAsSavedByUniqueKey(String(savedPath).replace(/\\/g, '/'));
                         } catch (e) {
                             failures.push({ fileName: tab.fileName, error: (e as Error)?.message || String(e) });
                         }
@@ -5747,7 +5768,7 @@ void hello() {
     }
 
 
-    updateTabPathBySource(oldPath: string | null | undefined, newPath: string | null | undefined, newFileName: string | null = null) {
+    updateTabPathBySource(oldPath: string | null | undefined, newPath: string | null | undefined, newFileName: string | null = null, targetUniqueKey: string | null = null) {
         try {
             if (!newPath) return;
             const norm = (p: string | null | undefined) => String(p).replace(/\\/g, '/');
@@ -5756,7 +5777,14 @@ void hello() {
 
             let tabData: TabRecord | null = null;
             let actualOldKey = oldKey;
-            if (oldKey) {
+            // 调用方知道是哪个标签时（未命名标签另存为就是这种），必须按 key 精确取，
+            // 兜底的「当前激活标签」一次只能猜中一个，批量保存会把路径绑到错的标签上。
+            const targetKey = targetUniqueKey ? norm(targetUniqueKey) : '';
+            if (targetKey && this.tabs.has(targetKey)) {
+                tabData = this.tabs.get(targetKey) || null;
+                actualOldKey = targetKey;
+            }
+            if (!tabData && oldKey) {
                 tabData = this.tabs.get(oldKey) || null;
                 if (!tabData) {
                     for (const [k, v] of this.tabs.entries()) {

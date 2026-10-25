@@ -485,6 +485,7 @@
     "saveApiUnavailable": "保存接口不可用",
     "saveNoLocation": "未选择保存位置",
     "saveWriteFailed": "写入失败",
+    "saveNoContent": "无法获取编辑器内容",
     "cloudSaveFailed": "云文件保存失败",
     "newCloudFile": "新建云端文件",
     "newCloudFolder": "新建云端文件夹",
