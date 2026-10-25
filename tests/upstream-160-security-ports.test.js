@@ -285,9 +285,15 @@ const terminalSource = read('src/terminal-manager.js');
         check(`${doc} 锁死 object-src / base-uri / form-action`,
             /object-src 'none'/.test(csp) && /base-uri 'none'/.test(csp) && /form-action 'none'/.test(csp), csp);
     }
-    // 主窗口不能跟着 upstream 把 frame-src 收成 none：PDF 预览与内置浏览器都在 iframe 里
     const indexCsp = (/Content-Security-Policy" content="([^"]*)"/i.exec(read('src/renderer/index.html')) || ['', ''])[1];
-    check('主窗口 frame-src 仍允许 self（PDF iframe / 内置浏览器）', /frame-src 'self'/.test(indexCsp), indexCsp);
+    // 主窗口不能跟着 upstream 把 frame-src 收成 none：PDF 预览与内置浏览器都在 iframe 里。
+    // 上游 1.6.0-beta1 就是这么把 PDF 整块废掉再补的（#544）；本 fork 的 iframe 是
+    // file:// 文档，'self' 在这台 Electron 上实测也能放行，但 file: 一并列出与上游一致、
+    // 不依赖那个匹配差异。
+    check('主窗口 frame-src 保留 self 且不用 none（PDF iframe / 内置浏览器）',
+        indexCsp.includes("frame-src 'self'") && !indexCsp.includes("frame-src 'none'"), indexCsp);
+    check('主窗口 frame-src 显式列出 file: 与 data:',
+        /frame-src 'self' data: file:;/.test(indexCsp) || /frame-src 'self' file: data:;/.test(indexCsp), indexCsp);
 }
 
 // ------------------------------------------------------ 语言包：新增键双语齐备

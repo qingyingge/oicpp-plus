@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- connect-src 中的 oicpp.mywwzh.top 是上游服务，fork 需自建列表/云服务源 -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: file: http: https:; worker-src 'self' blob: file:; connect-src 'self' https://oicpp.mywwzh.top; frame-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none';">
+    <!-- PDF 预览走 iframe，src 是 file:// 的 pdf-viewer.html；file: 必须显式列出，
+         'self' 在 file: 文档下匹配不可靠（上游 1.6.0-beta1 就是漏了它把 PDF 预览整块废掉，#544） -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: file: http: https:; worker-src 'self' blob: file:; connect-src 'self' https://oicpp.mywwzh.top; frame-src 'self' data: file:; object-src 'none'; base-uri 'none'; form-action 'none';">
     <meta http-equiv="Permissions-Policy" content="fullscreen=(self)">
     <title>OICPP-Plus</title>
     <link rel="stylesheet" href="css/titlebar.css">
