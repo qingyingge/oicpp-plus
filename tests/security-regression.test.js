@@ -1500,7 +1500,11 @@ check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') &
             vm.runInNewContext(iconLoop, {
                 path, root: '/virtual',
                 iconRefFiles: Object.keys(contents),
-                readFile: (fp) => contents[String(fp).replace(/^\/virtual\//, '')] || '',
+                // 生产循环是 path.join(root, f)：win32 上 '/virtual' 会被拼成 \virtual\src\main.js，
+                // 原来的 /^\/virtual\// 前缀正则一条都匹配不到 -> 每个 fixture 读成空串 ->
+                // if (content) 把 ok 和 fail 一起跳过，所有阳性断言恒空。
+                // 改回「相对根 + 折叠分隔符」取清单键，Linux 上 fold 是 no-op。
+                readFile: (fp) => contents[path.relative('/virtual', String(fp)).split(path.sep).join('/')] || '',
                 ok: (m) => out.oks.push(String(m)),
                 fail: (m) => out.fails.push(String(m))
             });
@@ -1556,7 +1560,8 @@ check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') &
         const ctx = {
             path, root: '/virtual',
             jsFiles: Object.keys(contents).map((f) => path.join('/virtual', f)),
-            readFile: (fp) => contents[path.relative('/virtual', String(fp))] || '',
+            // 同 B1：path.relative 在 win32 上给 cfg\settings.js，直接当键查会查空。
+            readFile: (fp) => contents[path.relative('/virtual', String(fp)).split(path.sep).join('/')] || '',
             secretPatterns, secretsFound: 0,
             ok: (m) => out.oks.push(String(m)),
             fail: (m) => out.fails.push(String(m)),
@@ -1585,8 +1590,11 @@ check('sharp is build-only', !Object.hasOwn(packageJson.dependencies, 'sharp') &
         ['secret', `app.secret = '${LONG}';`]
     ]) {
         const r = runE4({ 'cfg/settings.js': line });
+        // 生产报的 rel 本身就是 path.relative 的产物，win32 上是反斜杠。只在观测点折叠，
+        // 不放宽成 includes/isAbsolute：'/virtual/cfg/settings.js' 这种绝对路径变异体仍须被判不等。
         check(`${label} 形态的硬编码被抓出来，报的是相对路径`,
-            r.exception === null && hits(r).length === 1 && hits(r)[0] === 'potential secret in cfg/settings.js',
+            r.exception === null && hits(r).length === 1
+            && hits(r)[0].split(path.sep).join('/') === 'potential secret in cfg/settings.js',
             JSON.stringify({ fails: r.fails, exception: r.exception }));
         check(`${label}：判定走 fail 而不是 warn（换成 warn 就是只打印不改退出码）`,
             r.warns.length === 0 && r.found === 1, JSON.stringify(r));

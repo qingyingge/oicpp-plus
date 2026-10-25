@@ -317,7 +317,16 @@ const runEngineOnce = async (Ctor, progressCount) => {
             logInfo: () => { },
             assertSafeIoPath: () => { },
             isPathInsideTempRoots: (p) => String(p).includes('CODE_TEMP'),
-            isPathInsideDir: (p, d) => p === d || String(p).startsWith(d + '/'),
+            // 桩必须与生产同口径：src/main.ts 的 isPathInsideDir 先 path.resolve 再把反斜杠折成
+            // '/'、去尾斜杠、小写。handler 传进来的多是 resolve 过的路径，win32 上形如 D:\proj\ws\a.txt，
+            // 只认 '/' 的朴素 startsWith 会把「工作区内」判成越界 —— 四条对照组就是这么红的。
+            isPathInsideDir: (p, d) => {
+                if (!p || !d) return false;
+                const fold = (entry) => path.resolve(entry).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+                const target = fold(p);
+                const base = fold(d);
+                return target === base || target.startsWith(`${base}/`);
+            },
             currentExternalWorkspacePath: opt.workspace === null ? null : WS,
             markLocalDeletion: () => { calls.push(['mark']); return []; },
             restoreFileWatchStates: () => { },

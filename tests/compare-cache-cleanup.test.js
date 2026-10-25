@@ -212,7 +212,11 @@ check('编译缓存两段真语句抽取成功（查缓存 + 写缓存）',
     cacheReadBlock.length > 1500 && cacheWriteBlock.length > 500,
     JSON.stringify({ read: cacheReadBlock.length, write: cacheWriteBlock.length }));
 
-const HOME = '/home/oicpp';
+// 假 fs 的清单按字符串全等匹配，而抽出来的生产代码会先 path.resolve 再 stat。
+// HOME 若写成 posix 字面量，win32 上 resolve 会补当前盘符（/home/oicpp -> D:\home\oicpp），
+// 清单匹配不到 -> statSync 抛 ENOENT -> 签名检查降级、compileCacheRecord 恒为 null。
+// 所以 fixture 根必须是当前平台的原生绝对路径，resolve 才是恒等的；Linux 侧保持原样。
+const HOME = process.platform === 'win32' ? 'C:\\home\\oicpp' : '/home/oicpp';
 const SRC = path.join(HOME, 'src', 'a.cpp');
 const GPP = path.join(HOME, 'bin', 'g++');
 const CACHE_DIR = path.join(HOME, '.oicpp-plus', 'compile-cache');
