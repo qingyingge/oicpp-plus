@@ -230,7 +230,8 @@ const runCache = (opts = {}) => {
         result: { success: true }, outputExists: true,
         platform: 'linux', outputDirExists: true,
         sourceChangesMidCompile: false, throwOn: null,
-        missingInput: false, missingCompiler: false
+        missingInput: false, missingCompiler: false,
+        testlibPath: '', testlibMtime: 1000
     }, opts);
     const logs = { info: [], warn: [], error: [] };
     const writes = { copy: [], writeFile: [], mkdir: [], chmod: [], stat: [] };
@@ -247,6 +248,7 @@ const runCache = (opts = {}) => {
             if (p === o.compilerPath) return !o.missingCompiler;
             if (inCacheDir(p)) return p.endsWith('.oicpp-cache') ? o.cacheMetaExists : o.cacheExeExists;
             if (p === path.dirname(o.outputFile)) return o.outputDirExists;
+            if (o.testlibPath && p === o.testlibPath) return true;
             return false;
         },
         statSync: (p) => {
@@ -263,6 +265,7 @@ const runCache = (opts = {}) => {
                 return { size: o.compilerSize, mtimeMs: o.compilerMtime };
             }
             if (inCacheDir(p)) return { size: 4096, mtimeMs: o.cacheExeMtime };
+            if (o.testlibPath && p === o.testlibPath) return { size: 4096, mtimeMs: o.testlibMtime };
             throw enoent();
         },
         readFileSync: (p) => {
@@ -299,7 +302,9 @@ const runCache = (opts = {}) => {
         resolve: (v) => { resolved.push(v); },
         inputFile: o.inputFile, compilerPath: o.compilerPath, outputFile: o.outputFile,
         workingDirectory: o.workingDirectory, parsedUserArgs: o.parsedUserArgs,
-        result: o.result, outputExists: o.outputExists
+        result: o.result, outputExists: o.outputExists,
+        // 签名现在读 settings.testlibPath（testlib 走 include 目录注入，不进 parsedUserArgs）
+        settings: { testlibPath: o.testlibPath }
     });
     // 探针插在两段之间：命中时真代码走 resolve + return，探针就不会执行 ——
     // 「命中后不再往下写」是跑出来的，不是数字数数出来的。
@@ -331,6 +336,12 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
         rows.push({ name: '编译缓存守卫可执行', cond: false, extra: '两段真语句没抽出来' });
         return rows;
     }
+
+    // 缓存代际号写在 main.js 里，测试跟着它走：升代际是「改一处常量」的常规动作，
+    // 硬编码数字会让每次升级都得改测试。
+    const versionMatch = /const compileCacheVersion = (\d+);/.exec(cacheReadBlock);
+    add('能从缓存读取段里解析出 compileCacheVersion', !!versionMatch, versionMatch && versionMatch[1]);
+    const CACHE_VERSION = versionMatch ? Number(versionMatch[1]) : 2;
 
     const miss = runCache();
     const sig = miss.record && miss.record.signature;
@@ -372,13 +383,28 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
     // 把源码里那个代际常量改成 3 再跑一遍：换了缓存格式，旧签名必须整体作废，
     // 而不是只靠元数据里那个 cacheVersion 字段（签名本身就得跟着变）。
     const gen3 = runCache({
-        readBlock: cacheReadBlock.replace('const compileCacheVersion = 2;', 'const compileCacheVersion = 3;')
+        readBlock: cacheReadBlock.replace(
+            'const compileCacheVersion = ' + CACHE_VERSION + ';',
+            'const compileCacheVersion = ' + (CACHE_VERSION + 1) + ';')
     });
-    add('缓存代际号进签名：compileCacheVersion 从 2 升到 3，所有签名都换（旧缓存整体失效）',
+    add('缓存代际号进签名：compileCacheVersion 升一档，所有签名都换（旧缓存整体失效）',
         gen3.record && gen3.record.signature !== sig && /^[0-9a-f]{64}$/.test(gen3.record.signature),
         { v2: sig.slice(0, 8), v3: gen3.record && gen3.record.signature.slice(0, 8) });
     const otherArgs = runCache({ parsedUserArgs: ['-O2'] });
     add('编译参数变了签名变（少了 -std=c++17 就是另一个产物）', otherArgs.record.signature !== sig, '');
+    // testlib 是通过 C_INCLUDE_PATH/CPLUS_INCLUDE_PATH/CPATH 注入的，不进 parsedUserArgs，
+    // 不写进签名就会「换一份 testlib 还命中旧产物」——判题行为跟着变，用户看不见。
+    const withTestlib = runCache({ testlibPath: path.join(HOME, 'testlib'), testlibMtime: 1000 });
+    add('挂上 testlib 后签名与不挂时不同', withTestlib.record.signature !== sig
+        && withTestlib.record.testlibPath === path.join(HOME, 'testlib'), '');
+    const otherTestlibMtime = runCache({ testlibPath: path.join(HOME, 'testlib'), testlibMtime: 2000 });
+    add('testlib 只是被改过（路径没变）签名也变', otherTestlibMtime.record.signature !== withTestlib.record.signature,
+        { a: withTestlib.record.signature.slice(0, 8), b: otherTestlibMtime.record.signature.slice(0, 8) });
+    const otherTestlibPath = runCache({ testlibPath: path.join(HOME, 'testlib2'), testlibMtime: 1000 });
+    add('换成另一个 testlib 目录签名变', otherTestlibPath.record.signature !== withTestlib.record.signature, '');
+    add('没配 testlib 时那两个字段是空/ null，不影响既有命中口径',
+        miss.record.testlibPath === '' && miss.record.testlibMtimeMs === null,
+        { p: miss.record.testlibPath, m: miss.record.testlibMtimeMs });
     const otherCwd = runCache({ workingDirectory: path.join(HOME, 'other') });
     add('工作目录变了签名变（相对 include 会编出不同东西）', otherCwd.record.signature !== sig, '');
     const noExt = runCache({ outputFile: path.join(HOME, 'out', 'a.out') });
@@ -389,7 +415,7 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
 
     const hit = runCache({
         cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
-        cacheMeta: { cacheVersion: 2, signature: sig }
+        cacheMeta: { cacheVersion: CACHE_VERSION, signature: sig }
     });
     const OUT_EXE = path.join(HOME, 'out', 'a_1700.exe');
     add('命中：resolve({success:true, cached:true}) 并把缓存产物拷到本次 outputFile',
@@ -402,15 +428,15 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
         hit.logs.info.length === 1 && hit.logs.warn.length === 0 && hit.logs.error.length === 0, hit.logs);
     const hitNoDir = runCache({
         cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
-        cacheMeta: { cacheVersion: 2, signature: sig }, outputDirExists: false
+        cacheMeta: { cacheVersion: CACHE_VERSION, signature: sig }, outputDirExists: false
     });
     add('命中时输出目录不在：先 recursive 建目录再拷（调用方拿到的路径一定存在）',
         hitNoDir.writes.mkdir.length === 1 && hitNoDir.writes.mkdir[0][1] === true
             && hitNoDir.writes.copy.length === 1, hitNoDir.writes);
-    const hitPosix = runCache({ cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000, cacheMeta: { cacheVersion: 2, signature: sig } });
+    const hitPosix = runCache({ cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000, cacheMeta: { cacheVersion: CACHE_VERSION, signature: sig } });
     const hitWin = runCache({
         cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
-        cacheMeta: { cacheVersion: 2, signature: sig }, platform: 'win32'
+        cacheMeta: { cacheVersion: CACHE_VERSION, signature: sig }, platform: 'win32'
     });
     add('非 Windows 补回可执行位（copyFileSync 不保留权限），Windows 上不 chmod',
         hitPosix.writes.chmod.length === 1 && hitPosix.writes.chmod[0][0] === path.join(HOME, 'out', 'a_1700.exe')
@@ -418,7 +444,7 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
         { posix: hitPosix.writes.chmod, win: hitWin.writes.chmod });
     const staleHit = runCache({
         cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 500,
-        cacheMeta: { cacheVersion: 2, signature: sig }
+        cacheMeta: { cacheVersion: CACHE_VERSION, signature: sig }
     });
     add('缓存 exe 比源文件还旧：不算命中，正常编译并覆盖写回（不返回过期产物）',
         staleHit.hit === false && staleHit.resolved.length === 0
@@ -428,11 +454,11 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
         ['缓存元数据不在（只有孤儿 exe）：不算命中', { cacheExeExists: true, cacheMetaExists: false }],
         ['元数据版本号不匹配（旧版缓存）：不算命中', {
             cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
-            cacheMeta: { cacheVersion: 1, signature: sig }
+            cacheMeta: { cacheVersion: CACHE_VERSION - 1, signature: sig }
         }],
         ['元数据签名对不上（换机器/换编译器）：不算命中', {
             cacheExeExists: true, cacheMetaExists: true, cacheExeMtime: 5000,
-            cacheMeta: { cacheVersion: 2, signature: 'f'.repeat(64) }
+            cacheMeta: { cacheVersion: CACHE_VERSION, signature: 'f'.repeat(64) }
         }]
     ]) {
         const r = runCache(opt);

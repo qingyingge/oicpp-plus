@@ -5010,7 +5010,7 @@ void hello() {
     getBuildVersionLabel() {
         if (this._welcomeVersionLabel)
             return this._welcomeVersionLabel;
-        const fallback = '1.5.4 (v49)';
+        const fallback = '1.6.0-beta1-plus1';
         this._welcomeVersionLabel = fallback;
         if (window.electronAPI?.getBuildInfo) {
             Promise.resolve(window.electronAPI.getBuildInfo())

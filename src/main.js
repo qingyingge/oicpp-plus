@@ -35,7 +35,7 @@ const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
 const { samePath } = require('./utils/path-identity');
-const APP_VERSION = '1.5.4';
+const APP_VERSION = '1.6.0-beta1-plus1';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
 const LSP_REQUEST_TIMEOUT_MS = 30000;
@@ -3782,21 +3782,50 @@ function getRequestPath(req) {
     }
 }
 function readJsonBody(req, res, callback) {
-    let body = '';
-    let tooLarge = false;
-    req.on('data', (chunk) => {
-        if (tooLarge)
+    const MAX_BODY_BYTES = 2 * 1024 * 1024;
+    // 逐块 chunk→string 拼接会在多字节字符横跨两个 chunk 时静默产生 U+FFFD
+    // （中文注释/题面最常见的就是这种断法）。攒 Buffer，最后一次性按 utf8 解。
+    const chunks = [];
+    let receivedBytes = 0;
+    let settled = false;
+    const rejectTooLarge = () => {
+        if (settled)
             return;
-        body += chunk;
-        if (Buffer.byteLength(body, 'utf8') > 2 * 1024 * 1024) {
-            tooLarge = true;
-            writeJson(res, 413, { code: 413, message: 'Request body too large' });
-            req.destroy();
+        settled = true;
+        try {
+            req.pause();
         }
-    });
-    req.on('end', () => {
-        if (tooLarge)
+        catch (_) { }
+        try {
+            writeJson(res, 413, { code: 413, message: 'Request body too large' });
+        }
+        catch (_) { }
+        try {
+            res.once('finish', () => { try {
+                req.destroy();
+            }
+            catch (_) { } });
+        }
+        catch (_) { }
+    };
+    req.on('data', (chunk) => {
+        if (settled)
             return;
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+        receivedBytes += buf.length;
+        if (receivedBytes > MAX_BODY_BYTES) {
+            rejectTooLarge();
+            return;
+        }
+        chunks.push(buf);
+    });
+    // 客户端中途断开时不抛未捕获异常
+    req.on('error', () => { settled = true; });
+    req.on('end', () => {
+        if (settled)
+            return;
+        settled = true;
+        const body = Buffer.concat(chunks).toString('utf8');
         let data = null;
         try {
             data = JSON.parse(body || '{}');
@@ -9139,7 +9168,7 @@ async function resetSettings(settingsType = null) {
 function exportSettings(filePath) {
     try {
         const exportData = {
-            version: '1.5.4 (v49)',
+            version: APP_VERSION,
             timestamp: new Date().toISOString(),
             settings: settings
         };
@@ -9367,7 +9396,7 @@ async function compileFile(options) {
             reject(new Error(t('error.dangerousArgsBlocked', { args: rejectedUserArgs.join(' ') })));
             return;
         }
-        const compileCacheVersion = 2;
+        const compileCacheVersion = 3;
         // 缓存按 signature 命名并集中存放：outputFile 每次都带时间戳，元数据若绑在它旁边就永远命中不了
         const compileCacheDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'compile-cache');
         let compileCacheRecord = null;
@@ -9379,6 +9408,18 @@ async function compileFile(options) {
             const inputStats = fs.statSync(inputFile);
             const compilerAbsolutePath = path.resolve(compilerPath);
             const compilerStats = fs.statSync(compilerAbsolutePath);
+            // testlib 是作为 include 目录注入的（CPLUS_INCLUDE_PATH），不参与 parsedUserArgs，
+            // 不进签名就意味着换一份 testlib 后仍然命中旧产物。
+            const testlibPath = String(settings.testlibPath || '');
+            let testlibMtimeMs = null;
+            try {
+                testlibMtimeMs = testlibPath && fs.existsSync(testlibPath)
+                    ? fs.statSync(testlibPath).mtimeMs
+                    : null;
+            }
+            catch (_) {
+                testlibMtimeMs = null;
+            }
             // payload 只包含决定编译结果的因素，outputFile 这类每次变化的随机值一律不入签名
             const payload = {
                 cacheVersion: compileCacheVersion,
@@ -9389,7 +9430,9 @@ async function compileFile(options) {
                 compilerSize: compilerStats.size,
                 compilerMtimeMs: compilerStats.mtimeMs,
                 compilerArgs: parsedUserArgs,
-                workingDirectory: path.resolve(workingDirectory || process.cwd())
+                workingDirectory: path.resolve(workingDirectory || process.cwd()),
+                testlibPath,
+                testlibMtimeMs
             };
             const signature = crypto.createHash('sha256')
                 .update(JSON.stringify(payload))
