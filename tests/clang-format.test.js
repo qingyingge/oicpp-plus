@@ -1775,9 +1775,14 @@ function makeModel(lines, state = {}) {
             String(ok.files.get(path.resolve(ok.fingerprintPath))) === FIRST &&
                 ok.logs.info.join(' ').includes('utf8-static'),
             JSON.stringify({ written: String(ok.files.get(path.resolve(ok.fingerprintPath))).slice(0, 12), logs: ok.logs.info }));
+        // cwd 与 targetPath 都要先 resolve 再比：HOME 是 posix 字面量，win32 上
+        // path.join 产出无前导盘符的 \home\tester\.oicpp-plus，而断言侧 resolve 会补
+        // 当前盘符 —— 不统一归一，这条在 Windows 上永远差一个盘符。真实机器上
+        // os.homedir() 本就带盘符，src/main.ts 的 cwd 取值是对的。
         check('spawn 用 shell:false、cwd 在用户目录、stdio 全 pipe（不能退回 cmd 包装）',
             ok.builds[0].options.shell === false &&
-                ok.builds[0].options.cwd === path.resolve(path.dirname(ok.targetPath)) &&
+                path.isAbsolute(String(ok.builds[0].options.cwd)) &&
+                path.resolve(String(ok.builds[0].options.cwd)) === path.resolve(path.dirname(ok.targetPath)) &&
                 JSON.stringify(ok.builds[0].options.stdio) === JSON.stringify(['ignore', 'pipe', 'pipe']),
             JSON.stringify(ok.builds[0].options));
         check('findConsolePauser 只有 exe 真在才返回路径',
@@ -1868,11 +1873,16 @@ function makeModel(lines, state = {}) {
 
         const withDirs = ps({ files: ['/opt/mingw/bin', '/opt/mingw/mingw64/bin'] });
         await withDirs.attempt();
+        // 逐项折叠分隔符再比：win32 上 path.dirname 保留原串的 '/'、path.join 却归一成 '\'，
+        // 同一个目录会以两种拼法各进 PATH 一次（POSIX 上是同一拼法的重复，Windows 忽略不存在的
+        // PATH 目录，功能无差）。索引 0 单独锁「真实编译器目录排最前」，比原 startsWith 更严。
+        const pathEntries = withDirs.pathEnvOf(0).split(path.delimiter)
+            .map((entry) => String(entry).split(String.fromCharCode(92)).join('/'));
         check('PATH 前缀只补真实存在的编译器目录，原 PATH 留在最后',
-            withDirs.pathEnvOf(0).startsWith(`/opt/mingw/bin${path.delimiter}`) &&
-                withDirs.pathEnvOf(0).includes('/opt/mingw/mingw64/bin') &&
-                !withDirs.pathEnvOf(0).includes('/opt/mingw/mingw32/bin') &&
-                withDirs.pathEnvOf(0).endsWith(`${path.delimiter}/usr/bin`),
+            pathEntries[0] === '/opt/mingw/bin' &&
+                pathEntries.includes('/opt/mingw/mingw64/bin') &&
+                !pathEntries.includes('/opt/mingw/mingw32/bin') &&
+                pathEntries.at(-1) === '/usr/bin',
             withDirs.pathEnvOf(0));
     }
     const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -2335,9 +2345,12 @@ function makeModel(lines, state = {}) {
 
             {
                 const bfs = installRun({ files: ['/x/c/clang-format', '/x/a/b/clang-format'] });
+                // findFile 返回的是 path.join 的产物（win32 为 \x\c\clang-format，无盘符），
+                // 场景清单是 posix 字面量 —— 与脚本内 has() 一致，两侧都 resolve 再比。
+                const shallowHit = bfs.sb.call('findFile', '/x', 'clang-format');
                 check('findFile 逐层往下找，浅层的先命中（深层优先会跟着目录顺序漂）',
-                    bfs.sb.call('findFile', '/x', 'clang-format') === path.resolve('/x/c/clang-format'),
-                    String(bfs.sb.call('findFile', '/x', 'clang-format')));
+                    shallowHit !== null && path.resolve(String(shallowHit)) === path.resolve('/x/c/clang-format'),
+                    String(shallowHit));
                 check('找不到返回 null，不抛（调用方自己决定怎么报错）',
                     bfs.sb.call('findFile', '/x', 'no-such-file') === null);
             }
