@@ -16,6 +16,7 @@
   "main": "src/main.js",
   "packageManager": "pnpm@12.5.1",
   "scripts": {
+    "install": "node scripts/build-fastspawn.js",
     "start": "electron .",
     "dev": "electron . --dev",
     "prebuild:icons": "node scripts/generate-icons.js",
