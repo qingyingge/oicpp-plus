@@ -3082,36 +3082,66 @@ function requestSaveAllAndClose(context = '关闭窗口') {
             ipcMain.removeListener('save-all-complete', pendingSaveAllClose.onComplete);
         }
         catch (_) { }
+        try {
+            ipcMain.removeListener('save-all-failed', pendingSaveAllClose.onFailed);
+        }
+        catch (_) { }
         pendingSaveAllClose = null;
     }
     const closeWindow = () => {
         if (mainWindow && !mainWindow.isDestroyed())
             mainWindow.close();
     };
+    const cleanup = () => {
+        try {
+            ipcMain.removeListener('save-all-complete', onComplete);
+        }
+        catch (_) { }
+        try {
+            ipcMain.removeListener('save-all-failed', onFailed);
+        }
+        catch (_) { }
+    };
     const onComplete = () => {
         if (!pendingSaveAllClose || pendingSaveAllClose.onComplete !== onComplete)
             return;
         clearTimeout(pendingSaveAllClose.timer);
         pendingSaveAllClose = null;
+        cleanup();
         closeWindow();
     };
-    const timer = setTimeout(() => {
+    const onFailed = () => {
+        if (!pendingSaveAllClose || pendingSaveAllClose.onFailed !== onFailed)
+            return;
+        clearTimeout(pendingSaveAllClose.timer);
+        pendingSaveAllClose = null;
+        cleanup();
+        // 用户选的是「保存并退出」，落盘失败还关窗就等于静默丢掉修改；窗口保持打开。
         try {
-            logWarn(`[${context}] 保存超时，强制关闭窗口`);
+            logWarn(`[${context}] 保存失败，已取消关闭`);
         }
         catch (_) { }
+    };
+    const timer = setTimeout(() => {
         if (pendingSaveAllClose?.onComplete === onComplete)
             pendingSaveAllClose = null;
-        closeWindow();
+        cleanup();
+        // 超时同样不再强制关闭：宁可窗口一直开着，也不丢未保存的修改。
+        try {
+            logWarn(`[${context}] 等待保存完成超时，窗口保持打开`);
+        }
+        catch (_) { }
     }, SAVE_ALL_TIMEOUT);
-    pendingSaveAllClose = { timer, onComplete };
+    pendingSaveAllClose = { timer, onComplete, onFailed };
     try {
         mainWindow.webContents.send('request-save-all');
         ipcMain.once('save-all-complete', onComplete);
+        ipcMain.once('save-all-failed', onFailed);
     }
     catch (error) {
         clearTimeout(timer);
         pendingSaveAllClose = null;
+        cleanup();
         try {
             logWarn(`[${context}] 发送保存请求失败，直接关闭:`, error?.message || String(error));
         }
@@ -4287,13 +4317,18 @@ function setupIPC() {
                 incomingSettings['compilerArgs'] = normalizeCompilerArgsForPlatform(incomingSettings['compilerArgs']);
             }
             const prevLanguage = settings.language;
+            const previousSettings = { ...settings };
             settings = { ...settings, ...incomingSettings };
             if (mainWindow && !mainWindow.isDestroyed()) {
                 if (typeof incomingSettings['windowOpacity'] === 'number') {
                     mainWindow.setOpacity(incomingSettings['windowOpacity']);
                 }
             }
-            await saveSettings(); // 确保保存完成
+            if (!saveSettings()) {
+                // 写盘失败就回滚，否则内存里是新配置、磁盘上是旧的，而调用方拿到 success:true
+                settings = previousSettings;
+                return { success: false, error: t('error.settingsWriteFailed') };
+            }
             scheduleAutoSettingsBackup('update-settings');
             if (incomingSettings && Object.prototype.hasOwnProperty.call(incomingSettings, 'keybindings')) {
                 createMenuBar();
@@ -8910,9 +8945,11 @@ function saveSettings() {
     try {
         const settingsPath = getSettingsPath();
         fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+        return true;
     }
     catch (error) {
         logError('保存设置失败:', error);
+        return false;
     }
 }
 async function updateSettings(settingsType, newSettings) {
@@ -8926,6 +8963,7 @@ async function updateSettings(settingsType, newSettings) {
             : {};
         const validKeys = SETTINGS_WRITABLE_KEYS;
         const prevLanguage = settings.language;
+        const previousSettings = { ...settings };
         for (const key in patch) {
             if (validKeys.includes(key)) {
                 let normalizedValue = patch[key];
@@ -8943,7 +8981,11 @@ async function updateSettings(settingsType, newSettings) {
             }
         }
         normalizeSettingsRuntimeShape(settings);
-        saveSettings();
+        if (!saveSettings()) {
+            // 落盘失败还继续广播 settings-changed，渲染层显示的就是磁盘上不存在的一份配置
+            settings = previousSettings;
+            throw new Error(t('error.settingsWriteFailed'));
+        }
         scheduleAutoSettingsBackup('update-top-level-settings');
         if (Object.prototype.hasOwnProperty.call(patch, 'keybindings')) {
             createMenuBar();

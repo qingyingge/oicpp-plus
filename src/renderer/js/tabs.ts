@@ -5349,23 +5349,76 @@ class TabManager {
         }
     }
 
-    async saveAllFiles() {
+    async saveAllFiles(): Promise<{ success: boolean; failures: Array<{ fileName?: string | null; error?: string }> }> {
+        const _t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+        const failures: Array<{ fileName?: string | null; error?: string }> = [];
         if (this.isDiscardCloseInProgress()) {
-            return;
+            return { success: true, failures };
         }
+        const isCloudPath = (p: unknown): boolean => {
+            if (window.oicppApp && typeof window.oicppApp.isCloudFilePath === 'function') {
+                return !!window.oicppApp.isCloudFilePath(p);
+            }
+            return typeof p === 'string' && /^cloud:/i.test(p);
+        };
+
         // 按 uniqueKey 遍历、按 filePath 保存，两者不是一一对应：同一文件开在多个
         // 分栏（或存在残留 tab）时会对同一文件并发发起 N 次保存，产生多余的 IPC
         // 往返、file-saved 事件与重复的 clangd 分析。先按 filePath 归并。
         const byFilePath = new Map();
+        const tasks: Array<Promise<void>> = [];
         for (const [uniqueKey, tab] of this.tabs.entries()) {
             if (!tab || tab.viewType === 'pdf' || tab.viewType === 'markdown-preview') {
                 continue;
             }
             try {
                 const filePath = tab.filePath;
-                if (!filePath) continue;
                 const content = this.getTabContentForSave(tab);
                 if (typeof content !== 'string') continue;
+
+                // 未命名标签原先是静默 continue：用户选了「保存并退出」却什么都没落盘。
+                if (!filePath) {
+                    if (typeof window.electronAPI?.saveAsFile !== 'function') {
+                        failures.push({ fileName: tab.fileName, error: _t('dialog.saveApiUnavailable') });
+                        continue;
+                    }
+                    tasks.push((async () => {
+                        try {
+                            const savedPath = await window.electronAPI.saveAsFile(content);
+                            if (!savedPath) {
+                                failures.push({ fileName: tab.fileName, error: _t('dialog.saveNoLocation') });
+                                return;
+                            }
+                            const writeResult = (await window.electronAPI.saveFile(savedPath, content)) as Record<string, unknown> | undefined;
+                            if (writeResult && writeResult['success'] === false) {
+                                throw new Error(String(writeResult['error'] || _t('dialog.saveWriteFailed')));
+                            }
+                            try { this.updateTabPathBySource(null, String(savedPath)); } catch (_) { }
+                            this.markTabAsSavedByUniqueKey(uniqueKey);
+                        } catch (e) {
+                            failures.push({ fileName: tab.fileName, error: (e as Error)?.message || String(e) });
+                        }
+                    })());
+                    continue;
+                }
+
+                if (isCloudPath(filePath)) {
+                    tasks.push((async () => {
+                        try {
+                            if (window.oicppApp && typeof window.oicppApp.saveCloudFileToServer === 'function') {
+                                const ok = await window.oicppApp.saveCloudFileToServer(filePath, content);
+                                if (!ok) throw new Error(_t('dialog.cloudSaveFailed'));
+                                this.markTabAsSavedByUniqueKey(uniqueKey);
+                            } else {
+                                throw new Error(_t('dialog.saveApiUnavailable'));
+                            }
+                        } catch (e) {
+                            failures.push({ fileName: tab.fileName, error: (e as Error)?.message || String(e) });
+                        }
+                    })());
+                    continue;
+                }
+
                 if (!byFilePath.has(filePath)) {
                     byFilePath.set(filePath, { content, uniqueKeys: [] });
                 } else {
@@ -5374,26 +5427,36 @@ class TabManager {
                 }
                 byFilePath.get(filePath).uniqueKeys.push(uniqueKey);
             } catch (e) {
+                failures.push({ fileName: tab?.fileName, error: (e as Error)?.message || String(e) });
                 (window.logWarn || console.warn)('保存标签失败:', tab?.fileName, e);
             }
         }
 
         const hasSaveApi = typeof window.electronAPI?.saveFile === 'function';
-        const tasks = [];
         for (const [filePath, { content, uniqueKeys }] of byFilePath.entries()) {
             if (!hasSaveApi) {
-                uniqueKeys.forEach((key: string) => this.markTabAsSavedByUniqueKey(key));
+                // 原先这里直接标记已保存：桥不可用时界面显示干净、磁盘却是旧的，
+                // 关闭后改动就没了。标记去掉，改成如实上报。
+                failures.push({
+                    fileName: String(filePath).split('/').pop(),
+                    error: _t('dialog.saveApiUnavailable')
+                });
                 continue;
             }
             tasks.push(
-                window.electronAPI.saveFile(filePath, content).then(() => {
+                window.electronAPI.saveFile(filePath, content).then((result: unknown) => {
+                    if (result && typeof result === 'object' && (result as Record<string, unknown>)['success'] === false) {
+                        throw new Error(String((result as Record<string, unknown>)['error'] || _t('dialog.saveWriteFailed')));
+                    }
                     uniqueKeys.forEach((key: string) => this.markTabAsSavedByUniqueKey(key));
-                }).catch((e) => {
+                }).catch((e: unknown) => {
+                    failures.push({ fileName: String(filePath).split('/').pop(), error: (e as Error)?.message || String(e) });
                     (window.logWarn || console.warn)('保存文件失败:', filePath, e);
                 })
             );
         }
         try { await Promise.allSettled(tasks); } catch (_) { }
+        return { success: failures.length === 0, failures };
     }
 
     openFileDialog() {
@@ -5689,21 +5752,41 @@ void hello() {
 
     updateTabPathBySource(oldPath: string | null | undefined, newPath: string | null | undefined, newFileName: string | null = null) {
         try {
-            if (!oldPath || !newPath) return;
+            if (!newPath) return;
             const norm = (p: string | null | undefined) => String(p).replace(/\\/g, '/');
-            const oldKey = norm(oldPath);
+            const oldKey = oldPath ? norm(oldPath) : '';
             const newKey = norm(newPath);
 
-            let tabData = this.tabs.get(oldKey) || null;
+            let tabData: TabRecord | null = null;
             let actualOldKey = oldKey;
-            if (!tabData) {
-                for (const [k, v] of this.tabs.entries()) {
-                    if (norm(v.filePath || '') === oldKey) { tabData = v; actualOldKey = k; break; }
+            if (oldKey) {
+                tabData = this.tabs.get(oldKey) || null;
+                if (!tabData) {
+                    for (const [k, v] of this.tabs.entries()) {
+                        if (norm(v.filePath || '') === oldKey) { tabData = v; actualOldKey = k; break; }
+                    }
+                }
+            }
+            if (!tabData && !oldKey) {
+                // 未命名标签「另存为」后没有旧路径可查，按当前激活标签定位，
+                // 否则新路径永远绑不上，后续保存与编译会写到旧位置或静默跳过。
+                // 只在压根没给 oldPath 时才兜底：给了却查不到说明调用方递错了路径，
+                // 这时改激活标签会把不相干的 tab 悄悄改名。
+                const activeKey = this.activeTabKey
+                    || (typeof this.activeTab === 'string' ? this.findUniqueKeyByFileName(this.activeTab) : this.activeTab?.uniqueKey)
+                    || '';
+                if (activeKey && this.tabs.has(activeKey)) {
+                    tabData = this.tabs.get(activeKey) || null;
+                    actualOldKey = activeKey;
                 }
             }
             if (!tabData) {
                 logWarn('未找到需要更新路径的标签页，oldPath=', oldPath);
                 return;
+            }
+
+            if (!newFileName || typeof newFileName !== 'string') {
+                newFileName = newKey.split('/').pop() || tabData.fileName || null;
             }
 
             if (this.tabs.has(newKey) && newKey !== actualOldKey) {
@@ -5746,6 +5829,11 @@ void hello() {
                     if (group.activeTabKey === actualOldKey) {
                         group.activeTabKey = newKey;
                     }
+                    // tabOrder 存的也是 uniqueKey，漏掉它会让分组内的顺序指向已删除的 key
+                    if (Array.isArray(group.tabOrder)) {
+                        const idx = group.tabOrder.indexOf(actualOldKey);
+                        if (idx !== -1) group.tabOrder[idx] = newKey;
+                    }
                 }
             } catch (e) { logWarn('同步分组结构失败:', e); }
 
@@ -5762,6 +5850,10 @@ void hello() {
                     tabData.element = tabEl;
                 }
             } catch (e) { logWarn('更新标签 DOM uniqueKey 失败:', e); }
+
+            try {
+                if (tabData.groupId) this.syncGroupTabs(tabData.groupId);
+            } catch (e) { logWarn('同步分组标签失败:', e); }
 
             if (newFileName && typeof newFileName === 'string') {
                 const tabOrderIndex = this.tabOrder.indexOf(previousFileName as string);

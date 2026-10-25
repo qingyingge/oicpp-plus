@@ -94,14 +94,38 @@ async function initializeApp(): Promise<void> {
         try {
             if (window.electronAPI && window.electronAPI.onRequestSaveAll) {
                 window.electronAPI.onRequestSaveAll(async () => {
+                    type SaveAllResult = { success?: boolean; failures?: Array<{ fileName?: string | null; error?: string }> };
+                    const _t = (key: string, params?: Record<string, unknown>) => window.i18n?.t?.(key, params) || key;
+                    let result: SaveAllResult = { success: true, failures: [] };
                     try {
                         const tabManager = window.tabManager;
-                        if (tabManager && typeof (tabManager as { saveAllFiles?: () => Promise<void> }).saveAllFiles === 'function') {
-                            await (tabManager as { saveAllFiles: () => Promise<void> }).saveAllFiles();
+                        if (tabManager && typeof (tabManager as { saveAllFiles?: () => Promise<SaveAllResult> }).saveAllFiles === 'function') {
+                            result = (await (tabManager as { saveAllFiles: () => Promise<SaveAllResult> }).saveAllFiles()) || result;
                         } else if (window.oicppApp?.saveCurrentFile) {
-                            window.oicppApp.saveCurrentFile();
+                            await window.oicppApp.saveCurrentFile();
                         }
-                    } finally {
+                    } catch (e) {
+                        result = { success: false, failures: [{ fileName: '', error: (e as Error)?.message || String(e) }] };
+                    }
+                    if (result && result.success === false) {
+                        // 落盘失败仍然 notifySaveAllComplete 的话，主进程会照常关窗，
+                        // 用户选的「保存并退出」就变成了静默丢弃改动。
+                        const failures = Array.isArray(result.failures) ? result.failures : [];
+                        const detail = failures.slice(0, 8)
+                            .map((f) => _t('dialog.saveFailedItem', {
+                                name: f.fileName || _t('dialog.saveUnnamedFile'),
+                                error: f.error || _t('dialog.saveUnknownError')
+                            }))
+                            .join('<br>');
+                        const message = _t('dialog.saveFailedIntro', { detail: detail || _t('dialog.saveUnknownError') });
+                        logError('[关闭前保存]', message);
+                        try {
+                            if (window.dialogManager?.showConfirmDialog) {
+                                window.dialogManager.showConfirmDialog(_t('dialog.saveFailedTitle'), message).catch(() => { });
+                            }
+                        } catch (_) { }
+                        try { window.electronAPI.notifySaveAllFailed({ failures }); } catch (_) { }
+                    } else {
                         window.electronAPI.notifySaveAllComplete();
                     }
                 });

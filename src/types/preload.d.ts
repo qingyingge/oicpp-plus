@@ -174,6 +174,7 @@ interface ElectronAPI {
   onLspApplyEdit(callback: (payload: { requestId?: unknown; edit?: unknown }) => void): () => void;
   onRequestSaveAll(callback: () => void): () => void;
   notifySaveAllComplete(): void;
+  notifySaveAllFailed(payload: Record<string, unknown>): void;
   browserResolveUrl(url: string): Promise<unknown>;
   browserGetPageTitle(url: string): Promise<unknown>;
   onBrowserOpenNewTab(callback: (payload: unknown) => void): () => void;

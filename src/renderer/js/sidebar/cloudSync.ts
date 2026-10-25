@@ -633,7 +633,12 @@ class CloudSyncPanel {
     async openCloudFile(file: CloudRef) {
         try {
             const data = await this.request('GET', '/cloudSync/download', { path: file.path });
-            const content = typeof data?.content === 'string' ? data.content : '';
+            // 云端返回异常内容时回退成 ''，等于把一个 0 字节文件写到磁盘上，
+            // 而用户看到的是「保存成功」。
+            if (typeof data?.content !== 'string') {
+                throw new Error(window.i18n.t('cloud.dataFormatError'));
+            }
+            const content = data.content;
             const fileName = file.name;
             if (window.tabManager && typeof window.tabManager.openFile === 'function') {
                 await window.tabManager.openFile(fileName, content, false, `cloud://${file.path}`);
@@ -928,7 +933,12 @@ class CloudSyncPanel {
         }
         try {
             const data = await this.request('GET', '/cloudSync/download', { path: file.path });
-            const content = typeof data?.content === 'string' ? data.content : '';
+            // 云端返回异常内容时回退成 ''，等于把一个 0 字节文件写到磁盘上，
+            // 而用户看到的是「保存成功」。
+            if (typeof data?.content !== 'string') {
+                throw new Error(window.i18n.t('cloud.dataFormatError'));
+            }
+            const content = data.content;
             const result = await window.electronAPI.showSaveDialog({
                 title: window.i18n.t('cloud.saveCloudTitle'),
                 defaultPath: file.name
@@ -1293,7 +1303,10 @@ class CloudSyncPanel {
     getRelativeLocalPath(filePath: string, rootPath: string) {
         const fileNorm = this.normalizeLocalPath(filePath);
         const rootNorm = this.normalizeLocalPath(rootPath);
-        if (!fileNorm.startsWith(rootNorm)) return '';
+        // 必须带分隔符比较，否则 /proj-evil 会被当成 /proj 的子目录；
+        // rootNorm 为空时 startsWith('') 恒真，也要一并挡住。
+        if (!rootNorm) return '';
+        if (fileNorm !== rootNorm && !fileNorm.startsWith(rootNorm + '/')) return '';
         let rel = fileNorm.slice(rootNorm.length);
         if (rel.startsWith('/')) rel = rel.slice(1);
         return rel;

@@ -5877,6 +5877,7 @@ class MonacoEditorManager {
                     }
                 }
                 catch (_) { }
+                let offFileSaved;
                 window.electronIPC.send('save-file', filePath, content);
                 const handleFileSaved = (event, savedPath, error) => {
                     if (savedPath === filePath) {
@@ -5886,10 +5887,17 @@ class MonacoEditorManager {
                         else {
                             this.markFileSaved(filePath);
                         }
-                        window.electronIPC.ipcRenderer.removeListener('file-saved', handleFileSaved);
+                        // on() 现在返回取消函数。原先把原函数交给 removeListener 是移不掉
+                        // 那层包装的，每保存一次就泄漏一个监听器。
+                        if (typeof offFileSaved === 'function') {
+                            offFileSaved();
+                        }
+                        else {
+                            window.electronIPC.ipcRenderer.removeListener('file-saved', handleFileSaved);
+                        }
                     }
                 };
-                window.electronIPC.on('file-saved', handleFileSaved);
+                offFileSaved = window.electronIPC.on('file-saved', handleFileSaved);
             }
             else {
                 logWarn('无法保存: 无文件路径或非Electron环境');

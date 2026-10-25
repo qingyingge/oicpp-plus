@@ -1550,10 +1550,9 @@ class OICPPApp {
                         e.preventDefault();
                         this.saveCurrentFile();
                         return;
-                    case 'k':
-                        e.preventDefault();
-                        this.openFolder();
-                        return;
+                    // Ctrl+K 在 Monaco 里是按键序列前缀（Ctrl+K Ctrl+C 切换注释），
+                    // 编辑器内不能抢：抢了会 preventDefault，Monaco 永远收不到第二个按键。
+                    // 编辑器外的 Ctrl+K 仍由下面的全局分支处理（打开文件夹）。
             }
             }
 

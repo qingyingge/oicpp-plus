@@ -128,53 +128,57 @@ class TitlebarManager {
             return;
         if (!window.electronIPC)
             return;
-        // 关闭前先持久化当前打开的标签页。标签页状态平时靠 2s 防抖保存，
-        // 快速关闭时可能来不及写入，导致下次启动恢复成更早的旧会话。
-        try {
-            if (window.oicppApp && typeof window.oicppApp.saveCurrentOpenTabs === 'function') {
-                await window.oicppApp.saveCurrentOpenTabs();
-            }
-        }
-        catch (err) {
-            logWarn('关闭前保存标签页失败:', err);
-        }
-        const tempFilesHandled = await this._confirmTemporaryFilesBeforeClose();
-        if (!tempFilesHandled) {
-            if (source === 'system') {
-                window.electronIPC.send('app-close-cancelled');
-            }
-            return;
-        }
-        const unsavedFiles = (() => {
-            try {
-                if (window.tabManager && typeof window.tabManager.getUnsavedFiles === 'function') {
-                    return window.tabManager.getUnsavedFiles() || [];
-                }
-            }
-            catch (_) { }
-            return [];
-        })();
-        if (!unsavedFiles || unsavedFiles.length === 0) {
-            if (source === 'system') {
-                window.electronIPC.send('app-close-confirmed');
-            }
-            else {
-                window.electronIPC.send('window-close');
-            }
-            return;
-        }
-        if (!window.dialogManager || typeof window.dialogManager.showActionDialog !== 'function') {
-            logWarn('dialogManager 不可用，已阻止关闭以避免无提示自动保存');
-            if (source === 'system') {
-                try {
-                    window.electronIPC.send('app-close-cancelled');
-                }
-                catch (_) { }
-            }
-            return;
-        }
+        // 立即占位：下面有两次 await（持久化标签页、临时文件确认），期间重复进入会
+        // 弹出多个关闭对话框，而 DialogManager 只有一个槽位，前一个 Promise 会永久挂起。
+        // 提前 return 的三条分支（临时文件拒绝 / 无未保存 / dialogManager 不可用）
+        // 都必须靠这个 finally 复位，否则关闭流程从此卡死。
         this._closeConfirmInProgress = true;
         try {
+            // 关闭前先持久化当前打开的标签页。标签页状态平时靠 2s 防抖保存，
+            // 快速关闭时可能来不及写入，导致下次启动恢复成更早的旧会话。
+            try {
+                if (window.oicppApp && typeof window.oicppApp.saveCurrentOpenTabs === 'function') {
+                    await window.oicppApp.saveCurrentOpenTabs();
+                }
+            }
+            catch (err) {
+                logWarn('关闭前保存标签页失败:', err);
+            }
+            const tempFilesHandled = await this._confirmTemporaryFilesBeforeClose();
+            if (!tempFilesHandled) {
+                if (source === 'system') {
+                    window.electronIPC.send('app-close-cancelled');
+                }
+                return;
+            }
+            const unsavedFiles = (() => {
+                try {
+                    if (window.tabManager && typeof window.tabManager.getUnsavedFiles === 'function') {
+                        return window.tabManager.getUnsavedFiles() || [];
+                    }
+                }
+                catch (_) { }
+                return [];
+            })();
+            if (!unsavedFiles || unsavedFiles.length === 0) {
+                if (source === 'system') {
+                    window.electronIPC.send('app-close-confirmed');
+                }
+                else {
+                    window.electronIPC.send('window-close');
+                }
+                return;
+            }
+            if (!window.dialogManager || typeof window.dialogManager.showActionDialog !== 'function') {
+                logWarn('dialogManager 不可用，已阻止关闭以避免无提示自动保存');
+                if (source === 'system') {
+                    try {
+                        window.electronIPC.send('app-close-cancelled');
+                    }
+                    catch (_) { }
+                }
+                return;
+            }
             const maxShow = 8;
             const shown = unsavedFiles.slice(0, maxShow);
             const moreCount = Math.max(0, unsavedFiles.length - shown.length);

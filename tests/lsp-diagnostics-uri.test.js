@@ -301,13 +301,15 @@ const realWin = global.window;
     }
 
     {
-        // 没有 saveFile 桥时，tab 也不能一直挂着未保存的圆点
+        // 没有 saveFile 桥时原先照样把 tab 标成已保存：磁盘什么都没写，界面却显示干净，
+        // 用户选「保存并退出」就静默丢改动。1.6 移植批改成如实上报（不标记 + 记 failure）。
         const { manager, seen } = make({ tabs: [['k1', tab('D:/p/a.cpp')], ['k2', tab('D:/p/a.cpp')]], mode: 'none' });
-        await manager.saveAllFiles();
+        const result = await manager.saveAllFiles();
         check('无 saveFile API 时不发请求', seen.saved.length === 0, String(seen.saved.length));
-        check('无 saveFile API 时仍标记全部 uniqueKey',
-            seen.marked.length === 2 && seen.marked.includes('k1') && seen.marked.includes('k2'),
-            seen.marked.join(','));
+        check('无 saveFile API 时不再标记为已保存', seen.marked.length === 0, seen.marked.join(','));
+        check('无 saveFile API 时返回失败并带上原因',
+            result && result.success === false && Array.isArray(result.failures) && result.failures.length === 1
+            && !!result.failures[0].error, JSON.stringify(result));
     }
 
     {

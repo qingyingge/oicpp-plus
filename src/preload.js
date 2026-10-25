@@ -485,7 +485,7 @@ const ALLOWED_SEND_CHANNELS = new Set([
     'window-focus', 'window-blur',
     'window-minimize', 'window-maximize', 'window-unmaximize',
     'window-close', 'window-close-discard',
-    'app-close-confirmed', 'app-close-discard', 'app-close-cancelled', 'save-all-complete',
+    'app-close-confirmed', 'app-close-discard', 'app-close-cancelled', 'save-all-complete', 'save-all-failed',
     'open-external-terminal', 'run-code', 'compile-and-run',
     'request-kill-process', 'save-binary-temp-file',
     'theme-changed', 'settings-changed',
@@ -869,6 +869,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     onRequestSaveAll: (callback) => subscribeIpc('request-save-all', () => callback && callback()),
     notifySaveAllComplete: () => safeIpcRenderer.send('save-all-complete'),
+    notifySaveAllFailed: (payload) => safeIpcRenderer.send('save-all-failed', payload || {}),
     // === 内置浏览器 API ===
     browserResolveUrl: (url) => safeIpcRenderer.invoke('browser-resolve-url', url),
     browserGetPageTitle: (url) => safeIpcRenderer.invoke('browser-get-page-title', url),
@@ -883,25 +884,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
 contextBridge.exposeInMainWorld('electronIPC', {
     ...safeIpcRenderer,
     ipcRenderer: safeIpcRenderer,
+    // 返回取消函数而不是 ipcRenderer 这个 EventEmitter：file-saved 这类通道传的是包装后的
+    // listener，调用方拿着原函数调 removeListener 移不掉包装，每保存一次泄漏一个监听器。
     on: (channel, listener) => {
         if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
             console.warn('IPC event blocked: ' + channel);
             return;
         }
-        if (channel === 'file-saved') {
-            return ipcRenderer.on('file-saved', (event, filePath, error) => listener(event, filePath, error));
-        }
-        return ipcRenderer.on(channel, listener);
+        const wrapped = channel === 'file-saved'
+            ? (event, filePath, error) => listener(event, filePath, error)
+            : listener;
+        ipcRenderer.on(channel, wrapped);
+        return () => {
+            try {
+                ipcRenderer.removeListener(channel, wrapped);
+            }
+            catch (_) { }
+        };
     },
     once: (channel, listener) => {
         if (!ALLOWED_EVENT_CHANNELS.has(channel)) {
             console.warn('IPC event blocked: ' + channel);
             return;
         }
-        if (channel === 'file-saved') {
-            return ipcRenderer.once('file-saved', (event, filePath, error) => listener(event, filePath, error));
-        }
-        return ipcRenderer.once(channel, listener);
+        const wrapped = channel === 'file-saved'
+            ? (event, filePath, error) => listener(event, filePath, error)
+            : listener;
+        ipcRenderer.once(channel, wrapped);
+        return () => {
+            try {
+                ipcRenderer.removeListener(channel, wrapped);
+            }
+            catch (_) { }
+        };
     }
 });
 contextBridge.exposeInMainWorld('process', {

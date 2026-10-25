@@ -795,7 +795,7 @@ async function main() {
                 codeTemplatesWindow: win('templates'),
                 backupSettingsWindow: win('backup'),
                 normalizeSettingsRuntimeShape: (s) => { trace.push('normalize'); s.normalized = true; },
-                saveSettings: () => { trace.push('save'); },
+                saveSettings: () => { trace.push('save'); return true; },
                 scheduleAutoSettingsBackup: (reason) => { trace.push(`backup:${reason}`); },
                 createMenuBar: () => { trace.push('menuBar'); },
                 setLanguage: (lang) => { trace.push(`setLanguage:${lang}`); },
@@ -884,6 +884,19 @@ async function main() {
             JSON.stringify(diskFull.result));
         check('落盘失败时不广播 settings-changed（没写成就不能告诉渲染进程改好了）',
             !diskFull.trace.includes('main.settings-changed'), diskFull.trace.join(' → '));
+
+        // saveSettings 不抛、只返回 false（真实实现里 writeFileSync 的 catch 就是这么收口的）：
+        // 1.6 移植批让主进程在这种情况下回滚到改前的一份，否则内存是新配置、磁盘是旧配置，
+        // 下次启动就"神秘回退"。
+        const writeFalse = await runUpdate({ font: 'Courier New' }, { saveSettings: () => false });
+        check('落盘返回 false 时如实报失败并带上正文',
+            writeFalse.result && writeFalse.result.success === false && typeof writeFalse.result.error === 'string',
+            JSON.stringify(writeFalse.result));
+        check('落盘返回 false 时内存里的 settings 回滚到改前',
+            (writeFalse.scope?.ctx?.settings || writeFalse.settingsObj).font === 'Consolas',
+            JSON.stringify((writeFalse.scope?.ctx?.settings || writeFalse.settingsObj)));
+        check('回滚路径同样不广播',
+            !writeFalse.trace.includes('main.settings-changed'), writeFalse.trace.join(' → '));
 
         // 通道侧：载荷必须原样到 updateSettings，返回值必须原样回给渲染进程。
         // handler 是同步的，compileHandler 会强行包成 async 改掉返回类型，这里另配一个同步版。
