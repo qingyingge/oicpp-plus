@@ -402,7 +402,8 @@ class SampleTester {
         }
 
         const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
-        if (reserved.test(cleaned)) {
+        // Windows 保留设备名带任何扩展名仍然非法（con.cpp、nul.txt）。
+        if (reserved.test(cleaned.replace(/\.[^.]*$/, ''))) {
             cleaned = `_${cleaned}`;
         }
 
@@ -541,7 +542,10 @@ class SampleTester {
 
             newRunAllBtn.addEventListener('click', () => {
                 logInfo('[样例测试器] 运行所有样例按钮被点击');
-                this.runAllSamples();
+                // try 之外的几行（克隆按钮前的取数）仍可能抛；不接住就是 unhandled rejection
+                this.runAllSamples().catch((error) => {
+                    logError('[样例测试器] 运行所有样例失败:', error);
+                });
             });
         }
 
@@ -1634,7 +1638,8 @@ class SampleTester {
         }
 
         const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
-        if (reserved.test(safe)) {
+        // 同上：保留名带扩展名仍然非法，比较的是去掉后缀的主干。
+        if (reserved.test(safe.replace(/\.[^.]*$/, ''))) {
             safe = `_${safe}`;
         }
 
@@ -2546,6 +2551,21 @@ class SampleTester {
 
             await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
 
+        } catch (error) {
+            // 批次级失败（并行度探测、SPJ 预热这类）原先只会走到 finally：按钮复位了，
+            // 但屏幕上一个提示都没有，样例列表还停在上一轮的结果上。
+            logError('[样例测试器] 运行所有样例失败:', error);
+            const message = (error as Error)?.message || String(error);
+            for (const sample of runSamples) {
+                sample.result = { status: 'CE', output: message, time: 0 };
+                if (this.isCurrentSamplesContext(runSamplesFilePath, runCurrentFile)) {
+                    this.updateSampleResult(sample.id, sample.result, sample);
+                }
+            }
+            try {
+                await this.persistRunResults(runSamplesFilePath, runCurrentFile, runSamples);
+            } catch (_) { }
+            this.showCompileOutputForResult(window.i18n.t('tester.runAll'), { success: false, stderr: message });
         } finally {
             this._runningAllSamples = false;
             this.deferSpjTempCleanup = false;
@@ -3060,6 +3080,30 @@ class SampleTester {
             throw new Error(window.i18n.t('tester.noActiveCppFile'));
         }
 
+        // this.currentFile 靠 1 秒轮询同步；切了标签立刻运行会把新文件的内容写进旧路径。
+        // 以编辑器里的真实路径为准，不一致就拒跑并催刷新，绝不跨文件覆盖。
+        // 取路径本身可能抛（编辑器还没建好），那种情况放行；判定不一致用布尔量，
+        // 不拿译文做匹配 —— 改一次译文就会把这条守卫静默失效。
+        let editorPathMatches = false;
+        let editorPathChecked = false;
+        try {
+            const editorMgr = window.editorManager || window.monacoEditorManager;
+            const currentEditor = editorMgr?.currentEditor;
+            const editorPath = currentEditor?.getFilePath ? currentEditor.getFilePath() : currentEditor?.filePath;
+            const normPath = (p: unknown) => String(p ?? '').replace(/\\/g, '/');
+            const pathStr = String(editorPath ?? '');
+            if (pathStr && !pathStr.startsWith('untitled') && /\.(cpp|cc|cxx|c)$/i.test(pathStr)) {
+                editorPathChecked = true;
+                editorPathMatches = normPath(pathStr) === normPath(this.currentFile);
+            }
+        } catch (error) {
+            logWarn('[样例测试器] 读取当前编辑器路径失败:', error);
+        }
+        if (editorPathChecked && !editorPathMatches) {
+            this.refresh().catch((e) => logWarn('[样例测试器] 刷新当前文件失败:', e));
+            throw new Error(window.i18n.t('tester.fileSwitched'));
+        }
+
         const content = window.editorManager?.getCurrentContent() || '';
         logInfo('[样例测试器] 获取到的文件内容长度:', content.length);
         if (!content.trim()) {
@@ -3189,7 +3233,8 @@ class SampleTester {
 
     compareOutput(actual: string, expected: string) {
         const normalize = (str: string) => {
-            return String(str || '').replace(/\r\n?/g, '\n').split('\n')
+            // BOM 是不可见字符，留着就会把「内容一样」判成 WA，而且界面上看不出差别。
+            return String(str || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n')
                 .map(line => line.trimEnd())
                 .join('\n')
                 .replace(/\n+$/, '');
@@ -3308,14 +3353,16 @@ class SampleTester {
     }
 
     createHighlightedOutput(actual: string, expected: string) {
-        const safeActual = this.truncateOutput(actual || '');
-        const actualLines = safeActual.split('\n');
-        const expectedLines = expected.split('\n');
+        // 这里拿到的就该是未截断的原文（调用处限量传入）：先 truncate 再高亮，
+        // 会让差异标记在截断点之后全部消失，用户以为后面是一致的。
+        const actualLines = String(actual || '').split('\n');
+        const expectedLines = String(expected || '').split('\n');
         const maxLines = 100;
 
         let result = '';
         const maxCompareLines = Math.max(actualLines.length, expectedLines.length);
-        const displayLines = Math.min(maxLines, actualLines.length);
+        // 只按 actual 的行数展示，期望输出更长时多出来的行就完全看不到。
+        const displayLines = Math.min(maxLines, maxCompareLines);
 
         for (let i = 0; i < displayLines; i++) {
             const actualLine = actualLines[i] || '';
@@ -3420,7 +3467,9 @@ class SampleTester {
                         diffInfo.style.display = 'inline';
                     }
 
-                    const highlightedOutput = this.createHighlightedOutput(processedOutput, expectedOutput);
+                    // 高亮用未截断的原始输出（总量仍设上限，极端输出会把界面卡死）
+                    const highlightSource = String(actualOutput || '').slice(0, 20000);
+                    const highlightedOutput = this.createHighlightedOutput(highlightSource, expectedOutput);
 
                     outputTextarea.style.display = 'none';
 
@@ -3818,7 +3867,9 @@ class SampleTester {
             const actualFile = await window.electronAPI.saveTempFile(`spj_actual_${suffix}.txt`, actualOutput);
             const expectedFile = await window.electronAPI.saveTempFile(`spj_expected_${suffix}.txt`, expectedOutput);
             const tempFiles = [inputFile, actualFile, expectedFile];
-            tempFiles.forEach(file => this.spjTempFiles.add(file));
+            // saveTempFile 失败返回 null，混进去之后 cleanup 会拿 null 去 deleteTempFile，
+            // 整批清理在第一项就抛掉，剩下的临时文件全留在盘上。
+            tempFiles.filter(Boolean).forEach(file => this.spjTempFiles.add(file));
 
             try {
                 const workingDir = await window.electronAPI.pathDirname(spjExecutablePath);

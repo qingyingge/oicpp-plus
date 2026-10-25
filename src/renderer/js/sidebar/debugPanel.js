@@ -78,10 +78,18 @@ class DebugPanel {
                 <div class="category-content"><div id="local-variables"><div class="waiting-debug-message" data-i18n="debug.waitingDebug">等待开始调试...</div></div></div>
               </div>
               <div class="variable-category">
+                <div class="category-header" data-cat="global"><span class="expand-arrow">▼</span> <span data-i18n="debug.globalVariables">全局变量</span></div>
+                <div class="category-content"><div id="global-variables"><div class="no-debug-message" data-i18n="debug.noItems">暂无</div></div></div>
+              </div>
+              <div class="variable-category">
                 <div class="category-header" data-cat="watch"><span class="expand-arrow">▼</span> <span data-i18n="debug.watch">监视</span></div>
                 <div class="category-content"><div id="watch-variables"><div class="no-debug-message" data-i18n="debug.noItems">暂无</div></div></div>
               </div>
             </div>
+          </div>
+          <!-- _renderStack 找的就是这个节点；缺了它调用栈整块面板不渲染 -->
+          <div class="debug-section"><h4 class="debug-section-title" data-i18n="debug.callStack">调用栈</h4>
+            <div id="call-stack" class="call-stack"></div>
           </div>
         </div>
   </div>`;
@@ -315,6 +323,7 @@ class DebugPanel {
             }
         }
         this._renderVariableGroup('#local-variables', this.variableCache.local, 'local');
+        this._renderVariableGroup('#global-variables', this.variableCache.global, 'global');
         this._renderVariableGroup('#watch-variables', this.variableCache.watches, 'watch');
     }
     _renderVariables(v) {
@@ -338,6 +347,7 @@ class DebugPanel {
             });
         }
         this._renderVariableGroup('#local-variables', this.variableCache.local, 'local');
+        this._renderVariableGroup('#global-variables', this.variableCache.global, 'global');
         this._renderVariableGroup('#watch-variables', this.variableCache.watches, 'watch');
     }
     _renderVariableGroup(selector, variables, scope) {

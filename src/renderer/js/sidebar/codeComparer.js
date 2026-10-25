@@ -549,7 +549,6 @@ class CodeComparer {
         }
     }
     async startComparison() {
-        await this.autoSaveCurrentFile();
         if (!this.testCodePath) {
             const task = this.getActiveTask();
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.selectTestCodeFirst'));
@@ -558,13 +557,30 @@ class CodeComparer {
         const task = this.getOrCreateTask(this.testCodePath);
         if (!task)
             return;
+        // 入口同步占位：原先第一件事是 await autoSaveCurrentFile()，isRunning 要等一整段
+        // await 之后才置 true，双击「开始」或「停止后立刻开始」会并发跑两轮同一任务。
+        // fork 用 mode='stopping' 路由完成事件（不改 isRunning 的生命周期），所以守卫看 mode。
+        if (task.state.starting || task.state.isRunning
+            || task.state.mode === 'running' || task.state.mode === 'stopping') {
+            this.showTaskCompileError(task, 'general', window.i18n.t('compare.taskRunning'));
+            return;
+        }
+        task.state.starting = true;
+        try {
+            await this.startComparisonBody(task);
+        }
+        finally {
+            task.state.starting = false;
+        }
+    }
+    /**
+     * startComparison 的正文：调用前入口已经占好 starting 位，这里只管往下走。
+     */
+    async startComparisonBody(task) {
+        await this.autoSaveCurrentFile();
         this.syncInstanceConfigToTask(task);
         if (!task.config.standardCodePath || !task.config.testCodePath || !task.config.generatorPath) {
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.selectAllFilesFirst'));
-            return;
-        }
-        if (task.state.isRunning) {
-            this.showTaskCompileError(task, 'general', window.i18n.t('compare.taskRunning'));
             return;
         }
         logInfo('对拍器文件检查:');
@@ -1231,7 +1247,10 @@ class CodeComparer {
             ? { ...executablePath, skipPreKill: true }
             : { executablePath, skipPreKill: true };
         const result = (await window.electronAPI.runProgram(execOptions, input, timeLimit));
-        const trimmedOutput = (result.output || '').trim();
+        // 不能把 trim 后的串当输出：生成器写出的前导空白属于测试数据，
+        // 被测程序输出的前导空白也会影响 SPJ 判定。trim 只留给错误正文。
+        const rawOutput = result.output || '';
+        const trimmedOutput = rawOutput.trim();
         const outputLimitExceeded = !!result.outputLimitExceeded;
         let errorMessage = '';
         if (outputLimitExceeded) {
@@ -1243,7 +1262,7 @@ class CodeComparer {
             errorMessage = trimmedOutput || result.stderr || window.i18n.t('compare.exitCode', { code: result.exitCode });
         }
         return {
-            output: trimmedOutput,
+            output: rawOutput,
             error: errorMessage,
             timeout: !!result.timeout,
             time: result.time,
@@ -1457,9 +1476,10 @@ class CodeComparer {
         const resetBtn = ccButton('compare-reset-btn');
         const running = !!task?.state?.isRunning && (task?.state?.mode === 'running' || task?.state?.mode === 'stopping');
         if (startBtn)
-            startBtn.disabled = running;
+            startBtn.disabled = running || !!task?.state?.starting;
+        // 按下停止到 runTask 收口之间还有一段收尾，此时再点「停止」是空操作
         if (stopBtn)
-            stopBtn.disabled = !running;
+            stopBtn.disabled = !running || !!task?.state?.shouldStop;
         if (resetBtn)
             resetBtn.disabled = running;
     }

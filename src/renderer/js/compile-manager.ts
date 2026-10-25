@@ -1419,15 +1419,42 @@ class CompilerManager {
                 if (m) {
                     line.classList.add('output-link');
                     line.style.cursor = 'pointer';
-                    line.addEventListener('click', () => {
+                    line.addEventListener('click', async () => {
                         const [, file, lineNum, colNum] = m;
-                        const editor = window.editorManager?.getCurrentEditor?.();
-                        if (editor && editor.revealLineInCenter) {
-                            const ln = parseInt(lineNum ?? '', 10) || 1;
-                            const cn = colNum ? parseInt(colNum, 10) : 1;
-                            try { editor.revealLineInCenter(ln); } catch {}
-                            try { editor.setPosition({ lineNumber: ln, column: cn }); } catch {}
+                        const ln = parseInt(lineNum ?? '', 10) || 1;
+                        const cn = colNum ? parseInt(colNum, 10) : 1;
+                        const revealIn = (editor: { revealLineInCenter?: (n: number) => void; setPosition?: (p: { lineNumber: number; column: number }) => void } | null | undefined) => {
+                            if (!editor || !editor.revealLineInCenter) return;
+                            try { editor.revealLineInCenter(ln); } catch { }
+                            try { editor.setPosition?.({ lineNumber: ln, column: cn }); } catch { }
+                        };
+                        const currentEditor = window.editorManager?.getCurrentEditor?.();
+                        const norm = (p: unknown) => String(p ?? '').replace(/\\/g, '/');
+                        const currentPath = norm(currentEditor?.filePath);
+                        const targetPath = norm(file);
+                        const sameFile = !!currentPath && (
+                            currentPath === targetPath
+                            || currentPath.endsWith('/' + targetPath.split('/').pop())
+                            || targetPath.endsWith('/' + currentPath.split('/').pop())
+                        );
+                        if (sameFile) {
+                            revealIn(currentEditor);
+                            return;
                         }
+                        // 头文件里的报错点在当前编辑器上定位，等于把用户带到别的文件去指错行：
+                        // 先打开报错所属文件，再定位。
+                        try {
+                            const content = await window.electronAPI?.readFileContent?.(String(file ?? ''));
+                            if (typeof content === 'string') {
+                                const name = targetPath.split('/').pop() || String(file ?? '');
+                                await window.tabManager?.openFile?.(name, content, false, String(file ?? ''));
+                                revealIn(window.editorManager?.getCurrentEditor?.());
+                                return;
+                            }
+                        } catch (e) {
+                            logWarn('[编译输出] 打开错误文件失败:', e);
+                        }
+                        revealIn(currentEditor);
                     });
                 }
             } catch {}
