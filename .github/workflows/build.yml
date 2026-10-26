@@ -3,13 +3,13 @@ name: Build and Release
 on:
   push:
     tags:
-      # 只构建 fork 自己的发布标签：形如 v1.6.0-beta1-plus1（必须以 -plus.<后缀> 结尾）。
+      # 只构建 fork 自己的发布标签：形如 v1.6.0-beta1-plus.1（必须以 -plus.<后缀> 结尾）。
       # 上游的 v1.6.0 / v1.6.0-beta1 这类纯上游版本号不再触发本仓库打包与 Release。
       - "v*-plus.*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name to release (e.g., v1.6.0-beta1-plus1)"
+        description: "Tag name to release (e.g., v1.6.0-beta1-plus.1)"
         required: true
 
 permissions:

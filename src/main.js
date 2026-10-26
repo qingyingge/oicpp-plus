@@ -35,7 +35,7 @@ const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
 const { samePath } = require('./utils/path-identity');
-const APP_VERSION = '1.6.0-beta1-plus1';
+const APP_VERSION = '1.6.0-beta1-plus.1';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
 const LSP_REQUEST_TIMEOUT_MS = 30000;
@@ -2350,7 +2350,7 @@ function resolveValidatedInstallerPath(pending) {
         return null;
     const installerDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
     const base = path.basename(installerPath);
-    // 预发布后缀必须容得下，而且要容多段：fork 的版本号是 1.6.0-beta1-plus1，
+    // 预发布后缀必须容得下，而且要容多段：fork 的版本号是 1.6.0-beta1-plus.1，
     // 只认 \d+\.\d+\.\d+-Setup 或单段 -beta1 的话判定不通过，静默自动更新就永远不触发。
     const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)*-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
     return isPathInsideDir(installerPath, installerDir) && looksLikeInstaller ? installerPath : null;

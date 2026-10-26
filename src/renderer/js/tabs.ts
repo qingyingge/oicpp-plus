@@ -5611,7 +5611,7 @@ void hello() {
     // build-info.json 由主进程 require，渲染层读不到，这里在首次需要时取一次并缓存。
     getBuildVersionLabel() {
         if (this._welcomeVersionLabel) return this._welcomeVersionLabel;
-        const fallback = '1.6.0-beta1-plus1';
+        const fallback = '1.6.0-beta1-plus.1';
         this._welcomeVersionLabel = fallback;
         if (window.electronAPI?.getBuildInfo) {
             Promise.resolve(window.electronAPI.getBuildInfo())
