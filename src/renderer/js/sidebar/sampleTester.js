@@ -1703,8 +1703,7 @@ class SampleTester {
                 cleanupFiles: []
             };
         }
-        const userHome = await window.electronAPI.getUserHome();
-        const baseDir = await window.electronAPI.pathJoin(userHome, '.oicpp-plus', 'sampleTester', 'freopen_runs');
+        const baseDir = await window.electronAPI.getUserDataPath(['sampleTester', 'freopen_runs']);
         const runDirName = `sample_${sample?.id || 'x'}`;
         const runDir = await window.electronAPI.pathJoin(baseDir, runDirName);
         await window.electronAPI.ensureDirectory(baseDir);
@@ -2800,7 +2799,7 @@ class SampleTester {
             };
         }
         const currentFilePathInfo = await window.electronAPI.getPathInfo(this.currentFile);
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        const tempDir = await window.electronAPI.getUserDataPath(['codeTemp']);
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(tempDir, cachedExeName);
         const result = await window.electronAPI.compileFile({
@@ -3275,7 +3274,7 @@ class SampleTester {
             };
         }
         const isWin2 = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        const tempDir = await window.electronAPI.getUserDataPath(['codeTemp']);
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(tempDir, `spj_${cacheKey}${isWin2 ? '.exe' : ''}`);
         const spjPathInfo = await window.electronAPI.getPathInfo(spjPath);
@@ -3365,7 +3364,7 @@ class SampleTester {
             };
         }
         const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        const tempDir = await window.electronAPI.getUserDataPath(['codeTemp']);
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(tempDir, 'grader_' + cacheKey + (isWin ? '.exe' : ''));
         const graderPathInfo = await window.electronAPI.getPathInfo(graderPath);

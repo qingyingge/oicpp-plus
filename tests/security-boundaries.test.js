@@ -16,6 +16,7 @@ const path = require('path');
 const vm = require('vm');
 const os = require('os');
 const { callbackBody, funcDecl, scalarConst } = require('./fixtures/source-extract');
+const { readDataDirName, makeUserDataPath } = require('./fixtures/data-root-sandbox');
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -44,9 +45,13 @@ const observedKeys = [];
 // 模块级可变绑定要按场景注入，共用 context 会串味。
 function makeScope(extraGlobals) {
     const calls = { logWarn: [], logInfo: [], logError: [], t: [] };
+    // 主进程的数据根由 utils/data-root 解析。沙箱默认按本场景注入的 os 替身拼 HOME，
+    // 调用方仍可用 extraGlobals.userDataPath 覆盖（例如便携模式要假装根在 exe 同级）。
+    const effectiveOs = (extraGlobals && extraGlobals.os) || os;
     const ctx = vm.createContext({
         path, os, fs, URL, Map, Set, JSON, Math, Date, RegExp, Error,
         String, Number, Boolean, Array, Object, Promise,
+        userDataPath: makeUserDataPath(effectiveOs.homedir()),
         logWarn: (...a) => { calls.logWarn.push(a.map(String)); },
         logInfo: (...a) => { calls.logInfo.push(a.map(String)); },
         logError: (...a) => { calls.logError.push(a.map(String)); },
@@ -178,8 +183,9 @@ function readDeclaredWhitelist(src) {
     return m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
 }
 
-// 用户数据目录名也从源码里读，测试不复制第二份配置
-const USER_DATA_DIR_NAME = (mainSource.match(/const USER_DATA_DIR_NAME\s*=\s*'([^']+)'/) || [])[1];
+// 用户数据目录名也从源码里读，测试不复制第二份配置。
+// 真源自 1.6 起在 src/utils/data-root.ts（main.js 里已不再持有这个字面量）。
+const USER_DATA_DIR_NAME = readDataDirName();
 
 // ---------------------------------------------------------------------------
 // 主流程

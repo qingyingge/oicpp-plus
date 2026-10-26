@@ -725,6 +725,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openBackupSettings: () => safeIpcRenderer.invoke('open-backup-settings'),
     getPlatform: () => safeIpcRenderer.invoke('get-platform'),
     getUserHome: () => safeIpcRenderer.invoke('get-user-home'),
+    // 应用自有状态目录（codeTemp / compare / sampleTester ...）一律向主进程要，
+    // 不要拿 getUserHome 自己拼：便携模式下数据根不在家目录。
+    getUserDataPath: (segments) => safeIpcRenderer.invoke('get-user-data-path', segments),
     getUserIconPath: () => safeIpcRenderer.invoke('get-user-icon-path'),
     getBuildInfo: () => safeIpcRenderer.invoke('get-build-info'),
     readThirdPartyLicense: (name) => safeIpcRenderer.invoke('read-third-party-license', name),

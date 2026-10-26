@@ -36,7 +36,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.logger = exports.Logger = void 0;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const os = __importStar(require("os"));
+const data_root_1 = require("./data-root");
 const SENSITIVE_KEY_RE = /token|password|passwd|secret|authorization|cookie|credential|apikey|api_key/i;
 // 裸字符串里的敏感键值：键名可以带引号（两边必须配平）、分隔符除 : = 外还认 "token is xxx"
 // 这种散文写法，值优先整段引号内容吃掉 —— 只吃第一个非空白字符的话，
@@ -45,14 +45,18 @@ const SENSITIVE_INLINE_RE = /(["']?)(token|password|passwd|secret|authorization|
 const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._\-]+/gi;
 class Logger {
     initialized = false;
-    logDir;
     logFile = null;
     _buffer = [];
     _batchSize = 200;
     _maxBufferLines = 5000;
     _flushScheduled = false;
-    constructor() {
-        this.logDir = path.join(os.homedir(), '.oicpp-plus', 'logs');
+    _logDir = null;
+    // 目录延迟到第一次真正要用时才解析：main.js 第 19 行就 require 本模块，
+    // 在构造期把路径固化会让便携模式的日志永远写在系统盘。
+    get logDir() {
+        if (this._logDir === null)
+            this._logDir = (0, data_root_1.userDataPath)('logs');
+        return this._logDir;
     }
     _scheduleFlush() {
         if (this._flushScheduled)

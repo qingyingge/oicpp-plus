@@ -7,6 +7,7 @@ const vm = require('vm');
 const { EventEmitter } = require('events');
 const { callbackBody, classMethod, funcDecl } = require('./fixtures/source-extract');
 const { editOutOfBounds, replayEdit } = require('./fixtures/monaco-edit-replay');
+const { readDataDirName, makeUserDataPath } = require('./fixtures/data-root-sandbox');
 const {
     buildClangFormatArgs,
     formatCodeWithClangFormat,
@@ -451,7 +452,7 @@ function makePauserSandbox(options = {}) {
         fs: fsStub, path, crypto, Buffer, EventEmitter,
         os: { homedir: () => HOME },
         process: { platform: opts.platform || 'win32', env: { PATH: opts.pathEnv || '/usr/bin' } },
-        USER_DATA_DIR_NAME: UDN,
+        userDataPath: makeUserDataPath(HOME, UDN),
         CONSOLE_PAUSER_SOURCE: opts.pauserSource || 'PAUSER-C-SOURCE',
         logInfo: (...a) => { logs.info.push(a.map(fmt)); },
         logWarn: (...a) => { logs.warn.push(a.map(fmt)); },
@@ -1166,7 +1167,7 @@ function makeModel(lines, state = {}) {
     // 打包基准目录从 resourcesPath 换成 __dirname、缓存标记忘记置位，字符串全都照样命中。
     // 现在按场景搭 vm 沙箱：existsSync/statSync 由集合驱动并记账，
     // 每次落在哪个候选上、走没走过 PATH 都能数出来。
-    const USER_DATA_DIR_NAME = (mainSource.match(/const USER_DATA_DIR_NAME\s*=\s*'([^']+)'/) || [])[1];
+    const USER_DATA_DIR_NAME = readDataDirName();
     const RESOLVER_LETS = mainSource.match(
         /^let (?:cachedClangFormatExecutablePath|clangFormatExecutablePathResolved)[^\n]*$/gm) || [];
     const CACHE_LIMIT = Number((mainSource.match(/^const CLANG_FORMAT_RESULT_CACHE_LIMIT\s*=\s*(\d+)/m) || [])[1]);
@@ -1206,7 +1207,7 @@ function makeModel(lines, state = {}) {
             app: { isPackaged },
             process: { platform, resourcesPath, env },
             __dirname: '/app/src',
-            USER_DATA_DIR_NAME,
+            userDataPath: makeUserDataPath(homedir, USER_DATA_DIR_NAME),
             CLANG_FORMAT_RESULT_CACHE_LIMIT: CACHE_LIMIT,
             clangFormatInFlight: new Map(),
             clangFormatResultCache: new Map(),

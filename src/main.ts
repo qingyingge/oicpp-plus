@@ -40,6 +40,7 @@ const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
 const { samePath } = require('./utils/path-identity');
+const { getDataRoot, isPortableDataRoot, userDataPath } = require('./utils/data-root');
 
 // 业务错误：Error 之上携带 code/errno/syscall/path（Node 风格）或 lspCode（LSP 风格）
 type OicppError = NodeJS.ErrnoException & { lspCode?: number };
@@ -245,7 +246,8 @@ interface CommandProbeOptions {
 }
 
 const APP_VERSION = '1.6.0-beta1-plus.1';
-const USER_DATA_DIR_NAME = '.oicpp-plus';
+// 自有状态路径一律经 userDataPath(...) 拼装，实现见 utils/data-root.ts：
+// 基目录可以是家目录，也可以是命中便携标记后的 exe 同级目录。
 const SAVE_ALL_TIMEOUT = 4000;
 const LSP_REQUEST_TIMEOUT_MS = 30000;
 const LSP_MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
@@ -357,7 +359,7 @@ async function openExternalOnce(url: string) {
 }
 
 function getUserIconPath() {
-    const userIconPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp-plus.ico');
+    const userIconPath = userDataPath('oicpp-plus.ico');
     if (fs.existsSync(userIconPath)) {
         return userIconPath;
     }
@@ -485,12 +487,12 @@ function resolveClangdRootFromBundle() {
 // 用户侧工具目录：随包分发的二进制（clangd、可能的 clang-format）都扁平地放这里，
 // 不再套一层 bin/，也不再按功能拆成 LSP/ 之类会误导的子目录。
 function getUserToolsRoot() {
-    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'bin');
+    return userDataPath('bin');
 }
 
 // 旧版把工具放在 <userData>/LSP/bin 下，升级时需要把它搬过来
 function getLegacyUserToolsRoot() {
-    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP', 'bin');
+    return userDataPath('LSP', 'bin');
 }
 
 function resolveClangdExecutable(rootDir: string) {
@@ -671,7 +673,7 @@ async function ensureClangdUserBundle() {
 const COMPILER_INFO_CACHE_VERSION = 2;
 
 function getCompilerInfoCacheFile() {
-    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'LSP', 'compiler-info-cache.json');
+    return userDataPath('LSP', 'compiler-info-cache.json');
 }
 
 /**
@@ -2564,7 +2566,7 @@ function resolveValidatedInstallerPath(pending: MainSettings['pendingUpdate']) {
     if (!pending || typeof pending !== 'object') return null;
     const installerPath = pending.installerPath;
     if (!installerPath || typeof installerPath !== 'string') return null;
-    const installerDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
+    const installerDir = userDataPath();
     const base = path.basename(installerPath);
     // 预发布后缀必须容得下，而且要容多段：fork 的版本号是 1.6.0-beta1-plus.1，
     // 只认 \d+\.\d+\.\d+-Setup 或单段 -beta1 的话判定不通过，静默自动更新就永远不触发。
@@ -2907,11 +2909,11 @@ function getHelperSourceFingerprint(source: string) {
 }
 
 function getConsolePauserTargetPath() {
-    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'consolepauser.exe');
+    return userDataPath('consolepauser.exe');
 }
 
 function getMemWatchTargetPath() {
-    return path.join(os.homedir(), USER_DATA_DIR_NAME, 'memwatch.exe');
+    return userDataPath('memwatch.exe');
 }
 
 function getCompilerRuntimeBinPaths(compilerPath: string) {
@@ -4370,7 +4372,7 @@ function runQuitCleanup() {
     try { if (sampleTesterServer) { sampleTesterServer.close(); sampleTesterServer = null; } } catch (_) { }
     try { if (competitiveCompanionServer) { competitiveCompanionServer.close(); competitiveCompanionServer = null; } } catch (_) { }
     try {
-        const tempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+        const tempDir = userDataPath('codeTemp');
         fs.rmSync(tempDir, { recursive: true, force: true });
         logInfo('[退出] 已清理临时目录及编译产物:', tempDir);
     } catch (error) {
@@ -4929,6 +4931,9 @@ function setupIPC() {
             arch: process.arch,
             nodeVersion: process.version,
             homedir: os.homedir(),
+            // 便携模式下数据根不在 homedir，排障时这两个字段才是真相
+            dataRoot: getDataRoot(),
+            portable: isPortableDataRoot(),
             tmpdir: os.tmpdir(),
             osRelease: os.release()
         };
@@ -5406,7 +5411,7 @@ function setupIPC() {
         saveAsFile();
     });
 
-    const tempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+    const tempDir = userDataPath('codeTemp');
     if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
     }
@@ -5416,7 +5421,7 @@ function setupIPC() {
             if (!filePath || typeof filePath !== 'string') {
                 throw new Error(t('error.invalidFilePath'));
             }
-            const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+            const codeTempDir = userDataPath('codeTemp');
             const tempPath = path.resolve(codeTempDir, filePath);
             if (!isPathInsideDir(tempPath, codeTempDir)) {
                 throw new Error(t('error.pathTraversalBlocked'));
@@ -5441,7 +5446,7 @@ function setupIPC() {
             if (!base64Data || typeof base64Data !== 'string') {
                 throw new Error(t('error.missingFileData'));
             }
-            const tempDirPath = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+            const tempDirPath = userDataPath('codeTemp');
             if (!fs.existsSync(tempDirPath)) {
                 fs.mkdirSync(tempDirPath, { recursive: true });
             }
@@ -5508,7 +5513,7 @@ function setupIPC() {
             if (!filePath || typeof filePath !== 'string') {
                 throw new Error(t('error.invalidFilePath'));
             }
-            const codeTempDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp');
+            const codeTempDir = userDataPath('codeTemp');
             const tempPath = path.resolve(codeTempDir, filePath);
             if (!isPathInsideDir(tempPath, codeTempDir)) {
                 throw new Error(t('error.pathTraversalBlocked'));
@@ -5529,8 +5534,8 @@ function setupIPC() {
 
     // 允许删除的运行时目录：codeTemp 放临时文件，compare 放对拍器的 std_/test_/generator_ 产物
     const TEMP_DELETE_ROOTS = [
-        path.join(os.homedir(), USER_DATA_DIR_NAME, 'codeTemp'),
-        path.join(os.homedir(), USER_DATA_DIR_NAME, 'compare')
+        userDataPath('codeTemp'),
+        userDataPath('compare')
     ].map(dir => path.resolve(dir));
 
     // 用 path.relative 判断包含关系：startsWith 会把 codeTempEvil 这类同前缀兄弟目录误判为合法
@@ -7215,11 +7220,28 @@ function setupIPC() {
         return os.homedir();
     });
 
+    // 渲染层要的 `<数据根>/.oicpp-plus/<子目录>`：必须由主进程解析。让它拿 get-user-home
+    // 自己拼的话，便携模式下只会拼回系统盘（渲染层看得见的是家目录，不是数据根）。
+    // 校验只堵分隔符、NUL 与 . / .. —— 一段名字里只要没有分隔符就点不出上一层，
+    // 而 taskDirName 这类目录名允许空格和中文，收紧成 [A-Za-z0-9._-] 会把 freopen 跑挂。
+    ipcMain.handle('get-user-data-path', async (_event: Electron.IpcMainEvent, segments: unknown) => {
+        const list = Array.isArray(segments) ? segments : [];
+        const unsafe = list.filter((segment: unknown) =>
+            typeof segment !== 'string'
+            || segment.length === 0
+            || segment === '.' || segment === '..'
+            || segment.includes('/') || segment.includes('\\') || segment.includes('\0'));
+        if (unsafe.length > 0) {
+            logWarn('[数据根] 拒绝非法子路径段:', JSON.stringify(unsafe));
+            throw new Error(t('error.pathTraversalBlocked'));
+        }
+        return userDataPath(...(list as string[]));
+    });
+
     ipcMain.handle('get-downloaded-compilers', async () => {
         logInfo('[获取已下载编译器] 开始获取已下载编译器列表');
         try {
-            const userHome = os.homedir();
-            const compilersDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers');
+            const compilersDir = userDataPath('Compilers');
             logInfo('[获取已下载编译器] 编译器目录:', compilersDir);
 
             if (!fs.existsSync(compilersDir)) {
@@ -7260,8 +7282,7 @@ function setupIPC() {
         }
 
         return new Promise(async (resolve) => {
-            const userHome = os.homedir();
-            const compilersDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers');
+            const compilersDir = userDataPath('Compilers');
             const versionDir = path.join(compilersDir, version);
 
             if (!isPathInsideDir(versionDir, compilersDir) || path.resolve(versionDir) === path.resolve(compilersDir)) {
@@ -7648,8 +7669,7 @@ function setupIPC() {
     ipcMain.handle('select-compiler', async (event: Electron.IpcMainEvent, version: string) => {
         logInfo('[选择编译器] 开始选择编译器，版本:', version);
         try {
-            const userHome = os.homedir();
-            const versionDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers', version);
+            const versionDir = userDataPath('Compilers', version);
 
             if (!fs.existsSync(versionDir)) {
                 return { success: false, error: t('main.compilerVersionMissing') };
@@ -7678,8 +7698,7 @@ function setupIPC() {
 
     ipcMain.handle('get-downloaded-testlibs', async (event: Electron.IpcMainEvent) => {
         try {
-            const userHome = os.homedir();
-            const testlibsDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs');
+            const testlibsDir = userDataPath('Testlibs');
 
             if (!fs.existsSync(testlibsDir)) {
                 return [];
@@ -7711,8 +7730,7 @@ function setupIPC() {
         }
 
         return new Promise(async (resolve) => {
-            const userHome = os.homedir();
-            const testlibsDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs');
+            const testlibsDir = userDataPath('Testlibs');
             const versionDir = path.join(testlibsDir, version);
 
             if (!isPathInsideDir(versionDir, testlibsDir) || path.resolve(versionDir) === path.resolve(testlibsDir)) {
@@ -8090,8 +8108,7 @@ function setupIPC() {
     ipcMain.handle('select-testlib', async (event: Electron.IpcMainEvent, version: string) => {
         logInfo('[选择testlib] 开始选择testlib，版本:', version);
         try {
-            const userHome = os.homedir();
-            const versionDir = path.join(userHome, USER_DATA_DIR_NAME, 'Testlibs', version);
+            const versionDir = userDataPath('Testlibs', version);
             logInfo('[选择testlib] 检查版本目录:', versionDir);
 
             if (!fs.existsSync(versionDir)) {
@@ -8336,15 +8353,16 @@ function setupIPC() {
 
 function ensureLegacyDataMigration() {
     try {
+        // 旧版固定写在 ~/.oicpp，读取端不随便携模式变；落地目标才是当前解析出的数据根
         const legacyDir = path.join(os.homedir(), '.oicpp');
-        const newDir = path.join(os.homedir(), '.oicpp-plus');
-        const newSettings = path.join(newDir, 'settings.json');
+        const targetDir = userDataPath();
+        const newSettings = path.join(targetDir, 'settings.json');
         if (!fs.existsSync(legacyDir) || fs.existsSync(newSettings)) return;
         const legacySettings = path.join(legacyDir, 'settings.json');
         if (!fs.existsSync(legacySettings)) return;
-        fs.mkdirSync(newDir, { recursive: true });
+        fs.mkdirSync(targetDir, { recursive: true });
         fs.copyFileSync(legacySettings, newSettings);
-        logInfo('[Migration] 已从 ~/.oicpp 迁移 settings.json 到 ~/.oicpp-plus');
+        logInfo('[Migration] settings.json 已从', legacySettings, '复制到', newSettings);
     } catch (e) {
         logWarn('[Migration] 迁移旧版设置失败:', (e as Error)?.message || e);
     }
@@ -8902,7 +8920,7 @@ async function checkForUpdates(isManual = false) {
 
 async function cleanupOldInstallers(keepFile: string | null = null) {
     try {
-        const userOicppDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
+        const userOicppDir = userDataPath();
         if (!fs.existsSync(userOicppDir)) {
             return;
         }
@@ -9207,7 +9225,7 @@ function restoreSettingsBackupLinux() {
 function ensureUserIconForLinux() {
     if (process.platform !== 'linux') return;
     try {
-        const userIcon = path.join(os.homedir(), USER_DATA_DIR_NAME, 'oicpp-plus.ico');
+        const userIcon = userDataPath('oicpp-plus.ico');
         if (!fs.existsSync(userIcon)) {
             const srcIcon = path.join(__dirname, '../oicpp-plus.ico');
             if (fs.existsSync(srcIcon)) {
@@ -9250,7 +9268,7 @@ function checkPendingUpdate() {
 }
 
 function getSettingsPath() {
-    const settingsDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
+    const settingsDir = userDataPath();
     if (!fs.existsSync(settingsDir)) {
         fs.mkdirSync(settingsDir, { recursive: true });
     }
@@ -9859,7 +9877,7 @@ async function compileFile(options: Record<string, unknown>) {
         }
     const compileCacheVersion = 3;
     // 缓存按 signature 命名并集中存放：outputFile 每次都带时间戳，元数据若绑在它旁边就永远命中不了
-    const compileCacheDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'compile-cache');
+    const compileCacheDir = userDataPath('compile-cache');
     let compileCacheRecord = null;
     let cacheExePath = '';
     let cacheMetadataPath = '';
@@ -11654,7 +11672,7 @@ async function uploadClientLogFile(filePath: string) {
 
 function listClientLogFiles() {
     interface ClientLogFileEntry { name: string; path: string; size: number; mtimeMs: number }
-    const logDir = path.join(os.homedir(), USER_DATA_DIR_NAME, 'logs');
+    const logDir = userDataPath('logs');
     try {
         if (!fs.existsSync(logDir)) {
             return { success: true, logs: [] };
