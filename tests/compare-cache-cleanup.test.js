@@ -23,6 +23,7 @@ const check = (name, condition, extra = '') => {
 const root = path.join(__dirname, '..');
 const { callStatement, classMethod, compileMethod, ifStatement } = require('./fixtures/source-extract');
 const { loadLocales } = require('./fixtures/ci-block-runner');
+const { makeUserDataPath } = require('./fixtures/data-root-sandbox');
 const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 const comparerSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'sidebar', 'codeComparer.js'), 'utf8');
 
@@ -37,7 +38,7 @@ let isPathInsideTempRoots = null;
 let tempRoots = null;
 try {
     const snippet = mainSource.slice(helperStart, helperEnd);
-    const context = vm.createContext({ os, path, USER_DATA_DIR_NAME: '.oicpp-plus' });
+    const context = vm.createContext({ os, path, userDataPath: makeUserDataPath(os.homedir()) });
     vm.runInContext(`${snippet}\nthis.check = isPathInsideTempRoots; this.roots = TEMP_DELETE_ROOTS;`, context);
     isPathInsideTempRoots = context.check;
     tempRoots = context.roots;
@@ -297,7 +298,7 @@ const runCache = (opts = {}) => {
     };
     const ctx = vm.createContext({
         Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Promise,
-        path, os: { homedir: () => HOME }, USER_DATA_DIR_NAME: '.oicpp-plus',
+        path, os: { homedir: () => HOME }, userDataPath: makeUserDataPath(HOME),
         crypto: require('crypto'), process: { platform: o.platform, cwd: () => HOME },
         fs: fsStub,
         logInfo: (...a) => { logs.info.push(a.map((x) => String(x)).join(' ')); },

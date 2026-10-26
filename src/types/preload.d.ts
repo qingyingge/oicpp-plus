@@ -50,6 +50,9 @@ interface ElectronAPI {
   openBackupSettings(): Promise<unknown>;
   getPlatform(): Promise<string>;
   getUserHome(): Promise<string>;
+  // 应用自有状态目录：数据根由主进程解析（家目录，或便携模式下的 exe 同级目录）。
+  // 渲染层不要用 getUserHome + pathJoin 自己拼 <home>/.oicpp-plus/...，那样便携模式必漏。
+  getUserDataPath(segments: string[]): Promise<string>;
   readThirdPartyLicense(name: string): Promise<string>;
   getUserIconPath(): Promise<string>;
   getBuildInfo(): Promise<{ version?: string; buildTime?: string; author?: string; buildTag?: string; buildVersion?: string; buildNo?: string; clangdVersion?: string | null; clangFormatVersion?: string | null } | null>;

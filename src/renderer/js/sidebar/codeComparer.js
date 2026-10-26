@@ -797,8 +797,7 @@ class CodeComparer {
                 const testlibIncludePath = await window.electronAPI.pathJoin(compilerDir, '..', 'include');
                 compilerArgs += ` -I"${testlibIncludePath}"`;
             }
-            const homeDir = await window.electronAPI.getHomeDir();
-            const tempDir = await window.electronAPI.pathJoin(homeDir, '.oicpp-plus', 'compare');
+            const tempDir = await window.electronAPI.getUserDataPath(['compare']);
             await window.electronAPI.ensureDir(tempDir);
             const timestamp = Date.now();
             const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
@@ -1294,9 +1293,8 @@ class CodeComparer {
                 cleanupFiles: []
             };
         }
-        const homeDir = await window.electronAPI.getHomeDir();
         const taskDirName = this.buildFreopenTaskDirName(task?.key || 'task');
-        const baseDir = await window.electronAPI.pathJoin(homeDir, '.oicpp-plus', 'compare', 'freopen_runs', taskDirName);
+        const baseDir = await window.electronAPI.getUserDataPath(['compare', 'freopen_runs', taskDirName]);
         const runDirName = `${role || 'program'}_${caseIndex || 0}`;
         const runDir = await window.electronAPI.pathJoin(baseDir, runDirName);
         await window.electronAPI.ensureDir(baseDir);
