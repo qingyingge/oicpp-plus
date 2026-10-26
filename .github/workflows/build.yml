@@ -153,7 +153,9 @@ jobs:
         run: pnpm run prebuild:native
 
       - name: Ensure dmg-license is installed
-        run: pnpm add --no-save dmg-license
+        # pnpm 12 的 pnpm add 没有 --no-save（npm 写法，会直接 unexpected argument 退出）；
+        # 这里用 --dev，package.json 只在这次一次性 checkout 里被改，不回填仓库。
+        run: pnpm add --dev dmg-license
 
       - name: Ensure Electron binary
         run: node node_modules/electron/install.js
