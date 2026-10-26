@@ -73,6 +73,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libfuse2
 
+      # electron 44 起 npm 包不再有 postinstall（下载脚本改成 bin: install-electron），
+      # 所以 pnpm install 之后 node_modules/electron/dist 是空的，electron-builder 会报
+      # "The specified electronDist does not exist"。三个平台的打包步骤前都要先取一次二进制。
+      - name: Ensure Electron binary
+        run: node node_modules/electron/install.js
+
       - name: Build Linux packages
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -148,6 +154,9 @@ jobs:
 
       - name: Ensure dmg-license is installed
         run: pnpm add --no-save dmg-license
+
+      - name: Ensure Electron binary
+        run: node node_modules/electron/install.js
 
       - name: Build macOS DMG
         env:
@@ -270,6 +279,9 @@ jobs:
             throw new Error("node-pty windows native binary missing; terminal will be unavailable in Windows package.");
           }
           '@ | node
+
+      - name: Ensure Electron binary
+        run: node node_modules/electron/install.js
 
       - name: Build Windows app for NSIS
         env:

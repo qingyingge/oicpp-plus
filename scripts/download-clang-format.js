@@ -50,7 +50,19 @@ const ensureDir = (dirPath) => {
     fs.mkdirSync(dirPath, { recursive: true });
 };
 
+// 7zip-bin 的可执行文件经 pnpm 硬链接落盘后可能不带 X_OK，直接 spawn 会 EACCES
+// （CI 的 Prepare clang-format bundle 就是这么红的）。spawn 前补一次可执行位。
+const ensureSevenZipExecutable = () => {
+    if (process.platform === 'win32') return;
+    try {
+        fs.accessSync(path7za, fs.constants.X_OK);
+    } catch (_) {
+        try { fs.chmodSync(path7za, 0o755); } catch (_2) { }
+    }
+};
+
 const run7z = (argsList) => {
+    ensureSevenZipExecutable();
     const result = spawnSync(path7za, argsList, { stdio: 'inherit', timeout: 300000 });
     if (result.status !== 0) {
         throw new Error(`7z failed: ${argsList.join(' ')}`);
@@ -66,6 +78,7 @@ const extractFromZip = (archivePath, extractTo, binaryName) => {
 };
 
 const extractFromXz = (archivePath, extractTo, binaryName) => new Promise((resolve, reject) => {
+    ensureSevenZipExecutable();
     const source = spawn(path7za, ['x', archivePath, '-so'], { stdio: ['ignore', 'pipe', 'pipe'] });
     const target = spawn(path7za, [
         'x', '-si', '-ttar', `-o${extractTo}`, '-y',
