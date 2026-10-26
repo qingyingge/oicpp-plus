@@ -25,6 +25,7 @@ const { callStatement, classMethod, compileMethod, ifStatement } = require('./fi
 const { loadLocales } = require('./fixtures/ci-block-runner');
 const plural = require('../scripts/i18n-plural');
 const { makeUserDataPath } = require('./fixtures/data-root-sandbox');
+const pathIdentity = require('../src/utils/path-identity');
 const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 const comparerSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'sidebar', 'codeComparer.js'), 'utf8');
 
@@ -39,7 +40,14 @@ let isPathInsideTempRoots = null;
 let tempRoots = null;
 try {
     const snippet = mainSource.slice(helperStart, helperEnd);
-    const context = vm.createContext({ os, path, userDataPath: makeUserDataPath(os.homedir()) });
+    // isInside / samePath 用真模块：白名单判定的关键差异（软链指向根外、大小写）
+    // 恰好只在 realpath 之后才显形，桩函数会把这条守卫测成空守卫。
+    const context = vm.createContext({
+        os, path,
+        isInside: pathIdentity.isInside,
+        samePath: pathIdentity.samePath,
+        userDataPath: makeUserDataPath(os.homedir())
+    });
     vm.runInContext(`${snippet}\nthis.check = isPathInsideTempRoots; this.roots = TEMP_DELETE_ROOTS;`, context);
     isPathInsideTempRoots = context.check;
     tempRoots = context.roots;
