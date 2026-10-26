@@ -39,7 +39,7 @@ const GDBDebugger = require('./gdb-debugger');
 const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
-const { samePath } = require('./utils/path-identity');
+const { samePath, isInside } = require('./utils/path-identity');
 const { getDataRoot, isPortableDataRoot, userDataPath } = require('./utils/data-root');
 
 // 业务错误：Error 之上携带 code/errno/syscall/path（Node 风格）或 lspCode（LSP 风格）
@@ -2867,17 +2867,32 @@ function isFrameOutsideUserCode(frameFile: string) {
 // 判定 target 是否位于 dir 之内（含 dir 自身）。
 // 不能用 target.startsWith(dir)：缺末尾分隔符时，codeTempEvil 这类兄弟目录
 // 会通过校验，渲染进程即可读写 codeTemp 之外的任意文件。
-// Windows 下路径大小写不敏感，比较前统一小写；分隔符统一为 /。
+// 也不能自己折叠大小写：原先那句无条件 toLowerCase() 在大小写敏感的卷上把
+// /root/Project 判成位于 /root/project 之内，是一道被放开的安全边界。
+// 归一化交给 utils/path-identity —— 它先 realpath 再比，任何失败都判「不在内」。
 function isPathInsideDir(target: string, dir: string) {
     if (!target || !dir) return false;
-    try {
-        const norm = (p: string) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-        // 局部变量别用 t / d：主进程的 t 是 i18n 的 t，遮蔽后容易误用
-        const targetNorm = norm(target);
-        const dirNorm = norm(dir);
-        return targetNorm === dirNorm || targetNorm.startsWith(`${dirNorm}/`);
-    } catch (_) {
-        return false;
+    return isInside(target, dir);
+}
+
+// 递归强删之前的闸门。便携模式下数据根由磁盘上的 portable.txt 决定，
+// 「路径是拼出来的所以看起来对」不再成立：标记误判一次，退出清理就会
+// 对着整张 U 盘执行 rmSync(recursive, force)。三件事必须同时成立才允许删：
+// 不是盘根、末段名字就是预期的那个子目录、并且真实位于数据根之下。
+function assertDeletableUnderDataRoot(dir: string, expectedLeaf: string): void {
+    const resolved = path.resolve(dir);
+    if (path.parse(resolved).root === resolved) {
+        throw new Error(`refuse to delete a filesystem root: ${resolved}`);
+    }
+    if (path.basename(resolved) !== expectedLeaf) {
+        throw new Error(`refuse to delete: ${resolved} is not <dataRoot>/${expectedLeaf}`);
+    }
+    const dataDir = userDataPath();
+    if (!isInside(resolved, dataDir)) {
+        throw new Error(`refuse to delete outside the data directory: ${resolved}`);
+    }
+    if (samePath(resolved, dataDir)) {
+        throw new Error(`refuse to delete the data directory itself: ${resolved}`);
     }
 }
 
@@ -4363,6 +4378,7 @@ function runQuitCleanup() {
     try { if (competitiveCompanionServer) { competitiveCompanionServer.close(); competitiveCompanionServer = null; } } catch (_) { }
     try {
         const tempDir = userDataPath('codeTemp');
+        assertDeletableUnderDataRoot(tempDir, 'codeTemp');
         fs.rmSync(tempDir, { recursive: true, force: true });
         logInfo('[退出] 已清理临时目录及编译产物:', tempDir);
     } catch (error) {
@@ -5528,12 +5544,11 @@ function setupIPC() {
         userDataPath('compare')
     ].map(dir => path.resolve(dir));
 
-    // 用 path.relative 判断包含关系：startsWith 会把 codeTempEvil 这类同前缀兄弟目录误判为合法
+    // 包含关系走 isInside（realpath 之后再比）：原先只看字符串的 path.relative 挡不住
+    // codeTemp/link -> 用户工程，一次「删临时文件」就能伸进软链指向的目录。
+    // 根自身仍然算「不在内」—— 这条通道只该删根下面的文件，不该把整个根交出去。
     function isPathInsideTempRoots(targetPath: string) {
-        return TEMP_DELETE_ROOTS.some((root) => {
-            const rel = path.relative(root, targetPath);
-            return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-        });
+        return TEMP_DELETE_ROOTS.some((root) => isInside(targetPath, root) && !samePath(targetPath, root));
     }
 
     ipcMain.handle('delete-temp-file', async (event: Electron.IpcMainEvent, filePath: string) => {
