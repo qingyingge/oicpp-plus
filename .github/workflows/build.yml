@@ -35,7 +35,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: "pnpm"
 
       - name: Install dependencies
         run: |
@@ -133,7 +132,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: "pnpm"
 
       - name: Install dependencies
         run: |
@@ -208,7 +206,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: "pnpm"
 
       - name: Install NSIS
         shell: powershell
