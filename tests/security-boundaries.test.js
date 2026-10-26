@@ -813,6 +813,10 @@ async function main() {
             // 同样抽出来接进沙箱，让 setLanguage→menuBar 的顺序断言继续跑真实现。
             const ac = compileFn('applyLanguageChange', env.scope);
             if (typeof ac.fn === 'function') env.scope.ctx.applyLanguageChange = ac.fn;
+            // updateSettings 广播的是剥掉 loginToken 的快照，接真函数进来（不是桩），
+            // 这样「广播里不许带凭据」这条也顺带被这些用例跑到。
+            const snap = compileFn('getPublicSettingsSnapshot', env.scope);
+            if (typeof snap.fn === 'function') env.scope.ctx.getPublicSettingsSnapshot = snap.fn;
             // 抽取失败时 fn 是 undefined，直接调用会把整份测试带 stack trace 崩掉，
             // 后半段断言就没了 —— 让它在这里停住，由「抽取成功」那条报出来。
             const result = typeof compiled.fn === 'function' ? await compiled.fn(null, patch) : undefined;

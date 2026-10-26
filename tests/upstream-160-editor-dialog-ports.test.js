@@ -166,5 +166,20 @@ const methodOf = (src, name) => {
     check('保留 data-i18n-args 的插值解析', /data-i18n-args/.test(i18nSource));
 }
 
+// ---------------- 调试面板布局：变量区没有 min-width/overflow 就会被裁掉（#517）
+{
+    const debugCss = read('src/renderer/css/debug.css');
+    const splitBlock = /\.debug-split \{[^}]*\}/.exec(debugCss);
+    check('.debug-split 是 flex 且允许收缩（min-width/height 都为 0）',
+        !!splitBlock && /display: flex;/.test(splitBlock[0])
+        && /flex: 1 1 auto;/.test(splitBlock[0])
+        && /min-width: 0;/.test(splitBlock[0])
+        && /min-height: 0;/.test(splitBlock[0]), String(splitBlock && splitBlock[0]));
+    const leftBlock = /\.debug-split > \.left \{[^}]*\}/.exec(debugCss);
+    check('.debug-split > .left 自己滚动（长变量名不再撑破面板）',
+        !!leftBlock && /min-width: 0;/.test(leftBlock[0]) && /overflow: auto;/.test(leftBlock[0]),
+        String(leftBlock && leftBlock[0]));
+}
+
 console.log(`\nupstream 1.6.0-beta1 编辑器/对话框移植 tests completed: ${failures === 0 ? 'all checks passed' : failures + ' FAILED'}`);
 process.exitCode = failures === 0 ? 0 : 1;

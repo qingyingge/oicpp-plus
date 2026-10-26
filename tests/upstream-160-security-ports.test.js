@@ -191,6 +191,81 @@ const terminalSource = read('src/terminal-manager.js');
         !!createWindow && (createWindow[0] || '').includes("delete headers['X-Frame-Options']"));
 }
 
+// -------------------------------------------- 安装包文件名校验容得下预发布后缀（#512）
+{
+    const literal = /const looksLikeInstaller = (\/.+\/i)\.test\(base\)/.exec(mainSource);
+    check('抽到安装包名判定正则', !!literal, String(literal && literal[1]));
+    if (literal) {
+        const re = new Function(`return ${literal[1]};`)();
+        const accepted = [
+            'OICPP-1.5.4-Setup.exe',
+            'OICPP-Plus-1.6.0-beta1-plus1-Setup.exe',   // fork 当前版本号，拒了就永远静默不装
+            'OICPP-1.6.0-Setup.deb',
+            'oicpp-plus-1.6.0-beta1-Setup.zip'
+        ];
+        const rejected = ['OICPP-1.5-Setup.exe', 'OICPP-Plus-tool.exe', 'OICPP-1.6.0-Setup-evil.exe', 'calc.exe'];
+        check('正式与预发布版本号都认', accepted.every((n) => re.test(n)),
+            JSON.stringify(accepted.filter((n) => !re.test(n))));
+        check('不像安装包的名称仍然拒（路径在用户目录里也不给执行）',
+            rejected.every((n) => !re.test(n)), JSON.stringify(rejected.filter((n) => re.test(n))));
+        const cleanupPattern = /const installerPattern = (\/.+\/i);/.exec(mainSource);
+        check('清理旧安装包用的是同一条正则（否则清不掉 beta 包，越攒越大）',
+            !!cleanupPattern && new Function(`return ${cleanupPattern[1]};`)().test('OICPP-Plus-1.6.0-beta1-plus1-Setup.exe'),
+            String(cleanupPattern && cleanupPattern[1]));
+    }
+}
+
+// ---------------------------------- 设置广播一律发剥了凭据的快照（#534）
+{
+    const rawBroadcasts = (mainSource.match(/send\('settings-[a-z-]+', (?:null, )?settings[,)]/g) || []);
+    check('没有任何 settings-* 广播直接发原始 settings', rawBroadcasts.length === 0, JSON.stringify(rawBroadcasts));
+    const snapshotSites = (mainSource.match(/send\('settings-[a-z-]+', (?:null, )?getPublicSettingsSnapshot\(\)/g) || []).length;
+    check('settings-loaded / changed / applied / imported / reset 都走快照', snapshotSites >= 12, String(snapshotSites));
+    check('导入/重置的返回值也发快照',
+        (mainSource.match(/return \{ success: true, settings: getPublicSettingsSnapshot\(\) \}/g) || []).length === 2,
+        String((mainSource.match(/return \{ success: true, settings:/g) || []).length));
+}
+
+// ------------------------------------------------ 日志脱敏覆盖 Error 与散文写法（#541）
+{
+    const Logger = require('../src/utils/logger').constructor;
+    const err = new Error('request failed: Authorization: Bearer aaa.bbb-ccc_ddd');
+    err.stack = 'Error: token=SEKRITVALUE at foo.js:1:1';
+    err.code = 'ETIMEDOUT for api_key=KEYINSIDE';
+    err.data = { loginToken: 'IN DATA', note: 'cookie=COOKIEVALUE here' };
+    err.cause = 'nested failure with password=hunter2';
+    const out = Logger.stringifyArgs([err], { level: 'warn' });
+    for (const secret of ['aaa.bbb-ccc_ddd', 'SEKRITVALUE', 'KEYINSIDE', 'IN DATA', 'COOKIEVALUE', 'hunter2']) {
+        check(`Error 的 message/stack/code/data/cause 都不漏 ${secret}`, !out.includes(secret), out.slice(0, 120));
+    }
+
+    const prose = Logger.stringifyArgs(['login token is abc123def, done'], { level: 'warn' });
+    check('散文写法 token is xxx 也抹', !prose.includes('abc123def'), prose);
+    const quoted = Logger.stringifyArgs(['{"password": "hello world"}'], { level: 'warn' });
+    check('带空格的引号值整段吃掉（只截第一个词会漏后半段）', !quoted.includes('hello world'), quoted);
+    const unaffected = Logger.stringifyArgs(['compiled main.cpp in 1.2s'], { level: 'warn' });
+    check('普通日志不受影响', unaffected.includes('compiled main.cpp in 1.2s'), unaffected);
+}
+
+// ------------------------------------------ webview 的 data: 只放行受控欢迎页
+{
+    const guard = /const isInternalDataPage = parsed\.protocol === 'data:'[\s\S]*?src\.length <= 1024 \* 1024;/.exec(mainSource);
+    check('webview 守卫里 data: 收窄到 data:text/html + 大小上限', !!guard, String(guard && guard[0].length));
+    if (guard) {
+        const predicate = new Function('URL', `return function (src) {
+            const parsed = new URL(src);
+            ${guard[0]}
+            return isInternalDataPage;
+        };`)(URL);
+        check('内置新标签页那种 data:text/html;charset=utf-8,... 仍然放行',
+            predicate('data:text/html;charset=utf-8,' + encodeURIComponent('<html></html>')) === true);
+        check('data:text/javascript 不算欢迎页',
+            predicate('data:text/javascript,alert(1)') === false);
+        check('超过 1MB 的 data: 一律拒',
+            predicate('data:text/html;charset=utf-8,' + 'x'.repeat(1024 * 1024 + 10)) === false);
+    }
+}
+
 // ------------------------------------------------------- 独立文档必须有 CSP meta
 {
     const docs = [
@@ -210,9 +285,15 @@ const terminalSource = read('src/terminal-manager.js');
         check(`${doc} 锁死 object-src / base-uri / form-action`,
             /object-src 'none'/.test(csp) && /base-uri 'none'/.test(csp) && /form-action 'none'/.test(csp), csp);
     }
-    // 主窗口不能跟着 upstream 把 frame-src 收成 none：PDF 预览与内置浏览器都在 iframe 里
     const indexCsp = (/Content-Security-Policy" content="([^"]*)"/i.exec(read('src/renderer/index.html')) || ['', ''])[1];
-    check('主窗口 frame-src 仍允许 self（PDF iframe / 内置浏览器）', /frame-src 'self'/.test(indexCsp), indexCsp);
+    // 主窗口不能跟着 upstream 把 frame-src 收成 none：PDF 预览与内置浏览器都在 iframe 里。
+    // 上游 1.6.0-beta1 就是这么把 PDF 整块废掉再补的（#544）；本 fork 的 iframe 是
+    // file:// 文档，'self' 在这台 Electron 上实测也能放行，但 file: 一并列出与上游一致、
+    // 不依赖那个匹配差异。
+    check('主窗口 frame-src 保留 self 且不用 none（PDF iframe / 内置浏览器）',
+        indexCsp.includes("frame-src 'self'") && !indexCsp.includes("frame-src 'none'"), indexCsp);
+    check('主窗口 frame-src 显式列出 file: 与 data:',
+        /frame-src 'self' data: file:;/.test(indexCsp) || /frame-src 'self' file: data:;/.test(indexCsp), indexCsp);
 }
 
 // ------------------------------------------------------ 语言包：新增键双语齐备

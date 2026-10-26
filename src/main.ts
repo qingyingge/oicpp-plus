@@ -2556,7 +2556,9 @@ function resolveValidatedInstallerPath(pending: MainSettings['pendingUpdate']) {
     if (!installerPath || typeof installerPath !== 'string') return null;
     const installerDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
     const base = path.basename(installerPath);
-    const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
+    // 预发布后缀必须容得下，而且要容多段：fork 的版本号是 1.6.0-beta1-plus1，
+    // 只认 \d+\.\d+\.\d+-Setup 或单段 -beta1 的话判定不通过，静默自动更新就永远不触发。
+    const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)*-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
     return isPathInsideDir(installerPath, installerDir) && looksLikeInstaller ? installerPath : null;
 }
 
@@ -3540,7 +3542,13 @@ function createWindow() {
         let allowed = false;
         try {
             const parsed = new URL(src);
-            if (parsed.protocol === 'about:' || parsed.protocol === 'data:'
+            // data: 只放行内置新标签页那种受控的 data:text/html，并限死大小：
+            // 完整的 data: 允许等于给 lastOpenTabs 留一个任意脚本入口。
+            // （上游 1.6.0-beta1 就是因为欢迎页被这条守卫挡死而补的 —— #544 / bc69107）
+            const isInternalDataPage = parsed.protocol === 'data:'
+                && /^text\/html(?:[;,]|$)/i.test(parsed.pathname || '')
+                && src.length <= 1024 * 1024;
+            if (isInternalDataPage || parsed.protocol === 'about:'
                 || parsed.protocol === 'http:' || parsed.protocol === 'https:') {
                 allowed = true;
             } else if (parsed.protocol === 'file:') {
@@ -3609,7 +3617,7 @@ function createWindow() {
     (mainWindow as import('electron').BrowserWindow).once('ready-to-show', () => {
         (mainWindow as import('electron').BrowserWindow).show();
 
-        (mainWindow as import('electron').BrowserWindow).webContents.send('settings-loaded', settings);
+        (mainWindow as import('electron').BrowserWindow).webContents.send('settings-loaded', getPublicSettingsSnapshot());
 
         try {
             (function autoOpenWorkspace() {
@@ -4568,7 +4576,7 @@ function setupIPC() {
             // 语言是所有设置页保存时的公共字段，必须走这里广播，否则只写盘不生效
             await applyLanguageChange(settings.language, prevLanguage);
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-applied', settings, Object.keys(incomingSettings));
+                mainWindow.webContents.send('settings-applied', getPublicSettingsSnapshot(), Object.keys(incomingSettings));
             }
 
             return { success: true };
@@ -6212,10 +6220,10 @@ function setupIPC() {
                 saveSettings();
 
                 if (mainWindow) {
-                    mainWindow.webContents.send('settings-imported', settings);
+                    mainWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
                 }
 
-                return { success: true, settings };
+                return { success: true, settings: getPublicSettingsSnapshot() };
             }
 
             return { success: false, message: t('main.userCancelled') };
@@ -7649,7 +7657,7 @@ function setupIPC() {
             // 换编译器后主窗口的 get-all-settings 缓存必须失效：
             // 否则 1s 内 ensureLspReady 读到旧 compilerPath，用旧编译器拉起 clangd
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-changed', null, settings);
+                mainWindow.webContents.send('settings-changed', null, getPublicSettingsSnapshot());
             }
             return { success: true, compilerPath };
         } catch (error) {
@@ -8093,7 +8101,7 @@ function setupIPC() {
             saveSettings();
             // 同 select-compiler：改动不进 get-all-settings 缓存的失效路径
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-changed', null, settings);
+                mainWindow.webContents.send('settings-changed', null, getPublicSettingsSnapshot());
             }
 
             logInfo('[选择testlib] 选择成功，已更新设置，testlib路径:', testlibPath);
@@ -8893,7 +8901,7 @@ async function cleanupOldInstallers(keepFile: string | null = null) {
         
         // 匹配安装包文件名模式: OICPP-x.y.z-Setup.exe/.deb/.rpm/.dmg/.pkg/.zip
         // 使用更严格的版本号格式：主版本.次版本.修订号
-        const installerPattern = /^OICPP(?:-Plus)?-\d+\.\d+\.\d+-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
+        const installerPattern = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)*-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
         
         const deletePromises = [];
         
@@ -9449,7 +9457,7 @@ async function updateSettings(settingsType: string | null, newSettings: unknown)
         }
 
         if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('settings-changed', null, settings);
+            mainWindow.webContents.send('settings-changed', null, getPublicSettingsSnapshot());
         }
 
         if (patch['theme']) {
@@ -9555,14 +9563,14 @@ async function resetSettings(settingsType: string | null = null) {
 
         if (mainWindow && !mainWindow.isDestroyed()) {
 
-            mainWindow.webContents.send('settings-reset', settings);
+            mainWindow.webContents.send('settings-reset', getPublicSettingsSnapshot());
         }
 
         // 'language' 在可重置键里，重置会改回默认语言，必须同步广播
         await applyLanguageChange(settings.language, prevLanguage);
 
         logInfo('所有设置已重置为默认值');
-        return { success: true, settings };
+        return { success: true, settings: getPublicSettingsSnapshot() };
     } catch (error) {
         logError('重置设置失败:', error);
         return { success: false, error: (error as Error)?.message };
@@ -9616,7 +9624,7 @@ function importSettings(filePath: string) {
         saveSettings();
 
         if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('settings-imported', settings);
+            mainWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
         }
 
         // 导入文件里带 language 时必须同步广播，否则界面停留在旧语言
@@ -11443,19 +11451,19 @@ function normalizeCloudSyncResponse(response: CloudSyncApiResponse) {
 
 function broadcastSettingsRefresh() {
     if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('settings-imported', settings);
+        mainWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (compilerSettingsWindow && !compilerSettingsWindow.isDestroyed()) {
-        compilerSettingsWindow.webContents.send('settings-imported', settings);
+        compilerSettingsWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (editorSettingsWindow && !editorSettingsWindow.isDestroyed()) {
-        editorSettingsWindow.webContents.send('settings-imported', settings);
+        editorSettingsWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (codeTemplatesWindow && !codeTemplatesWindow.isDestroyed()) {
-        codeTemplatesWindow.webContents.send('settings-imported', settings);
+        codeTemplatesWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (backupSettingsWindow && !backupSettingsWindow.isDestroyed()) {
-        backupSettingsWindow.webContents.send('settings-imported', settings);
+        backupSettingsWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
 }
 
@@ -11506,7 +11514,7 @@ async function syncSettingsFromCloud() {
         }
         broadcastSettingsRefresh();
         if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('settings-applied', settings);
+            mainWindow.webContents.send('settings-applied', getPublicSettingsSnapshot());
         }
         await applyLanguageChange(settings.language, prevLanguage);
     } finally {
