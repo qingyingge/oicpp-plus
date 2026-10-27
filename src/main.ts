@@ -11217,30 +11217,33 @@ async function callCloudSyncApi(options: CloudSyncApiOptions = {}) {
         headers['Content-Type'] = 'application/json';
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-        try { controller.abort(); } catch (_) { }
-    }, 15000);
-
     try {
-        const response = await fetch(url.toString(), {
+        // 用 axios 而不是全局 fetch：全局 fetch 要 Node 18+，而 legacy 渠道的 Electron 22
+        // 内嵌 Node 16.17 —— 在那里 fetch 是 undefined，ReferenceError 会被下面的 catch
+        // 咽掉，云同步静默失效、不崩也不提示，只能从「同步按钮没反应」倒推。
+        // validateStatus 恒真不是为了放宽错误处理，是为了保住 fetch 的分类语义：
+        // 4xx/5xx 原本不抛错、走 ok:false，换成 axios 默认抛出会把同一失败上报成另一种形状。
+        const response = await axios.request({
+            url: url.toString(),
             method,
             headers,
-            body: bodyString || undefined,
-            signal: controller.signal
+            data: bodyString || undefined,
+            timeout: 15000,
+            responseType: 'text',
+            transformResponse: [],
+            validateStatus: () => true
         });
-        const text = await response.text();
+        const text = typeof response.data === 'string' ? response.data : '';
         let data = null;
         try {
             data = text ? JSON.parse(text) : null;
         } catch (_) {
             data = text;
         }
-        return { ok: response.ok, status: response.status, data };
+        const status = Number(response.status) || 0;
+        return { ok: status >= 200 && status < 300, status, data };
     } catch (error) {
         return { ok: false, status: 0, error: (error as Error)?.message || String(error) };
-    } finally {
-        clearTimeout(timeout);
     }
 }
 
