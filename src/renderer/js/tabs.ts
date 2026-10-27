@@ -2598,22 +2598,44 @@ class TabManager {
                         return typeof p === 'string' && /^cloud:/i.test(p);
                     };
 
+                    // 用户点的是「保存并关闭」，每条走不通的分支都必须说清楚为什么没关掉，
+                    // 静默 return 等于让用户以为已经保存了。
                     if (tabData.isTempFile) {
-                        if (!window.electronAPI?.saveAsFile) return;
+                        if (!window.electronAPI?.saveAsFile) {
+                            throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
+                        }
+                        // 用户在系统另存为框里主动取消：不算失败，保持标签页打开即可。
                         const savedPath = await window.electronAPI.saveAsFile(content as string);
                         if (!savedPath) return;
                     } else if (path && typeof content === 'string') {
                         if (isCloudPath(path)) {
-                            if (window.oicppApp && typeof window.oicppApp.saveCloudFileToServer === 'function') {
-                                const ok = await window.oicppApp.saveCloudFileToServer(path, content);
-                                if (!ok) return;
+                            if (!(window.oicppApp && typeof window.oicppApp.saveCloudFileToServer === 'function')) {
+                                throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
                             }
+                            const ok = await window.oicppApp.saveCloudFileToServer(path, content);
+                            if (!ok) throw new Error(window.i18n.t('dialog.cloudSaveFailed'));
                         } else if (window.electronAPI?.saveFile) {
+                            // 落盘走 invoke：主进程 handler 失败会 reject，交给下面的 catch，
+                            // 不能再去看 result.success —— save-file 成功时返回的是 true。
                             await window.electronAPI.saveFile(path, content);
+                        } else {
+                            throw new Error(window.i18n.t('dialog.saveApiUnavailable'));
                         }
+                    } else if (path) {
+                        throw new Error(window.i18n.t('dialog.saveContentUnavailable'));
+                    } else {
+                        throw new Error(window.i18n.t('dialog.saveTargetUnknown'));
                     }
                 } catch (e) {
+                    const errorText = (e as Error)?.message || String(e);
                     logWarn('关闭前保存失败:', e);
+                    try {
+                        if (window.dialogManager?.showConfirmDialog) {
+                            await window.dialogManager.showConfirmDialog(window.i18n.t('dialog.saveFailedTitle'), errorText);
+                        } else if (window.dialogManager?.showError) {
+                            window.dialogManager.showError(errorText);
+                        }
+                    } catch (_) { }
                     return;
                 }
                 this.closeTab(fileName, { ...options, skipCloseConfirm: true, skipAutoSave: true });
@@ -5393,17 +5415,18 @@ class TabManager {
                     }
                     tasks.push((async () => {
                         try {
+                            // save-as-file 的主进程 handler 自己已经落盘并广播 file-saved，
+                            // 这里再补一次 saveFile 等于同一个文件写两遍。
                             const savedPath = await window.electronAPI.saveAsFile(content);
                             if (!savedPath) {
                                 failures.push({ fileName: tab.fileName, error: _t('dialog.saveNoLocation') });
                                 return;
                             }
-                            const writeResult = (await window.electronAPI.saveFile(savedPath, content)) as Record<string, unknown> | undefined;
-                            if (writeResult && writeResult['success'] === false) {
-                                throw new Error(String(writeResult['error'] || _t('dialog.saveWriteFailed')));
-                            }
-                            try { this.updateTabPathBySource(null, String(savedPath)); } catch (_) { }
-                            this.markTabAsSavedByUniqueKey(uniqueKey);
+                            const newPath = String(savedPath);
+                            try { this.updateTabPathBySource(null, newPath, null, uniqueKey); } catch (_) { }
+                            // 换绑后条目已经迁到以新路径为 key，再按旧的 uniqueKey 标记
+                            // 就是空转，标签会一直挂着未保存的小圆点。
+                            this.markTabAsSavedByUniqueKey(newPath.replace(/\\/g, '/'));
                         } catch (e) {
                             failures.push({ fileName: tab.fileName, error: (e as Error)?.message || String(e) });
                         }
@@ -5747,7 +5770,7 @@ void hello() {
     }
 
 
-    updateTabPathBySource(oldPath: string | null | undefined, newPath: string | null | undefined, newFileName: string | null = null) {
+    updateTabPathBySource(oldPath: string | null | undefined, newPath: string | null | undefined, newFileName: string | null = null, targetUniqueKey: string | null | undefined = null) {
         try {
             if (!newPath) return;
             const norm = (p: string | null | undefined) => String(p).replace(/\\/g, '/');
@@ -5756,7 +5779,17 @@ void hello() {
 
             let tabData: TabRecord | null = null;
             let actualOldKey = oldKey;
-            if (oldKey) {
+            if (targetUniqueKey) {
+                // 调用方点名要改哪一个标签：批量保存未命名标签时只有调用方知道是谁，
+                // 靠激活标签兜底会把 N 个未命名标签全绑到同一个 tab 上。
+                const targetKey = norm(targetUniqueKey);
+                const pinned = this.tabs.get(targetKey) || null;
+                if (pinned) {
+                    tabData = pinned;
+                    actualOldKey = targetKey;
+                }
+            }
+            if (!tabData && oldKey) {
                 tabData = this.tabs.get(oldKey) || null;
                 if (!tabData) {
                     for (const [k, v] of this.tabs.entries()) {
@@ -5764,7 +5797,7 @@ void hello() {
                     }
                 }
             }
-            if (!tabData && !oldKey) {
+            if (!tabData && !oldKey && !targetUniqueKey) {
                 // 未命名标签「另存为」后没有旧路径可查，按当前激活标签定位，
                 // 否则新路径永远绑不上，后续保存与编译会写到旧位置或静默跳过。
                 // 只在压根没给 oldPath 时才兜底：给了却查不到说明调用方递错了路径，

@@ -507,6 +507,8 @@
     "saveNoLocation": "No save location was chosen",
     "saveWriteFailed": "Write failed",
     "cloudSaveFailed": "Cloud file save failed",
+    "saveContentUnavailable": "Could not read the editor content to save",
+    "saveTargetUnknown": "This tab has no file path to write to yet",
     "newCloudFile": "New Cloud File",
     "newCloudFolder": "New Cloud Folder",
     "rename": "Rename",

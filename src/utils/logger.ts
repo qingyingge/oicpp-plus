@@ -5,8 +5,10 @@ import * as path from 'path';
 import * as os from 'os';
 
 const SENSITIVE_KEY_RE = /token|password|passwd|secret|authorization|cookie|credential|apikey|api_key/i;
-// 裸字符串里的 token=xxx / "password": "xxx" 形式，键名收窄为已知敏感词，避免把普通日志抹平
-const SENSITIVE_INLINE_RE = /("?)(token|password|passwd|secret|authorization|cookie|credential|apikey|api_key|login_?token)("?\s*[:=]\s*["']?)([^"'\s,}]+)/gi;
+// 裸字符串里的 token=xxx / "password": "xxx" 形式，键名收窄为已知敏感词，避免把普通日志抹平。
+// 值这一侧必须一路吃到成对引号结束 / 行尾：旧写法 [^"'\s,}]+ 在第一个空格就停，
+// 于是 "apiKey": "abc def ghi" 只抹掉 abc，def 与 ghi 原样落盘（口令是多词的情况很常见）。
+const SENSITIVE_INLINE_RE = /(["']?)(token|password|passwd|secret|authorization|cookie|credential|apikey|api_key|login_?token)\1(\s*(?::|=|\bis\b)\s*)(?:"[^"]*"|'[^']*'|Bearer\s+[^\s,}\]]+|[^,}\r\n]+)/gi;
 const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._\-]+/gi;
 
 export class Logger {
@@ -114,7 +116,8 @@ export class Logger {
 
     static redactString(text: unknown): string {
         return String(text ?? '')
-            .replace(SENSITIVE_INLINE_RE, '$1$2$3[REDACTED]')
+            .replace(SENSITIVE_INLINE_RE, (_match: string, quote: string, key: string, separator: string) =>
+                `${quote}${key}${quote}${separator}[REDACTED]`)
             .replace(BEARER_RE, '$1[REDACTED]');
     }
 
@@ -126,6 +129,18 @@ export class Logger {
             return value;
         };
         const serializeError = (err: unknown): Record<string, unknown> => {
+            // err.data 常是云同步/编译的请求载荷，里面就躺着 token；键名黑名单 + 字符串值
+            // 两道都要过，否则前面把 message 抹干净、data 原样落盘等于没脱敏。
+            const redactData = (value: unknown): unknown => {
+                try {
+                    return JSON.parse(JSON.stringify(value, (key: string, val: unknown): unknown => {
+                        if (key && SENSITIVE_KEY_RE.test(key)) return '[REDACTED]';
+                        return typeof val === 'string' ? Logger.redactString(val) : val;
+                    }));
+                } catch (_) {
+                    return Logger.redactString(String(value));
+                }
+            };
             try {
                 const base: {
                     name: string;
@@ -135,24 +150,26 @@ export class Logger {
                     data?: unknown;
                 } = {
                     name: err instanceof Error ? err.name : 'Error',
-                    message: err instanceof Error ? err.message : String(err),
-                    stack: err instanceof Error ? err.stack : undefined,
+                    message: Logger.redactString(err instanceof Error ? err.message : String(err)),
+                    stack: err instanceof Error && err.stack ? Logger.redactString(err.stack) : undefined,
                 };
                 ['code', 'errno', 'syscall', 'path', 'address', 'port'].forEach((k) => {
                     if (err && typeof err === 'object' && k in err) {
-                        (base as Record<string, unknown>)[k] = (err as Record<string, unknown>)[k];
+                        const field = (err as Record<string, unknown>)[k];
+                        (base as Record<string, unknown>)[k] = typeof field === 'string' ? Logger.redactString(field) : field;
                     }
                 });
                 if (err && typeof err === 'object' && 'cause' in err) {
                     const cause = (err as ErrorLike).cause;
-                    base.cause = typeof cause === 'object' && cause !== null ? serializeError(cause) : String(cause);
+                    base.cause = typeof cause === 'object' && cause !== null ? serializeError(cause) : Logger.redactString(String(cause));
                 }
                 if (err && typeof err === 'object' && 'data' in err) {
-                    base.data = (err as ErrorLike).data;
+                    const data = (err as ErrorLike).data;
+                    base.data = data && typeof data === 'object' ? redactData(data) : Logger.redactString(String(data));
                 }
                 return base;
             } catch (_) {
-                return { message: String(err) };
+                return { message: Logger.redactString(String(err)) };
             }
         };
         const INFO_PER_ARG_LIMIT = 1200;

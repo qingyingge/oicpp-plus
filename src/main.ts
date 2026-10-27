@@ -2358,7 +2358,10 @@ function assertSafeIoPath(targetPath: string) {
 }
 
 // 登录凭据只用于主进程的云同步签名，渲染层没有任何消费点；
-// get-settings / get-all-settings 下发前必须剥掉（与 get-top-level-settings 的 H4 口径一致）。
+// 凡是以「完整设置」为载荷出口的地方都必须先剥掉：get-settings / get-all-settings /
+// get-top-level-settings 这些 invoke 返回值，以及 settings-loaded / applied / changed /
+// imported / reset 广播和 importSettings / resetSettings 的返回值。
+// 漏一处就等于把 token 递给渲染进程 —— 而渲染层里有 innerHTML 的地方都是可被利用的落点。
 function getPublicSettingsSnapshot(): MainSettings {
     if (!settings.account) return settings;
     const safeAccount: AccountInfo = { ...settings.account };
@@ -2556,7 +2559,9 @@ function resolveValidatedInstallerPath(pending: MainSettings['pendingUpdate']) {
     if (!installerPath || typeof installerPath !== 'string') return null;
     const installerDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
     const base = path.basename(installerPath);
-    const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
+    // 版本号允许预发布后缀：本 fork 自己的包就是 OICPP-Plus-1.6.0-beta1-plus1-Setup.exe，
+    // 只写 \d+\.\d+\.\d+- 会把自己刚下载的安装包判成非法，静默丢弃待装更新。
+    const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
     return isPathInsideDir(installerPath, installerDir) && looksLikeInstaller ? installerPath : null;
 }
 
@@ -3609,7 +3614,7 @@ function createWindow() {
     (mainWindow as import('electron').BrowserWindow).once('ready-to-show', () => {
         (mainWindow as import('electron').BrowserWindow).show();
 
-        (mainWindow as import('electron').BrowserWindow).webContents.send('settings-loaded', settings);
+        (mainWindow as import('electron').BrowserWindow).webContents.send('settings-loaded', getPublicSettingsSnapshot());
 
         try {
             (function autoOpenWorkspace() {
@@ -4568,7 +4573,7 @@ function setupIPC() {
             // 语言是所有设置页保存时的公共字段，必须走这里广播，否则只写盘不生效
             await applyLanguageChange(settings.language, prevLanguage);
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-applied', settings, Object.keys(incomingSettings));
+                mainWindow.webContents.send('settings-applied', getPublicSettingsSnapshot(), Object.keys(incomingSettings));
             }
 
             return { success: true };
@@ -6212,10 +6217,10 @@ function setupIPC() {
                 saveSettings();
 
                 if (mainWindow) {
-                    mainWindow.webContents.send('settings-imported', settings);
+                    mainWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
                 }
 
-                return { success: true, settings };
+                return { success: true, settings: getPublicSettingsSnapshot() };
             }
 
             return { success: false, message: t('main.userCancelled') };
@@ -7649,7 +7654,7 @@ function setupIPC() {
             // 换编译器后主窗口的 get-all-settings 缓存必须失效：
             // 否则 1s 内 ensureLspReady 读到旧 compilerPath，用旧编译器拉起 clangd
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-changed', null, settings);
+                mainWindow.webContents.send('settings-changed', null, getPublicSettingsSnapshot());
             }
             return { success: true, compilerPath };
         } catch (error) {
@@ -8093,7 +8098,7 @@ function setupIPC() {
             saveSettings();
             // 同 select-compiler：改动不进 get-all-settings 缓存的失效路径
             if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('settings-changed', null, settings);
+                mainWindow.webContents.send('settings-changed', null, getPublicSettingsSnapshot());
             }
 
             logInfo('[选择testlib] 选择成功，已更新设置，testlib路径:', testlibPath);
@@ -8892,8 +8897,9 @@ async function cleanupOldInstallers(keepFile: string | null = null) {
         const files = await fs.promises.readdir(userOicppDir);
         
         // 匹配安装包文件名模式: OICPP-x.y.z-Setup.exe/.deb/.rpm/.dmg/.pkg/.zip
-        // 使用更严格的版本号格式：主版本.次版本.修订号
-        const installerPattern = /^OICPP(?:-Plus)?-\d+\.\d+\.\d+-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
+        // 预发布后缀（-beta1-plus1）同样要认，否则带后缀的包永远留在 ~/.oicpp-plus 里不被回收，
+        // 也与 resolveValidatedInstallerPath 的判定口径保持一致。
+        const installerPattern = /^OICPP(?:-Plus)?-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
         
         const deletePromises = [];
         
@@ -9449,7 +9455,7 @@ async function updateSettings(settingsType: string | null, newSettings: unknown)
         }
 
         if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('settings-changed', null, settings);
+            mainWindow.webContents.send('settings-changed', null, getPublicSettingsSnapshot());
         }
 
         if (patch['theme']) {
@@ -9555,14 +9561,14 @@ async function resetSettings(settingsType: string | null = null) {
 
         if (mainWindow && !mainWindow.isDestroyed()) {
 
-            mainWindow.webContents.send('settings-reset', settings);
+            mainWindow.webContents.send('settings-reset', getPublicSettingsSnapshot());
         }
 
         // 'language' 在可重置键里，重置会改回默认语言，必须同步广播
         await applyLanguageChange(settings.language, prevLanguage);
 
         logInfo('所有设置已重置为默认值');
-        return { success: true, settings };
+        return { success: true, settings: getPublicSettingsSnapshot() };
     } catch (error) {
         logError('重置设置失败:', error);
         return { success: false, error: (error as Error)?.message };
@@ -9616,14 +9622,14 @@ function importSettings(filePath: string) {
         saveSettings();
 
         if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('settings-imported', settings);
+            mainWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
         }
 
         // 导入文件里带 language 时必须同步广播，否则界面停留在旧语言
         applyLanguageChange(settings.language, prevLanguage);
 
         logInfo('设置已导入自:', filePath);
-        return { success: true, settings: settings };
+        return { success: true, settings: getPublicSettingsSnapshot() };
     } catch (error) {
         logError('导入设置失败:', error);
         return { success: false, error: (error as Error)?.message };
@@ -11443,19 +11449,19 @@ function normalizeCloudSyncResponse(response: CloudSyncApiResponse) {
 
 function broadcastSettingsRefresh() {
     if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('settings-imported', settings);
+        mainWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (compilerSettingsWindow && !compilerSettingsWindow.isDestroyed()) {
-        compilerSettingsWindow.webContents.send('settings-imported', settings);
+        compilerSettingsWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (editorSettingsWindow && !editorSettingsWindow.isDestroyed()) {
-        editorSettingsWindow.webContents.send('settings-imported', settings);
+        editorSettingsWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (codeTemplatesWindow && !codeTemplatesWindow.isDestroyed()) {
-        codeTemplatesWindow.webContents.send('settings-imported', settings);
+        codeTemplatesWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
     if (backupSettingsWindow && !backupSettingsWindow.isDestroyed()) {
-        backupSettingsWindow.webContents.send('settings-imported', settings);
+        backupSettingsWindow.webContents.send('settings-imported', getPublicSettingsSnapshot());
     }
 }
 
@@ -11506,7 +11512,7 @@ async function syncSettingsFromCloud() {
         }
         broadcastSettingsRefresh();
         if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('settings-applied', settings);
+            mainWindow.webContents.send('settings-applied', getPublicSettingsSnapshot());
         }
         await applyLanguageChange(settings.language, prevLanguage);
     } finally {
