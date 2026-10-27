@@ -35,7 +35,7 @@ const MultiThreadDownloader = require('./utils/multi-thread-downloader');
 const { isCancelledError: isDownloadCancelled } = MultiThreadDownloader;
 const { getCpuThreads, scheduleCpuThreadsWarmUp } = require('./utils/cpu-threads');
 const { samePath } = require('./utils/path-identity');
-const APP_VERSION = '1.6.0-beta1-plus1';
+const APP_VERSION = '1.6.0-beta1-plus.1';
 const USER_DATA_DIR_NAME = '.oicpp-plus';
 const SAVE_ALL_TIMEOUT = 4000;
 const LSP_REQUEST_TIMEOUT_MS = 30000;
@@ -2171,10 +2171,7 @@ function assertSafeIoPath(targetPath) {
     return targetPath;
 }
 // 登录凭据只用于主进程的云同步签名，渲染层没有任何消费点；
-// 凡是以「完整设置」为载荷出口的地方都必须先剥掉：get-settings / get-all-settings /
-// get-top-level-settings 这些 invoke 返回值，以及 settings-loaded / applied / changed /
-// imported / reset 广播和 importSettings / resetSettings 的返回值。
-// 漏一处就等于把 token 递给渲染进程 —— 而渲染层里有 innerHTML 的地方都是可被利用的落点。
+// get-settings / get-all-settings 下发前必须剥掉（与 get-top-level-settings 的 H4 口径一致）。
 function getPublicSettingsSnapshot() {
     if (!settings.account)
         return settings;
@@ -2353,9 +2350,9 @@ function resolveValidatedInstallerPath(pending) {
         return null;
     const installerDir = path.join(os.homedir(), USER_DATA_DIR_NAME);
     const base = path.basename(installerPath);
-    // 版本号允许预发布后缀：本 fork 自己的包就是 OICPP-Plus-1.6.0-beta1-plus1-Setup.exe，
-    // 只写 \d+\.\d+\.\d+- 会把自己刚下载的安装包判成非法，静默丢弃待装更新。
-    const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
+    // 预发布后缀必须容得下，而且要容多段：fork 的版本号是 1.6.0-beta1-plus.1，
+    // 只认 \d+\.\d+\.\d+-Setup 或单段 -beta1 的话判定不通过，静默自动更新就永远不触发。
+    const looksLikeInstaller = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)*-Setup\.(?:exe|deb|rpm|dmg|pkg|zip)$/i.test(base);
     return isPathInsideDir(installerPath, installerDir) && looksLikeInstaller ? installerPath : null;
 }
 function hasPendingUpdateToInstall() {
@@ -3289,7 +3286,13 @@ function createWindow() {
         let allowed = false;
         try {
             const parsed = new URL(src);
-            if (parsed.protocol === 'about:' || parsed.protocol === 'data:'
+            // data: 只放行内置新标签页那种受控的 data:text/html，并限死大小：
+            // 完整的 data: 允许等于给 lastOpenTabs 留一个任意脚本入口。
+            // （上游 1.6.0-beta1 就是因为欢迎页被这条守卫挡死而补的 —— #544 / bc69107）
+            const isInternalDataPage = parsed.protocol === 'data:'
+                && /^text\/html(?:[;,]|$)/i.test(parsed.pathname || '')
+                && src.length <= 1024 * 1024;
+            if (isInternalDataPage || parsed.protocol === 'about:'
                 || parsed.protocol === 'http:' || parsed.protocol === 'https:') {
                 allowed = true;
             }
@@ -8503,9 +8506,8 @@ async function cleanupOldInstallers(keepFile = null) {
         logInfo('[更新] 开始清理旧的安装包...');
         const files = await fs.promises.readdir(userOicppDir);
         // 匹配安装包文件名模式: OICPP-x.y.z-Setup.exe/.deb/.rpm/.dmg/.pkg/.zip
-        // 预发布后缀（-beta1-plus1）同样要认，否则带后缀的包永远留在 ~/.oicpp-plus 里不被回收，
-        // 也与 resolveValidatedInstallerPath 的判定口径保持一致。
-        const installerPattern = /^OICPP(?:-Plus)?-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
+        // 使用更严格的版本号格式：主版本.次版本.修订号
+        const installerPattern = /^(?:OICPP|OICPP-Plus)-\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)*-Setup\.(exe|deb|rpm|dmg|pkg|zip)$/i;
         const deletePromises = [];
         for (const file of files) {
             if (installerPattern.test(file)) {
@@ -9216,7 +9218,7 @@ function importSettings(filePath) {
         // 导入文件里带 language 时必须同步广播，否则界面停留在旧语言
         applyLanguageChange(settings.language, prevLanguage);
         logInfo('设置已导入自:', filePath);
-        return { success: true, settings: getPublicSettingsSnapshot() };
+        return { success: true, settings: settings };
     }
     catch (error) {
         logError('导入设置失败:', error);

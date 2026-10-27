@@ -132,7 +132,7 @@ const cloudSource = read('src/renderer/js/sidebar/cloudSync.js');
             isDiscardCloseInProgress: () => false,
             getTabContentForSave: () => 'body',
             markTabAsSavedByUniqueKey: (k) => seen.marked.push(k),
-            updateTabPathBySource: (oldPath, newPath, newFileName, targetUniqueKey) => { seen.rebound = [oldPath, newPath, newFileName, targetUniqueKey]; },
+            updateTabPathBySource: (...args) => { seen.rebound = args; },
             electronApiHint: null
         };
         global.window = {
@@ -147,7 +147,8 @@ const cloudSource = read('src/renderer/js/sidebar/cloudSync.js');
     };
 
     (async () => {
-        // 未命名标签 + 有 saveAs：应当真的另存、重新绑定路径、标记已保存
+        // 未命名标签 + 有 saveAs：另存即落盘（save-as-file 的 handler 自己会写），
+        // 再补一次 saveFile 就是同一份内容写两遍 + 多一次 clangd didSave（#515）
         {
             const { seen, result } = await run({
                 tabs: [['k1', { filePath: null, fileName: 'untitled.cpp', viewType: 'code' }]],
@@ -156,15 +157,11 @@ const cloudSource = read('src/renderer/js/sidebar/cloudSync.js');
                     saveAsFile: async () => { s.saveAsCalls++; return 'D:/p/saved.cpp'; }
                 })
             });
-            // save-as-file 的主进程 handler 已经落盘，这里再调一次 saveFile 就是把同一个
-            // 文件写两遍（并多一次 file-saved 广播），所以另存之后不该再有第二次写。
             check('未命名标签走另存而不是静默跳过',
-                seen.saveAsCalls === 1 && seen.saved.length === 0 && seen.marked.includes('D:/p/saved.cpp'),
+                seen.saveAsCalls === 1 && seen.marked.includes('D:/p/saved.cpp'),
                 JSON.stringify({ saved: seen.saved, marked: seen.marked }));
-            check('换绑与标记落在同一个标签上',
-                seen.marked.length === 1 && !seen.marked.includes('k1'),
-                JSON.stringify(seen.marked));
-            check('另存后重新绑定标签路径，并点名是哪一个未命名标签',
+            check('另存不再重复调 saveFile', seen.saved.length === 0, JSON.stringify(seen.saved));
+            check('另存后按 uniqueKey 精确重绑标签路径（#509）',
                 JSON.stringify(seen.rebound) === JSON.stringify([null, 'D:/p/saved.cpp', null, 'k1']),
                 JSON.stringify(seen.rebound));
             check('全部成功时返回 success:true', result && result.success === true, JSON.stringify(result));
@@ -258,6 +255,30 @@ const cloudSource = read('src/renderer/js/sidebar/cloudSync.js');
         && /return \{ success: true \};/.test(monacoSource), '');
     check('markFileSaved 优先按路径 uniqueKey 标记（同名不同目录不能互相冒领）',
         /markTabAsSavedByUniqueKey\(key\)/.test(monacoSource));
+}
+
+// ------------------------ 关闭标签时的保存失败：不许静默（#521，2026-10-25 批）
+{
+    const block = /const proceedSave = async \(\) => \{[\s\S]*?\n            \};/.exec(tabsSource);
+    check('抽取到 closeTab 里的 proceedSave', !!block, String(block && block[0].length));
+    if (block) {
+        const src = block[0];
+        const silentReturns = (src.match(/if \(![\w.]+\) return;/g) || []).length;
+        check('接口不可用 / 云端失败 / 无内容 都改成抛错，不再静默 return',
+            silentReturns === 0
+            && /throw new Error\(window\.i18n\.t\('dialog\.saveApiUnavailable'\)\)/.test(src)
+            && /dialog\.cloudSaveFailed/.test(src)
+            && /dialog\.saveNoContent/.test(src), String(silentReturns));
+        check('saveFile 的返回值要被检查（只看 Promise 不 reject 会漏掉 success:false）',
+            /const result = await window\.electronAPI\.saveFile\(path, content\);\s*if \(result && result\['success'\] === false\)/.test(src));
+        check('失败要弹一次提示（原先只有 logWarn，用户看不到）',
+            /showConfirmDialog\(title, `\$\{title\}: \$\{errorText\}`\)/.test(src)
+            && /message\.saveFailed/.test(src));
+        check('用户主动取消另存不算失败', /if \(!savedPath\)\s*return;/.test(src));
+    }
+    check('updateTabPathBySource 支持显式 targetUniqueKey（#509）',
+        /updateTabPathBySource\(oldPath, newPath, newFileName = null, targetUniqueKey = null\)/.test(tabsSource)
+        && /const targetKey = targetUniqueKey \? norm\(targetUniqueKey\) : ''/.test(tabsSource));
 }
 
 // --------------------------------------------------------------- 语言包双语齐备

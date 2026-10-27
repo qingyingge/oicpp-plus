@@ -779,8 +779,9 @@ async function main() {
     {
         const makeSettingsScope = (extra = {}) => {
             const trace = [];
-            // account.loginToken 是主进程独有的凭据：任何一次「完整设置」出边界都必须被剥掉，
-            // 所以沙箱里放一个真值，出口处逐条查它有没有漏出去。
+            // account.loginToken 是主进程独有的凭据，渲染层没有任何消费点。放一份真值进来，
+            // 出口处逐条查它有没有跟着 settings-* 广播漏出去 —— 上面接的是真实的
+            // getPublicSettingsSnapshot，夹具里没有 account 的话那条剥离根本没被跑到。
             const settingsObj = { theme: 'dark', font: 'Consolas', account: { username: 'u', loginToken: 'SECRET-TOKEN' } };
             const sent = [];
             const win = (name) => ({
@@ -803,12 +804,6 @@ async function main() {
                 codeTemplatesWindow: win('templates'),
                 backupSettingsWindow: win('backup'),
                 normalizeSettingsRuntimeShape: (s) => { trace.push('normalize'); s.normalized = true; },
-                // 与 src/main.ts 的真实实现同形：剥掉 loginToken 再出边界。
-                getPublicSettingsSnapshot: () => {
-                    const clone = JSON.parse(JSON.stringify(settingsObj));
-                    if (clone.account) delete clone.account.loginToken;
-                    return clone;
-                },
                 saveSettings: () => { trace.push('save'); return true; },
                 scheduleAutoSettingsBackup: (reason) => { trace.push(`backup:${reason}`); },
                 createMenuBar: () => { trace.push('menuBar'); },
@@ -827,6 +822,10 @@ async function main() {
             // 同样抽出来接进沙箱，让 setLanguage→menuBar 的顺序断言继续跑真实现。
             const ac = compileFn('applyLanguageChange', env.scope);
             if (typeof ac.fn === 'function') env.scope.ctx.applyLanguageChange = ac.fn;
+            // updateSettings 广播的是剥掉 loginToken 的快照，接真函数进来（不是桩），
+            // 这样「广播里不许带凭据」这条也顺带被这些用例跑到。
+            const snap = compileFn('getPublicSettingsSnapshot', env.scope);
+            if (typeof snap.fn === 'function') env.scope.ctx.getPublicSettingsSnapshot = snap.fn;
             // 抽取失败时 fn 是 undefined，直接调用会把整份测试带 stack trace 崩掉，
             // 后半段断言就没了 —— 让它在这里停住，由「抽取成功」那条报出来。
             const result = typeof compiled.fn === 'function' ? await compiled.fn(null, patch) : undefined;
@@ -853,8 +852,8 @@ async function main() {
             follows(nulled.trace, ['normalize', 'save', 'main.settings-changed']),
             nulled.trace.join(' → '));
 
-        // 「不写坏 settings」的基准键集从这里现取，而不是硬编码：
-        // 沙箱夹具以后加字段时，这条断言仍然只回答「null/undefined 补丁有没有改动键集」。
+        // 「不写坏 settings」的基准键集从夹具现取，别硬编码：夹具以后加字段时这条断言
+        // 仍然只回答「null/undefined 补丁有没有改动键集」这一件事。
         const baseKeys = Object.keys(makeSettingsScope().settingsObj).sort().join(',');
         for (const junk of [null, undefined]) {
             const env = await runUpdate(junk);
@@ -916,6 +915,27 @@ async function main() {
         check('回滚路径同样不广播',
             !writeFalse.trace.includes('main.settings-changed'), writeFalse.trace.join(' → '));
 
+        // 出口侧：上面每一条成功路径都真的把载荷交给了 webContents.send，这里逐条查凭据漏没漏。
+        // 这才是「接真实 getPublicSettingsSnapshot」的意义 —— 夹具里没有 account 时剥离等于没被跑到，
+        // 任何一处调用点退回裸 settings 都不会有人报警。
+        const leaked = [];
+        for (const env of [nulled, junkShape, applied, rebound, speak, painted]) {
+            for (const s of env.sent) {
+                if (/^settings-/.test(s.channel) && JSON.stringify(s.args).includes('SECRET-TOKEN')) {
+                    leaked.push(`${s.name}.${s.channel}`);
+                }
+            }
+        }
+        check('每一条成功路径的 settings-* 广播载荷里都没有 account.loginToken',
+            painted.sent.length > 0 && leaked.length === 0,
+            JSON.stringify({ sent: painted.sent.map((s) => `${s.name}.${s.channel}`), leaked }));
+        // 反向对照：载荷确实是完整设置（不是空对象蒙过去），只是凭据被剥掉了
+        check('广播出去的确实是完整设置本身，剥的只有 loginToken',
+            painted.sent.some((s) => /^settings-/.test(s.channel)
+                && JSON.stringify(s.args).includes('"username":"u"')
+                && JSON.stringify(s.args).includes('"theme":"light"')),
+            JSON.stringify(painted.sent.filter((s) => /^settings-/.test(s.channel)).map((s) => s.args)));
+
         // 通道侧：载荷必须原样到 updateSettings，返回值必须原样回给渲染进程。
         // handler 是同步的，compileHandler 会强行包成 async 改掉返回类型，这里另配一个同步版。
         const compileSyncHandler = (anchor, params, scope) => {
@@ -938,22 +958,6 @@ async function main() {
                 JSON.stringify(seen));
             check(`${channel}：updateSettings 的返回值原样回给渲染进程（失败了调用方得看得见）`,
                 out && out.success === true && out.via === channel, JSON.stringify(out));
-        }
-
-        // 出口收口：settings-* 的广播载荷一律是脱敏快照。渲染层对 loginToken 零消费点，
-        // 递过去只是给渲染进程里的 XSS 多备一份可以直接拿去调云端的凭据。
-        {
-            const env = makeSettingsScope();
-            const fn = compileFn('updateSettings', env.scope);
-            if (typeof fn.fn === 'function') {
-                await fn.fn(null, { theme: 'light' });
-            }
-            const leaked = env.sent
-                .filter((s) => /^settings-/.test(s.channel) && JSON.stringify(s.args).includes('SECRET-TOKEN'))
-                .map((s) => `${s.name}.${s.channel}`);
-            check('settings-* 广播载荷里没有 account.loginToken',
-                env.sent.length > 0 && leaked.length === 0,
-                JSON.stringify({ sent: env.sent.map((s) => `${s.name}.${s.channel}`), leaked }));
         }
     }
 

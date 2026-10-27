@@ -38,9 +38,9 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
 const SENSITIVE_KEY_RE = /token|password|passwd|secret|authorization|cookie|credential|apikey|api_key/i;
-// 裸字符串里的 token=xxx / "password": "xxx" 形式，键名收窄为已知敏感词，避免把普通日志抹平。
-// 值这一侧必须一路吃到成对引号结束 / 行尾：旧写法 [^"'\s,}]+ 在第一个空格就停，
-// 于是 "apiKey": "abc def ghi" 只抹掉 abc，def 与 ghi 原样落盘（口令是多词的情况很常见）。
+// 裸字符串里的敏感键值：键名可以带引号（两边必须配平）、分隔符除 : = 外还认 "token is xxx"
+// 这种散文写法，值优先整段引号内容吃掉 —— 只吃第一个非空白字符的话，
+// "token": "a b" 会留下尾巴 a 在日志里。
 const SENSITIVE_INLINE_RE = /(["']?)(token|password|passwd|secret|authorization|cookie|credential|apikey|api_key|login_?token)\1(\s*(?::|=|\bis\b)\s*)(?:"[^"]*"|'[^']*'|Bearer\s+[^\s,}\]]+|[^,}\r\n]+)/gi;
 const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._\-]+/gi;
 class Logger {
@@ -148,7 +148,7 @@ class Logger {
     }
     static redactString(text) {
         return String(text ?? '')
-            .replace(SENSITIVE_INLINE_RE, (_match, quote, key, separator) => `${quote}${key}${quote}${separator}[REDACTED]`)
+            .replace(SENSITIVE_INLINE_RE, '$1$2$3[REDACTED]')
             .replace(BEARER_RE, '$1[REDACTED]');
     }
     static stringifyArgs(args, { level = 'info', maxLen = 2000 } = {}) {
@@ -162,39 +162,38 @@ class Logger {
             return value;
         };
         const serializeError = (err) => {
-            // err.data 常是云同步/编译的请求载荷，里面就躺着 token；键名黑名单 + 字符串值
-            // 两道都要过，否则前面把 message 抹干净、data 原样落盘等于没脱敏。
-            const redactData = (value) => {
-                try {
-                    return JSON.parse(JSON.stringify(value, (key, val) => {
-                        if (key && SENSITIVE_KEY_RE.test(key))
-                            return '[REDACTED]';
-                        return typeof val === 'string' ? Logger.redactString(val) : val;
-                    }));
-                }
-                catch (_) {
-                    return Logger.redactString(String(value));
-                }
-            };
             try {
                 const base = {
                     name: err instanceof Error ? err.name : 'Error',
+                    // 报错正文与栈里最常出现的就是「Authorization: Bearer …」「token=…」，
+                    // 不跟着脱敏的话，前面那套 replacer 对 Error 参数完全无效（#541）。
                     message: Logger.redactString(err instanceof Error ? err.message : String(err)),
                     stack: err instanceof Error && err.stack ? Logger.redactString(err.stack) : undefined,
                 };
                 ['code', 'errno', 'syscall', 'path', 'address', 'port'].forEach((k) => {
                     if (err && typeof err === 'object' && k in err) {
-                        const field = err[k];
-                        base[k] = typeof field === 'string' ? Logger.redactString(field) : field;
+                        const value = err[k];
+                        base[k] = typeof value === 'string' ? Logger.redactString(value) : value;
                     }
                 });
                 if (err && typeof err === 'object' && 'cause' in err) {
                     const cause = err.cause;
-                    base.cause = typeof cause === 'object' && cause !== null ? serializeError(cause) : Logger.redactString(String(cause));
+                    base.cause = typeof cause === 'object' && cause !== null
+                        ? serializeError(cause)
+                        : Logger.redactString(String(cause));
                 }
                 if (err && typeof err === 'object' && 'data' in err) {
                     const data = err.data;
-                    base.data = data && typeof data === 'object' ? redactData(data) : Logger.redactString(String(data));
+                    try {
+                        base.data = JSON.parse(JSON.stringify(data, (key, value) => {
+                            if (key && SENSITIVE_KEY_RE.test(key))
+                                return '[REDACTED]';
+                            return typeof value === 'string' ? Logger.redactString(value) : value;
+                        }));
+                    }
+                    catch (_) {
+                        base.data = Logger.redactString(String(data));
+                    }
                 }
                 return base;
             }
@@ -216,7 +215,7 @@ class Logger {
             if (v instanceof Error)
                 return JSON.stringify(serializeError(v), null, 2);
             if (typeof v === 'string')
-                return clamp(v, INFO_PER_ARG_LIMIT);
+                return clamp(Logger.redactString(v), INFO_PER_ARG_LIMIT);
             try {
                 const full = JSON.stringify(v, redactingReplacer, 2);
                 if (full && full.length <= INFO_PER_ARG_LIMIT)

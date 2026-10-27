@@ -3,11 +3,13 @@ name: Build and Release
 on:
   push:
     tags:
-      - "v*"
+      # 只构建 fork 自己的发布标签：形如 v1.6.0-beta1-plus.1（必须以 -plus.<后缀> 结尾）。
+      # 上游的 v1.6.0 / v1.6.0-beta1 这类纯上游版本号不再触发本仓库打包与 Release。
+      - "v*-plus.*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag name to release (e.g., v1.0.0)"
+        description: "Tag name to release (e.g., v1.6.0-beta1-plus.1)"
         required: true
 
 permissions:
@@ -33,7 +35,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: "pnpm"
 
       - name: Install dependencies
         run: |
@@ -71,6 +72,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfuse2
+
+      # electron 44 起 npm 包不再有 postinstall（下载脚本改成 bin: install-electron），
+      # 所以 pnpm install 之后 node_modules/electron/dist 是空的，electron-builder 会报
+      # "The specified electronDist does not exist"。三个平台的打包步骤前都要先取一次二进制。
+      - name: Ensure Electron binary
+        run: node node_modules/electron/install.js
 
       - name: Build Linux packages
         env:
@@ -131,7 +138,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: "pnpm"
 
       - name: Install dependencies
         run: |
@@ -147,7 +153,14 @@ jobs:
         run: pnpm run prebuild:native
 
       - name: Ensure dmg-license is installed
-        run: pnpm add --no-save dmg-license
+        # pnpm 12 的 pnpm add 没有 --no-save（npm 写法，直接 unexpected argument 退出）。
+        # 用 -D：实测 --dev 会被塞进 dependencies（只有 -D 才进 devDependencies），
+        # 两者都会装进 node_modules —— 这里要的只是 electron-builder 能找到它。
+        # package.json 只在那次一次性 checkout 里被改，不回填仓库。
+        run: pnpm add -D dmg-license
+
+      - name: Ensure Electron binary
+        run: node node_modules/electron/install.js
 
       - name: Build macOS DMG
         env:
@@ -206,7 +219,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: "pnpm"
 
       - name: Install NSIS
         shell: powershell
@@ -271,6 +283,9 @@ jobs:
             throw new Error("node-pty windows native binary missing; terminal will be unavailable in Windows package.");
           }
           '@ | node
+
+      - name: Ensure Electron binary
+        run: node node_modules/electron/install.js
 
       - name: Build Windows app for NSIS
         env:

@@ -42,6 +42,7 @@ const mainSource = read('src/main.js');
         const cleanup = new RegExp(cleanupLit.source, cleanupLit.flags);
 
         const mustAccept = [
+            'OICPP-Plus-1.6.0-beta1-plus.1-Setup.exe',
             'OICPP-Plus-1.6.0-beta1-plus1-Setup.exe',
             'OICPP-1.5.4-Setup.exe',
             'OICPP-Plus-1.6.0-Setup.exe',
@@ -122,9 +123,9 @@ const mainSource = read('src/main.js');
         check('抛出的文案一律取语言包，没有硬编码中文',
             !/throw new Error\(['"][\u4e00-\u9fa5]/.test(text), text.split('\n').filter((l) => /throw new Error/.test(l)).join(' | ').slice(0, 240));
         check('catch 里把原因显示给用户而不是只写日志',
-            /showConfirmDialog\(window\.i18n\.t\('dialog\.saveFailedTitle'/.test(text)
-            && /window\.dialogManager\?\.showError/.test(text),
-            text.split('\n').filter((l) => /showConfirmDialog|showError|logWarn/.test(l)).join(' | ').slice(0, 300));
+            /const title = window\.i18n\.t\('message\.saveFailed'\)/.test(text)
+            && /showConfirmDialog\(title, `\$\{title\}: \$\{errorText\}`\)/.test(text),
+            text.split('\n').filter((l) => /showConfirmDialog|const title|logWarn/.test(l)).join(' | ').slice(0, 300));
         check('日志仍然照写（弹窗不是替代品）', /logWarn\(/.test(text));
         // 唯一保留的静默退出：用户在系统保存框里主动取消，那不该弹「保存失败」
         check('主动取消另存仍是静默返回（不误报成失败）',
@@ -136,7 +137,7 @@ const mainSource = read('src/main.js');
     }
     const zh = JSON.parse(read('src/lang/zh-cn.json'));
     const en = JSON.parse(read('src/lang/en.json'));
-    for (const key of ['dialog.saveContentUnavailable', 'dialog.saveTargetUnknown', 'dialog.saveApiUnavailable', 'dialog.saveFailedTitle']) {
+    for (const key of ['dialog.saveApiUnavailable', 'dialog.cloudSaveFailed', 'dialog.saveNoContent', 'message.saveFailed', 'error.invalidFilePath']) {
         const get = (o) => key.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
         check(`${key} 双语齐备且正文非空`, !!get(zh) && !!get(en), JSON.stringify({ zh: get(zh), en: get(en) }));
     }

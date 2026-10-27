@@ -1,1 +1,1 @@
-v1.6.0-beta1-plus1
+v1.6.0-beta1-plus.1

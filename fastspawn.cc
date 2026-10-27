@@ -16,6 +16,34 @@
 
 #define MAX_OUTPUT (64 * 1024 * 1024)
 
+// pipe2 只在 Linux 上有（glibc 扩展），macOS/BSD 编译到这里就是 undeclared。
+// 两个平台的差别只是 close-on-exec / 非阻塞的设置方式，所以用 pipe()+fcntl()
+// 补一个语义等价的实现： flags 里出现的每一位都照做，不能静默忽略。
+#if !defined(__linux__)
+static int pipe2(int fds[2], int flags) {
+    if (pipe(fds) != 0) return -1;
+    for (int i = 0; i < 2; i++) {
+        if (flags & O_CLOEXEC) {
+            int got = fcntl(fds[i], F_GETFD);
+            if (got < 0 || fcntl(fds[i], F_SETFD, got | FD_CLOEXEC) != 0) goto fail;
+        }
+        if (flags & O_NONBLOCK) {
+            int got = fcntl(fds[i], F_GETFL);
+            if (got < 0 || fcntl(fds[i], F_SETFL, got | O_NONBLOCK) != 0) goto fail;
+        }
+    }
+    return 0;
+fail:
+    {
+        int saved = errno;
+        close(fds[0]);
+        close(fds[1]);
+        errno = saved;
+    }
+    return -1;
+}
+#endif
+
 static int64_t nowMs(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

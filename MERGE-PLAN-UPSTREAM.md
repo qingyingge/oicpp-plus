@@ -278,22 +278,25 @@ git reset --hard main-backup-before-upstream-cherrypick
 
 ## 9. 执行结果（本轮实际落地，2026-10-27）
 
-### 9.1 计划本身需要修正的两点
+### 9.1 计划本身需要修正的三点
 
+0. **动手前先 `git fetch`：这七项修复 origin/main 早就有了。** 本轮是在一个落后 11 个提交的本地 `main`（`648ad1c`）上开工的，等我把 `#534 #541 #512 #509 #515 #521 #517` 都移植完，才发现 origin/main 上已经有 `44342ac`（保存链路）、`7bccabc`（安全批）、`80a7daf`（显示与 CSP 批）三个等价提交，而且**远端版本在几处更完整**：`will-navigate` 的 `data:` 只放行内联新标签页并限死 1MB、`dialog.saveNoContent`/`message.saveFailed` 复用既有键而不是新造键、`security-boundaries` 的沙箱接的是真实 `getPublicSettingsSnapshot` 而非桩、版本号已统一成 `1.6.0-beta1-plus.1`。所以本轮真正推上去的只有 9.3 列的增量，代码本体一律采用远端版本。**教训：移植类任务的第一步是 `git fetch origin && git log --oneline HEAD..origin/main`，不是读 upstream。**
 1. **cherry-pick 全线不可行**（§4/§8 的前提不成立）。upstream 改的是 `src/**/*.js`，而 fork 的 `.js` 全部是同名 `.ts` 经 `tsc -p tsconfig.build.json` emit 的产物。任何 cherry-pick 都会把产物改成「与 `.ts` 不一致」的下一次 emit 又被覆盖，且 merge-base 是空树，没有可复用的 blob 历史。实际做法改为**按意图手工移植**：读上游 diff → 在 fork 的 `.ts` 里找到对应函数 → 用 fork 的约定重写该修复。
 2. **审计范围是 26 个提交，不是 16 个**。写计划时本地只 fetch 到 `d0845f9`；执行期间 upstream 已发布 `v1.6.0-beta2`（`7b24fef`，2026-10-27 14:51），多出 10 个提交，一并审掉了。
 
 ### 9.2 逐提交判定（`git log v1.6.0-beta1..upstream/main`，26 条）
 
+「已在 origin/main 落地」一列指的是本地落后期间远端已完成的部分。
+
 | 提交 | 主题 | 判定 | fork 里的依据 |
 |---|---|---|---|
-| `bb1c0ce` | #534 设置事件脱敏 | **已移植** | `src/main.ts` 14 处广播 + 3 处 return 全改走 `getPublicSettingsSnapshot()`；守卫 `tests/security-boundaries.test.js`「settings-* 广播载荷里没有 account.loginToken」 |
-| `8ffe41a` | #541 日志脱敏 | **已移植（改良）** | `src/utils/logger.ts` `SENSITIVE_INLINE_RE` 值分支原来停在首个空白 → `password: a b c` 只抹 `a`；现整段吞到 `,}\r\n`；`serializeError` 的 message/stack/errno/data 也过 `redactString`。守卫在 `tests/upstream-160-security-ports.test.js`（4 条行为断言） |
-| `d872ba1` | #512 beta 更新包校验正则 | **已移植（并修掉自己引入的漏）** | `resolveValidatedInstallerPath` 与 `cleanupOldInstallers` 两处判定都放开 `OICPP-Plus-` 与预发布后缀；守卫 `tests/upstream-160-posttag-ports.test.js` |
-| `bcdcc74` | #509 保存全部时未命名标签路径错绑 | **已移植** | `updateTabPathBySource` 加第 4 个默认形参 `targetUniqueKey`，点名要换绑的标签，不再统统落到活动标签 |
-| `d90f567` | #515 另存为重复写入 | **已移植** | `saveAllFiles` 删掉第二次写（主进程 `save-as-file` 已 write+markLocalSave+broadcast），并把 mark 换成换绑后的新路径 |
-| `accdd71` | #521 保存失败关闭标签页无提示 | **已移植** | `closeTab` 的 `proceedSave` 五条死路（原来全是裸 `return`）改成 `throw new Error(window.i18n.t(...))`，catch 统一弹窗；唯一保留静默返回的是「用户在系统保存框里主动取消」 |
-| `9ee5ef1` | #517 调试面板变量布局 | **已移植** | fork 标记早就写着 `.debug-split > .left`，但 `debug.css` 一条规则都没有 → `.sidebar-panel .variables-panel{flex:1 1 auto;overflow-y:auto}` 永不生效；补 12 行 |
+| `bb1c0ce` | #534 设置事件脱敏 | 已在 origin/main 落地（`7bccabc`） | `settings-loaded/applied/changed/imported/reset` 广播与 `import-settings` 返回值全走 `getPublicSettingsSnapshot()`；本轮补上「夹具里没有凭据 ⇒ 剥离从未被跑到」这个空档，见 9.3 |
+| `8ffe41a` | #541 日志脱敏 | 已在 origin/main 落地（`7bccabc`） | `SENSITIVE_INLINE_RE` 值分支整段吃到 `,}\r\n`；`serializeError` 的 message/stack/errno/cause/data 全过 `redactString` |
+| `d872ba1` | #512 beta 更新包校验正则 | 已在 origin/main 落地（`7bccabc`） | `resolveValidatedInstallerPath` 与 `cleanupOldInstallers` 都放开 `OICPP-Plus-` 与多段预发布后缀 `(?:-[0-9A-Za-z.]+)*` |
+| `bcdcc74` | #509 保存全部时未命名标签路径错绑 | 已在 origin/main 落地（`44342ac`） | `updateTabPathBySource` 第 4 个默认形参 `targetUniqueKey` 点名换绑 |
+| `d90f567` | #515 另存为重复写入 | 已在 origin/main 落地（`44342ac`） | `saveAllFiles` 删掉第二次写，mark 用换绑后的新路径 |
+| `accdd71` | #521 保存失败关闭标签页无提示 | 已在 origin/main 落地（`44342ac`） | `proceedSave` 五条死路改成 `throw`，catch 用 `message.saveFailed` 弹窗；仅「用户主动取消另存」保持静默 |
+| `9ee5ef1` | #517 调试面板变量布局 | 已在 origin/main 落地（`80a7daf`） | `.debug-split` / `.debug-split > .left` 规则补齐 |
 | `fafa196` | #544 PDF 预览 | 已生效 | `preload.ts:736` + 白名单 `:536`、`index.html` CSP `frame-src 'self' data:`、pdf-viewer `frame-src 'none'`；守卫 `upstream-160-security-ports.test.js:215` |
 | `bc69107` | 新标签页 `data:` | 已生效 | `main.ts:3537-3544` 对内联新标签页放行 `data:` |
 | `794793c` | #538 编译器名属性转义 | 已生效 | `settings/compiler.ts:2-9` 的 `escapeHtml` 已连引号一起转，用于 `:616`/`:1399` |
@@ -303,47 +306,68 @@ git reset --hard main-backup-before-upstream-cherrypick
 | `23183f0` | #540 GDB 断点正则回溯 | 不适用 | fork 的 `src/gdb-debugger.ts` 是 6 行 shim，真身 `gdb-mi-debugger.ts` 走 MI 解析，`reBreak`/`begmidl`/`\x1a` 在 src/tests/scripts 里都查不到 |
 | `4066a7c` | #508 空定界符原始字符串格式化 | 不适用 | fork 无 `renderer/js/formatters/`，只有 clang-format（`clang-format-options.ts:7` 记着这次删除）；`buildMinimalFormatEdits` 在 `monaco-editor-manager.ts:7120` |
 | `a989e63` | #511 云编译无效调用 | 不适用 | `cloudCompileCurrentFile()` 是禁用桩（`compile-manager.ts:496-498`），并被 `security-regression.test.js:161-163` 锁死 |
-| `2aa5f84` | 编译运行结束后未暂停 | **不移植（fork 已用更强的机制解决）** | 上游是退回 `cmd /c start` + `shell:true`；fork 的 `utils/consolepauser-source.js` 自己 `AllocConsole()` + `CreateProcess` + `WaitForSingleObject` + `_getch()`，还会打印执行时间/峰值内存。照抄反而把 fork 的注释里写明的引号语义坑（`main.ts:10352-10356`）重新引入，并多一层 `shell:true` |
-| `c9758e6` | #546 打开文件后 Ctrl+K 失效 | **不移植（fork 达成方式不同）** | fork 把 Ctrl+K 放在主进程菜单 accelerator（`main.ts:3839`），Ctrl+Shift+S 同样（`:3854`）；上游那套「renderer 里 600ms 延迟等第二个按键」是与「fork 没有菜单 accelerator」配套的方案 |
-| `3819f99` | Ctrl+Shift+I 打开内置浏览器失效 | **不移植（同上）** | fork 有 `CmdOrCtrl+Shift+I` → `menu-open-browser`（`main.ts:3945`）。注意残留风险：Electron 的 accelerator 在 `<webview>` 子文档聚焦时不触发，而 `tabs.ts:3793 openBrowserTab` 每次都生成新 uniqueKey、不去重 —— 若要补 renderer 兜底，得先加去重，否则双击开两个浏览器标签 |
+| `2aa5f84` | 编译运行结束后未暂停 | **不移植（fork 已用更强的机制解决）** | 上游是退回 `cmd /c start` + `shell:true`；fork 的 `utils/consolepauser-source.js` 自己 `AllocConsole()` + `CreateProcess` + `WaitForSingleObject` + `_getch()`，还会打印执行时间/峰值内存。照抄反而把 fork 的注释里写明的引号语义坑（`main.ts:10355-10358`）重新引入，并多一层 `shell:true` |
+| `c9758e6` | #546 打开文件后 Ctrl+K 失效 | **不移植（fork 达成方式不同）** | fork 把 Ctrl+K 放在主进程菜单 accelerator（`main.ts:3842`），Ctrl+Shift+S 同样（`:3857`）；上游那套「renderer 里 600ms 延迟等第二个按键」是与「fork 没有菜单 accelerator」配套的方案 |
+| `3819f99` | Ctrl+Shift+I 打开内置浏览器失效 | **不移植（同上）** | fork 有 `CmdOrCtrl+Shift+I` → `menu-open-browser`（`main.ts:3948`）。注意残留风险：Electron 的 accelerator 在 `<webview>` 子文档聚焦时不触发，而 `tabs.ts:3793 openBrowserTab` 每次都生成新 uniqueKey、不去重 —— 若要补 renderer 兜底，得先加去重，否则双击开两个浏览器标签 |
 | `14e6269` `33240b7` `1ace3a4` `a80d063` `0ccb2a5` | 手动发布工作流 | **不动** | 五条只改 `.github/workflows/build.yml`；fork 的同名文件与之已分叉 95+/164-（fork 走 `installer.nsi` + 自己的产物清单），且这类改动本地无法验证、只在 GitHub runner 上生效，本轮「不推送」的前提下不碰 |
 | `0420597` | 1.6.0-beta2 版本号 | **不动** | 纯版本号（`installer.nsi`/`package.json` + 两处硬编码回退串）。fork 版本口径是 `1.6.0-beta1-plus1`，是否跟进到 `1.6.0-beta2-plus1` 属产品决策 |
 | `7b24fef` | package-lock 依赖版本 | 不适用 | fork 用 pnpm，无 `package-lock.json` |
 
-### 9.3 本轮落地的文件
+### 9.3 本轮真正推上去的增量（src/ 一行未改）
 
 ```
-src/main.ts                    #534 脱敏出口 17 处 + #512 两处正则
-src/utils/logger.ts            #541 值分支 + serializeError
-src/renderer/js/tabs.ts        #509 / #515 / #521
-src/renderer/css/debug.css     #517 12 行
-src/lang/{zh-cn,en}.json       dialog.saveContentUnavailable / dialog.saveTargetUnknown（各 2 键，双语对称）
-（以上各自的 .js 由 tsc 重新 emit，无手改产物）
-tests/security-boundaries.test.js        沙箱补 getPublicSettingsSnapshot + 载荷捕获，新增 loginToken 泄漏守卫
-tests/upstream-160-security-ports.test.js 新增 4 条日志脱敏行为断言（带空格值、JSON 片段、Error.message、不误伤）
-tests/upstream-160-close-save-ports.test.js 原先锁住 bug 形状的 3 条断言改成修复后形状（tighten，未放宽语义）
-tests/upstream-160-posttag-ports.test.js  新增：#512 两处判定行为 + 口径一致、#517 规则与标记类名对应、#521 proceedSave 不再静默
+tests/upstream-160-posttag-ports.test.js  新增。#512 从产物里取出两处正则跑真实文件名、
+                                          并要求两边结论逐项一致；#517 规则挂的类名必须确实在
+                                          调试面板标记里；#521 proceedSave 的死路不许静默返回。
+tests/security-boundaries.test.js         沙箱夹具补 account.loginToken 真值 + 捕获 send 载荷，
+                                          新增两条出口守卫；「不写坏 settings」的基准键集改为现取。
+MERGE-PLAN-UPSTREAM.md                    本文档（§9 全量审计结论）。
 ```
 
-### 9.4 验证
+两条出口守卫的意义：origin/main 虽然已经把 `getPublicSettingsSnapshot` 接进沙箱跑真实实现，
+但夹具里没有 `account`，那条剥离路径**从没被真的执行过** —— 任何一处调用点退回裸 `settings`
+都不会报警。补上后，第一条断言「每条成功路径的 `settings-*` 广播载荷里没有 loginToken」会红；
+第二条断言「载荷确实是完整设置」（含 `"username":"u"` 与被改的 `theme`）防止它靠空载荷蒙过去。
 
-- `npx tsc -p tsconfig.build.json` 后 `git diff --stat -- src` 只剩本轮 9 个文件，无 emit 漂移。
-- `npx tsc --noEmit -p tsconfig.json`：0 error。
-- `pnpm run ci`：**79 PASS / 22 WARN / 0 FAIL**，回归测试 **53/53**（比基线多一个文件）。WARN 数与基线持平，I7 孤儿键 201（≤基线 202，未擅自下调该常量，因为这 −1 无法归因到本轮改动），I8 仍 1、I8b 仍 0。
+比对后**主动放弃**的本地改动（远端版本更好，不回退）：
+
+- 我新造的 `dialog.saveContentUnavailable` / `dialog.saveTargetUnknown` 两个键：远端直接复用既有的
+  `dialog.saveNoContent` 与 `error.invalidFilePath`。加新键不改引用只会让 I7 孤儿键往上涨。
+- 我的预发布正则 `(?:-[0-9A-Za-z.-]+)?`：远端 `(?:-[0-9A-Za-z.]+)*` 覆盖同样文件名且注释更准（写明版本号
+  是 `1.6.0-beta1-plus.1`）。
+- `redactString` 用 replacer 函数还是 `'$1$2$3[REDACTED]'`：语义完全相同，保留远端写法。
+
+### 9.4 验证（本轮增量，Windows 本机）
+
+- `npx tsc -p tsconfig.build.json` 后 `git diff --stat -- src` 为空 —— 本轮没有 src 改动，无 emit 漂移。
+- `pnpm run ci`：**79 PASS / 22 WARN / 0 FAIL**，回归测试 **53/53**（远端 52 + 本轮新增 1 个文件）。
+  I7 孤儿键 201（≤基线 202）、I8 仍 1、I8b 仍 0、WARN 数持平。
+- 顺手修掉一个 origin/main 带来的本机红灯：`[T2] fastspawn.cc syntax` 在 Windows 上 FAIL。
+  根因不在 `fastspawn.cc`（那份 `pipe2` 兜底在真 POSIX 上是对的），而在语法桩
+  `scripts/check-fastspawn-syntax.js`：MinGW 的 `<fcntl.h>` 给 `O_*` 却不给 `F_SETFD`/`FD_CLOEXEC`，
+  而这两个宏原先挂在 `#ifndef O_NONBLOCK` 里（有 O_NONBLOCK 就不需要 F_SETFL —— 两个结论无关）；
+  桩里还声明了 `pipe2`，与文件自带的非 Linux 实现撞成重定义，且没声明它调用的 `pipe`。
+  改成逐位独立 `#ifndef` + 用 `pipe` 声明替换 `pipe2` 后检查通过。这类「只有 Windows 才红」的
+  检查项以后仍要靠 `pnpm run ci` 在本机跑，POSIX CI 看不见。
 
 ### 9.5 过程中修掉的两个自伤（记录以免重犯）
 
-1. 第一次写 `d872ba1` 的正则时，预发布段用了 `[0-9A-Za-z.]+`，**不含连字符**，于是 fork 自己的 `OICPP-Plus-1.6.0-beta1-plus1-Setup.exe` 仍然判非法 —— 与上游原 bug 同一症状。是新加的 posttag 守卫跑出来的，不是人眼看出来的；守卫因此必须在写完后立刻跑。
-2. `#521` 的兜底最初写成 `window.alert`，把 tabs.js 的 `alert()` 计数从 0 抬到 1，CI 的 WARN 由 22 变 23。改用本文件既有的 `dialogManager.showError`  surface 后回到 22。
+1. 第一次写 `d872ba1` 的正则时，预发布段用了 `[0-9A-Za-z.]+` 且外面只包一层 `?`，结果 fork 自己的
+   `OICPP-Plus-1.6.0-beta1-plus1-Setup.exe` 仍然判非法 —— 与上游原 bug 同一症状。是新加的 posttag
+   守卫跑出来的，不是人眼看出来的；守卫因此必须在写完立刻跑。（最终采用的是远端
+   `(?:-[0-9A-Za-z.]+)*` 的多段形式。）
+2. `#521` 的兜底最初写成 `window.alert`，把 tabs.js 的 `alert()` 计数从 0 抬到 1，CI 的 WARN 由 22 变 23。
+   远端版本本来就没用 alert（走 `dialogManager.showConfirmDialog(title, ...)`），posttag 守卫里那条
+   「catch 必须把原因显示出来」也照远端形状写 —— 提醒一件事：加兜底 UI 前先看同文件已有的错误 surface。
 
 ### 9.6 遗留（需用户拍板，本轮未动）
 
-- **`main.ts:5786` 仍返回 `reason:'stopped'`**（上游 `cb03abe` 改成 `started/updated`）：全仓找不到 renderer 消费点，零影响，按「不新增无消费者的改动」原则跳过。
-- **`multi-thread-downloader.ts:213`** 抛错前可选 `response.body.destroy()`：上游 `bc78684` 有，fork 缺；只是资源回收更早一点，不改也不泄漏（socket 随 error 关闭）。
+- **`main.ts:5794` 仍返回 `reason:'stopped'`**（上游 `cb03abe` 改成 `started/updated`）：全仓找不到 renderer 消费点，零影响，按「不新增无消费者的改动」原则跳过。
+- **`multi-thread-downloader.ts` 里 `RANGE_UNSUPPORTED_CODE` 那条 throw 之前**没有 `response.body.destroy()`：上游 `bc78684` 有；只是资源回收更早一点，不改也不泄漏（socket 随 error 关闭）。
 - **Ctrl+K 与 Monaco chord 的冲突**：fork 的 `CmdOrCtrl+K` 菜单 accelerator 会先于页面吞掉按键，编辑器内 `Ctrl+K Ctrl+C` 这类序列前缀因此收不到第二个按键（fork 注释 `main.ts:1553-1555` 只处理了 renderer 层抢占，没覆盖 native 层）。改法要么去掉该 accelerator，要么学 `c9758e6` 在 renderer 侧做 chord 延迟 —— 都是改用户已习惯的快捷键，需要产品决策。
 - **是否跟进 `1.6.0-beta2` 版本号**、**是否把手动发布工作流的健壮化（校验输入、缺 secret 即失败、`nullglob` 防空产物假装成功）搬到 fork 的 build.yml**：都属发布基建，本地无法验证，建议下次出包前一起处理。
 
 ---
 
-文档版本：v1.2（本轮移植已执行并验证；§4/§8 的 cherry-pick 方案作废，以 §9 为准）  
+文档版本：v1.3（已推 origin/main。§4/§8 的 cherry-pick 方案作废，以 §9 为准；§9.1 第 0 条是本类任务的开工第一步）  
 适用仓库：`D:\Users\admin\Desktop\oicpp-plus`

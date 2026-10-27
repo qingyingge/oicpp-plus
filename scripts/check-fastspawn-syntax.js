@@ -124,10 +124,27 @@ typedef unsigned long nfds_t;
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 0x80000
 #endif
+// pipe2 的 macOS 兜底实现会用到 F_GETFD/F_SETFD/FD_CLOEXEC（fastspawn.cc 里那圈
+// close-on-exec 补设）。MinGW 的 <fcntl.h> 给了 O_* 却不给 FD_CLOEXEC，缺哪个补哪个，
+// 而且每一位都要独立判断 —— 挂在 #ifndef O_NONBLOCK 里面等于「平台有 O_NONBLOCK 就
+// 不需要 F_SETFL」，这两个结论没有半点关系。
 #ifndef O_NONBLOCK
 #define O_NONBLOCK 0x800
+#endif
+#ifndef F_SETFL
 #define F_SETFL 4
+#endif
+#ifndef F_GETFL
 #define F_GETFL 3
+#endif
+#ifndef F_GETFD
+#define F_GETFD 1
+#endif
+#ifndef F_SETFD
+#define F_SETFD 2
+#endif
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC 1
 #endif
 #ifndef POLLIN
 #define POLLIN 0x001
@@ -165,7 +182,9 @@ static inline int posix_spawnattr_setpgroup(posix_spawnattr_t* a, pid_t p) { (vo
 extern "C" {
 #endif
 extern char** environ;
-int pipe2(int pipefd[2], int flags);
+// Windows 上跑这份桩时 __linux__ 未定义，fastspawn.cc 会走它自己的 pipe2 兜底实现 ——
+// 桩里再声明一次 pipe2 就是重定义，这里只补它实现里真正缺的那个 pipe()。
+int pipe(int pipefd[2]);
 int posix_spawn(pid_t*, const char*, const posix_spawn_file_actions_t*, const posix_spawnattr_t*, char* const[], char* const[]);
 int kill(pid_t, int);
 pid_t waitpid(pid_t, int*, int);

@@ -4,7 +4,7 @@
 !define PRODUCT_NAME "OICPP-Plus IDE"
 ; 版本号默认取自 package.json；CI 用 makensis /DPRODUCT_VERSION=x.y.z 注入覆盖
 !ifndef PRODUCT_VERSION
-  !define PRODUCT_VERSION "1.6.0-beta1-plus1"
+  !define PRODUCT_VERSION "1.6.0-beta1-plus.1"
 !endif
 !define PRODUCT_PUBLISHER "qingyingge"
 !define PRODUCT_WEB_SITE "https://github.com/qingyingge/oicpp-plus"

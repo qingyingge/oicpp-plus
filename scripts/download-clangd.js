@@ -44,7 +44,18 @@ const ensureDir = (dirPath) => {
     fs.mkdirSync(dirPath, { recursive: true });
 };
 
+// 与 download-clang-format 同一问题：7zip-bin 落盘可能不带 X_OK，spawn 即 EACCES。
+const ensureSevenZipExecutable = () => {
+    if (process.platform === 'win32') return;
+    try {
+        fs.accessSync(path7za, fs.constants.X_OK);
+    } catch (_) {
+        try { fs.chmodSync(path7za, 0o755); } catch (_2) { }
+    }
+};
+
 const run7z = (argsList) => {
+    ensureSevenZipExecutable();
     const result = spawnSync(path7za, argsList, { stdio: 'inherit', timeout: 300000 });
     if (result.status !== 0) {
         throw new Error(`7z failed: ${argsList.join(' ')}`);
