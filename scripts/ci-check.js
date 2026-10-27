@@ -1094,8 +1094,18 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
     electronVer = declared;
     majorVer = parseInt(declared.split('.')[0], 10);
   }
+  // legacy 渠道（Electron 22 = 最后一个支持 Windows 7/8/8.1 的大版本）是显式构建目标，
+  // 不是意外回退。主渠道的「老 Electron = 安全事故」判断对它同样成立，但那次失败是已
+  // 知且已声明的代价，所以用 OICPP_LEGACY_ELECTRON=1 显式声明时降为 WARN —— 仍然说出来，
+  // 只是不再阻塞。不设这个变量的任何版本回退照旧是 FAIL。
+  const legacyChannel = String(process.env.OICPP_LEGACY_ELECTRON || '') === '1';
   if (majorVer < 35) {
-    fail(`Electron ${electronVer} is too old (security risk)`);
+    const tooOld = `Electron ${electronVer} is too old (security risk)`;
+    if (legacyChannel) {
+      warn(`legacy 渠道（OICPP_LEGACY_ELECTRON=1）放行：${tooOld}`);
+    } else {
+      fail(tooOld);
+    }
   } else if (majorVer < 39) {
     warn(`Electron ${electronVer} -- check for security patches at electronjs.org`);
   } else {

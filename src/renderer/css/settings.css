@@ -21,6 +21,7 @@ body {
     --settings-button-bg: #007acc;
     --settings-button-hover: #4a9eff;
     --settings-warning-bg: #ff9500;
+    --settings-warning-ring: rgba(255, 149, 0, .35);
     --settings-warning-hover: #e88900;
     --settings-warning-border: #e88900;
     --settings-card-bg: #252526;
@@ -64,6 +65,7 @@ body[data-editor-theme="light"] {
     --settings-button-bg: #0066cc;
     --settings-button-hover: #004499;
     --settings-warning-bg: #ff9500;
+    --settings-warning-ring: rgba(255, 149, 0, .35);
     --settings-warning-hover: #e88900;
     --settings-warning-border: #d17900;
     --settings-card-bg: #f8f8f8;
@@ -84,6 +86,7 @@ body[data-theme="monokai"] {
     --settings-button-bg: #f92672;
     --settings-button-hover: #ff4081;
     --settings-warning-bg: #fd971f;
+    --settings-warning-ring: rgba(253, 151, 31, .35);
     --settings-warning-hover: #e68a1c;
     --settings-warning-border: #fd971f;
     --settings-card-bg: #1e1f1c;
@@ -104,6 +107,7 @@ body[data-theme="github-light"] {
     --settings-button-bg: #2ea44f;
     --settings-button-hover: #2c974b;
     --settings-warning-bg: #dbab09;
+    --settings-warning-ring: rgba(219, 171, 9, .35);
     --settings-warning-hover: #cb9e08;
     --settings-warning-border: #dbab09;
     --settings-card-bg: #f6f8fa;
@@ -124,6 +128,7 @@ body[data-theme="github-dark"] {
     --settings-button-bg: #238636;
     --settings-button-hover: #2ea043;
     --settings-warning-bg: #d29922;
+    --settings-warning-ring: rgba(210, 153, 34, .35);
     --settings-warning-hover: #bb881f;
     --settings-warning-border: #d29922;
     --settings-card-bg: #161b22;
@@ -144,6 +149,7 @@ body[data-theme="solarized-light"] {
     --settings-button-bg: #268bd2;
     --settings-button-hover: #2aa198;
     --settings-warning-bg: #b58900;
+    --settings-warning-ring: rgba(181, 137, 0, .35);
     --settings-warning-hover: #a57d00;
     --settings-warning-border: #b58900;
     --settings-card-bg: #eee8d5;
@@ -164,6 +170,7 @@ body[data-theme="solarized-dark"] {
     --settings-button-bg: #268bd2;
     --settings-button-hover: #2aa198;
     --settings-warning-bg: #b58900;
+    --settings-warning-ring: rgba(181, 137, 0, .35);
     --settings-warning-hover: #a57d00;
     --settings-warning-border: #b58900;
     --settings-card-bg: #073642;
@@ -184,6 +191,7 @@ body[data-theme="dracula"] {
     --settings-button-bg: #bd93f9;
     --settings-button-hover: #d6acff;
     --settings-warning-bg: #ffb86c;
+    --settings-warning-ring: rgba(255, 184, 108, .35);
     --settings-warning-hover: #ffca85;
     --settings-warning-border: #ffb86c;
     --settings-card-bg: #44475a;
@@ -365,7 +373,10 @@ body[data-theme="dracula"] {
 
 .syntax-color-text.invalid {
     border-color: var(--settings-warning-bg);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--settings-warning-bg) 35%, transparent);
+    /* 不用 color-mix(in srgb, … 35%, transparent)：那是 Chrome 111+，legacy 渠道的
+       Chromium 108 会把整条声明丢掉，校验态只剩 border-color。逐主题写成 35% alpha
+       的等价 rgba，两边看到的框一样。 */
+    box-shadow: 0 0 0 1px var(--settings-warning-ring);
 }
 
 .syntax-style-toggle {
