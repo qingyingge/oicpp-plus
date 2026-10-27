@@ -132,7 +132,7 @@ const cloudSource = read('src/renderer/js/sidebar/cloudSync.js');
             isDiscardCloseInProgress: () => false,
             getTabContentForSave: () => 'body',
             markTabAsSavedByUniqueKey: (k) => seen.marked.push(k),
-            updateTabPathBySource: (oldPath, newPath) => { seen.rebound = [oldPath, newPath]; },
+            updateTabPathBySource: (oldPath, newPath, newFileName, targetUniqueKey) => { seen.rebound = [oldPath, newPath, newFileName, targetUniqueKey]; },
             electronApiHint: null
         };
         global.window = {
@@ -156,11 +156,16 @@ const cloudSource = read('src/renderer/js/sidebar/cloudSync.js');
                     saveAsFile: async () => { s.saveAsCalls++; return 'D:/p/saved.cpp'; }
                 })
             });
+            // save-as-file 的主进程 handler 已经落盘，这里再调一次 saveFile 就是把同一个
+            // 文件写两遍（并多一次 file-saved 广播），所以另存之后不该再有第二次写。
             check('未命名标签走另存而不是静默跳过',
-                seen.saveAsCalls === 1 && seen.saved[0] === 'D:/p/saved.cpp' && seen.marked.includes('k1'),
+                seen.saveAsCalls === 1 && seen.saved.length === 0 && seen.marked.includes('D:/p/saved.cpp'),
                 JSON.stringify({ saved: seen.saved, marked: seen.marked }));
-            check('另存后按 oldPath=null 重新绑定标签路径',
-                JSON.stringify(seen.rebound) === JSON.stringify([null, 'D:/p/saved.cpp']),
+            check('换绑与标记落在同一个标签上',
+                seen.marked.length === 1 && !seen.marked.includes('k1'),
+                JSON.stringify(seen.marked));
+            check('另存后重新绑定标签路径，并点名是哪一个未命名标签',
+                JSON.stringify(seen.rebound) === JSON.stringify([null, 'D:/p/saved.cpp', null, 'k1']),
                 JSON.stringify(seen.rebound));
             check('全部成功时返回 success:true', result && result.success === true, JSON.stringify(result));
         }

@@ -43,6 +43,23 @@ const terminalSource = read('src/terminal-manager.js');
     const info = Logger.stringifyArgs([{ account: { loginToken: 'XYZ789' } }], { level: 'info' });
     check('info 级别同样脱敏', !info.includes('XYZ789'), info);
 
+    // 8ffe41a (#541) 真正修的是「值里带空格时只抹掉第一个词」：
+    // 旧 SENSITIVE_INLINE_RE 的值分支停在空白处，于是 "password: a b c" 只剩 "a b c" 明文。
+    // 上游是改 .js 产物，fork 这边同名修复落在 logger.ts，所以断言必须跑真函数。
+    const spacedPlain = Logger.stringifyArgs(['password: hunter2 super secret tail'], { level: 'warn' });
+    check('裸字符串里带空格的敏感值整段抹掉（不留下尾明文）',
+        !spacedPlain.includes('hunter2') && !spacedPlain.includes('super secret tail'), spacedPlain);
+
+    const spacedJson = Logger.stringifyArgs(['{"apiKey": "abc def ghi"}'], { level: 'warn' });
+    check('JSON 片段里多词敏感值同样抹到尾', !spacedJson.includes('def ghi'), spacedJson);
+
+    const errText = Logger.stringifyArgs([new Error('auth failed loginToken=SECRET keep this too')], { level: 'warn' });
+    check('Error.message 走 redactString（值后面那串明文也不能留）',
+        !errText.includes('SECRET') && !errText.includes('keep this too'), errText);
+
+    const benign = Logger.stringifyArgs(['wrote theme: dark to settings.json'], { level: 'warn' });
+    check('不含敏感键的正常日志不被误伤', benign.includes('theme: dark'), benign);
+
     check('redactingReplacer 不再是原样返回的占位实现',
         /const redactingReplacer = \(key, value\) => \{/.test(loggerSource)
         && !/const redactingReplacer = \(_?key, value\) => value;/.test(loggerSource));

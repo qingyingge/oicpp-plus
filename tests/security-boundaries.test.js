@@ -779,11 +779,19 @@ async function main() {
     {
         const makeSettingsScope = (extra = {}) => {
             const trace = [];
-            const settingsObj = { theme: 'dark', font: 'Consolas' };
+            // account.loginToken 是主进程独有的凭据：任何一次「完整设置」出边界都必须被剥掉，
+            // 所以沙箱里放一个真值，出口处逐条查它有没有漏出去。
+            const settingsObj = { theme: 'dark', font: 'Consolas', account: { username: 'u', loginToken: 'SECRET-TOKEN' } };
+            const sent = [];
             const win = (name) => ({
                 isDestroyed: () => false,
                 setBackgroundColor: (c) => { trace.push(`${name}.bg=${c}`); },
-                webContents: { send: (channel) => { trace.push(`${name}.${channel}`); } }
+                webContents: {
+                    send: (channel, ...args) => {
+                        trace.push(`${name}.${channel}`);
+                        sent.push({ name, channel, args });
+                    }
+                }
             });
             const scope = makeScope({
                 settings: settingsObj,
@@ -795,6 +803,12 @@ async function main() {
                 codeTemplatesWindow: win('templates'),
                 backupSettingsWindow: win('backup'),
                 normalizeSettingsRuntimeShape: (s) => { trace.push('normalize'); s.normalized = true; },
+                // 与 src/main.ts 的真实实现同形：剥掉 loginToken 再出边界。
+                getPublicSettingsSnapshot: () => {
+                    const clone = JSON.parse(JSON.stringify(settingsObj));
+                    if (clone.account) delete clone.account.loginToken;
+                    return clone;
+                },
                 saveSettings: () => { trace.push('save'); return true; },
                 scheduleAutoSettingsBackup: (reason) => { trace.push(`backup:${reason}`); },
                 createMenuBar: () => { trace.push('menuBar'); },
@@ -804,7 +818,7 @@ async function main() {
                 getThemeBackgroundColor: (name) => `bg(${name})`,
                 ...extra
             });
-            return { scope, trace, settingsObj };
+            return { scope, trace, settingsObj, sent };
         };
         const runUpdate = async (patch, extra) => {
             const env = makeSettingsScope(extra);
@@ -839,12 +853,16 @@ async function main() {
             follows(nulled.trace, ['normalize', 'save', 'main.settings-changed']),
             nulled.trace.join(' → '));
 
+        // 「不写坏 settings」的基准键集从这里现取，而不是硬编码：
+        // 沙箱夹具以后加字段时，这条断言仍然只回答「null/undefined 补丁有没有改动键集」。
+        const baseKeys = Object.keys(makeSettingsScope().settingsObj).sort().join(',');
         for (const junk of [null, undefined]) {
             const env = await runUpdate(junk);
             check(`整参传 ${String(junk)} 时既不抛也不写坏 settings`,
                 env.result && env.result.success === true
-                && Object.keys(env.settingsObj).filter((k) => k !== 'normalized').sort().join(',') === 'font,theme',
-                JSON.stringify(env.result));
+                && Object.keys(env.settingsObj).filter((k) => k !== 'normalized').sort().join(',') === baseKeys
+                && env.settingsObj.account && env.settingsObj.account.loginToken === 'SECRET-TOKEN',
+                JSON.stringify({ result: env.result, keys: Object.keys(env.settingsObj) }));
         }
         const junkShape = await runUpdate('font=Consolas');
         check('传进来的是字符串这种非对象形状时当空补丁处理（for...in 会把每个下标当成一个无效键）',
@@ -920,6 +938,22 @@ async function main() {
                 JSON.stringify(seen));
             check(`${channel}：updateSettings 的返回值原样回给渲染进程（失败了调用方得看得见）`,
                 out && out.success === true && out.via === channel, JSON.stringify(out));
+        }
+
+        // 出口收口：settings-* 的广播载荷一律是脱敏快照。渲染层对 loginToken 零消费点，
+        // 递过去只是给渲染进程里的 XSS 多备一份可以直接拿去调云端的凭据。
+        {
+            const env = makeSettingsScope();
+            const fn = compileFn('updateSettings', env.scope);
+            if (typeof fn.fn === 'function') {
+                await fn.fn(null, { theme: 'light' });
+            }
+            const leaked = env.sent
+                .filter((s) => /^settings-/.test(s.channel) && JSON.stringify(s.args).includes('SECRET-TOKEN'))
+                .map((s) => `${s.name}.${s.channel}`);
+            check('settings-* 广播载荷里没有 account.loginToken',
+                env.sent.length > 0 && leaked.length === 0,
+                JSON.stringify({ sent: env.sent.map((s) => `${s.name}.${s.channel}`), leaked }));
         }
     }
 
