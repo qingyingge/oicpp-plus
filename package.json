@@ -24,6 +24,7 @@
     "prebuild:clangd": "node scripts/run-node-compat.js scripts/download-clangd.js",
     "prebuild:clang-format": "node scripts/run-node-compat.js scripts/download-clang-format.js",
     "prebuild:native": "node scripts/build-fastspawn.js",
+    "package:portable": "node scripts/make-portable.js",
     "build": "pnpm run prebuild:buildinfo && pnpm run prebuild:icons && pnpm run prebuild:native && pnpm run prebuild:clangd && pnpm run prebuild:clang-format && electron-builder",
     "ci": "node scripts/ci-check.js",
     "ci:tests": "node scripts/ci-check.js --only tests",
