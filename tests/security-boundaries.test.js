@@ -779,11 +779,20 @@ async function main() {
     {
         const makeSettingsScope = (extra = {}) => {
             const trace = [];
-            const settingsObj = { theme: 'dark', font: 'Consolas' };
+            // account.loginToken 是主进程独有的凭据，渲染层没有任何消费点。放一份真值进来，
+            // 出口处逐条查它有没有跟着 settings-* 广播漏出去 —— 上面接的是真实的
+            // getPublicSettingsSnapshot，夹具里没有 account 的话那条剥离根本没被跑到。
+            const settingsObj = { theme: 'dark', font: 'Consolas', account: { username: 'u', loginToken: 'SECRET-TOKEN' } };
+            const sent = [];
             const win = (name) => ({
                 isDestroyed: () => false,
                 setBackgroundColor: (c) => { trace.push(`${name}.bg=${c}`); },
-                webContents: { send: (channel) => { trace.push(`${name}.${channel}`); } }
+                webContents: {
+                    send: (channel, ...args) => {
+                        trace.push(`${name}.${channel}`);
+                        sent.push({ name, channel, args });
+                    }
+                }
             });
             const scope = makeScope({
                 settings: settingsObj,
@@ -804,7 +813,7 @@ async function main() {
                 getThemeBackgroundColor: (name) => `bg(${name})`,
                 ...extra
             });
-            return { scope, trace, settingsObj };
+            return { scope, trace, settingsObj, sent };
         };
         const runUpdate = async (patch, extra) => {
             const env = makeSettingsScope(extra);
@@ -843,12 +852,16 @@ async function main() {
             follows(nulled.trace, ['normalize', 'save', 'main.settings-changed']),
             nulled.trace.join(' → '));
 
+        // 「不写坏 settings」的基准键集从夹具现取，别硬编码：夹具以后加字段时这条断言
+        // 仍然只回答「null/undefined 补丁有没有改动键集」这一件事。
+        const baseKeys = Object.keys(makeSettingsScope().settingsObj).sort().join(',');
         for (const junk of [null, undefined]) {
             const env = await runUpdate(junk);
             check(`整参传 ${String(junk)} 时既不抛也不写坏 settings`,
                 env.result && env.result.success === true
-                && Object.keys(env.settingsObj).filter((k) => k !== 'normalized').sort().join(',') === 'font,theme',
-                JSON.stringify(env.result));
+                && Object.keys(env.settingsObj).filter((k) => k !== 'normalized').sort().join(',') === baseKeys
+                && env.settingsObj.account && env.settingsObj.account.loginToken === 'SECRET-TOKEN',
+                JSON.stringify({ result: env.result, keys: Object.keys(env.settingsObj) }));
         }
         const junkShape = await runUpdate('font=Consolas');
         check('传进来的是字符串这种非对象形状时当空补丁处理（for...in 会把每个下标当成一个无效键）',
@@ -901,6 +914,27 @@ async function main() {
             JSON.stringify((writeFalse.scope?.ctx?.settings || writeFalse.settingsObj)));
         check('回滚路径同样不广播',
             !writeFalse.trace.includes('main.settings-changed'), writeFalse.trace.join(' → '));
+
+        // 出口侧：上面每一条成功路径都真的把载荷交给了 webContents.send，这里逐条查凭据漏没漏。
+        // 这才是「接真实 getPublicSettingsSnapshot」的意义 —— 夹具里没有 account 时剥离等于没被跑到，
+        // 任何一处调用点退回裸 settings 都不会有人报警。
+        const leaked = [];
+        for (const env of [nulled, junkShape, applied, rebound, speak, painted]) {
+            for (const s of env.sent) {
+                if (/^settings-/.test(s.channel) && JSON.stringify(s.args).includes('SECRET-TOKEN')) {
+                    leaked.push(`${s.name}.${s.channel}`);
+                }
+            }
+        }
+        check('每一条成功路径的 settings-* 广播载荷里都没有 account.loginToken',
+            painted.sent.length > 0 && leaked.length === 0,
+            JSON.stringify({ sent: painted.sent.map((s) => `${s.name}.${s.channel}`), leaked }));
+        // 反向对照：载荷确实是完整设置（不是空对象蒙过去），只是凭据被剥掉了
+        check('广播出去的确实是完整设置本身，剥的只有 loginToken',
+            painted.sent.some((s) => /^settings-/.test(s.channel)
+                && JSON.stringify(s.args).includes('"username":"u"')
+                && JSON.stringify(s.args).includes('"theme":"light"')),
+            JSON.stringify(painted.sent.filter((s) => /^settings-/.test(s.channel)).map((s) => s.args)));
 
         // 通道侧：载荷必须原样到 updateSettings，返回值必须原样回给渲染进程。
         // handler 是同步的，compileHandler 会强行包成 async 改掉返回类型，这里另配一个同步版。
