@@ -20,6 +20,7 @@ pnpm@11.7.0
 | `ci:fast` | `node scripts/ci-check.js --skip tests`（只跑静态检查） |
 | `ci:strict` | `node scripts/ci-check.js --strict`（WARN 也判 FAIL，当前 18 WARN 会红） |
 | `ci:verbose` | `node scripts/ci-check.js --verbose`（详细输出） |
+| `package:portable` | `node scripts/make-portable.js`（把 dir 产物打成免安装 zip，见「打安装包」） |
 
 ## Workflows（按任务类型的正确操作方式）
 本节按任务类型登记「这件事在本项目里应该怎么做」。动手前先在这里找对应条目，照着走；条目里点名的**反模式**不要试。判断不了就问，不要凭通用经验猜流程。新增条目统一用三级标题，格式：适用场景 → 正确命令序列 → 反模式（附失败特征）→ 坑。
@@ -51,6 +52,29 @@ pnpm exec electron-builder --win dir     # 产出 dist\win-unpacked
 - **构建时间只由 `pnpm run prebuild:buildinfo` 改写**（写入 `src/build-info.json` 的 `buildTime`）。需要保持原构建时间时就跳过该步骤，直接用其余 prebuild + electron-builder + makensis。
 - 产物会覆盖同名旧包，必要时先备份。
 - 压缩是 solid LZMA + 64MB 字典，打包耗时数分钟到十几分钟属正常，耐心等，不要中途打断重试。
+
+#### 便携版（免安装 zip）
+适用场景：学校机房 / 家里机没有管理员权限，或用户就想从 U 盘直接跑。
+
+正确命令序列（Windows，接在上面 `electron-builder --win dir` 之后）：
+```powershell
+pnpm run package:portable          # 默认吃 dist\win-unpacked，产出 dist\OICPP-Plus-<version>-Portable-<label>.zip
+```
+
+要点：
+- **便携版不是另一套构建**：就是同一份 `win-unpacked` 目录 + 一个 `portable.txt` 标记 + zip。运行时 `src/utils/data-root.ts` 看见 exe 同级有 `portable.txt` 就把数据根挪到 exe 旁边，其下仍然叫 `.oicpp-plus`，布局与安装版逐字相同，因此没有迁移代码，`installer.nsi` 也不参与（NSIS 那一条只服务安装版）。
+- **标记文件名是跨文件契约**：`scripts/make-portable.js` 从 `require('../src/utils/data-root')` 里取 `PORTABLE_MARKER_FILE`，不要在别处再写字面量。改名字要同步改已分发的旧包说明。
+- 数据根也可以被环境变量 `OICPP_DATA_ROOT`（必须是**绝对路径**）覆盖，用于「程序在 U 盘、状态留本地盘」；优先级高于标记。
+- CI 的 `build-windows` job 已接：`Build portable package` 步骤 + 产物并入 `windows-artifacts`，release job 的 `files: artifacts/*` 会一并发到 Release。**`UPLOAD_API` 那条远端上传只挑 `*-Setup.exe`，便携包不会进用户的下载服务器** —— 要分发得单独决定。
+- 归档根目录名是有意义的产物名（`OICPP-Plus-<version>-Portable-<arch>/`），脚本用 dist 下的临时暂存目录实现；**不要**原地改名 `dist\win-unpacked`，那是 `installer.nsi` 的输入。
+
+反模式：
+- ❌ 拿 `electron-builder` 的 `portable` target。本项目的 Windows 交付不走 electron-builder 的打包器（同 `nsis` 的理由：它要联网取工具链）。
+- ❌ 在渲染层用 `getUserHome()` + `pathJoin(home, '.oicpp-plus', …)` 自己拼数据目录。便携模式下那会指回系统盘，且不会有任何报错。要目录就问 `getUserDataPath([...segments])`。
+
+坑：
+- 数据根解析里任何候选是**盘根**（`/` 或 `C:\`）都会被拒绝。这是刻意的：退出清理对 `<数据根>\codeTemp` 执行 `rmSync(recursive, force)`，标记误判一次就抹掉整张 U 盘。新增递归删除必须过 `assertDeletableUnderDataRoot()`。
+- `win32` 的盘根判定只有 Windows 能真跑到（POSIX 的 `path.parse` 认不出 `C:\`），Linux 上的测试只覆盖了同一条分支的 POSIX 形态。
 
 ### 改界面文案 / 加翻译（i18n）
 **渲染层一律写 `window.i18n.t('key')`。** 不要新增 `this.t` 或 `window.__` 的调用（类上的 `this.t` 包装已随存量清理删除）。模板字符串里重复调用时允许保留局部别名，但**必须包 `window.i18n`**：

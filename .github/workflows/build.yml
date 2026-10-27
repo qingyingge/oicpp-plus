@@ -335,11 +335,18 @@ jobs:
           Write-Host "Building version: $version"
           makensis "/DPRODUCT_VERSION=$version" installer.nsi
 
+      # 便携包用的是同一份 win-unpacked，只多一个 portable.txt 标记。
+      # 学校机房和家里机经常没有管理员权限，免安装那一份才是这些机器上唯一能用的形态。
+      - name: Build portable package
+        run: pnpm run package:portable
+
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifacts
-          path: dist/OICPP-*-Setup.exe
+          path: |
+            dist/OICPP-*-Setup.exe
+            dist/OICPP-*-Portable-*.zip
           if-no-files-found: error
 
       - name: Upload Windows installer to remote
