@@ -137,42 +137,48 @@ Graph 场景是 Windows `CreateProcess`/Node spawn 固定开销主导，程序�
 - **fastspawn napi 零拷贝 / native stdin-drain 并发**：本机（win32）无法编译验证，
   WSL 无发行版；留待有 POSIX  runner 时再做。
 
-## 第四轮：spawn 时间解剖与 DETACHED_PROCESS（2026-10-28）
+## 第四轮：spawn 时间解剖与一次被评审撤回的尝试（2026-10-28）
 
 ### 时间去哪了（benchmark/profile-pipeline.js，阶段级中位）
 
 | 探针 | spawn 事件 | stdin 写排空 | 首输出 | close 全程 |
 |------|-----------|-------------|--------|-----------|
 | 空程序（现状 windowsHide） | 5.6ms | — | — | **33~35ms** |
-| 空程序 detached | 5.6ms | — | — | **11.7ms** |
+| 空程序 detached 试验 | 5.6ms | — | — | **11.7ms** |
 | scanf 干 1.3MB | 6.4ms | 134ms | — | 142ms |
 | scanf 干 4.6MB | 7.3ms | 428ms | — | 437ms |
 
 - drain 的 134/428ms 完全吻合 scanf ~10MB/s —— 是**用户程序自己的 CPU**，管道本身
   只摊 ~1ms；worker 侧写 stdin 不与关键路径争用（std‖test 并发后各写各的）。
-- 每进程 33ms 地板与 stdio 配置无关、与 exe 是否静态无关，**是 `windowsHide:true`
-  在非 DETACHED 子进程上分配隐藏 conhost 的成本**（Electron GUI 父进程语境实测同幅）。
+- 每进程 33ms 地板与 stdio 配置无关、与 exe 是否静态无关，是 windowsHide 在非
+  detached 子进程上分配隐藏 conhost 的成本（Electron GUI 父进程语境实测同幅）。
 - 判等：1.3MB 逐字节相同 0.12ms（equals 短路）；不同才进归一化（双侧 3.2ms，一次性）。
 
-### 改动
+### 尝试了 DETACHED_PROCESS，撤回（09f5f9c → 本提交）
 
-worker 的 `spawnProcess` 在 win32 也改 `detached: true`（DETACHED_PROCESS：根本不分配
-控制台，比"分配了再隐藏"快 23ms/进程且同样无窗）。POSIX 本来就是 detached，零变化；
-win32 杀树走 `taskkill /T` 按父子关系，不受影响。**副产修复**：带 `system("pause")`
-的遗留程序此前会在隐藏控制台上永远等键（误判 TLE），现在立即返回。
+detached 把地板砍到 11.7ms，t12 三轮中位实测 Sort 18.9 / Graph 34.1 / Range 8.2 TPS
+（+8~32%）。但 /review 的 A/B 实测（交替可复现）暴露了否决级回归：
 
-### 实测（t12，3 轮中位；相对原始基线）
+```
+detached=false   80ms   system("pause") 正常返回
+detached=true  5020ms   永久挂起（5s 被杀）      ← ×2 轮均复现
+```
 
-| 场景 | 第三轮 | 第四轮 | vs 原始基线 | CPU 上限达成度 |
-|------|--------|--------|------------|---------------|
-| Sort  | 17.4 | **18.9** | **2.13x** | ~61% |
-| Graph | 25.9 | **34.1** | **1.78x** | ~35%（撞内核建进程串行：150 程×~10ms≈1.5s=实测墙钟） |
-| Range | 7.7  | **8.2**  | **1.60x** | ~76% |
+无控制台的子进程里 `system("pause")` / conio `getch()` 这类 console 依赖调用会永挂，
+而 OI 遗留代码里 pause() 是高频习惯 —— 按「不保证用户给定程序」（同 fastio 否决理由）
+的原则，兼容优先于 23ms/进程，已回退为隐藏控制台。代码注释就地锁死此结论，防止
+未来再次踩进同一个坑。
+
+### 现状（回退后 = 第三轮数字 t12）
+
+| 场景 | TPS(t12) | vs 原始基线 | CPU 上限达成度 |
+|------|---------|------------|---------------|
+| Sort  | 17.4 | 1.95x | ~56%（余量为核间争用与流水线粒度） |
+| Graph | 25.9 | 1.36x | 非 CPU 主导：150 进程 × 隐藏 conhost 35ms 的建进程串行就是地板 |
+| Range | 7.7  | 1.51x | ~71%（长程序已接近程序自身 CPU 极限） |
 
 达成度口径：单槽无争用 CPU 合计（Sort≈400ms/测）×50 ÷ 12.5 等效核（10 物理+HT 增益）。
-Graph 的"上限"不是 CPU 而是 Windows CreateProcess 串行吞吐，用户态无法再压；
-Range 剩余差距在长程序的核间争用。三条场景均无更多可结构性压缩的空间——
-时间的大头已经属于用户程序自己。
+剩余大头发给 Windows 建进程串行与用户程序本体 CPU；用户态结构性杠杆已尽。
 
 ## 复测命令
 

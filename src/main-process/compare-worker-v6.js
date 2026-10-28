@@ -119,15 +119,15 @@ function outputsEqual(left, right) {
 }
 function spawnProcess(exePath, args, cwd) {
     return new Promise((resolve) => {
-        // detached 在 POSIX 给独立进程组（kill(-pid) 用）；在 win32 它对应
-        // DETACHED_PROCESS —— 不分配 conhost 控制台。实测（Electron GUI 父进程）：
-        // 非 detached 的子进程 35ms/个、detached 12ms/个 —— 每测 3 进程就是 ~68ms，
-        // 小数据的快程序对拍里这是最大单项开销。windowsHide 保留：非 DETACHED 场景
-        // （旧 Node）兜底防闪窗。win32 杀树走 taskkill /T 按父子关系，不依赖进程组。
+        // win32 不用 DETACHED_PROCESS（勿再尝试，实测过的坑）：detached 确实把每进程
+        // 的隐藏 conhost 地板从 35ms 砍到 12ms，但无控制台的子进程里 system("pause")/
+        // conio(getch) 这类 console 依赖调用会永久挂起（实测 5s 被杀 vs 隐藏控制台 80ms
+        // 返回，A/B 交替可复现）——OI 遗留代码里 pause() 是高频习惯，宁可保留 23ms 开销
+        // 也不能把「秒回」变成「挂死判 TLE」。POSIX 保持 detached：独立进程组供 kill(-pid)。
         const proc = (0, child_process_1.spawn)(exePath, args || [], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
-            detached: true,
+            detached: process.platform !== 'win32',
             cwd
         });
         activeProcesses.add(proc);
