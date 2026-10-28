@@ -10,5 +10,5 @@ allowBuilds:
   sharp: true
   electron-winstaller: true
 minimumReleaseAgeExclude:
-  - electron@44.5.1
+  - electron@44.5.1 || 44.10.0 || 45.1.0
   - i18next@26.4.4
