@@ -491,7 +491,10 @@ const workerRows = (() => {
             `const runFastPair = () => { trace.pair++; return ${PAIR}; };`,
             'const fail = (i, kind, code) => { trace.fails.push([i, kind, code]); };',
             "const worker_threads_1 = { parentPort: { postMessage: (m) => trace.posts.push(m.type) } };",
-            `this.__done = (async () => { ${loopSrc} })();`
+            // 回退路径预取开关在 worker 里是模块级 const，循环体引用它；
+            // harness 只抽循环源码，这里补一个恒真的同名声明（预取行为由 trace 计数验证）
+            'const PREFETCH_ENABLED = true;',
+            `this.__done = (async () => { let pendingGen = null; ${loopSrc} })();`,
         ].join('\n'), lctx);
         return lctx.__done.then(() => trace, (e) => { trace.error = String((e && e.stack) || e); return trace; });
     };
@@ -584,11 +587,11 @@ const workerRows = (() => {
             afterGen.gen === 1 && afterGen.js === 0 && afterGen.fails.length === 0 && afterGen.posts.length === 0,
             JSON.stringify({ gen: afterGen.gen, js: afterGen.js, fails: afterGen.fails, posts: afterGen.posts }));
         const afterStd = await runLoop({ flipAt: 'js1' });
-        push('标准程序 await 之后查停：不跑测试程序、不发 progress',
-            afterStd.gen === 1 && afterStd.js === 1 && afterStd.posts.length === 0 && afterStd.fails.length === 0,
-            JSON.stringify({ js: afterStd.js, posts: afterStd.posts, fails: afterStd.fails }));
+        push('std/test 同批并发：批内停机后不发 progress、不报错，循环在批边界即停',
+            afterStd.gen === 2 && afterStd.js === 2 && afterStd.posts.length === 0 && afterStd.fails.length === 0,
+            JSON.stringify({ gen: afterStd.gen, js: afterStd.js, posts: afterStd.posts, fails: afterStd.fails }));
         const afterTest = await runLoop({ flipAt: 'js2' });
-        push('测试程序 await 之后查停：结果一致也不发 progress',
+        push('测试程序侧停机：结果一致也不发 progress',
             afterTest.js === 2 && afterTest.posts.length === 0, JSON.stringify({ js: afterTest.js, posts: afterTest.posts }));
         const clean = await runLoop({});
         push('不停止时 3 组各发一条 progress，一条错都不报（对照组）',

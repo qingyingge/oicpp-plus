@@ -163,6 +163,13 @@ function normalizeOutput(value: Buffer | string | null | undefined): string {
 }
 
 function outputsEqual(left: Buffer | string | null | undefined, right: Buffer | string | null | undefined): boolean {
+    // 逐字节相同是对拍里的高频主情形；先裸比较短路，MB 级输出免掉两侧各一轮
+    // Buffer.from 复制 + utf8 解码 + 4 趟 replace/split/join。判等口径没变：
+    // 不相同（含 string 混入）仍回到唯一一套 normalizeOutput。
+    if (Buffer.isBuffer(left) && Buffer.isBuffer(right)
+        && (left === right || (left.length === right.length && left.equals(right)))) {
+        return true;
+    }
     return normalizeOutput(left) === normalizeOutput(right);
 }
 
@@ -238,6 +245,11 @@ function waitForResult(proc: WorkerProc, timeout: number): Promise<ProcResult> {
 }
 
 function killProc(proc: WorkerProc): void { terminateProcessTree(proc); }
+
+// 回退路径生成器预取开关（环境变量 OICPP_COMPARE_PREFETCH=0 关闭）：
+// 预取让每个 worker 并发进程数 2→3，短程序场景（gen 占主导）净赚，
+// 长程序场景在 CPU 饱和机器上反而挤掉 std/test 的核。默认开，benchmark 可 A/B。
+const PREFETCH_ENABLED = process.env['OICPP_COMPARE_PREFETCH'] !== '0';
 
 // 不限时（0）时给 native 同步调用兜一个墙钟上限：fastspawn 会把 0 当成
 // NO_DEADLINE(=INT64_MAX)，此时死循环的程序永远不返回，worker 线程被占死，
@@ -343,6 +355,11 @@ const activeProcesses = new Set<WorkerProc>();
         const useFast = !!fast;
         const genTimeout = (Number.isFinite(generatorTimeout) && generatorTimeout > 0) ? generatorTimeout : 0;
         let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;
+        // 回退路径的生成器预取：std/test 并发期间事件循环是空的，提前把下一组
+        // 生成器进程起出来，每测耗时从 gen+max(std,test) 收敛到 max(gen, max(std,test))。
+        // fastpath 的 runFastPair 是同步 native 调用，会占死本线程事件循环，
+        // 预取的生成器子进程写满管道缓冲区就得等 —— 没有重叠收益，不预取。
+        let pendingGen: Promise<RunResult> | null = null;
 
         // code 是给渲染层做 i18n 映射用的稳定标识，message 仅作技术细节，不再直接进 UI
         const fail = (i: number, kind: string, code: string, detail: string, extra: FailExtra = {}) => {
@@ -372,7 +389,8 @@ const activeProcesses = new Set<WorkerProc>();
             let genOut: RunResult | null = null;
             const rawInput = () => (genOut ? genOut.output : null);
             try {
-                genOut = await runGenerator(gen, genTimeout);
+                genOut = pendingGen ? await pendingGen : await runGenerator(gen, genTimeout);
+                pendingGen = null;
                 if (!running) break;
                 lastGenMs = genOut.ms || 0;
                 if (genOut.timeout || genOut.error || genOut.signal || genOut.code !== 0) {
@@ -405,11 +423,12 @@ const activeProcesses = new Set<WorkerProc>();
                     }
                     (parentPort as MessagePort).postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: (genOut.output as Buffer).length });
                 } else {
-                    const stdR = await runJs(stdPath, genOut.output, timeout);
+                    if (PREFETCH_ENABLED && running && i + 1 < startIdx + count) pendingGen = runGenerator(gen, genTimeout);
+                    const stdR0 = runJs(stdPath, genOut.output, timeout);
+                    const testR0 = runJs(testPath, genOut.output, timeout);
+                    const [stdR, testR] = await Promise.all([stdR0, testR0]);
                     if (!running) break;
                     lastStdMs = stdR.ms || 0;
-                    const testR = await runJs(testPath, genOut.output, timeout);
-                    if (!running) break;
                     lastTestMs = testR.ms || 0;
 
                     const spawnExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };

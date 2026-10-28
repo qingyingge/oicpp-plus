@@ -29,6 +29,10 @@ binding.posix.gyp
 # 本地编译的 native 模块（平台相关，勿提交）
 fastspawn.node
 
+# 对拍基准：工具日志、基准程序与编译产物均为本地内容（跑法见 docs/PERFORMANCE.md）
+/benchmark/
+/compare-benchmark/
+
 # opencode 工具配置
 .opencode/
 AGENTS.local.md

@@ -187,7 +187,7 @@ class CodeComparer {
                     spjPath: '',
                     freopenInputFile: '',
                     freopenOutputFile: '',
-                    threadCount: 1,
+                    threadCount: NaN,
                     compareCount: 100,
                     timeLimit: 1000
                 },
@@ -737,7 +737,10 @@ class CodeComparer {
         const { cpuThreads, maxParallel } = await this.getMaxParallelThreads();
         this.maxParallelThreads = maxParallel;
         const requestedThreadsRaw = parseInt(ccInput('compare-threads')?.value ?? '');
-        const requestedThreads = Number.isFinite(requestedThreadsRaw) ? Math.max(1, requestedThreadsRaw) : 1;
+        // 留空/非法 = 自动跟随上限（与 ensureThreadLimitUI 的兜底一致），不再退回 1
+        const requestedThreads = Number.isFinite(requestedThreadsRaw)
+            ? Math.max(1, Math.min(requestedThreadsRaw, maxParallel))
+            : maxParallel;
 
         task.config.compareCount = compareCount;
         task.config.timeLimit = Number.isFinite(timeLimit) ? timeLimit : task.config.timeLimit;
@@ -1569,7 +1572,7 @@ class CodeComparer {
                 cpuThreads = remoteCount;
             }
         } catch (_) { }
-        const maxParallel = Math.max(1, Math.floor(cpuThreads / 2));
+        const maxParallel = Math.max(1, Math.round(cpuThreads * 0.6));
         return { cpuThreads, maxParallel };
     }
 
@@ -1585,6 +1588,9 @@ class CodeComparer {
                 if (Number.isFinite(current)) {
                     const capped = Math.max(1, Math.min(current, maxParallel));
                     if (capped !== current) input.value = String(capped);
+                } else {
+                    // 留空 = 自动：直接落到上限，避免用户默认只跑单线程
+                    input.value = String(maxParallel);
                 }
             }
             if (hint) {
