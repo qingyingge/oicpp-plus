@@ -137,14 +137,52 @@ Graph 场景是 Windows `CreateProcess`/Node spawn 固定开销主导，程序�
 - **fastspawn napi 零拷贝 / native stdin-drain 并发**：本机（win32）无法编译验证，
   WSL 无发行版；留待有 POSIX  runner 时再做。
 
+## 第四轮：spawn 时间解剖与 DETACHED_PROCESS（2026-10-28）
+
+### 时间去哪了（benchmark/profile-pipeline.js，阶段级中位）
+
+| 探针 | spawn 事件 | stdin 写排空 | 首输出 | close 全程 |
+|------|-----------|-------------|--------|-----------|
+| 空程序（现状 windowsHide） | 5.6ms | — | — | **33~35ms** |
+| 空程序 detached | 5.6ms | — | — | **11.7ms** |
+| scanf 干 1.3MB | 6.4ms | 134ms | — | 142ms |
+| scanf 干 4.6MB | 7.3ms | 428ms | — | 437ms |
+
+- drain 的 134/428ms 完全吻合 scanf ~10MB/s —— 是**用户程序自己的 CPU**，管道本身
+  只摊 ~1ms；worker 侧写 stdin 不与关键路径争用（std‖test 并发后各写各的）。
+- 每进程 33ms 地板与 stdio 配置无关、与 exe 是否静态无关，**是 `windowsHide:true`
+  在非 DETACHED 子进程上分配隐藏 conhost 的成本**（Electron GUI 父进程语境实测同幅）。
+- 判等：1.3MB 逐字节相同 0.12ms（equals 短路）；不同才进归一化（双侧 3.2ms，一次性）。
+
+### 改动
+
+worker 的 `spawnProcess` 在 win32 也改 `detached: true`（DETACHED_PROCESS：根本不分配
+控制台，比"分配了再隐藏"快 23ms/进程且同样无窗）。POSIX 本来就是 detached，零变化；
+win32 杀树走 `taskkill /T` 按父子关系，不受影响。**副产修复**：带 `system("pause")`
+的遗留程序此前会在隐藏控制台上永远等键（误判 TLE），现在立即返回。
+
+### 实测（t12，3 轮中位；相对原始基线）
+
+| 场景 | 第三轮 | 第四轮 | vs 原始基线 | CPU 上限达成度 |
+|------|--------|--------|------------|---------------|
+| Sort  | 17.4 | **18.9** | **2.13x** | ~61% |
+| Graph | 25.9 | **34.1** | **1.78x** | ~35%（撞内核建进程串行：150 程×~10ms≈1.5s=实测墙钟） |
+| Range | 7.7  | **8.2**  | **1.60x** | ~76% |
+
+达成度口径：单槽无争用 CPU 合计（Sort≈400ms/测）×50 ÷ 12.5 等效核（10 物理+HT 增益）。
+Graph 的"上限"不是 CPU 而是 Windows CreateProcess 串行吞吐，用户态无法再压；
+Range 剩余差距在长程序的核间争用。三条场景均无更多可结构性压缩的空间——
+时间的大头已经属于用户程序自己。
+
 ## 复测命令
 
 `/benchmark/` 与 `/compare-benchmark/` 已整体进 `.gitignore`（跑分日志、基准程序与
 编译产物都是本地内容，不入库）。基准程序的口径：**纯 stdio 实现（scanf/printf，
 不带 fastio）**——真实用户程序不保证有自定义快读，用 fastio 会低估 spawn/管道占比。
 场景规格：Sort = 20 万随机数（gen → std::sort vs 归并）；Graph = 1e3 点 5e4 边最短路
-（Dijkstra vs SPFA）；Range = 2e5 元素 2e5 操作区间和（BIT vs 线段树）；另有 _empty（空
-程序，测固定开销）与 wrong_dijkstra（造 WA 用）。按上表规格现写 .cpp 后：
+（Dijkstra vs SPFA）；Range = 2e5 元素 2e5 操作区间和（BIT vs 线段树）；另有 _empty
+（空程序，测固定开销）、_drain（scanf 干 stdin，隔离读取成本）、_tiny/_tinygen（小数据
+测地板）与 wrong_dijkstra（造 WA 用）。按上表规格现写 .cpp 后：
 
 ```bash
 g++ -O2 -o compare-benchmark/progs/<name>.exe compare-benchmark/progs/<name>.cpp   # 9 个场景程序

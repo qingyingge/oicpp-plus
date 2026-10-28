@@ -175,10 +175,15 @@ function outputsEqual(left: Buffer | string | null | undefined, right: Buffer | 
 
 function spawnProcess(exePath: string, args?: string[], cwd?: string): Promise<WorkerProc> {
     return new Promise((resolve) => {
+        // detached 在 POSIX 给独立进程组（kill(-pid) 用）；在 win32 它对应
+        // DETACHED_PROCESS —— 不分配 conhost 控制台。实测（Electron GUI 父进程）：
+        // 非 detached 的子进程 35ms/个、detached 12ms/个 —— 每测 3 进程就是 ~68ms，
+        // 小数据的快程序对拍里这是最大单项开销。windowsHide 保留：非 DETACHED 场景
+        // （旧 Node）兜底防闪窗。win32 杀树走 taskkill /T 按父子关系，不依赖进程组。
         const proc = (spawn(exePath, args || [], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
-            detached: process.platform !== 'win32',
+            detached: true,
             cwd
         }) as WorkerProc);
         activeProcesses.add(proc);
