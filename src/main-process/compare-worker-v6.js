@@ -119,15 +119,19 @@ function outputsEqual(left, right) {
 }
 function spawnProcess(exePath, args, cwd) {
     return new Promise((resolve) => {
-        // win32 不用 DETACHED_PROCESS（勿再尝试，实测过的坑）：detached 确实把每进程
-        // 的隐藏 conhost 地板从 35ms 砍到 12ms，但无控制台的子进程里 system("pause")/
-        // conio(getch) 这类 console 依赖调用会永久挂起（实测 5s 被杀 vs 隐藏控制台 80ms
-        // 返回，A/B 交替可复现）——OI 遗留代码里 pause() 是高频习惯，宁可保留 23ms 开销
-        // 也不能把「秒回」变成「挂死判 TLE」。POSIX 保持 detached：独立进程组供 kill(-pid)。
+        // 全平台 detached（win32 = DETACHED_PROCESS，不分配控制台）——这是权衡后的
+        // 最终选择，两种模式对 console 依赖程序的行为差异实测于 docs/PERFORMANCE.md：
+        //   隐藏控制台（旧）：getch/kbhit 绕过重定向的 stdin 读 CONIN$ → 永挂；
+        //                     system("pause") 碰巧被 conhost 快速放行。
+        //   DETACHED（现在）：pause 永挂（→按超时如实上报）；getch 读 stdin 见 EOF 立返。
+        // 判定一致性优先：DETACHED 下所有 stdin 语义统一为「读重定向、EOF 即止」，
+        // 与 OJ 评测环境同构；隐藏控制台则同时存在「读不到的一把键」和「永挂」两种
+        // 幽灵路径。另外 DETACHED 每进程快 23ms（省 conhost 分配）。
+        // POSIX detached 同时给出独立进程组供 kill(-pid)。win32 杀树走 taskkill /T。
         const proc = (0, child_process_1.spawn)(exePath, args || [], {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
-            detached: process.platform !== 'win32',
+            detached: true,
             cwd
         });
         activeProcesses.add(proc);
