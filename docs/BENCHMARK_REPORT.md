@@ -489,3 +489,292 @@ Sort 16.0 / Graph 23.5 / Range 8.9 TPS（worker 独立进程加载新 .node，�
 ### 结论
 - std+test 并行消除了串行等待，wall 时间降 15%+，CPU 总量不变（CPU-bound 上限不受影响）
 - 8 线程 + runPair 是当前最优配置；总优化链路 1.3→19.9 TPS = **15.3x**（Sort）
+
+---
+
+## 实验十一：V11 — 修复 stdin 写循环误杀 + C 层归一化判等
+
+### 先说结论
+
+工作区里那版未提交的重构（std/test 改为每次 `spawn(process.execPath, [timeout-wrapper.js])`）
+实测比 HEAD 的原生路径**慢一倍**，且打包后**根本跑不起来**。本实验把原生路径恢复，
+顺带修掉一个一直在悄悄吞测试的 native bug，并把输出判等下沉到 C 层。
+
+| 场景 | 工作区版 (timeout-wrapper) | HEAD 原生 + 本次修复 | V11（含 C 层判等） | V11 vs 工作区版 |
+|------|---------------------------|----------------------|-------------------|----------------|
+| Sort | 25888ms (0 失败) | 11966ms | **10462ms** | **2.47x** |
+| Graph | 16082ms (0 失败) | 6426ms | **6536ms** | **2.46x** |
+| Range | 48223ms (0 失败) | 28675ms | **24286ms** | **1.99x** |
+
+（25 组/场景 × 3 交错重复取中位数 wall time，三者失败数均为 0，日志 `benchmark/logs/ab/`）
+
+Graph 那栏 V11 比「HEAD 原生 + 修复」略慢属噪声：Graph 的输出只有几行，
+C 层判等在那里本来就没有可省的活。
+
+### 缺陷一：poll 超时被当成错误，健康子进程被 SIGKILL（本次最重要）
+
+`fastspawn.cc` 的 stdin 写循环判错写成：
+
+```c
+int wr = (remain < 0) ? poll(&writeFd, 1, -1) : poll(&writeFd, 1, ...);
+if (wr <= 0 && errno != EINTR) { kill(-pid, SIGKILL); break; }
+```
+
+**`poll()` 超时时返回 0 且不改动 `errno`。** 此时 `errno` 还是上一步 `write()` 留下的
+`EAGAIN`，条件于是成立 —— 「子进程只是还没来得及读」被当成错误，健康的 std/test 被
+SIGKILL，收割状态折算成 `128 + 9 = 137`，对拍里显示为 `std_re: standard program exit 137`。
+
+触发门槛仅仅是**输入大于管道缓冲**（默认 64KB），也就是任何真实规模的生成数据。
+实测空闲机器上单次 `run(range_bit, 3.5MB, 20000ms)` 在 **139ms** 就被杀 —— 与负载无关，
+与截止时间无关，百分之百复现。
+
+这就是历史上 Range 场景 0/50、Sort 偶发 `std_re` 的真正原因。同文件里 `drainBoth`
+对同一个 `pr == 0` 分支的处理一直是正确的（`continue`），只有写循环漏改。
+
+修法：抽出 `pump()`，`pr == 0` 一律 `continue`；只在截止时间到达时 kill，并且
+**直接返回 -3**，绝不从收割状态反推超时（反推正是 137 的来源）。`errno` 必须在
+`write`/`read` 之后立刻存进局部变量再判断。
+
+守卫：`tests/fastspawn-io-pump.test.js`（真起子进程的行为断言，win32 自动跳过）。
+
+### 缺陷二：「先写完 stdin 再收输出」的两段式写法会死锁
+
+`run()` 是 CPU 密集的，但父进程把 input 全部写完之前完全不去读子进程的 stdout。
+`cat` 这类边读边写的程序把输出管道写满后就停住不再读输入，而我们还堵在写输入上 ——
+双方互等，只能靠超时收场。实测 `run(cat, 2MB)` 耗满截止时间返回 -3。
+
+修成 `pump()` 交错进行后：`run(cat, 2MB)` = **85ms**，且输出与输入逐字节相同。
+附带收益：喂数据与被测程序计算重叠，每组白赚一段并行。
+
+### 缺陷三：原生路径丢掉 stderr
+
+`runOne()` 捕获 stderr 之后在函数末尾直接 `free(errBuf)`，从不回传。于是原生路径下
+一次段错误只能显示成「standard program killed by SIGSEGV」而没有任何崩溃栈。
+
+这不是架构限制，只是实现疏漏。现在 `run`/`runPair` 都回传 stderr（独立上限 64KB：
+只可能用前缀诊断，同时把 worker 最坏驻留内存从每线程 2×(64MB+64MB) 压到 2×(64MB+64KB)），
+并把 `truncated` 收窄为**只看 stdout** —— 原先 `truncatedOut || truncatedErr`
+会让一个正常退出但喷了 70MB 日志的程序被误判 `output_limit`。
+
+这正是工作区那版重构唯一的真实收益，现已吸收进原生路径。端到端实测：
+RE 的 message 现在是 `FATAL: assertion failed in solver.cpp:42`。
+
+### C 层归一化判等
+
+`normalizeOutput` 在 JS 里是 `toString('utf8') + replace + split/map/join`，
+MB 级输出下实测每组 **67-292ms**（Sort 的 1.97MB 单行输出 67-98ms；
+Range 的 875KB / 99,635 行 244-292ms），而同尺寸 `memcmp` 不到 1ms。
+
+现在 `runPair` 第 5 参 `compare` 为真时在 C 层原地归一化并判等，相等时连两段大输出的
+跨边界拷贝都省掉（相等是最常见的路径）。原地归一化成立的理由：归一化只会**删**字节，
+写游标恒不超过读游标，不需要第二块缓冲。
+
+**假 WA 防护**：`normalizeOutput` 先 `.toString('utf8')`，无效字节序列各自塌成一个
+U+FFFD，因此存在「字节不同而解码相同」的两段输出，JS 判相等而 `memcmp` 判不等 ——
+那会是一次无声的 AC→WA。所以 C 层只在**两侧都是纯 ASCII** 时自己下结论
+（此时 UTF-8 解码是单射，字节相等 ⇔ 字符串相等）；任一侧出现 `>= 0x80` 就回 `-1`
+不裁，把两段交回 worker 的 `outputsEqual` 终裁。真实评测数据都是 ASCII，这条回退
+几乎不触发，但它是唯一能证明「不会假 WA」的兜底。
+
+等价性守卫：`normalizeCompare` 导出真实的 `normalizeInPlace` + `compareNormalized`，
+测试里与**从生产 worker 源码抽出的** `normalizeOutput` 逐条对拍
+（22 条手写边界 + 4000 条定种子 fuzz，字母表专挑 `\r`/`\n`/空格/制表符的组合，
+其中 2767 条判等 / 1233 条判不等），全部一致。参照物不在测试里重抄一份，
+否则它会跟着源码漂移，然后两边都「对」。
+
+### 附带修复
+
+- `runJsPair` 用 `Promise.all` 并行跑 std/test。HEAD 的回退路径是**串行**的，
+  白白丢掉 runPair 的全部收益；而 Windows 上根本没有 `.node`，回退路径就是生产路径。
+- 生成数据长度不再 `Buffer.from(genOut.output).length` —— 那会为拿一个数字把整块
+  MB 级输入再拷一份。
+- 默认并行度改用 `os.availableParallelism()`：`os.cpus().length` 看不见 cgroup 配额
+  与亲和性掩码，本机报 8 而实际允许 3-4，按它起 worker 是 2 倍超订，测到的排队时间
+  会被误当成引擎性能。基准脚本同步采用。
+
+### 环境说明（绝对值不可与实验八/九直接比）
+
+本轮机器 `Cpus_allowed_list` 只有 **3-4** 个 CPU，而 `os.cpus().length` 报 8；
+可用内存约 2.6GB；node 冷启动 339-377ms。文档里 23.3 / 33.1 / 10.1 TPS 是当年
+8 核空闲机器的绝对值，这里**不可比**，因此本实验全部用同机交错 A/B 的相对值。
+
+另外本轮再次确认了实验八的教训：串行分批跑 A/B 会被机器负载漂移骗到。
+第一次跑出的「工作区版 Range 1779ms/组 vs V11 2649ms/组」是假结论 ——
+交错重跑后工作区版是 V11 的 1.99 倍耗时。同一个 worker 在两次运行里
+`gen` 从 190ms 跳到 627ms，足以说明问题。
+
+### 复现
+
+```bash
+pnpm run prebuild:native                 # 重建 fastspawn.node（改完 .cc 必须重建，
+                                         # 否则 runPair 的新 compare 参数被静默忽略）
+npx tsc -p tsconfig.build.json           # .ts 是唯一手写源
+node benchmark/bench-logged.js --scenario Range --tests 12 --worker <path>   # 单场景对照
+node tests/fastspawn-io-pump.test.js     # native 层行为守卫
+```
+
+---
+
+## 实验十二〜二十：V12-V20（生成器路径、判等快路、以及「提前投递」的不可行性证明）
+
+### 先更正本会话自己的一条错误结论
+
+实验十一里我写过「原生跑生成器**无收益**（gen_sort 1.15x、gen_graph 1.56x、gen_range 0.92x
+反而更慢）」。那个结论是**错的**，错在量具：我用的是墙钟，而且没有钉核，而本机
+`Cpus_allowed_list` 会在一次会话中途从 3 变到 4 再变到 8。同一份 worker 的 `gen` 阶段
+在两次运行里从 190ms 跳到 627ms，足以说明那次测量的分辨率根本不足以判 10% 量级的差异。
+
+V12 用 CPU 口径重测之后，结论反转：生成器路径是**剩余最大的单项收益**。
+
+### 方法论升级（这一轮才真正建立可信的比较）
+
+1. **钉核**：所有跑批经 `taskset -c 0-3`。另注意 `taskset -c 0-7` 在 cpuset 只授 0-3 时会
+   **静默成功并降级到 0-3**（内核取交集），所以「请求了几个核」必须回读 `Cpus_allowed_list`
+   确认，不能看 taskset 的返回码。
+2. **用 CPU 而不是墙钟作判据**：`process.cpuUsage()` 即 `getrusage(RUSAGE_SELF)`，含全部
+   worker 线程且不含子进程，正好是「引擎自身 CPU」，不受争抢影响。墙钟在本机对 1-2% 量级
+   的效应没有分辨率。
+3. **交错 + 偶数轮反序**：`benchmark/ab.js` 在同一轮内跑完所有 (场景, 变体) 再进下一轮，
+   且偶数轮反转变体顺序，避免「总排后面那个」系统性吃亏。
+4. **正确性闸门先于性能闸门**：`benchmark/equiv-check.js` 先逐条比对各实现的 kind 序列
+   （含一个故意不等价的 ForceDiff 场景，用来抓「把不等判成相等」这个方向），**只有结论
+   完全一致的实现才允许进入基准环节**。性能优化最危险的失效方式是结论变了但速度数字很好看。
+
+### 总览
+
+| 编号 | 内容 | 结论 |
+|------|------|------|
+| **V12** | 生成器输出改由 C 捕获（无 args/cwd 时走 `fast.run`） | **采用**。引擎 CPU −38%，吞吐 +10~23% |
+| **V13** | `outputsEqual` 原始字节短路 | **采用，但仅 Windows 有效**（回退路径 Range CPU −40%；Linux 原生路径 0.0%） |
+| **V14** | C 层 `normalizeInPlace` 之前加 raw memcmp | **淘汰**。Sort 省 19.8ms 过线，Range 省 −1.8ms 不过线 |
+| **V15** | 融合 `runTriple` / 让 std/test 提前拿到输入 | **淘汰，且不可行**：收益只能用错判换来（见下） |
+| **V16** | 时限锚点守卫（V15 的产物） | **新增为回归测试** `tests/compare-timeout-anchor.test.js`，4/4 PASS |
+| **V17** | 线程数策略 | 维持现状：每 worker 实际索取 1.4-1.65 核，`availableParallelism` 对吞吐是对的 |
+| **V18** | 异质负载下动态分片实测 | **无差别**（dynamic/static = 1.005，落在噪声带内） |
+| **V19** | DrainBuf 复用 / 管道容量 / 读块大小调优 | **零收益**，低于本机测量分辨率 20-60 倍 |
+| **V20** | V12 + V13 组合（已进产品源码） | 72/72 全过，等价闸门 SAME |
+
+### V12 明细：生成器捕获
+
+`compare-worker-v6.ts` 原来无论什么情况都用 `runJs`（child_process + stream `data` 回调 +
+`Buffer.concat`）捕获生成器输出。实测两种机制的引擎 CPU 单价：
+
+| 捕获方式 | 引擎 CPU |
+|---|---|
+| Node stream 逐块回调 + concat | **43.2 ms/MB** |
+| addon 的 C pump | **13-15 ms/MB** |
+| `readFileSync`（不经管道） | 2.5 ms/MB |
+
+于是 `runGenerator` 在「无 args 且无 cwd」时改走 `fast.run()`；Python 生成器
+（解释器 + 脚本参数）仍然走 `runJs`。
+
+钉核 `0-3`、threads=4、每场景 24 组 × 3 轮、对照 V11 完整还原件：
+
+| 场景 | 墙钟 | 引擎 CPU/组 | 失败 |
+|---|---|---|---|
+| Sort | 1.142x | 272.8 → **168.0ms** (1.624x↓) | 0/72 |
+| Graph | 1.228x | 141.9 → **87.9ms** (1.614x↓) | 0/72 |
+| Range | 1.102x | 367.9 → **217.8ms** (1.689x↓) | 0/72 |
+
+与独立测得的分母完全对得上：引擎原本占总 CPU 的 17.2-17.5%，砍掉约 45% 的引擎 CPU
+≈ 总 CPU 的 7.7%，实测吞吐 +10%（Range）。CPU 密集型负载下「省下的 CPU」直接兑换成吞吐，
+这个链路是闭合的。
+
+**⚠ V12 带来的语义变化（必须知道）**：渲染层 `codeComparer.ts:809` 把 `generatorTimeout`
+**恒设为 0（不限时）**。原生调用是同步的、`stop` 与 `worker.terminate()` 都打不断，
+所以沿用 std/test 已有的 `UNLIMITED_RUN_FALLBACK_MS` —— 「不限时」在原生捕获下实际是
+**60s 上限**，而此前经 child_process 可以真的无限等。取舍依据：跑超过 60s 的生成器几乎
+必然是死循环，而旧行为是把整轮对拍无声挂死且不给任何反馈。**若不接受这条，就让
+`runGenerator` 在 `timeout === 0` 时回退 `runJs`，代价是 V12 在生产配置下失效。**
+
+**V12 顺带修掉的一个静默截断**：原生捕获超限后是「继续读但丢弃」，生成器照样退出 0。
+所以主循环的生成器闸门加上了 `genOut.outputTruncated` —— 不拦就会拿一份被截断的输入去跑
+std/test，两边算出同一个错答案然后判你 AC。旧路径靠杀进程间接暴露，换成原生后不会了。
+
+### V13 明细：判等快路（仅 Windows）
+
+回退路径把 `verdict` 硬编码为 -1，于是**每个 AC 都要跑两遍 `normalizeOutput`**
+（`Buffer.from` + `toString` + `replace` + `split/map/join`）。加上原始字节相同就直接返回：
+
+| 回退路径 | Sort | Graph | Range |
+|---|---|---|---|
+| 引擎 CPU/组 | 1.193x↓ | 0.973x | **1.661x↓** |
+
+审计明确记录的一条限制：**这条在 Linux 的原生路径上是 0.0%**（0.132 → 0.115 ms/组），
+因为 `verdict === 1` 在 `judgePair` 里先返回，`outputsEqual` 根本不会被调用。它的价值
+是 Windows（那里没有 `.node`，回退路径就是生产路径），不能当成引擎整体吞吐来汇报。
+
+快路无条件安全：字节相同 ⇒ 归一化与 UTF-8 解码后必然相同（两者都是字节的函数，与是否
+合法 UTF-8 无关），所以它不削弱、也不触碰「非 ASCII 不自己下结论」那道闸门。
+
+### V15 最重要的发现：时限与「提前投递」不可兼得
+
+融合方案（gen 的 stdout 在 C 里广播给 std+test，输入不进 JS）实测每组墙钟
+Range −32% / Sort −40% / Graph −36%，看着很香。它**不可实现**，因为超时锚点两个方向都会
+产生错判，而且都错得无声，两边都有实测样本：
+
+- **锚在 spawn** → 子进程被算上生成器那段时间。只要 `timeout < 投递完成墙钟`，两个都正确的
+  程序就被判成 TLE。实测：投递耗时 1073ms、时限 1000ms → 返回 `0/137/137`，而两个程序本身
+  只需 157-195ms。**假 TLE**。
+- **锚在输入投递完成** → 子进程白拿「投递前它自己空转的那段 CPU」。实测：`range_bit` /
+  `range_segtree` 需要 787/911ms CPU，时限 500ms，融合版返回 `0/0/0` **且答案全对**。**假 AC**。
+
+形式化：**任何锚在 spawn 的时限，只要 `timeout < 投递墙钟` 就造出假 TLE；任何锚在
+input-complete 的时限，只要投递前空转超过时限余额就造出假 AC。** 唯一与现有语义等价的
+策略是「生成器退出之前一个字节都不许投」，而那正好把 −32% 整个删掉。
+
+这一条同时 retroactively 解释了 **V4 为什么必然失败**（不只是「更慢」），并且顺手否掉了
+「预启动下一组的 std/test」这类想法：那是同一个投递前计算的机制换了个外壳。
+
+产物是 `tests/compare-timeout-anchor.test.js`：生成器慢于时限、std/test 快且答案正确时
+必须判通过且不得出现任何 `*_tle`；同时保留「答案不同仍报 mismatch」与「真超时仍报
+std_timeout」两条反向断言，防止有人为了绕过问题而把时限关掉。
+
+### V18 / V19：测出来是「没有」的两条
+
+- **V18 动态分片**：纸面结论是 0%（基准生成器耗时 cv 只有 0.059）。为了不把纸面当实测，
+  造了双峰异质夹具重跑：8 轮全部 0 失败，dynamic/static = 1.005，**无差别**。
+  *harness 缺陷自曝*：脚本里那个 `cv=0.761` 是混了语义算的 —— 静态模式 `w.__t0` 只在启动时
+  设一次，记录的是**整片**耗时，动态模式记录的才是**单组**耗时。所以该 cv 不能当异质度证据，
+  有效证据是夹具单独测出的规模 cv=0.864（n 跨度 5193-187238）。
+- **V19 缓冲复用 / 管道容量 / 读块大小**：直接测 `drainAppend` 的分配链、pipe 往返次数、
+  读块尺寸的影响，收益为零到 0.19%，低于本机测量分辨率 20-60 倍。另外确认
+  `F_SETPIPE_SZ` 请求的 1048576 就是本机 `pipe-max-size` 上限，V11 那一步已经吃满。
+
+### 一次「夹具自己造假失败」的教训
+
+V18 第一版把生成规模放到 400k，实测 `sort_mergesort` 在 **n ≥ 250000 时堆破坏崩溃**
+（它的输出 md5 恰好是空输入的 `d41d8cd9…`），于是 13/20 组「失败」是夹具造的。拿那批数据
+比较两种分片策略，得出的方向是反的。现在 `v18-sharding.js` 的做法是：**任何一轮出现失败
+就整轮作废、不参与结论**，并且夹具在测量前必须自校验（当前 0/20 不一致）。
+
+### 复现
+
+```bash
+pnpm run prebuild:native            # 改完 fastspawn.cc 必须重建，否则新参数被静默忽略
+npx tsc -p tsconfig.build.json
+
+# 1) 先过正确性闸门（结论不一致就不许进基准）
+node benchmark/equiv-check.js --cases 6 \
+  --worker V11=benchmark/variants/worker-v11-control.js \
+  --worker V20=src/main-process/compare-worker-v6.js
+# 2) 钉核 + 交错 + CPU 口径
+node benchmark/ab.js --cpus 0-3 --threads 4 --tests 24 --reps 3 \
+  --scenario Sort,Graph,Range \
+  --worker V11=benchmark/variants/worker-v11-control.js \
+  --worker V20=src/main-process/compare-worker-v6.js
+# 3) 变体单独造
+gcc -O2 -o benchmark/fixtures/gen_mixed benchmark/fixtures/gen_mixed.c
+taskset -c 0-3 node benchmark/v18-sharding.js --threads 4 --tests 20 --reps 4
+```
+
+变体 id 与最终编号的对应：`worker-v12.js`=V12，`worker-v15fb.js`=V13（回退路径），
+`worker-v14.js`/`fastspawn-v14.node`=V14，`worker-v11-control.js`=对照 V11，
+`src/main-process/compare-worker-v6.js`=V20。文件名沿用开发期 id，未随编号重命名。
+
+### 本轮净结论
+
+引擎的 CPU 天花板已经摸清：**runPair 的 std/test 重叠已到 90-100% 效率、T=4 就吃满可得
+CPU、静态分片在均匀与异质负载下都不劣于动态**。剩下的真实收益在「引擎自己烧掉的 CPU」，
+V12 把它砍掉约 38%，V13 在 Windows 上再砍最多 40%。想再往上只剩「常驻进程协议消除
+exec」这一条，而那需要用户程序配合，不在引擎能单方面决定的范围内。

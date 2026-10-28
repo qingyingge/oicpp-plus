@@ -50,6 +50,22 @@ const UNLIMITED_TEST_BUDGET_MS = 60 * 1000;
 const WATCHDOG_SLACK_MS = 30 * 1000;
 // 不限时且测试点很多时预算会线性膨胀，用硬上限兜住，避免看门狗形同虚设
 const WATCHDOG_HARD_CAP_MS = 6 * 60 * 60 * 1000;
+/**
+ * 默认并行度取「当前真正可用」的 CPU 数，而不是机器上的 CPU 总数。
+ *
+ * os.cpus().length 既看不见 cgroup 配额也看不见亲和性掩码：受限环境里它照常报
+ * 满机器核数，于是按它起的 worker 有一半在排队等 CPU。对拍是「每个 worker 跑一
+ * 串完整测试」的形态，超订不会让总吞吐上升，只会把每一组的 wall time 拉长、
+ * 并让时限判定更难对准。availableParallelism 两个都看；拿不到时退回总数。
+ */
+function defaultThreadCount() {
+    if (typeof os.availableParallelism === 'function') {
+        const n = os.availableParallelism();
+        if (Number.isFinite(n) && n > 0)
+            return Math.floor(n);
+    }
+    return os.cpus().length;
+}
 class CompareEngineV2 extends events_1.EventEmitter {
     // 轮次序号：start() 用 ++CompareEngineV2._runCounter 分配本轮 _runId，
     // 配合 isCurrentRun() 把上一轮 worker 的迟到消息挡在门外。
@@ -91,7 +107,7 @@ class CompareEngineV2 extends events_1.EventEmitter {
             }
             const requestedThreads = Number.isInteger(config.threadCount) && config.threadCount > 0
                 ? config.threadCount
-                : os.cpus().length;
+                : defaultThreadCount();
             // 0 = 不限时，与 main.js run-program 的 useTimeouts 语义保持一致；不能用 || 兜底
             const runTimeout = (Number.isFinite(config.timeLimit) && config.timeLimit > 0) ? config.timeLimit : 0;
             const genTimeout = (Number.isFinite(config.generatorTimeout) && config.generatorTimeout > 0) ? config.generatorTimeout : 0;

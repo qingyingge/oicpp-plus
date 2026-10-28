@@ -29,6 +29,10 @@ binding.posix.gyp
 # 本地编译的 native 模块（平台相关，勿提交）
 fastspawn.node
 
+# 基准测试的每测试 JSONL 输出（历史报告里引用的就是这类文件）
+benchmark/logs/
+compare-benchmark/
+
 # opencode 工具配置
 .opencode/
 AGENTS.local.md
@@ -39,3 +43,11 @@ opencode-rag.json
 Thumbs.db
 .idea/
 .vscode/
+
+# 基准变体的编译产物与夹具二进制（平台相关，按需重建）
+benchmark/variants/*.node
+benchmark/variants/*.cc
+benchmark/fixtures/gen_mixed
+
+# 一次性测量脚手架（编号实验的临时变体构建脚本，结论已写进文档，不需长驻仓库）
+benchmark/compare-probe/

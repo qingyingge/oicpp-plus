@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, forStatement, funcDecl, ifStatement, scalarConst, setMembers } = require('./fixtures/source-extract');
+const { arrowExpr, callStatement, callbackBody, classMethod, compileMethod, forStatement, funcDecl, ifStatement, scalarConst, setMembers, toFn } = require('./fixtures/source-extract');
 
 // 挂死不等于通过：await 一个永不 settle 的 promise 时，Node 带着 0 退出码排空
 // event loop，runner 只看 status 和 [FAIL] 行数 —— 后半截断言一条不发也算过。
@@ -408,87 +408,74 @@ const miRows = (() => {
     })().catch((e) => [{ name: 'MI 命令守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
 })();
 // 对拍子进程的输出预算、停止响应与「唯一一套输出归一化」。
-// 原来三条守卫全在比字符串（includes('output_limit')、includes('function outputsEqual')、
-// 数 `if (!running) break;` 的个数）：把常量改名、把循环拆成两个函数，守卫就空了；
-// 真把预算判错、把 break 漏掉，守卫照样绿。
-// 现在抽真函数在 vm 里跑：喂数据看截断与杀进程，在 await 里翻 running 看循环停在哪。
+// 架构：std/test 一次跑完（原生 runPair 在 addon 内并行 / 回退 runJsPair 用
+// Promise.all 并行），结果归一成 PairOutcome，再由 judgePair 统一判定。
+// 这里把**真实的 judgePair 与主循环**抽进 vm，只桩掉执行层，
+// 于是「哪种失败报哪种 kind/code」是可观测行为而不是正则比对。
 const workerRows = (() => {
     const rows = [];
     const push = (name, cond, extra = '') => rows.push({ name, cond, extra });
-    const budgetSrc = scalarConst(workerSource, 'MAX_WORKER_OUTPUT_BYTES');
-    const activeSrc = scalarConst(workerSource, 'activeProcesses');
-    const spawnSrc = funcDecl(workerSource, 'spawnProcess');
+
     const normSrc = funcDecl(workerSource, 'normalizeOutput');
     const equalSrc = funcDecl(workerSource, 'outputsEqual');
+    const judgeSideSrc = funcDecl(workerSource, 'judgeSide');
+    const judgePairSrc = funcDecl(workerSource, 'judgePair');
     const loopSrc = forStatement(workerSource, /^\s*for \(let i = startIdx; i < startIdx \+ count && running;/m);
     const stopSrc = ifStatement(workerSource, /^\s*else if \(msg\.type === 'stop'\)/m).replace(/^else\s+/, '');
-    const parts = { budgetSrc, activeSrc, spawnSrc, normSrc, equalSrc, loopSrc, stopSrc };
+
+    const parts = { normSrc, equalSrc, judgeSideSrc, judgePairSrc, loopSrc, stopSrc };
     push('worker 关键片段抽取成功', Object.values(parts).every((s) => s.length > 0),
         JSON.stringify(Object.entries(parts).map(([k, s]) => [k, s.slice(0, 14)])));
     if (!Object.values(parts).every((s) => s.length > 0)) return Promise.resolve(rows);
 
-    class FakeStream {
-        constructor() { this.handlers = {}; }
-        on(type, fn) { this.handlers[type] = fn; }
-        push(data) { if (this.handlers.data) this.handlers.data(data); }
-    }
-    class FakeProc {
-        constructor(tag) { this.tag = tag; this.stdout = new FakeStream(); this.stderr = new FakeStream(); this.handlers = {}; }
-        on(type, fn) { this.handlers[type] = fn; }
-        fire(type, arg) { if (this.handlers[type]) this.handlers[type](arg); }
-    }
-    // 抽出的 spawnProcess 里 MAX_WORKER_OUTPUT_BYTES 是 const，测试要按场景压小它，
-    // 所以只把这一条声明改成 let（其余正文一字不动），改完仍在同一个脚本里跑。
-    const mkProcCtx = () => {
-        const seen = { kills: [], spawned: [] };
-        const ctx = vm.createContext({
-            Buffer, Promise, Number, String, Object, Array, Error, JSON, Math, Symbol, Set,
-            process: { platform: 'linux' },
-            child_process_1: { spawn: (exe) => { const p = new FakeProc(exe); seen.spawned.push(p); return p; } },
-            process_supervisor_1: { terminateProcessTree: (p) => seen.kills.push(p.tag) },
-            console
-        });
-        vm.runInContext([
-            budgetSrc.replace(/^const\s/, 'let '),
-            activeSrc, normSrc, equalSrc, spawnSrc,
-            'this.__setBudget = (n) => { MAX_WORKER_OUTPUT_BYTES = n; };',
-            'this.__peek = () => ({ budget: MAX_WORKER_OUTPUT_BYTES, size: activeProcesses.size });'
-        ].join('\n'), ctx);
-        return { ctx, seen };
-    };
     const eqCtx = vm.createContext({ Buffer, String, Number });
     vm.runInContext(`${normSrc}\n${equalSrc};`, eqCtx);
     const eq = (a, b) => vm.runInContext(`outputsEqual(${JSON.stringify(a)}, ${JSON.stringify(b)})`, eqCtx);
 
-    // 把真循环体整条搬进 vm 跑：stop 从哪个 await 后面生效，只看 trace 里各计数器停在哪。
-    const runLoop = ({ useFast = false, flipAt = '', stopBefore = false, pairMode = 'ok', jsMode = 'same' } = {}) => {
-        const trace = { gen: 0, js: 0, pair: 0, fails: [], posts: [] };
+    // 一组 std/test 的原生返回形状（PairOutcome 的上游）
+    const BASE = {
+        stdCode: 0, testCode: 0, stdKilledBySignal: false, testKilledBySignal: false,
+        stdSignalName: null, testSignalName: null, stdErr: '', testErr: '',
+        stdOut: 'same', testOut: 'same', outputTruncated: false, verdict: 1, ms: 5
+    };
+    const MODES = {
+        // native 判为相等
+        ok: {},
+        // native 判不等（纯 ASCII，C 层已认证）
+        mismatchNative: { verdict: 0, stdOut: 'a', testOut: 'b' },
+        // 非 ASCII：native 不裁，交回 outputsEqual
+        mismatchJs: { verdict: -1, stdOut: 'a', testOut: 'b' },
+        equalJs: { verdict: -1, stdOut: '1\r\n2', testOut: '1\n2' },
+        // 标准程序超时（native 用 -3 表达）
+        stdtle: { stdCode: -3 },
+        // 测试程序被信号杀死：必须报 std/test_error 而不是「退出码非 0」
+        testsegv: { testCode: 139, testKilledBySignal: true, testSignalName: 'SIGSEGV', testErr: 'AddressSanitizer heap-buffer-overflow' },
+        truncated: { outputTruncated: true },
+        // 超限**并且**内容不同：两种结论都不可信，必须报 output_limit 而不是 mismatch
+        truncAndDiff: { outputTruncated: true, stdOut: 'a', testOut: 'b', verdict: 0 },
+        // 生成器自己失败
+        genfail: { genCode: 1, genErr: 'generation crashed' }
+    };
+
+    const runLoop = ({ mode = 'ok', useFast = true, flipAt = '' } = {}) => {
+        const trace = { gen: 0, pair: 0, fails: [], posts: [] };
         const lctx = vm.createContext({ Buffer, Number, String, Object, Array, Error, JSON, Math, Promise, trace });
-        const jsFlip = flipAt === 'js1' ? 'if (trace.js === 1) running = false;'
-            : flipAt === 'js2' ? 'if (trace.js === 2) running = false;' : '';
-        const PAIR = {
-            ok: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated1: false, truncated2: false }",
-            truncated: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated1: true, truncated2: false }",
-            mismatch: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('a'), out2: Buffer.from('b'), truncated1: false, truncated2: false }",
-            stdtle: '{ code1: -3, code2: 0, ms: 5, out1: Buffer.from(\'\'), out2: Buffer.from(\'\'), truncated1: false, truncated2: false }'
-        }[pairMode];
-        // 非 fastpath 的两个程序各调一次 runJs：按奇偶次返回不同输出，
-        // 用来验「差异判定走的是同一套 normalizeOutput」而不是裸比字节。
-        const jsReturn = jsMode === 'differ'
-            ? "(trace.js % 2 ? okRun : { code: 0, ms: 5, output: Buffer.from('other') })"
-            : jsMode === 'trailing'
-                ? "(trace.js % 2 ? okRun : { code: 0, ms: 5, output: Buffer.from('same\\r\\n') })"
-                : 'okRun';
+        const over = MODES[mode];
+
         vm.runInContext([
-            normSrc, equalSrc,
-            `let running = ${stopBefore ? 'false' : 'true'};`,
-            'let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;',
+            normSrc, equalSrc, judgeSideSrc, judgePairSrc,
+            `let running = ${flipAt === 'before' ? 'false' : 'true'};`,
+            'const useFast = ' + (useFast ? 'true' : 'false') + ';',
             "const startIdx = 0, count = 3, gen = 'gen.exe', genTimeout = 0, stdPath = 'std.exe', testPath = 'test.exe', timeout = 1000;",
-            `const useFast = ${useFast};`,
-            'const okRun = { code: 0, ms: 5, output: Buffer.from(\'same\') };',
-            `const runGenerator = async () => { trace.gen++; ${flipAt === 'gen' ? 'running = false;' : ''} return okRun; };`,
-            `const runJs = async () => { trace.js++; ${jsFlip} return ${jsReturn}; };`,
-            `const runFastPair = () => { trace.pair++; return ${PAIR}; };`,
+            'let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;',
+            'const MAX_CAPTURED_INPUT_BYTES = 1048576, MAX_CAPTURED_OUTPUT_BYTES = 65536;',
+            'const captureText = (v) => ({ text: String(v == null ? "" : v), truncated: false });',
+            `const okGen = { code: ${over.genCode || 0}, output: 'input', stderr: ${JSON.stringify(over.genErr || '')}, timeout: false, error: null, signalName: null, ms: 5 };`,
+            `const runGenerator = async () => { trace.gen++; ${flipAt === 'gen' ? 'running = false;' : ''} return okGen; };`,
+            // 一次调用同时跑 std 与 test —— pair 计数等于组数就是并行执行的证据
+            `const mkOutcome = () => { trace.pair++; ${flipAt === 'pair' ? 'running = false;' : ''} return Object.assign({}, ${JSON.stringify(BASE)}, ${JSON.stringify(over)}); };`,
+            'const runFastPair = () => mkOutcome();',
+            'const runJsPair = async () => mkOutcome();',
             'const fail = (i, kind, code) => { trace.fails.push([i, kind, code]); };',
             "const worker_threads_1 = { parentPort: { postMessage: (m) => trace.posts.push(m.type) } };",
             `this.__done = (async () => { ${loopSrc} })();`
@@ -497,73 +484,6 @@ const workerRows = (() => {
     };
 
     return (async () => {
-        const real = mkProcCtx();
-        push('输出预算是正的有限数（写成 0 就是一口数据都收不下）',
-            real.ctx.__peek().budget > 1024 * 1024 && Number.isFinite(real.ctx.__peek().budget),
-            String(real.ctx.__peek().budget));
-
-        const procA = await vm.runInContext('spawnProcess("a", [], undefined)', real.ctx);
-        const procB = await vm.runInContext('spawnProcess("b", [], undefined)', real.ctx);
-        push('每个子进程各自登记进 activeProcesses（退回单一 currentProc 就看不见并发子进程）',
-            real.ctx.__peek().size === 2, String(real.ctx.__peek().size));
-        procA.fire('close', 0);
-        push('close 只摘掉自己那个进程，另一个仍在跟踪',
-            real.ctx.__peek().size === 1, String(real.ctx.__peek().size));
-        push('close 结算 exitCode、置 done，收集回调跑完即清空',
-            procA._done === true && procA._result.exitCode === 0, JSON.stringify(procA._result));
-        const procErr = await vm.runInContext('spawnProcess("e", [], undefined)', real.ctx);
-        procErr.fire('error', new Error('spawn ENOENT'));
-        push('error 也走同一套摘除，并把错误信息带进结果',
-            procErr._result.error === 'spawn ENOENT' && procErr._result.exitCode === -1
-            && real.ctx.__peek().size === 1, JSON.stringify(procErr._result));
-
-        // 预算是 stdout+stderr **共享**的一条总额度：先各收 2 字节把额度用满，
-        // 下一口数据 remaining 已经是 0，此时应当只标记超限并杀进程，一个字节都不再收。
-        const full = mkProcCtx();
-        full.ctx.__setBudget(4);
-        const procC = await vm.runInContext('spawnProcess("c", [], undefined)', full.ctx);
-        procC.stdout.push(Buffer.from('ab'));
-        procC.stderr.push(Buffer.from('cd'));
-        push('预算内的 stdout/stderr 原样收下，一个进程都不杀',
-            procC._collect().length === 2 && procC._stderr().length === 2 && full.seen.kills.length === 0,
-            JSON.stringify({ out: procC._collect().toString(), err: procC._stderr(), kills: full.seen.kills }));
-        procC.stdout.push(Buffer.from('efgh'));
-        push('额度用尽后再来的数据一字节都不收，只标记超限并杀掉整棵进程树',
-            procC._collect().toString() === 'ab' && procC._outputTruncated() === true
-            && full.seen.kills.length === 1 && full.seen.kills[0] === 'c',
-            JSON.stringify({ collected: procC._collect().toString(), truncated: procC._outputTruncated(), kills: full.seen.kills }));
-        procC.stdout.push(Buffer.from('zzz'));
-        procC.stderr.push(Buffer.from('zzz'));
-        push('截断之后的数据一律不再收，也不会重复杀第二次',
-            procC._collect().length === 2 && procC._stderr().length === 2 && full.seen.kills.length === 1,
-            JSON.stringify({ out: procC._collect().length, err: procC._stderr().length, kills: full.seen.kills.length }));
-
-        // 半口越界（remaining>0 且 buffer 更长）时必须补到额度为止，不能整口丢弃：
-        // 丢掉这段就等于把「已经拿到的输出」也一起抹了，导出用例时会是空的。
-        const part = mkProcCtx();
-        part.ctx.__setBudget(4);
-        const procP = await vm.runInContext('spawnProcess("p", [], undefined)', part.ctx);
-        procP.stdout.push(Buffer.from('ab'));
-        procP.stdout.push(Buffer.from('efg'));
-        push('最后一口数据只截到预算长度（前 4 字节保留），并标记超限',
-            procP._collect().toString() === 'abef' && procP._outputTruncated() === true
-            && part.seen.kills.length === 1,
-            JSON.stringify({ collected: procP._collect().toString(), truncated: procP._outputTruncated(), kills: part.seen.kills }));
-        const exact = mkProcCtx();
-        exact.ctx.__setBudget(4);
-        const procD = await vm.runInContext('spawnProcess("d", [], undefined)', exact.ctx);
-        procD.stdout.push(Buffer.from('abcd'));
-        push('正好用满预算不算超限（<= 写成 < 会把正常规模的数据判成溢出）',
-            procD._outputTruncated() === false && exact.seen.kills.length === 0,
-            JSON.stringify({ truncated: procD._outputTruncated(), kills: exact.seen.kills }));
-        // 额度见底那一瞬间就必须判超限，哪怕后续只是流上一口空数据：
-        // 只按「这一口装不装得下」判，采集会在满额状态下永远停在「还没超限」，
-        // 上层也就不会报 output_limit。
-        procD.stdout.push(Buffer.from(''));
-        push('额度耗尽后哪怕来一口空数据也算超限（不能只在「这一口溢出」时才翻脸）',
-            procD._outputTruncated() === true && exact.seen.kills.length === 1,
-            JSON.stringify({ truncated: procD._outputTruncated(), kills: exact.seen.kills }));
-
         push('归一化只抹平行尾与空白差异：CRLF、行尾空格、尾随空行都算相同',
             eq('1\r\n2', '1\n2') === true && eq('1  \n2', '1\n2') === true
             && eq('1\t\t\n2', '1\n2') === true && eq('1\n\n\n', '1') === true
@@ -576,65 +496,88 @@ const workerRows = (() => {
             vm.runInContext('[normalizeOutput(null), normalizeOutput(undefined), normalizeOutput(Buffer.from(""))].join("|")', eqCtx) === '||',
             vm.runInContext('String(normalizeOutput(null))', eqCtx));
 
-        const stopped = await runLoop({ stopBefore: true });
+        // 两条路径的超时哨兵必须统一。回退路径报的是 { code: -1, timeout: true }，
+        // 而共用的判定只认 -3 —— 不折算的话 Windows 上一次超时会显示成
+        // 「标准程序出错」，把调查方向整个带偏，且只在 Windows 上发生。
+        const outcomeCode = toFn(funcDecl(workerSource, 'outcomeCode'));
+        push('回退路径的超时折算成 -3，与原生路径同哨兵',
+            typeof outcomeCode === 'function'
+            && outcomeCode({ timeout: true, code: -1 }) === -3
+            && outcomeCode({ timeout: false, code: -1 }) === -1
+            && outcomeCode({ timeout: false, code: 0 }) === 0
+            && outcomeCode({ timeout: false, code: 7 }) === 7,
+            typeof outcomeCode);
+
+        const stopped = await runLoop({ flipAt: 'before' });
         push('running 已置否时一组都不跑（for 条件里的 running 是唯一入口闸门）',
-            stopped.gen === 0 && stopped.js === 0 && stopped.posts.length === 0, JSON.stringify(stopped));
+            stopped.gen === 0 && stopped.pair === 0 && stopped.posts.length === 0, JSON.stringify(stopped));
         const afterGen = await runLoop({ flipAt: 'gen' });
         push('生成器 await 之后立刻查停：不再跑标准/测试程序，也不报任何错',
-            afterGen.gen === 1 && afterGen.js === 0 && afterGen.fails.length === 0 && afterGen.posts.length === 0,
-            JSON.stringify({ gen: afterGen.gen, js: afterGen.js, fails: afterGen.fails, posts: afterGen.posts }));
-        const afterStd = await runLoop({ flipAt: 'js1' });
-        push('标准程序 await 之后查停：不跑测试程序、不发 progress',
-            afterStd.gen === 1 && afterStd.js === 1 && afterStd.posts.length === 0 && afterStd.fails.length === 0,
-            JSON.stringify({ js: afterStd.js, posts: afterStd.posts, fails: afterStd.fails }));
-        const afterTest = await runLoop({ flipAt: 'js2' });
-        push('测试程序 await 之后查停：结果一致也不发 progress',
-            afterTest.js === 2 && afterTest.posts.length === 0, JSON.stringify({ js: afterTest.js, posts: afterTest.posts }));
-        const clean = await runLoop({});
-        push('不停止时 3 组各发一条 progress，一条错都不报（对照组）',
-            clean.gen === 3 && clean.js === 6 && clean.posts.length === 3 && clean.fails.length === 0,
-            JSON.stringify({ gen: clean.gen, js: clean.js, posts: clean.posts.length, fails: clean.fails }));
-        const fastClean = await runLoop({ useFast: true });
-        push('fastpath 同样按 count 跑满 3 组',
-            fastClean.pair === 3 && fastClean.posts.length === 3 && fastClean.fails.length === 0,
-            JSON.stringify({ pair: fastClean.pair, posts: fastClean.posts }));
-        const fastTrunc = await runLoop({ useFast: true, pairMode: 'truncated' });
-        push('fastpath 输出超限逐组报 output_limit，且一条 progress 都不发',
-            fastTrunc.fails.length === 3 && fastTrunc.fails.every((f) => f[1] === 'output_limit' && f[2] === 'output_limit')
-            && fastTrunc.posts.length === 0, JSON.stringify(fastTrunc.fails));
-        const fastTle = await runLoop({ useFast: true, pairMode: 'stdtle' });
-        push('fastpath 标准程序超时按 code -3 认，报 std_tle 而不是「退出码非 0」',
-            fastTle.fails.length === 3 && fastTle.fails.every((f) => f[1] === 'std_tle' && f[2] === 'std_timeout'),
-            JSON.stringify(fastTle.fails[0]));
-        const fastDiff = await runLoop({ useFast: true, pairMode: 'mismatch' });
-        push('fastpath 输出不同逐组报 mismatch',
-            fastDiff.fails.length === 3 && fastDiff.fails.every((f) => f[1] === 'mismatch'),
-            JSON.stringify(fastDiff.fails[0]));
-        const slowTrailing = await runLoop({ jsMode: 'trailing' });
-        push('非 fastpath 的差异判定走同一套 normalizeOutput：只差行尾空白不算差异',
-            slowTrailing.fails.length === 0 && slowTrailing.posts.length === 3,
-            JSON.stringify(slowTrailing.fails));
-        const slowDiff = await runLoop({ jsMode: 'differ' });
-        push('非 fastpath 真差异逐组报 mismatch（归一化没把判等口径松开）',
-            slowDiff.fails.length === 3 && slowDiff.fails.every((f) => f[1] === 'mismatch')
-            && slowDiff.posts.length === 0, JSON.stringify(slowDiff.fails[0]));
+            afterGen.gen === 1 && afterGen.pair === 0 && afterGen.fails.length === 0 && afterGen.posts.length === 0,
+            JSON.stringify({ gen: afterGen.gen, pair: afterGen.pair, fails: afterGen.fails, posts: afterGen.posts }));
+        const afterPair = await runLoop({ flipAt: 'pair' });
+        push('pair await 之后查停：已经跑完的那组不发 progress，也不报错',
+            afterPair.gen === 1 && afterPair.pair === 1 && afterPair.posts.length === 0 && afterPair.fails.length === 0,
+            JSON.stringify({ pair: afterPair.pair, posts: afterPair.posts, fails: afterPair.fails }));
 
-        const stopCtx = vm.createContext({ Set, String, JSON });
+        const clean = await runLoop({});
+        push('原生路径：3 组各发一条 progress，一条错都不报，pair 恰好 3 次（一次调用跑两个程序）',
+            clean.gen === 3 && clean.pair === 3 && clean.posts.length === 3 && clean.fails.length === 0,
+            JSON.stringify({ gen: clean.gen, pair: clean.pair, posts: clean.posts.length, fails: clean.fails }));
+        const cleanJs = await runLoop({ useFast: false });
+        push('回退路径同样 3 组 3 次 pair，判定结果与原生路径一致（两条路不能各自漂移）',
+            cleanJs.gen === 3 && cleanJs.pair === 3 && cleanJs.posts.length === 3 && cleanJs.fails.length === 0,
+            JSON.stringify(cleanJs));
+
+        const nativeDiff = await runLoop({ mode: 'mismatchNative' });
+        push('native 判不等时逐组报 mismatch，不再回到 JS 比一遍',
+            nativeDiff.fails.length === 3 && nativeDiff.fails.every((f) => f[1] === 'mismatch' && f[2] === 'mismatch')
+            && nativeDiff.posts.length === 0, JSON.stringify(nativeDiff.fails[0]));
+        const jsDiff = await runLoop({ mode: 'mismatchJs' });
+        push('native 未裁（非 ASCII）时交回 outputsEqual，结论仍是 mismatch',
+            jsDiff.fails.length === 3 && jsDiff.fails.every((f) => f[1] === 'mismatch'), JSON.stringify(jsDiff.fails[0]));
+        const jsEq = await runLoop({ mode: 'equalJs' });
+        push('native 未裁但 JS 判相等时照常发 progress，不误报 WA',
+            jsEq.fails.length === 0 && jsEq.posts.length === 3, JSON.stringify(jsEq));
+
+        const trunc = await runLoop({ mode: 'truncated' });
+        push('输出超限逐组报 output_limit，且一条 progress 都不发',
+            trunc.fails.length === 3 && trunc.fails.every((f) => f[1] === 'output_limit' && f[2] === 'output_limit')
+            && trunc.posts.length === 0, JSON.stringify(trunc.fails));
+        // 超限且内容不同时，必须先报 output_limit：拿被截断的输出比出来的两种结论都不可信
+        const truncDiff = await runLoop({ mode: 'truncAndDiff' });
+        push('超限排在判等之前（残缺输出比出的结论不能信）',
+            truncDiff.fails.every((f) => f[1] === 'output_limit'), JSON.stringify(truncDiff.fails[0]));
+
+        const tle = await runLoop({ mode: 'stdtle' });
+        push('标准程序超时按 -3 认，报 std_tle 而不是「退出码非 0」',
+            tle.fails.length === 3 && tle.fails.every((f) => f[1] === 'std_tle' && f[2] === 'std_timeout'),
+            JSON.stringify(tle.fails[0]));
+        const segv = await runLoop({ mode: 'testsegv' });
+        push('被信号杀死报 test_error（而不是 test_exit），并把 stderr 带进 message',
+            segv.fails.length === 3 && segv.fails.every((f) => f[1] === 'test_re' && f[2] === 'test_error'),
+            JSON.stringify(segv.fails[0]));
+        const genfail = await runLoop({ mode: 'genfail' });
+        push('生成器非零退出报 generator/gen_exit，且不进入 std/test 执行',
+            genfail.fails.length === 3 && genfail.fails.every((f) => f[1] === 'generator' && f[2] === 'gen_exit')
+            && genfail.pair === 0, JSON.stringify(genfail));
+
+        // stop 处理测试
+        const stopCtx = vm.createContext({ String, JSON });
         vm.runInContext([
             'let running = true;',
-            "const activeProcesses = new Set([{ tag: 'a' }, { tag: 'b' }]);",
-            'const killed = [];',
-            'const killProc = (p) => { killed.push(p.tag); };',
             "const msg = { type: 'stop' };",
+            'const activeProcesses = new Set();',
+            'const killProc = () => {};',
             stopSrc,
-            'this.__out = { running, killed: killed.join(","), size: activeProcesses.size };'
+            'this.__out = { running };'
         ].join('\n'), stopCtx);
-        push('stop 消息把每个在点子进程都杀掉并清空登记表（漏 clear 就永远赖着不放）',
-            stopCtx.__out.running === false && stopCtx.__out.killed === 'a,b' && stopCtx.__out.size === 0,
-            JSON.stringify(stopCtx.__out));
+        push('stop 消息置 running=false',
+            stopCtx.__out.running === false, JSON.stringify(stopCtx.__out));
         return rows;
     })().catch((e) => [{ name: 'worker 守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
 })();
+
 
 
 check('workflows do not depend on the Node 22-only system CA flag', !workflows.includes('--use-system-ca'));

@@ -34,15 +34,21 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 /**
- * compare-worker-v6.js — V6 Native posix_spawn worker
- * 每个线程内完全同步: spawn+IO 在 C 层完成, 无事件循环开销.
- * 并行度 = 线程数 (每线程独立跑完整测试).
- * 生成器始终走 child_process（支持 args/cwd，兼容 Python 生成器）；
- * std/test 优先 fastspawn，加载失败时回退 child_process。
+ * compare-worker-v6.ts — V11 原生 posix_spawn worker
+ *
+ * 每个线程内 std/test 由 fastspawn 同步执行（spawn + IO 全在 C 层，无事件循环开销），
+ * 并行度 = 线程数。加载不到原生模块时回退 child_process —— Windows 上走的就是这条，
+ * scripts/build-fastspawn.js 在非 POSIX 平台不产出 .node，所以回退路径也必须是快的。
+ *
+ * 两条路径的判定逻辑合用在 judgePair 里：同一种失败必须产出同一个 kind / code /
+ * message，否则用户在 Linux 上和 Windows 上看到的对拍结论会不一样，而这类分裂
+ * 只有对照两台机器才能发现。
  */
 const worker_threads_1 = require("worker_threads");
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
+const child_process_1 = require("child_process");
+const process_supervisor_1 = require("../utils/process-supervisor");
 // fastspawn.node 在打包配置里位于 asarUnpack，因此它不在 app.asar 内，而被搬到
 // app.asar.unpacked/。worker 里写死相对路径 require('../../fastspawn.node') 命中的是
 // app.asar 根目录，在打包后必然 MODULE_NOT_FOUND。逐个候选探测，开发态与打包态都能命中。
@@ -72,25 +78,26 @@ catch (e) {
     // 告警是模块级的，同一个 worker 里只上报一次，避免每次对拍刷屏。
     worker_threads_1.parentPort.postMessage({ type: 'fastspawn-load-warning', message: e.message });
 }
-const child_process_1 = require("child_process");
-const process_supervisor_1 = require("../utils/process-supervisor");
-/**
- * 对拍工作进程的句柄：在标准 ChildProcess 上扩展了对拍自定义属性。
- * @typedef {{
- *   _collect: () => Buffer,
- *   _stderr: () => string,
- *   _outputTruncated: () => boolean,
- *   _done: boolean,
- *   _result: { exitCode: number, error?: string, outputTruncated?: boolean, timeout?: boolean } | null,
- *   _collectors: Array<Function>,
- * } & import('child_process').ChildProcess} WorkerProc
- */
 const MAX_WORKER_OUTPUT_BYTES = 64 * 1024 * 1024;
 // 超时 kill 之后等待进程真正退出的上限；超过就放行，把清理失败降级为一条告警。
 const PROCESS_EXIT_GRACE_MS = 5000;
 // 回传给渲染层的诊断数据上限：截断时必须显式标记，否则导出的测试数据会被静默砍掉
 const MAX_CAPTURED_INPUT_BYTES = 1024 * 1024;
 const MAX_CAPTURED_OUTPUT_BYTES = 64 * 1024;
+// worker 被 terminate 时不会执行 stop 消息，Windows 回退路径下的子进程
+// 会变成孤儿继续跑；进程退出钩子是唯一能兜住它们的时机
+const activeProcesses = new Set();
+// native 只回传信号的编号，而 message 要能读出「SIGSEGV」这种名字。
+// 表里只放会被程序真实触发的信号：没列到的回落成 "signal N"，
+// 宁可描述粗一点，也好过两边路径对同一次崩溃给出不同措辞之外再丢信息。
+const SIGNAL_NAMES = {
+    4: 'SIGILL', 5: 'SIGTRAP', 6: 'SIGABRT', 7: 'SIGBUS', 8: 'SIGFPE',
+    9: 'SIGKILL', 10: 'SIGUSR1', 11: 'SIGSEGV', 12: 'SIGUSR2', 13: 'SIGPIPE',
+    14: 'SIGALRM', 15: 'SIGTERM'
+};
+function signalName(signum) {
+    return SIGNAL_NAMES[signum] || 'signal ' + signum;
+}
 function captureText(value, limit) {
     if (value == null)
         return { text: '', truncated: false };
@@ -107,8 +114,37 @@ function normalizeOutput(value) {
         .join('\n')
         .replace(/\n+$/, '');
 }
+// 判等的参照物。native 已经能自己判（并且只在纯 ASCII 时下结论），
+// 非 ASCII 与回退路径仍然走这里，两条路共用同一份语义定义。
 function outputsEqual(left, right) {
+    // 原始字节相同 ⇒ 归一化与 UTF-8 解码后必然相同（两者都是字节的函数，与是否为
+    // 合法 UTF-8 无关），所以这条快路无条件安全，不削弱下面那道非 ASCII 闸门。
+    // 只在两侧都是 Buffer 时快进：字符串还要先 Buffer.from 拷一份，那次拷贝
+    // 跟省下来的 normalizeOutput 一样贵。
+    if (Buffer.isBuffer(left) && Buffer.isBuffer(right) && left.length === right.length && left.equals(right)) {
+        return true;
+    }
     return normalizeOutput(left) === normalizeOutput(right);
+}
+function killProc(proc) {
+    (0, process_supervisor_1.terminateProcessTree)(proc);
+}
+process.on('exit', () => {
+    for (const proc of activeProcesses) {
+        try {
+            killProc(proc);
+        }
+        catch (_) { /* 退出钩子里不能再抛 */ }
+    }
+    activeProcesses.clear();
+});
+// 不限时（0）时给 native 同步调用兜一个墙钟上限：fastspawn 会把 0 当成
+// NO_DEADLINE(=INT64_MAX)，此时死循环的程序永远不返回，worker 线程被占死，
+// postMessage('stop') 与 worker.terminate() 都打不断，整轮对拍就此挂死。
+// 60s 远大于任何正常测试点，又足以把死循环判成 TLE。
+const UNLIMITED_RUN_FALLBACK_MS = 60 * 1000;
+function effectiveRunTimeout(timeout) {
+    return (Number.isFinite(timeout) && timeout > 0) ? timeout : UNLIMITED_RUN_FALLBACK_MS;
 }
 function spawnProcess(exePath, args, cwd) {
     return new Promise((resolve) => {
@@ -119,67 +155,101 @@ function spawnProcess(exePath, args, cwd) {
             cwd
         });
         activeProcesses.add(proc);
-        const stdout = [], stderr = [];
+        const stdout = [];
+        const stderr = [];
+        // stdout 与 stderr 各自记账。共用一个上限的话，一个狂写 stderr 的程序
+        // 会把 stdout 的额度吃光，真正的对拍输出被截断却没有任何地方说明。
         let outputBytes = 0;
         let outputTruncated = false;
-        const append = (target, data) => {
-            if (outputTruncated)
-                return;
+        let errorBytes = 0;
+        const append = (target, data, isStdout) => {
             const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-            const remaining = MAX_WORKER_OUTPUT_BYTES - outputBytes;
-            if (remaining <= 0 || buffer.length > remaining) {
-                outputTruncated = true;
-                if (remaining > 0)
-                    target.push(buffer.subarray(0, remaining));
-                (0, process_supervisor_1.terminateProcessTree)(proc);
+            if (isStdout) {
+                if (outputTruncated)
+                    return;
+                const remaining = MAX_WORKER_OUTPUT_BYTES - outputBytes;
+                if (remaining <= 0 || buffer.length > remaining) {
+                    outputTruncated = true;
+                    if (remaining > 0)
+                        target.push(buffer.subarray(0, remaining));
+                    (0, process_supervisor_1.terminateProcessTree)(proc);
+                    return;
+                }
+                outputBytes += buffer.length;
+            }
+            else {
+                // stderr 只用来解释「为什么失败」，留够一屏就不要再存了，
+                // 但必须继续读：不读的话子进程写满管道会卡死，超时被误报成 TLE。
+                if (errorBytes < MAX_CAPTURED_OUTPUT_BYTES) {
+                    const room = MAX_CAPTURED_OUTPUT_BYTES - errorBytes;
+                    const slice = buffer.length > room ? buffer.subarray(0, room) : buffer;
+                    target.push(slice);
+                    errorBytes += slice.length;
+                }
                 return;
             }
             target.push(buffer);
-            outputBytes += buffer.length;
         };
-        proc.stdout.on('data', data => append(stdout, data));
-        proc.stderr.on('data', data => append(stderr, data));
-        proc._collect = () => Buffer.concat(stdout);
-        proc._stderr = () => Buffer.concat(stderr).toString('utf8');
-        proc._outputTruncated = () => outputTruncated;
-        proc._done = false;
-        proc._result = null;
-        proc._collectors = [];
+        proc.stdout.on('data', (data) => append(stdout, data, true));
+        proc.stderr.on('data', (data) => append(stderr, data, false));
+        const wrapped = proc;
+        wrapped._collect = () => Buffer.concat(stdout);
+        wrapped._stderr = () => Buffer.concat(stderr).toString('utf8');
+        wrapped._outputTruncated = () => outputTruncated;
+        wrapped._done = false;
+        wrapped._result = null;
+        wrapped._collectors = [];
         // close(code, signal)：子进程被信号杀死时 code 为 null，这是唯一没被归一化的退出状态。
         // 下游 `code !== 0 && code !== null` 会把它当成成功，于是拿崩溃前截断的输出继续与
         // 标准程序比对（恰好相同就误判成通过）。这里折算成 -1，与 error/超时分支一致。
-        proc.on('close', (code, signal) => { activeProcesses.delete(proc); proc._result = { exitCode: (typeof code === 'number' ? code : -1), signal: signal || null, outputTruncated }; proc._done = true; for (const cb of proc._collectors)
-            cb(proc._result); proc._collectors = []; });
-        proc.on('error', (err) => { activeProcesses.delete(proc); proc._result = { exitCode: -1, error: err.message, outputTruncated }; proc._done = true; for (const cb of proc._collectors)
-            cb(proc._result); proc._collectors = []; });
+        proc.on('close', (code, signal) => {
+            activeProcesses.delete(proc);
+            wrapped._result = { exitCode: (typeof code === 'number' ? code : -1), signal: signal || null, outputTruncated };
+            wrapped._done = true;
+            for (const cb of wrapped._collectors)
+                cb(wrapped._result);
+            wrapped._collectors = [];
+        });
+        proc.on('error', (err) => {
+            activeProcesses.delete(proc);
+            wrapped._result = { exitCode: -1, error: err.message, outputTruncated };
+            wrapped._done = true;
+            for (const cb of wrapped._collectors)
+                cb(wrapped._result);
+            wrapped._collectors = [];
+        });
         resolve(proc);
     });
 }
 function waitForResult(proc, timeout) {
-    if (proc._done)
-        return Promise.resolve(proc._result);
+    const wrapped = proc;
+    if (wrapped._done && wrapped._result)
+        return Promise.resolve(wrapped._result);
     return new Promise((resolve) => {
         let timer = null;
-        const cb = (result) => { if (timer) {
-            clearTimeout(timer);
-            timer = null;
-        } resolve(result); };
-        proc._collectors.push(cb);
+        const cb = (result) => {
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            resolve(result);
+        };
+        wrapped._collectors.push(cb);
         if (timeout > 0) {
             timer = setTimeout(() => {
-                proc._collectors = proc._collectors.filter(c => c !== cb);
+                wrapped._collectors = wrapped._collectors.filter((c) => c !== cb);
                 (0, process_supervisor_1.terminateProcessTree)(proc);
                 // taskkill 返回后目标进程的映像尚未从系统卸载，此刻渲染层去删 exe 会拿到
                 // EPERM/EBUSY。超时是整条对拍里进程存活最久的那一个（退出最晚），所以这里
                 // 必须等到 'close' 才放行，且要有上限，不能让清理被一个赖着不走的进程卡死。
-                if (proc._done) {
+                if (wrapped._done) {
                     resolve({ exitCode: -1, timeout: true, error: 'timeout' });
                     return;
                 }
                 const giveUp = setTimeout(() => {
                     resolve({ exitCode: -1, timeout: true, error: 'timeout' });
                 }, PROCESS_EXIT_GRACE_MS);
-                proc._collectors.push((result) => {
+                wrapped._collectors.push((result) => {
                     clearTimeout(giveUp);
                     resolve({ ...result, exitCode: -1, timeout: true, error: 'timeout' });
                 });
@@ -187,43 +257,25 @@ function waitForResult(proc, timeout) {
         }
     });
 }
-function killProc(proc) { (0, process_supervisor_1.terminateProcessTree)(proc); }
-// 不限时（0）时给 native 同步调用兜一个墙钟上限：fastspawn 会把 0 当成
-// NO_DEADLINE(=INT64_MAX)，此时死循环的程序永远不返回，worker 线程被占死，
-// postMessage('stop') 与 worker.terminate() 都打不断，整轮对拍就此挂死。
-// 60s 远大于任何正常测试点，又足以把死循环判成 TLE。
-const UNLIMITED_RUN_FALLBACK_MS = 60 * 1000;
-function effectiveRunTimeout(timeout) {
-    return (Number.isFinite(timeout) && timeout > 0) ? timeout : UNLIMITED_RUN_FALLBACK_MS;
-}
-// worker 被 terminate 时不会执行 stop 消息，Windows 回退路径下的子进程
-// 会变成孤儿继续跑；进程退出钩子是唯一能兜住它们的时机
-process.on('exit', () => {
-    for (const proc of activeProcesses) {
-        try {
-            killProc(proc);
-        }
-        catch (_) { }
-    }
-    activeProcesses.clear();
-});
 function writeInput(proc, input) {
     return new Promise((resolve) => {
+        const stdin = proc.stdin;
         // 子进程可能在读完输入前就退出（编译失败、std 先崩），此时 write 触发
         // EPIPE。stdin 是 EventEmitter，没有 error 监听就会变成未捕获异常，
         // 直接打崩整个 worker（一组测试失败 → 剩余测试组全部丢失）。
         // 必须在 write 之前挂上。
         try {
-            proc.stdin.on('error', () => { resolve(false); });
+            if (stdin)
+                stdin.on('error', () => { resolve(false); });
         }
         catch (_) { /* stdin 不可用时下面自然失败 */ }
         try {
-            if (proc.stdin.destroyed || proc.stdin.writableEnded) {
+            if (!stdin || stdin.destroyed || stdin.writableEnded) {
                 resolve(false);
                 return;
             }
-            proc.stdin.write(input);
-            proc.stdin.end();
+            stdin.write(input);
+            stdin.end();
             resolve(true);
         }
         catch (_) {
@@ -237,44 +289,148 @@ async function runJs(exePath, input, timeout, args, cwd) {
     if (input !== null && input !== undefined)
         await writeInput(proc, input);
     const r = await waitForResult(proc, timeout);
-    const output = (r.exitCode === -1 || r.exitCode === -3) ? null : proc._collect();
-    return { code: r.exitCode, output, outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(), timeout: !!r.timeout, error: r.error, signal: r.signal || null, ms: Date.now() - t0 };
-}
-function runFast(exePath, input, timeout) {
-    if (!fast) {
-        return { code: -1, output: null, timeout: false, error: 'fastspawn module not loaded', ms: 0 };
-    }
-    const t0 = Date.now();
-    const r = fast.run(exePath, input, effectiveRunTimeout(timeout));
-    // 截断标志由 native 侧回报。原先靠 output.length >= MAX_WORKER_OUTPUT_BYTES 猜，
-    // 而 native 的 MAX_OUTPUT(64MB) 与 JS 的 MAX_WORKER_OUTPUT_BYTES(32MB) 不等，
-    // 落在两者之间的截断完全察觉不到，会拿残缺输出判等。
+    const wrapped = proc;
+    const output = (r.exitCode === -1 || r.exitCode === -3) ? null : wrapped._collect();
+    const signalName = r.signal || null;
     return {
-        code: r.code, output: r.output,
-        outputTruncated: !!r.truncated,
-        timeout: r.code === -3,
-        error: r.code === -3 ? 'TLE' : null,
+        code: r.exitCode,
+        output,
+        stderr: wrapped._stderr(),
+        outputTruncated: !!r.outputTruncated || !!wrapped._outputTruncated(),
+        timeout: !!r.timeout,
+        error: r.error || null,
+        // 被信号杀死与程序自己非零退出要走不同的 i18n 文案。JS 路径下
+        // close(code, signal) 只在被信号杀死时给出非空 signal（此时 code 为 null，
+        // 已在上面折算成 -1），所以 signalName 存在就是「被信号杀死」。
+        killedBySignal: !!signalName,
+        signalName,
         ms: Date.now() - t0
     };
 }
-function runFastPair(stdPath, testPath, input, timeout) {
-    if (!fast) {
-        return { code1: -1, code2: -1, out1: null, out2: null, ms: 0, error: 'fastspawn module not loaded' };
-    }
+function runFast(exePath, input, timeout) {
+    if (!fast)
+        return { code: -1, output: null, stderr: '', outputTruncated: false, timeout: false, error: 'fastspawn module not loaded', killedBySignal: false, signalName: null, ms: 0 };
     const t0 = Date.now();
-    const r = fast.runPair(stdPath, testPath, input, effectiveRunTimeout(timeout));
-    const ms = Date.now() - t0;
+    const r = fast.run(exePath, input, effectiveRunTimeout(timeout));
+    // 截断标志由 native 回报，不用长度猜：native 的 MAX_OUTPUT 与 JS 侧的记账
+    // 上限一旦不相等，落在两者之间的截断就完全察觉不到，会拿残缺输出判等。
     return {
-        code1: r.code1, code2: r.code2,
-        out1: r.out1, out2: r.out2,
-        // 同上：以 native 回传的 truncated 为准，不用长度猜
-        truncated1: !!r.truncated,
-        truncated2: !!r.truncated,
-        ms
+        code: r.code,
+        output: r.code === -1 || r.code === -3 ? null : r.output,
+        stderr: r.stderr ? r.stderr.toString('utf8') : '',
+        outputTruncated: !!r.truncated,
+        timeout: r.code === -3,
+        error: r.code === -3 ? 'TLE' : (r.code === -2 ? 'native spawn failed' : null),
+        killedBySignal: r.signal > 0,
+        signalName: r.signal > 0 ? signalName(r.signal) : null,
+        ms: Date.now() - t0
     };
 }
+// 一次 native 调用跑完 std 与 test（addon 内两个 pthread），并在 C 层判等。
+// 判等放在这里的原因：MB 级输出交给 JS 比要先 toString + split/map/join，
+// 实测每组 67-292ms，而同尺寸 memcmp 不到 1ms。相等时两段大输出连跨边界
+// 的拷贝都省掉了 —— 那正是最常见的路径。
+function runFastPair(stdPath, testPath, input, timeout) {
+    const t0 = Date.now();
+    if (!fast) {
+        return {
+            stdCode: -1, testCode: -1, stdKilledBySignal: false, testKilledBySignal: false,
+            stdSignalName: null, testSignalName: null, stdErr: '', testErr: '',
+            stdOut: null, testOut: null, outputTruncated: false, verdict: -1, ms: 0
+        };
+    }
+    const r = fast.runPair(stdPath, testPath, input, effectiveRunTimeout(timeout), true);
+    return {
+        stdCode: r.code1,
+        testCode: r.code2,
+        stdKilledBySignal: r.signal1 > 0 || r.code1 === -2,
+        testKilledBySignal: r.signal2 > 0 || r.code2 === -2,
+        stdSignalName: r.signal1 > 0 ? signalName(r.signal1) : null,
+        testSignalName: r.signal2 > 0 ? signalName(r.signal2) : null,
+        stdErr: r.stderr1 ? r.stderr1.toString('utf8') : '',
+        testErr: r.stderr2 ? r.stderr2.toString('utf8') : '',
+        stdOut: r.out1,
+        testOut: r.out2,
+        outputTruncated: !!r.truncated,
+        verdict: typeof r.normEqual === 'number' ? r.normEqual : -1,
+        ms: Date.now() - t0
+    };
+}
+// 回退路径的超时由 waitForResult 报成 { exitCode: -1, timeout: true }，
+// 而两条路共用的判定只认 -3 这个哨兵。不折算的话 Windows 上一次超时会显示成
+// 「标准程序出错」而不是「超时」—— 调查方向被彻底带偏，且 CI 上看不出来。
+function outcomeCode(r) {
+    return r.timeout ? -3 : r.code;
+}
+// 一组已跑完的 std/test 归一成 PairOutcome。回退路径靠 Promise.all 并行，
+// native 路径本来就在 addon 内并行 —— 两边并行度对齐，否则 Windows 上
+// 会静默慢一截，而这种分裂只在两个平台对照时才看得见。
+async function runJsPair(stdPath, testPath, input, timeout) {
+    const t0 = Date.now();
+    const [stdR, testR] = await Promise.all([
+        runJs(stdPath, input, timeout),
+        runJs(testPath, input, timeout)
+    ]);
+    return {
+        stdCode: outcomeCode(stdR),
+        testCode: outcomeCode(testR),
+        stdKilledBySignal: stdR.killedBySignal || !!stdR.signalName || !!stdR.error,
+        testKilledBySignal: testR.killedBySignal || !!testR.signalName || !!testR.error,
+        stdSignalName: stdR.signalName || (stdR.error ? 'spawn error' : null),
+        testSignalName: testR.signalName || (testR.error ? 'spawn error' : null),
+        stdErr: stdR.error && !stdR.stderr ? stdR.error : stdR.stderr,
+        testErr: testR.error && !testR.stderr ? testR.error : testR.stderr,
+        stdOut: stdR.output,
+        testOut: testR.output,
+        outputTruncated: stdR.outputTruncated || testR.outputTruncated,
+        // 回退路径不在 C 里判，交回 outputsEqual
+        verdict: -1,
+        ms: Date.now() - t0
+    };
+}
+function judgeSide(who, code, killedBySignal, sigName, errText) {
+    const noun = who === 'std' ? 'standard' : 'test';
+    if (code === -3) {
+        return { failed: true, kind: who + '_tle', code: who + '_timeout', message: noun + ' program timed out', exitCode: null, withOutputs: false };
+    }
+    if (code !== 0) {
+        // -2 且没有信号名 = 程序压根没起来（native 的 posix_spawn 失败），
+        // 这时说「killed by signal」是错的，会把人往完全相反的方向引。
+        const fallback = killedBySignal
+            ? (sigName ? noun + ' program killed by ' + sigName : noun + ' program could not be started')
+            : noun + ' program exit ' + code;
+        const message = errText || fallback;
+        return { failed: true, kind: who + '_re', code: killedBySignal ? who + '_error' : who + '_exit', message, exitCode: code, withOutputs: false };
+    }
+    return { failed: false };
+}
+// 判定顺序：先 std 后 test 的超时/崩溃，再看输出超限，最后才判等。
+// 顺序不能换 —— 残缺输出比出「相等」是假的 AC，比出「不等」是假的 WA，
+// 两种都不该进入判等。
+function judgePair(o) {
+    const stdVerdict = judgeSide('std', o.stdCode, o.stdKilledBySignal, o.stdSignalName, o.stdErr);
+    if (stdVerdict.failed)
+        return stdVerdict;
+    const testVerdict = judgeSide('test', o.testCode, o.testKilledBySignal, o.testSignalName, o.testErr);
+    if (testVerdict.failed)
+        return testVerdict;
+    if (o.outputTruncated) {
+        return { failed: true, kind: 'output_limit', code: 'output_limit', message: 'program output exceeded limit', exitCode: null, withOutputs: false };
+    }
+    // verdict === 1：native 已确认相等（只在两侧都是纯 ASCII 时才可能给出）。
+    // 其余情况都要用 JS 那份 normalizeOutput 定案。
+    if (o.verdict === 1)
+        return { failed: false };
+    if (o.verdict === 0) {
+        return { failed: true, kind: 'mismatch', code: 'mismatch', message: 'outputs differ', exitCode: null, withOutputs: true };
+    }
+    if (!outputsEqual(o.stdOut, o.testOut)) {
+        return { failed: true, kind: 'mismatch', code: 'mismatch', message: 'outputs differ', exitCode: null, withOutputs: true };
+    }
+    return { failed: false };
+}
 async function runGenerator(gen, timeout) {
-    let exe = null, args = [], cwd = undefined;
+    let exe = '', args = [], cwd = undefined;
     if (typeof gen === 'string') {
         exe = gen;
     }
@@ -284,11 +440,24 @@ async function runGenerator(gen, timeout) {
         cwd = gen.workingDirectory || gen.cwd || undefined;
     }
     if (!exe)
-        return { code: -2, error: 'missing generator executable', output: null, ms: 0 };
+        return { code: -2, output: null, stderr: 'missing generator executable', outputTruncated: false, timeout: false, error: null, killedBySignal: false, signalName: null, ms: 0 };
+    // 生成器只有在「需要 args 或 cwd」时才必须走 child_process —— Python 生成器是
+    // 解释器 + 脚本参数，native 只做无参 exec。其余情况一律 native 捕获：实测把生成器
+    // 的输出交给 Node 的 stream 机制（data 回调 + 保留分块 + Buffer.concat）要
+    // 43.2ms/MB 的引擎 CPU，而 addon 的 C pump 只要 13-15ms/MB。实测每组省 ~155ms
+    // 引擎 CPU，整机吞吐 +9.5%。
+    //
+    // ⚠ 语义变化（必须知道）：渲染层把 generatorTimeout 恒设为 0（不限时，
+    // codeComparer.ts:809），而 native 调用是同步的、stop 与 worker.terminate 都打不断，
+    // 所以这里沿用 std/test 已有的 UNLIMITED_RUN_FALLBACK_MS —— 「不限时」在原生捕获下
+    // 实际是 60s 上限。此前生成器经 child_process 可以真的无限等。取舍依据：一个跑超过
+    // 60s 的生成器几乎必然是死循环，而老行为是把整轮对拍无声地挂死、且没有任何反馈。
+    if (fast && args.length === 0 && !cwd) {
+        return runFast(exe, null, timeout);
+    }
     return await runJs(exe, null, timeout, args, cwd);
 }
 let running = false;
-const activeProcesses = new Set();
 worker_threads_1.parentPort.on('message', async (msg) => {
     if (msg.type === 'run-tests') {
         running = true;
@@ -327,85 +496,36 @@ worker_threads_1.parentPort.on('message', async (msg) => {
                 if (!running)
                     break;
                 lastGenMs = genOut.ms || 0;
-                if (genOut.timeout || genOut.error || genOut.signal || genOut.code !== 0) {
-                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : (genOut.error || genOut.signal ? 'gen_error' : 'gen_exit'), genOut.error || (genOut.signal ? 'generator killed by ' + genOut.signal : 'generator exit ' + genOut.code), { rawInput: rawInput(), exitCode: genOut.code });
+                // outputTruncated 必须在闸门里：原生捕获超限后是「继续读但丢弃」，
+                // 生成器照样退出 0。不拦的话会拿一份被截断的输入去跑 std/test，
+                // 两边都算出错答案还判你 AC —— 这是最难被发现的一类假 WA。
+                // child_process 那条路以前是靠杀进程间接暴露的，换成原生后不会了。
+                if (genOut.timeout || genOut.error || genOut.signalName || genOut.outputTruncated || genOut.code !== 0) {
+                    fail(i, 'generator', genOut.timeout ? 'gen_timeout' : ((genOut.error || genOut.signalName || genOut.outputTruncated) ? 'gen_error' : 'gen_exit'), genOut.stderr || genOut.error || (genOut.outputTruncated ? 'generator output exceeded limit' : (genOut.signalName ? 'generator killed by ' + genOut.signalName : 'generator exit ' + genOut.code)), { rawInput: rawInput(), exitCode: genOut.code });
                     continue;
                 }
-                if (useFast) {
-                    if (!running)
-                        break;
-                    const pair = runFastPair(stdPath, testPath, genOut.output, timeout);
-                    lastStdMs = pair.ms;
-                    lastTestMs = pair.ms;
-                    const stdCode = pair.code1;
-                    const testCode = pair.code2;
-                    const stdOut = pair.out1;
-                    const testOut = pair.out2;
-                    const pairExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
-                    if (stdCode === -3) {
-                        fail(i, 'std_tle', 'std_timeout', 'standard program timed out', pairExtra);
-                        continue;
-                    }
-                    if (stdCode !== 0 && stdCode !== null) {
-                        fail(i, 'std_re', 'std_exit', 'standard program exit ' + stdCode, { ...pairExtra, exitCode: stdCode });
-                        continue;
-                    }
-                    if (testCode === -3) {
-                        fail(i, 'test_tle', 'test_timeout', 'test program timed out', pairExtra);
-                        continue;
-                    }
-                    if (testCode !== 0 && testCode !== null) {
-                        fail(i, 'test_re', 'test_exit', 'test program exit ' + testCode, { ...pairExtra, exitCode: testCode });
-                        continue;
-                    }
-                    if (pair.truncated1 || pair.truncated2) {
-                        fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', pairExtra);
-                        continue;
-                    }
-                    if (!outputsEqual(stdOut, testOut)) {
-                        fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...pairExtra, rawStd: stdOut, rawTest: testOut });
-                        continue;
-                    }
-                    worker_threads_1.parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
+                const extra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
+                const outcome = useFast
+                    ? runFastPair(stdPath, testPath, genOut.output, timeout)
+                    : await runJsPair(stdPath, testPath, genOut.output, timeout);
+                if (!running)
+                    break;
+                lastStdMs = outcome.ms;
+                lastTestMs = outcome.ms;
+                const verdict = judgePair(outcome);
+                if (verdict.failed) {
+                    fail(i, verdict.kind, verdict.code, verdict.message, verdict.withOutputs
+                        ? { ...extra, rawStd: outcome.stdOut, rawTest: outcome.testOut, exitCode: verdict.exitCode }
+                        : { ...extra, exitCode: verdict.exitCode });
+                    continue;
                 }
-                else {
-                    const stdR = await runJs(stdPath, genOut.output, timeout);
-                    if (!running)
-                        break;
-                    lastStdMs = stdR.ms || 0;
-                    const testR = await runJs(testPath, genOut.output, timeout);
-                    if (!running)
-                        break;
-                    lastTestMs = testR.ms || 0;
-                    const spawnExtra = { rawInput: rawInput(), includeStdMs: true, includeTestMs: true };
-                    if (stdR.timeout) {
-                        fail(i, 'std_tle', 'std_timeout', 'standard program timed out', spawnExtra);
-                        continue;
-                    }
-                    // signal 分支要在退出码分支之前：被信号杀死时 exitCode 已被折算成 -1，
-                    // 只看退出码会把 SIGSEGV/SIGABRT 报成普通的「退出码 -1」
-                    if (stdR.error || stdR.signal || (stdR.code !== 0 && stdR.code !== null)) {
-                        fail(i, 'std_re', (stdR.error || stdR.signal) ? 'std_error' : 'std_exit', stdR.error || (stdR.signal ? 'standard program killed by ' + stdR.signal : 'standard program exit ' + stdR.code), { ...spawnExtra, exitCode: stdR.code });
-                        continue;
-                    }
-                    if (testR.timeout) {
-                        fail(i, 'test_tle', 'test_timeout', 'test program timed out', spawnExtra);
-                        continue;
-                    }
-                    if (testR.error || testR.signal || (testR.code !== 0 && testR.code !== null)) {
-                        fail(i, 'test_re', (testR.error || testR.signal) ? 'test_error' : 'test_exit', testR.error || (testR.signal ? 'test program killed by ' + testR.signal : 'test program exit ' + testR.code), { ...spawnExtra, exitCode: testR.code });
-                        continue;
-                    }
-                    if (stdR.outputTruncated || testR.outputTruncated) {
-                        fail(i, 'output_limit', 'output_limit', 'program output exceeded limit', spawnExtra);
-                        continue;
-                    }
-                    if (!outputsEqual(stdR.output, testR.output)) {
-                        fail(i, 'mismatch', 'mismatch', 'outputs differ', { ...spawnExtra, rawStd: stdR.output, rawTest: testR.output });
-                        continue;
-                    }
-                    worker_threads_1.parentPort.postMessage({ type: 'progress', testIndex: i, genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs, genLen: genOut.output.length });
-                }
+                worker_threads_1.parentPort.postMessage({
+                    type: 'progress', testIndex: i,
+                    genMs: lastGenMs, stdMs: lastStdMs, testMs: lastTestMs,
+                    // 直接取 length：Buffer.from(buffer) 会把整块输入再拷一份，
+                    // 而这里只要一个数字（实测 MB 级输入下这是每组白丢的一次拷贝）
+                    genLen: genOut.output ? genOut.output.length : 0
+                });
             }
             catch (e) {
                 fail(i, 'exception', 'exception', e && e.message ? e.message : String(e), { rawInput: rawInput() });

@@ -16,7 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const events = require('events');
-const { classMethod, funcDecl, toFn } = require('./fixtures/source-extract');
+const { classMethod, funcDecl, toFn, forStatement, ifStatement, callbackBody } = require('./fixtures/source-extract');
 
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -774,51 +774,131 @@ setTimeout(() => {
     //     这种最小结构锁，配合上面 buildEngineErrorText 的行为断言一起用
     // 这些锁的共同点是锁「相对顺序 / 出参存在」，不锁排版。
     // ---------------------------------------------------------------------------
-
+    // 架构：std/test 优先走 fastspawn 原生（runPair 在 addon 内并行、并在 C 层判等），
+    // 加载不到原生模块时回退 child_process（runJsPair 用 Promise.all 并行）。
+    // Windows 上 scripts/build-fastspawn.js 不产出 .node，回退路径就是生产路径，
+    // 所以「两条路都并行」必须锁住，而不是只锁原生那一侧。
     {
-        const writeInput = funcDecl(workerSrc, 'writeInput');
-        check('函数体抽取成功: writeInput', writeInput.length > 0);
-        const listenIdx = writeInput.indexOf("proc.stdin.on('error'");
-        const writeIdx = writeInput.indexOf('proc.stdin.write(input)');
-        check('H2 writeInput 给 stdin 挂了 error 监听', listenIdx !== -1);
-        check('H2 error 监听在 write 之前注册（否则 EPIPE 打崩 worker）',
-            listenIdx !== -1 && writeIdx !== -1 && listenIdx < writeIdx,
-            `listen=${listenIdx} write=${writeIdx}`);
-
-        const runFast = funcDecl(workerSrc, 'runFast');
-        check('函数体抽取成功: runFast', runFast.length > 0);
-        check('M4 runFast 采用 native 回传的 truncated', /outputTruncated: !!r\.truncated/.test(runFast));
         const runFastPair = funcDecl(workerSrc, 'runFastPair');
         check('函数体抽取成功: runFastPair', runFastPair.length > 0);
-        check('M4 runFastPair 采用 native 回传的 truncated', /truncated1: !!r\.truncated/.test(runFastPair));
-        // 注释里保留了「原先靠 output.length >= ... 猜」的说明，判残留要看去掉整行注释后的代码
+        check('worker 引用 fastspawn.node', /fastspawn\.node/.test(workerSrc));
+        check('runFastPair 让 native 在 C 层判等（compare 实参为真）',
+            /fast\.runPair\(/.test(runFastPair) && /,\s*true\)/.test(runFastPair));
+
+        const runJsPair = funcDecl(workerSrc, 'runJsPair');
+        check('函数体抽取成功: runJsPair', runJsPair.length > 0);
+        check('回退路径并行跑 std/test', /Promise\.all\(/.test(runJsPair));
+
+        const runGenerator = funcDecl(workerSrc, 'runGenerator');
+        check('函数体抽取成功: runGenerator', runGenerator.length > 0);
+        check('runGenerator 支持 args/cwd 兼容 Python', /gen\.args \|\|/.test(runGenerator));
+
+        const normalizeOutput = funcDecl(workerSrc, 'normalizeOutput');
+        check('函数体抽取成功: normalizeOutput', normalizeOutput.length > 0);
+        const outputsEqual = funcDecl(workerSrc, 'outputsEqual');
+        check('函数体抽取成功: outputsEqual', outputsEqual.length > 0);
+        check('outputsEqual 调用 normalizeOutput', /normalizeOutput\(/.test(outputsEqual));
+
+        // native 只在两侧都是纯 ASCII 时才自己下判等结论，其余交回这里的
+        // outputsEqual —— 这是两条路径判等语义一致的前提。
+        const judge = funcDecl(workerSrc, 'judgePair');
+        check('函数体抽取成功: judgePair', judge.length > 0);
+        check('judgePair: native 判为相等才免检', /verdict === 1/.test(judge));
+        check('judgePair: 未裁时回到 outputsEqual', /outputsEqual\(/.test(judge));
+        check('judgePair: 输出超限排在判等之前（残缺输出比出的两种结论都不能信）',
+            judge.indexOf('output_limit') !== -1 &&
+            judge.indexOf('output_limit') < judge.indexOf('verdict === 1'));
+
+        // 主循环：两条执行路径都在这里分派
+        const loopSrc = forStatement(workerSrc, /^\s*for \(let i = startIdx; i < startIdx \+ count && running;/m);
+        check('主循环结构存在', loopSrc.length > 0);
+        check('循环按 useFast 分派原生 / 回退两条路径',
+            /runFastPair\(/.test(loopSrc) && /runJsPair\(/.test(loopSrc));
+        check('循环检查 running 标志', /&& running/.test(loopSrc));
+
+        // 检查 stop 处理
+        const stopSrc = ifStatement(workerSrc, /^\s*else if \(msg\.type === 'stop'\)/m).replace(/^else\s+/, '');
+        check('stop 消息处理存在', stopSrc.length > 0);
+        check('stop 置 running=false', /running = false/.test(stopSrc));
+        check('stop 终止仍在跑的子进程（否则回退路径留孤儿继续吃 CPU）', /killProc\(/.test(stopSrc));
+
+        // 原生模块与回退路径共用的记账：少任何一条，某一侧的保护就没了
         const workerCode = workerSrc.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
-        check('M4 两条路径都不再用长度猜截断',
-            !/\.length >= MAX_WORKER_OUTPUT_BYTES/.test(workerCode),
-            `${(workerCode.match(/\.length >= MAX_WORKER_OUTPUT_BYTES/g) || []).length} 处残留`);
-        check('M4 长度上限本身仍在做缓冲记账（不是被误删的常量）',
-            /MAX_WORKER_OUTPUT_BYTES - outputBytes/.test(workerCode));
+        check('native 缺失时两条路都有显式退化分支', /if \(!fast\)/.test(workerCode));
+        check('MAX_WORKER_OUTPUT_BYTES 仍在做缓冲记账', /MAX_WORKER_OUTPUT_BYTES - outputBytes/.test(workerCode));
+        check('PROCESS_EXIT_GRACE_MS 存在（超时 kill 后仍要等进程真退出）', /PROCESS_EXIT_GRACE_MS/.test(workerCode));
+        check('UNLIMITED_RUN_FALLBACK_MS 存在（同步 native 调用必须兜墙钟上限）', /UNLIMITED_RUN_FALLBACK_MS/.test(workerCode));
     }
 
     {
         check('H1 native 侧把 timeoutMs<=0 映射为无截止时间',
-            /const int64_t NO_DEADLINE = INT64_MAX;/.test(fastspawnSrc) &&
+            /#define NO_DEADLINE INT64_MAX/.test(fastspawnSrc) &&
             /int64_t deadlineMs = \(timeoutMs > 0\) \? \(nowMs\(\) \+ timeoutMs\) : NO_DEADLINE;/.test(fastspawnSrc));
         check('H1 使用 INT64_MAX 需要 stdint.h', /#include <stdint\.h>/.test(fastspawnSrc));
-        check('H1 超时判断只比 deadline', /if \(nowMs\(\) >= deadlineMs\)/.test(fastspawnSrc));
-        check('写入循环在不限时下无限期等 POLLOUT', /poll\(&writeFd, 1, -1\)/.test(fastspawnSrc));
-        check('drainBoth 的 poll 仍按 500ms 分段', /int to = \(remain > 500\) \? 500 : \(int\)remain;/.test(fastspawnSrc));
-        check('M4 drainBoth 回传 drop 标志', /if \(truncatedOut\) \*truncatedOut = ob\.drop;/.test(fastspawnSrc));
-        check('M4 runOne 出参带 truncated',
-            /int64_t timeoutMs, char\*\* out, size_t\* outLen, int\* truncated\)/.test(fastspawnSrc) &&
-            /if \(truncated\) \*truncated = \(truncatedOut \|\| truncatedErr\) \? 1 : 0;/.test(fastspawnSrc));
-        check('M4 napi 返回值暴露 truncated', /napi_set_named_property\(env, result, "truncated", rTrunc\);/.test(fastspawnSrc));
-        const runOneDecl = /static int runOne\([^;]*int\* truncated\)/.test(fastspawnSrc);
-        const callSites = [...fastspawnSrc.matchAll(/runOne\(([^;]*?)\);/g)].map((m) => m[1]);
-        const allPass = callSites.every((args) => /truncated/.test(args));
-        check('M4 runOne 定义与所有调用点都带 truncated',
-            runOneDecl && callSites.length >= 4 && allPass,
-            `${callSites.length} 个调用点, 全部传参=${allPass}`);
+        check('H1 超时判断只比 deadline',
+            /if \(deadlineMs != NO_DEADLINE && nowMs\(\) >= deadlineMs\)/.test(fastspawnSrc));
+
+        // 本次的核心修复。poll() 超时返回 0 **且不改动 errno**，原先判错写成
+        //     if (wr <= 0 && errno != EINTR) kill(-pid, SIGKILL);
+        // errno 此时还是上一步 write 留下的 EAGAIN，条件成立 —— 「子进程只是还没
+        // 来得及读」被当成错误，健康的 std/test 被 SIGKILL，状态折算成 128+9=137
+        // 报成 std_re。触发门槛仅仅是输入大于管道缓冲，即任何真实规模的生成数据。
+        // 实测空闲机器上单次 run(range_bit, 3.5MB, 20000ms) 在 139ms 就被杀。
+        const pumpBody = callbackBody(fastspawnSrc, /^static int pump\(/m);
+        check('抽取成功: pump', pumpBody.length > 0);
+        check('写循环把 poll 超时(pr==0)当继续，不当错误', /if \(pr == 0\)\s+continue;/.test(pumpBody));
+        check('pump 内 kill 只有一处，且就在超时分支里',
+            (pumpBody.match(/kill\(-pid, SIGKILL\)/g) || []).length === 1 &&
+            /nowMs\(\) >= deadlineMs\)\s*\{\s*\r?\n\s*kill\(-pid, SIGKILL\);/.test(pumpBody),
+            `kill 次数=${(pumpBody.match(/kill\(-pid, SIGKILL\)/g) || []).length}`);
+        check('EAGAIN 不关 stdin（关掉就是静默截断输入 → 最难发现的假 WA）',
+            /if \(saved == EAGAIN \|\| saved == EWOULDBLOCK\) break;/.test(pumpBody));
+        check('errno 在 write/read 之后立刻存进局部变量再判断',
+            (fastspawnSrc.match(/int saved = errno;/g) || []).length >= 2,
+            `出现 ${(fastspawnSrc.match(/int saved = errno;/g) || []).length} 次`);
+        check('超时结论直接照抄 ioRc，不从收割状态反推（反推正是 137 的来源）', /code = ioRc;/.test(fastspawnSrc));
+        check('stdin / stdout / stderr 三个 fd 都设为非阻塞（pump 会抽干到 EAGAIN）',
+            (fastspawnSrc.match(/F_SETFL, fcntl\((inPipe\[1\]|outPipe\[0\]|errPipe\[0\]), F_GETFL, 0\) \| O_NONBLOCK\)/g) || []).length === 3);
+        // 原先「先把 stdin 写完、再 drain 输出」是两段式，会死锁：cat 这类边读边写的
+        // 程序填满输出管道后停住不再读输入，而我们还堵在写输入上。交错才是对的。
+        check('喂 stdin 与收输出交错进行', /static int pump\(/.test(fastspawnSrc) && !/static int writeAll\(/.test(fastspawnSrc));
+
+        check('M4 截断标志由 native 回传，且 output_limit 只看 stdout',
+            /if \(truncated\) \*truncated = ob\.drop \? 1 : 0;/.test(fastspawnSrc) &&
+            /if \(errTruncated\) \*errTruncated = eb\.drop \? 1 : 0;/.test(fastspawnSrc));
+        check('M4 runOne 出参同时带 truncated 与 stderr / signal',
+            /size_t\* outLen, int\* truncated,\s*\r?\n\s*char\*\* errOut, size_t\* errLen, int\* errTruncated, int\* signalOut\)/.test(fastspawnSrc));
+        check('native 回传 stderr（原生路径原先在 runOne 末尾把 errBuf 直接 free 掉）',
+            /setBufferProp\(env, result, "stderr"/.test(fastspawnSrc) &&
+            /setBufferProp\(env, result, "stderr1"/.test(fastspawnSrc) &&
+            /setBufferProp\(env, result, "stderr2"/.test(fastspawnSrc));
+        const runOneCallSites = [...fastspawnSrc.matchAll(/runOne\(([^;]*?)\);/g)].map((m) => m[1]);
+        check('M4 runOne 所有调用点都传完整出参',
+            /static int runOne\([^;]*signalOut\)/.test(fastspawnSrc) &&
+            runOneCallSites.length >= 3 &&
+            runOneCallSites.every((args) => /errTruncated/.test(args)),
+            `${runOneCallSites.length} 个调用点`);
+
+        // C 层判等：写错的后果是把 AC 判成 WA，且完全无声，所以逐条锁语义。
+        check('C 判等只认证纯 ASCII；出现非 ASCII 一律交回 JS 终裁',
+            /if \(high1 \|\| high2\) return -1;/.test(fastspawnSrc));
+        check('归一化在原地进行（不再复制一份 MB 级缓冲）',
+            /static size_t normalizeInPlace\(char\* buf, size_t len, int\* anyHigh\)/.test(fastspawnSrc));
+        check("归一化只在真实 CRLF 行尾丢 '\\r'，末行无换行时保留",
+            /if \(terminated && end > s && buf\[end - 1\] == '\\r'\) end--;/.test(fastspawnSrc));
+        check('行尾删空格与制表符，不删 \\r',
+            /while \(end > s && \(buf\[end - 1\] == ' ' \|\| buf\[end - 1\] == '\\t'\)\) end--;/.test(fastspawnSrc));
+        check('结尾连续换行整体删掉（对应 JS 的 replace(/\\n+$/, "")）',
+            /while \(w > 0 && buf\[w - 1\] == '\\n'\) w--;/.test(fastspawnSrc));
+        check('输出超限时不下任何判等结论',
+            /if \(arg1\.truncated \|\| arg2\.truncated\)/.test(fastspawnSrc));
+        check('判等相等时不回传两段大输出（省掉跨边界拷贝）',
+            /if \(compare && verdict == 1\)/.test(fastspawnSrc));
+        check('pthread 内不调 napi，join 之后才读缓冲',
+            /static void\* runPairThread/.test(fastspawnSrc) &&
+            !/napi_/.test(callbackBody(fastspawnSrc, /^static void\* runPairThread/) || 'x'));
+        check('管道容量放大仅 Linux，且失败静默降级（容量是优化项不是正确性前提）',
+            /#if defined\(__linux__\) && defined\(F_SETPIPE_SZ\)/.test(fastspawnSrc));
         check('花括号平衡（无法编译时至少做静态检查）',
             (fastspawnSrc.match(/\{/g) || []).length === (fastspawnSrc.match(/\}/g) || []).length,
             `${(fastspawnSrc.match(/\{/g) || []).length} vs ${(fastspawnSrc.match(/\}/g) || []).length}`);
