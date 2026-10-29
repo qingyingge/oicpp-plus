@@ -262,16 +262,29 @@ if (nsiContent) {
 // ============================================================
 
 // C1: JS syntax check
+// 一次进程内用 V8 解析器校验全部 JS 文件：每个文件单独 spawn `node -c` 要起几十个
+// Node 进程（实测 51 个文件 ~6.4s），vm.Script 编译用的正是同一个 V8 解析器，
+// 不执行任何代码，语法错误会抛 SyntaxError —— 语义等价且只占约 0.6s。
+// 不能塞进 `node -e`：经 JSON.stringify 后行内换行会变成字面 \n，Node 直接当
+// 非法 JS 抛 SyntaxError，报出整段脚本。独立脚本文件是唯一可靠形态。
 console.log(`\n${Y}[C1] JS syntax${R}`);
 const srcDir = path.join(root, 'src');
 const jsFiles = getAllFiles(srcDir, '.js');
 let syntaxErrors = 0;
-for (const f of jsFiles) {
-  const rel = path.relative(root, f);
-  const result = exec(`node -c "${f}"`, 10000);
-  if (result === null) {
-    fail(`syntax: ${rel}`);
-    syntaxErrors++;
+{
+  let syntaxOut = null;
+  try {
+    syntaxOut = execSync('node scripts/check-js-syntax.js', { encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'], cwd: root }).trim();
+  } catch (err) {
+    syntaxOut = `${err.stdout || ''}${err.stderr || ''}`;
+  }
+  // 有语法错误时 stderr 里是 "path: message" 行
+  for (const line of String(syntaxOut).split(/\r?\n/)) {
+    const colon = line.indexOf(': ');
+    if (colon > 0) {
+      fail(`syntax: ${path.relative(root, line.slice(0, colon))}`);
+      syntaxErrors++;
+    }
   }
 }
 if (syntaxErrors === 0) ok(`all ${jsFiles.length} JS files OK`);
@@ -361,6 +374,7 @@ if (indexHtmlContent) {
   for (const m of indexHtmlContent.matchAll(/id="([^"]+)"/g)) htmlIds.push(m[1]);
 }
 const jsSelectorFiles = ['src/renderer/js/main.js', 'src/renderer/js/tabs.js', 'src/renderer/js/init.js', 'src/renderer/js/monaco-editor-manager.js'];
+let domMismatchCount = 0;
 for (const f of jsSelectorFiles) {
   const fp = path.join(root, f);
   if (!fileExists(fp)) continue;
@@ -370,6 +384,7 @@ for (const f of jsSelectorFiles) {
     const id = m[1];
     if (!htmlIds.includes(id) && !/^group-/.test(id) && !/^tab-/.test(id) && !/monaco/.test(id)) {
       if (verbose) warn(`${f} -> #${id} not in HTML (may be dynamic)`);
+      domMismatchCount++;
     }
   }
   for (const m of content.matchAll(/querySelector\(['"]\.([^'"]+)['"]\)/g)) {
@@ -381,10 +396,14 @@ for (const f of jsSelectorFiles) {
     }
     if (!cssFound && !/monaco/.test(cls) && !/^tab-/.test(cls)) {
       if (verbose) warn(`${f} -> .${cls} not in CSS (may be dynamic)`);
+      domMismatchCount++;
     }
   }
 }
-ok('DOM selectors checked');
+// 逐条明细只在 --verbose 下打（这些 selector 多为动态创建，常态全打会刷屏）；
+// 但汇总行必须是真信号：有未匹配就 WARN，而不是无条件 ok()。
+if (domMismatchCount === 0) ok('DOM selectors checked');
+else warn(`${domMismatchCount} selector(s) not statically matched (may be dynamic — use --verbose for details)`);
 
 // D4: IPC channel consistency
 console.log(`\n${Y}[D4] IPC channel consistency${R}`);
@@ -641,12 +660,33 @@ for (const f of jsFiles) {
   const rel = path.relative(root, f);
   const content = readFile(f);
   if (!content) continue;
-  const childProcessImport = /require\s*\(\s*['"]child_process['"]\s*\)/.test(content);
-  const execCount = childProcessImport ? (content.match(/child_process\.exec\(/g) || []).length : 0;
-  const execSyncCount = childProcessImport ? (content.match(/child_process\.execSync\(/g) || []).length : 0;
+  // 别只匹配全限定 `child_process.exec(`：源码里是解构引入（`const { execSync } = require('child_process')`）
+  // 或 TS emit 出的 `child_process_1.` 命名空间别名，全限定写法根本不会出现，
+  // 会让本检查恒为 [OK]（见 E6 修复）。所以要认裸调用形式。
+  const childProcessImport = /require\s*\(\s*['"]child_process['"]\s*\)/.test(content)
+    || /child_process_1\./.test(content);
+  // 认裸调用形式（解构 `const { execSync } = require('child_process')` 或 TS emit 的
+  // child_process_1. 别名），但排除 .exec(/ .match(/ 这类**正则方法调用**——前面的
+  // 点号或标识符会让它不是 child_process 的 exec/spawn。负向环视 (?!<[.\w]) 挡掉。
+  const bareFnRe = /(?<![.\w])([A-Za-z_$][\w$]*)(?:\s*\()/g;
+  let execCount = 0;
+  let execSyncCount = 0;
+  let spawnCount = 0;
+  let spawnSyncCount = 0;
+  if (childProcessImport) {
+    for (const m of content.matchAll(bareFnRe)) {
+      const name = m[1];
+      if (name === 'exec') execCount++;
+      else if (name === 'execSync') execSyncCount++;
+      else if (name === 'spawn') spawnCount++;
+      else if (name === 'spawnSync') spawnSyncCount++;
+    }
+  }
   const spawnShellCount = (content.match(/spawn\([^)]*shell\s*:\s*true/g) || []).length;
   if (execCount > 0) { warn(`${rel} has ${execCount}x exec()`); shellExecFound += execCount; }
   if (execSyncCount > 0) { warn(`${rel} has ${execSyncCount}x execSync()`); shellExecFound += execSyncCount; }
+  if (spawnCount > 0) { warn(`${rel} has ${spawnCount}x spawn()`); shellExecFound += spawnCount; }
+  if (spawnSyncCount > 0) { warn(`${rel} has ${spawnSyncCount}x spawnSync()`); shellExecFound += spawnSyncCount; }
   if (spawnShellCount > 0) { warn(`${rel} has spawn with shell:true`); shellExecFound += spawnShellCount; }
 }
 if (shellExecFound === 0) ok('no shell execution found'); else warn(`${shellExecFound} shell exec calls (review for safety)`);
@@ -847,7 +887,8 @@ if (lsResult !== null) {
     ok('dependency tree clean');
   }
 } else {
-  info('pnpm ls timed out after 60s (inconclusive)');
+  // exec() 在非零退出或超时时返回 null —— 这不能静默放行，否则 pnpm 坏了也会过
+  warn('pnpm ls failed or timed out — dependency tree not verifiable');
 }
 
 // F3: Third-party license coverage
@@ -991,7 +1032,9 @@ if (mainJsContent) {
   if (/render-process-gone/.test(mainJsContent)) ok('render-process-gone handler'); else fail('no render-process-gone handler');
   if (/uncaughtException/.test(mainJsContent)) ok('uncaughtException handler'); else fail('no uncaughtException handler');
   if (/unhandledRejection/.test(mainJsContent)) ok('unhandledRejection handler'); else fail('no unhandledRejection handler');
-  if (/process\.on/.test(mainJsContent)) ok('process exit handler'); else fail('no process exit handler');
+  // 泛化的 /process\.on/ 会被上面 uncaughtException/unhandledRejection 的 process.on 调用满足，
+  // 是假信号。要认一个真正独立的退出路径处理（process.on('exit') 或 app 的 quit 钩子）。
+  if (/process\.on\(\s*['"]exit['"]|before-quit|will-quit/.test(mainJsContent)) ok('process exit handler'); else fail('no process exit handler');
 } else {
   fail('main.js not found for crash handler check');
 }

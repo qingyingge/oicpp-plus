@@ -192,9 +192,9 @@ if (toggleBody) {
 // 只查代码，注释里提到这个历史名字不算残留引用
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 const liveWindowApp = (rel) => /window\.app\b/.test(stripComments(read(rel)));
+// compile-output.js 已随 ts-migration 退役（不存在），对它的守卫恒真，不再列入
 check('renderer no longer references window.app in code',
     !liveWindowApp('src/renderer/js/tabs.js')
-    && !liveWindowApp('src/renderer/js/compile-output.js')
     && !liveWindowApp('src/renderer/js/sidebar/debugPanel.js')
     && !liveWindowApp('src/renderer/js/monaco-editor-manager.js'));
 

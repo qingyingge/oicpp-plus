@@ -91,11 +91,21 @@ const runEngineOnce = async (Ctor, progressCount) => {
         assert.ok(second > first, `runId ${second} 应大于 ${first}`);
     });
 
-    check('runId 相同则 isCurrentRun() 为 true（NaN !== NaN 已排除）', () => {
-        engine._runId = 42;
-        const runId = engine._runId;
-        assert.strictEqual(engine._runId === runId, true);
-        assert.ok(Number.isNaN(runId) === false, 'runId 不应是 NaN');
+    check('start() 分配的 runId 是有效整数，且新一轮必定换号（NaN !== NaN 已排除）', () => {
+        // isCurrentRun() = () => this._runId === runId，runId 是 start() 开头捕获的
+        // 局部（`const runId = this._runId`）。_runCounter 若未初始化，++undefined 得
+        // NaN，闭包比较恒 false，本轮每条 worker 消息都被当迟到丢弃。这里直接验证
+        // 这段语义：start() 分到的 runId 必须是有效整数，且换一轮后必须变号。
+        engine._state = 'idle';
+        engine.start({ totalTests: 0 }).catch(() => { });
+        const first = engine._runId;
+        assert.ok(Number.isInteger(first), `start() 分配的 runId 应为整数，实际 ${first}`);
+        assert.ok(!Number.isNaN(first), 'runId 不应是 NaN');
+        engine._state = 'idle';
+        engine.start({ totalTests: 0 }).catch(() => { });
+        const second = engine._runId;
+        assert.notStrictEqual(second, first, `新一轮必须拿到不同 runId（实际仍是 ${first}）`);
+        assert.ok(Number.isInteger(second), `新一轮 runId 也应为整数，实际 ${second}`);
     });
 
     check('_runCounter 递增不会被并发 start 复用', () => {

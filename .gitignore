@@ -38,6 +38,11 @@ fastspawn.node
 AGENTS.local.md
 opencode-rag.json
 
+# 本机开发/对比基准目录
+.qoder/
+benchmark/
+compare-benchmark/
+
 # 操作系统/编辑器
 .DS_Store
 Thumbs.db

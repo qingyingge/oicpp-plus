@@ -436,16 +436,21 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                                         langs3.length === 1, JSON.stringify(langs3));
 
                                     // --- 11. enableAutoTranslate 不炸且幂等 ---
+                                    // 实现里二次调用因 this._observer 已存在会提前 return，
+                                    // 所以 observer 实例必须保持同一个，不能重复创建。
                                     s2.window.i18n.enableAutoTranslate();
+                                    const obs1 = s2.window.i18n._observer;
                                     s2.window.i18n.enableAutoTranslate();
-                                    check('enableAutoTranslate is idempotent and observer-safe', true);
+                                    check('enableAutoTranslate creates exactly one observer (idempotent)',
+                                        !!obs1 && s2.window.i18n._observer === obs1);
 
                                     // --- 12. onChange 返回 unsubscribe ---
-                                    const off = s2.window.i18n.onChange(() => { throw new Error('should be off'); });
+                                    let unsubFired = 0;
+                                    const off = s2.window.i18n.onChange(() => { unsubFired++; });
                                     check('onChange hands back a callable unsubscribe', typeof off === 'function');
                                     off();
                                     return ipcSubs.languageChanged[0]('en').then(() => {
-                                        check('after unsubscribe that listener is not called', true);
+                                        check('after unsubscribe that listener is not called', unsubFired === 0, `fired ${unsubFired}×`);
                                     });
                                 });
                         });
