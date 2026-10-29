@@ -1222,11 +1222,6 @@ class SampleTester {
             const id = (group instanceof HTMLElement ? group.dataset['sampleId'] : '') || '';
             el.textContent = t('tester.testGroup', { i: id });
         });
-        document.querySelectorAll('.sample-run-btn').forEach((el) => {
-            if (!(el instanceof HTMLElement)) return;
-            el.textContent = t('tester.run');
-            el.title = t('tester.runSample');
-        });
         document.querySelectorAll('.sample-delete-btn').forEach((el) => {
             if (el instanceof HTMLElement) el.title = t('tester.deleteSample');
         });
@@ -1243,13 +1238,6 @@ class SampleTester {
             const key = el.classList.contains('switch-btn') ? 'tester.manualInput' : 'tester.readFromFile';
             el.textContent = t(key, null);
             el.title = t(key, null);
-        });
-        document.querySelectorAll('.export-output-btn').forEach((el) => {
-            if (el.classList.contains('expand-output-btn')) {
-                el.textContent = t('tester.expand');
-            } else {
-                el.textContent = t('tester.export');
-            }
         });
     }
 
@@ -1284,7 +1272,7 @@ class SampleTester {
                     ${statusBadge}
                 </div>
                 <div class="sample-controls" onclick="event.stopPropagation()">
-                    <button class="sample-run-btn" id="run-btn-${sample.id}" onclick="sampleTester.runSample(${sample.id})" data-i18n-title="tester.runSample" title="运行此样例">
+                    <button class="sample-run-btn" id="run-btn-${sample.id}" onclick="sampleTester.runSample(${sample.id})" data-i18n="tester.run" data-i18n-title="tester.runSample" title="运行此样例">
                         运行
                     </button>
                     <button class="sample-delete-btn" onclick="sampleTester.deleteSample(${sample.id}).catch(logError)" data-i18n-title="tester.deleteSample" title="删除样例">
@@ -1326,7 +1314,7 @@ class SampleTester {
                             <span class="diff-info" id="diff-info-${sample.id}" style="display: none;"></span>
                             <div class="output-controls" style="display: ${sample.result?.output ? 'flex' : 'none'};">
                                 <button class="export-output-btn expand-output-btn" style="display: ${outputIsTruncated ? 'inline-flex' : 'none'};" onclick="sampleTester.toggleExpandOutput(${sample.id})" title="${outputIsExpanded ? window.i18n.t('tester.collapseOutput') : window.i18n.t('tester.expandFullOutput')}">${outputIsExpanded ? window.i18n.t('tester.collapse') : window.i18n.t('tester.expand')}</button>
-                                <button class="export-output-btn" onclick="sampleTester.exportSampleOutput(${sample.id})" data-i18n-title="tester.export" title="导出输出到文件">
+                                <button class="export-output-btn" onclick="sampleTester.exportSampleOutput(${sample.id})" data-i18n="tester.export" data-i18n-title="tester.exportOutput" title="导出样例输出">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                         <polyline points="7,10 12,15 17,10"></polyline>
