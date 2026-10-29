@@ -25,6 +25,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 // 挂死不等于通过：某个同步调用卡住时进程可能一直不退出，也可能事件循环排空后
 // 以 0 退出码收尾而后半截断言一条不发。留一个不 unref 的定时器顶成失败。
@@ -75,9 +76,10 @@ if (typeof fast.runPair !== 'function' || typeof fast.normalizeCompare !== 'func
     process.exit(0);
 }
 
-// 临时脚本目录：这些子进程只用来构造「读得不快 / 不读 / 狂写 stderr」这几种形状
-const TMP = path.join(ROOT, 'benchmark', 'logs', '_fastspawn-tmp');
-fs.mkdirSync(TMP, { recursive: true });
+// 临时脚本目录：这些子进程只用来构造「读得不快 / 不读 / 狂写 stderr」这几种形状。
+// 放系统临时目录并用 mkdtemp 取唯一名字 —— 写在仓库里会每次跑都长出废文件，
+// 固定名字还会让并行的两个实例互相踩。
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'oicpp-fastspawn-'));
 function script(name, body) {
     const p = path.join(TMP, name);
     fs.writeFileSync(p, '#!/bin/sh\n' + body + '\n');

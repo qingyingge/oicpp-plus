@@ -51,3 +51,8 @@ benchmark/fixtures/gen_mixed
 
 # 一次性测量脚手架（编号实验的临时变体构建脚本，结论已写进文档，不需长驻仓库）
 benchmark/compare-probe/
+
+# CLI 会话状态（含 workflow 运行记录），与 .opencode/ 同类
+.qoder/
+# 变体的派生副本：由 cp src/main-process/timeout-wrapper.js 生成，见 variants/README.md
+benchmark/variants/timeout-wrapper.js

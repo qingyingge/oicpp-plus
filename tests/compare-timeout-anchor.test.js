@@ -48,8 +48,9 @@ if (process.platform === 'win32') {
     process.exit(0);
 }
 
-const TMP = path.join(ROOT, 'benchmark', 'logs', '_anchor-tmp');
-fs.mkdirSync(TMP, { recursive: true });
+// 临时脚本落在系统临时目录，并用 mkdtemp 拿唯一目录：
+// 写在仓库里会每次跑都长出废文件，固定名字还会让并行的两个实例互相踩。
+const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'oicpp-anchor-'));
 const script = (name, body) => {
     const p = path.join(TMP, name);
     fs.writeFileSync(p, '#!/bin/sh\n' + body + '\n');
