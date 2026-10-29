@@ -79,14 +79,17 @@ function auditHtml(file) {
     let last = 0;
     while ((m = tagRe.exec(src))) {
         const text = src.slice(last, m.index);
-        if (CJK.test(text) && !stack.some((f) => f.opaque)) {
-            const t = text.trim().replace(/\s+/g, ' ');
-            if (t && !stack.some((f) => f.i18n)) {
+        const t = text.trim().replace(/\s+/g, ' ');
+        const opaque = stack.some((f) => f.opaque);
+        if (t && !opaque) {
+            // A 条只认 CJK：纯英文的未接线文字归 ci-check 的 I8b 管，两条别混口径。
+            if (CJK.test(t) && !stack.some((f) => f.i18n)) {
                 uncoveredText.push({ line: lineAt(m.index), text: t });
             }
-            if (t && stack.length && !stack[stack.length - 1].opaque) {
-                stack[stack.length - 1].texts.push(t);
-            }
+            // B 条不分脚本 —— 「默认值写英文、键值是中文」同样是同屏换话，而且正是
+            // index.html 里最大批的那种不符（35 条里只有 5 条含 CJK）。早先这里跟着
+            // A 条一起套了 CJK 门槛，于是 ENFORCED 的 0 是靠漏报换来的；已改掉。
+            if (stack.length) stack[stack.length - 1].texts.push(t);
         }
         last = tagRe.lastIndex;
         const tag = m[0];
@@ -160,6 +163,8 @@ fs.writeFileSync(probeBad, [
     '<html><body>',
     '<div class="unit">这是一条没接线的中文</div>',
     `<label data-i18n="settings.rawText">故意写错的默认值</label>`,
+    // 英文默认值配中文键 —— B 条曾经套着 CJK 门槛，正是漏掉这一类
+    `<span data-i18n="menu.browse">Browse</span>`,
     '<!-- <span>注释里的中文不算未接线</span> -->',
     '</body></html>',
 ].join('\n'));
@@ -168,7 +173,10 @@ check('审计器能抓到未接线的 CJK 文本（守卫不空转）',
     probe.uncoveredText.length === 1 && probe.uncoveredText[0].text === '这是一条没接线的中文',
     JSON.stringify(probe.uncoveredText));
 check('审计器能抓到默认值与键值不一致',
-    probe.mismatches.length === 1 && probe.mismatches[0].key === 'settings.rawText',
+    probe.mismatches.some((x) => x.key === 'settings.rawText'),
+    JSON.stringify(probe.mismatches));
+check('英文默认值配中文键也要抓到（B 条不得套 CJK 门槛）',
+    probe.mismatches.some((x) => x.key === 'menu.browse' && x.inline === 'Browse'),
     JSON.stringify(probe.mismatches));
 check('审计器不把 HTML 注释算成可见文本',
     !probe.uncoveredText.some((t) => t.text.includes('注释里')), JSON.stringify(probe.uncoveredText));
