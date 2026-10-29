@@ -54,5 +54,3 @@ benchmark/compare-probe/
 
 # CLI 会话状态（含 workflow 运行记录），与 .opencode/ 同类
 .qoder/
-# 变体的派生副本：由 cp src/main-process/timeout-wrapper.js 生成，见 variants/README.md
-benchmark/variants/timeout-wrapper.js

@@ -17,7 +17,7 @@
 | `worker-v15fb.js` | V13 回退路径判等快路 | 上一条 + `outputsEqual` 里加原始字节短路。**结论：采用，但只在回退路径有效。** |
 | `worker-head-native.js` | 实验八的 **V6** 原样 | `git show HEAD~N:src/main-process/compare-worker-v6.js`（V11 之前的那一版），addon 换成 v6 版（即修复前的 `fastspawn.cc`：写循环里是 `if (wr <= 0 && errno != EINTR) { kill(-pid, SIGKILL); break; }`，且 `runOne` 末尾 `free(errBuf)` 不回传 stderr）。 |
 | `worker-worktree-wrapper.js/.ts` | 工作区那版 timeout-wrapper 重构 | 见下方"这份是留档"。 |
-| `timeout-wrapper.js` | 上一行的依赖 | `cp src/main-process/timeout-wrapper.js benchmark/variants/` |
+| `timeout-wrapper.js` | 上一行的依赖 | **归档副本，已进仓库**。`src/main-process/timeout-wrapper.*` 已在 V20 收尾时删除（该架构被否决，且它经 `files: ["src/**/*"]` 只会给安装包添死重），所以这份副本是该方案的唯一存留，只为复现「工作区版 vs V11」那张对照表而保留。 |
 
 重建 addon（`.node` 已在 .gitignore 里）：
 
