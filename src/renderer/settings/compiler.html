@@ -36,12 +36,12 @@
                     </div>
 
                     <div class="setting-group">
-                        <label for="run-mode" data-i18n="compiler.runMode">Run Mode</label>
+                        <label for="run-mode" data-i18n="compiler.runMode">运行方式</label>
                         <select id="run-mode">
-                            <option value="popup" data-i18n="compiler.runModePopup">Popup Window</option>
-                            <option value="integrated-terminal" data-i18n="compiler.runModeIntegrated">Integrated Terminal</option>
+                            <option value="popup" data-i18n="compiler.runModePopup">弹窗运行</option>
+                            <option value="integrated-terminal" data-i18n="compiler.runModeIntegrated">内置终端运行</option>
                         </select>
-                        <div class="hint" data-i18n="compiler.runModeDesc">Integrated terminal mode creates a new terminal and runs the program automatically</div>
+                        <div class="hint" data-i18n="compiler.runModeDesc">内置终端运行会新建终端并自动输入程序路径后回车执行</div>
                     </div>
 
                     <div class="setting-group">
@@ -59,13 +59,13 @@
                     <div class="section-title" data-i18n="compiler.testlibTitle">Testlib 配置</div>
                     
                     <div class="setting-group">
-                        <label for="testlib-path" data-i18n="compiler.testlibPath">Testlib 头文件路径</label>
+                        <label for="testlib-path" data-i18n="compiler.testlibPath">testlib 库路径</label>
                         <div class="input-group">
-                            <input type="text" id="testlib-path" data-i18n-placeholder="compiler.testlibPathPlaceholder" placeholder="testlib.h 所在目录" readonly>
+                            <input type="text" id="testlib-path" data-i18n-placeholder="compiler.testlibPathPlaceholder" placeholder="请选择 testlib.h 所在文件夹" readonly>
                             <button id="browse-testlib" class="btn btn-secondary" data-i18n="compiler.browseLocal">浏览本地</button>
-                            <button id="install-testlib" class="btn btn-primary" data-i18n="compiler.downloadTestlib">在线安装</button>
+                            <button id="install-testlib" class="btn btn-primary" data-i18n="compiler.downloadTestlib">下载 testlib</button>
                         </div>
-                        <div class="hint" data-i18n="compiler.testlibPathDesc">用于编写 Special Judge 的 testlib.h 库</div>
+                        <div class="hint" data-i18n="compiler.testlibPathDesc">testlib.h 是竞赛编程中常用的测试辅助库</div>
                     </div>
 
                     <div class="setting-group">
@@ -89,11 +89,11 @@
     <div id="install-dialog" class="modal" style="display: none;">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 data-i18n="compiler.downloadCompiler">安装编译器</h3>
+                <h3 data-i18n="compiler.installCompiler">安装编译器</h3>
                 <button id="close-install-dialog" class="close-btn">&times;</button>
             </div>
             <div class="modal-body">
-                <p data-i18n="compiler.downloadCompiler">选择要安装的编译器：</p>
+                <p data-i18n="compiler.selectCompilerVersion">选择要安装的编译器：</p>
                 <div id="compiler-list" class="compiler-list">
                 </div>
             </div>
@@ -103,11 +103,11 @@
     <div id="testlib-install-dialog" class="modal" style="display: none;">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 data-i18n="compiler.installTestlib">安装Testlib</h3>
+                <h3 data-i18n="compiler.installTestlib">安装 Testlib</h3>
                 <button id="close-testlib-install-dialog" class="close-btn">&times;</button>
             </div>
             <div class="modal-body">
-                <p data-i18n="compiler.selectTestlibVersion">选择要安装的Testlib版本：</p>
+                <p data-i18n="compiler.selectTestlibVersion">选择要安装的 Testlib 版本：</p>
                 <div id="testlib-list" class="compiler-list">
                 </div>
             </div>

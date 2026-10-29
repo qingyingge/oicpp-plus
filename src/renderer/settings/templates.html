@@ -204,20 +204,20 @@
     <div class="settings-container">
         <div class="settings-layout">
             <div class="settings-sidebar">
-                <div class="sidebar-item active" data-target="tpl-section" data-i18n="templates.templateTab">File Template</div>
+                <div class="sidebar-item active" data-target="tpl-section" data-i18n="templates.templateTab">文件模板</div>
                 <div class="sidebar-item" data-target="snippets-section" data-i18n="templates.snippetsTab">代码片段</div>
             </div>
             
             <div class="settings-main">
                 <!-- Template Section -->
                 <div id="tpl-section" class="settings-section active">
-                    <div class="section-title" data-i18n="templates.templateTab">File Template</div>
+                    <div class="section-title" data-i18n="templates.templateTab">文件模板</div>
                     <div class="template-info">
-                        <strong data-i18n="dialog.note">Note:</strong><span data-i18n="templates.templateDesc">Edit the default C++ template used when creating new files. Standard C++ syntax is supported. Changes take effect immediately.</span>
+                        <strong data-i18n="dialog.note">注意：</strong><span data-i18n="templates.templateDesc">说明：在这里可以编辑新建C++文件时使用的默认模板。模板支持标准的C++语法，保存后立即生效。</span>
                     </div>
                     
                     <div class="setting-group">
-                        <label for="cpp-template" data-i18n="templates.templateLabel">C++ Template Content:</label>
+                        <label for="cpp-template" data-i18n="templates.templateLabel">C++ 模板内容：</label>
                         <textarea id="cpp-template" spellcheck="false" data-i18n-placeholder="templates.templatePlaceholder" placeholder="在这里编辑 C++ 模板内容...">#include <bits/stdc++.h>
 
 using namespace std;
@@ -242,7 +242,7 @@ int main()
                     </div>
                     <div class="setting-group">
                         <div class="btn-row">
-                            <button id="add-snippet" class="preview-btn" data-i18n="templates.addSnippet">添加模板</button>
+                            <button id="add-snippet" class="preview-btn" data-i18n="templates.addSnippet">添加代码片段</button>
                         </div>
                         <div class="hint" style="margin-top:8px;" data-i18n="templates.snippetsHint">提示：保存后主窗口即时生效；在编辑器中输入关键词即可看到补全。</div>
                     </div>
@@ -255,7 +255,7 @@ int main()
         </div>
         
         <div class="settings-footer">
-            <button id="save-settings" class="btn btn-primary" data-i18n="settings.save">保存</button>
+            <button id="save-settings" class="btn btn-primary" data-i18n="settings.save">保存设置</button>
             <button id="cancel-settings" class="btn btn-secondary" data-i18n="settings.cancel">取消</button>
             <button id="reset-settings" class="btn btn-warning" data-i18n="settings.reset">重置默认</button>
         </div>

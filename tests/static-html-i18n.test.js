@@ -175,12 +175,12 @@ function auditHtml(file) {
 // minWired 是「这文件本来有多少个接线元素」的下限，防止解析退化成扫出空结果、
 // 让 A/B/C 在空集上真空通过。
 const ENFORCED = [
-    { file: 'settings/editor.html', metrics: 'AB', minWired: 100 },
+    { file: 'settings/editor.html', metrics: 'ABC', minWired: 100 },
     { file: 'index.html', metrics: 'ABC', minWired: 90 },
     { file: 'pdf-viewer.html', metrics: 'ABC', minWired: 5 },
-    { file: 'settings/backup.html', metrics: 'AC', minWired: 10 },
-    { file: 'settings/templates.html', metrics: 'AC', minWired: 20 },
-    { file: 'settings/compiler.html', metrics: 'A', minWired: 25 },
+    { file: 'settings/backup.html', metrics: 'ABC', minWired: 10 },
+    { file: 'settings/templates.html', metrics: 'ABC', minWired: 20 },
+    { file: 'settings/compiler.html', metrics: 'ABC', minWired: 25 },
 ];
 
 const files = walkHtml(rendererDir).map((f) => path.relative(rendererDir, f).split(path.sep).join('/'));
@@ -259,12 +259,20 @@ fs.rmSync(probeDir, { recursive: true, force: true });
 
 // 每个文件的三条指标一律如实打印（含已上锁的），不静默截断：把存量藏起来就等于
 // 假装它不存在，而下一次收紧时没有人知道还剩多少。
+// I18N_HTML_AUDIT=1 时额外列出每一条明细 —— 收紧某个文件前要靠它逐条分诊，
+// 而分诊必须用正式口径，不能再另写一份脚本（两套口径迟早会给出不同的数，
+// 本文件历史上已经因为「只看开标签后紧邻文本」把 index.html 的 39 报成 35）。
 console.log('--- 各文件存量（括号内为本轮已上锁的指标）---');
+const verboseAudit = !!process.env.I18N_HTML_AUDIT;
 for (const rel of files) {
     const r = results.get(rel);
     const entry = ENFORCED.find((x) => x.file === rel);
     console.log(`  ${rel}: A=${r.uncoveredText.length} B=${r.mismatches.length} C=${r.attrIssues.length} wired=${r.wiredCount}`
         + `  [锁:${entry ? entry.metrics : '无'}]`);
+    if (!verboseAudit) continue;
+    for (const x of r.uncoveredText) console.log(`      A L${x.line}: ${x.text.slice(0, 60)}`);
+    for (const x of r.mismatches) console.log(`      B L${x.line} ${x.key}\n           默认="${x.inline.slice(0, 56)}"\n           键值="${String(x.zhValue).slice(0, 56)}"`);
+    for (const x of r.attrIssues) console.log(`      C L${x.line} ${x.attr}="${x.val.slice(0, 48)}"  ${x.why}`);
 }
 
 clearTimeout(watchdog);
