@@ -23,12 +23,12 @@
                     <div class="section-title" data-i18n="settings.general">常规设置</div>
                     
                     <div class="setting-group">
-                        <label data-i18n="settings.languageLabel">界面语言</label>
+                        <label data-i18n="settings.languageLabel">语言</label>
                         <div class="input-group">
                             <select id="editor-language" class="form-select">
                             </select>
                         </div>
-                        <div class="hint" data-i18n="settings.languageDesc">选择界面显示语言，更改后需要重新打开设置面板生效</div>
+                        <div class="hint" data-i18n="settings.languageDesc">选择界面显示语言，更改后立即生效</div>
                     </div>
 
                     <div class="setting-group">
@@ -386,7 +386,7 @@
                         <label for="clang-format-column-limit" data-i18n="settings.columnLimit">列宽限制</label>
                         <div class="input-group">
                             <input type="number" id="clang-format-column-limit" min="0" max="512" value="0">
-                            <span class="unit">0 表示不限制</span>
+                            <span class="unit" data-i18n="settings.columnLimitDesc">0 表示不限制</span>
                         </div>
                     </div>
 
@@ -427,7 +427,7 @@
                     </div>
 
                     <div class="setting-group">
-                        <label class="checkbox-label">
+                        <label class="checkbox-label" data-i18n="settings.indentCaseLabels">
                             <input type="checkbox" id="clang-format-indent-case-labels">
                             <span class="checkmark"></span>
                             缩进 case / default 标签
@@ -435,7 +435,7 @@
                     </div>
 
                     <div class="setting-group">
-                        <label class="checkbox-label">
+                        <label class="checkbox-label" data-i18n="settings.sortIncludes">
                             <input type="checkbox" id="clang-format-sort-includes" checked>
                             <span class="checkmark"></span>
                             自动排序 includes
@@ -443,7 +443,7 @@
                     </div>
 
                     <div class="setting-group">
-                        <label class="checkbox-label">
+                        <label class="checkbox-label" data-i18n="settings.alignAssignments">
                             <input type="checkbox" id="clang-format-align-assignments">
                             <span class="checkmark"></span>
                             对齐连续赋值
@@ -451,7 +451,7 @@
                     </div>
 
                     <div class="setting-group">
-                        <label class="checkbox-label">
+                        <label class="checkbox-label" data-i18n="settings.alignDeclarations">
                             <input type="checkbox" id="clang-format-align-declarations">
                             <span class="checkmark"></span>
                             对齐连续声明
@@ -459,7 +459,7 @@
                     </div>
 
                     <div class="setting-group">
-                        <label for="clang-format-raw-text">.clang-format 原文</label>
+                        <label for="clang-format-raw-text" data-i18n="settings.rawText">.clang-format 原文</label>
                         <textarea id="clang-format-raw-text" class="form-control" rows="16" spellcheck="false" data-i18n-placeholder="settings.rawTextPlaceholder" placeholder="可粘贴现有 .clang-format 内容，也可由上方选项生成"></textarea>
                         <div class="hint" data-i18n="settings.rawTextDesc">编辑这里的文本后，点击“应用文本到配置”即可同步到详细选项；点击“写入 .clang-format”可保存为文件。</div>
                     </div>

@@ -1125,8 +1125,13 @@ const I18N_HARDCODED_EN_BASELINE = 0;
 // 2026-10-19：退役永无加载入口的 compile-output.js（L37）时，把它独占的 11 个
 // compileOutput.* 键从两个语言包同步摘掉，删除一增一减正好抵平，仍是 202 ——
 // 只删文件不摘键会涨到 213 撞破基线。所以这一档不是「还可以再降」的空间。
+// 2026-10-29：settings/editor.html 里 6 个界面文字一直有键却没挂 data-i18n
+// （settings.indentCaseLabels / sortIncludes / alignAssignments / alignDeclarations /
+// rawText / columnLimitDesc），属于「先加键后接线、接线那步漏了」的存量。挂上后
+// 全部转为已引用，201 → 195。这一档由 tests/static-html-i18n.test.js 的 A 条守住：
+// 该文件再出现「有中文没挂 data-i18n」就直接红，不许靠调高 baseline 消化。
 // 取 tests/i18n.test.js 的口径（更严格：只扫 src，键名全字符类）算出的值。
-const I18N_ORPHAN_KEY_BASELINE = 202;
+const I18N_ORPHAN_KEY_BASELINE = 195;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {
