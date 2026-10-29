@@ -68,6 +68,22 @@ function walkHtml(dir, out = []) {
  * 和「带 data-i18n 元素的直接文本子节点」这两件事。不做完整解析，因此
  * 遇到未闭合标签会一路带到文件尾 —— 宁可漏报不误报，且这些文件是手写的。
  */
+// 属性级映射。I8 的 userVisibleRe 里有 `title:` 与 `\.title\s*=`，却没有 `title="`；
+// `label:` 也匹配不到 `aria-label="`。于是 HTML 属性上的界面文字（tooltip、读屏文本、
+// 输入框提示）整类无人管 —— 实测 index.html 因此躺着 11 条。
+const ATTR_MAP = {
+    'title': 'data-i18n-title',
+    'aria-label': 'data-i18n-aria-label',
+    'placeholder': 'data-i18n-placeholder',
+};
+// 语言中性的值不要求接线：缩写、快捷键、单位、纯符号。判据与 ci-check 的 I8b 同源 ——
+// 「≥2 个 ≥3 字母的完整词」才算散文，这正是把 SPJ / MB / Ctrl+P 挡在外面的关键。
+const HAN_RE = /[\u4e00-\u9fff\u3400-\u4dbf]/;
+function needsTranslation(val) {
+    if (HAN_RE.test(val)) return true;
+    return (val.match(/\b[A-Za-z]{3,}\b/g) || []).length >= 2;
+}
+
 function auditHtml(file) {
     const src = fs.readFileSync(file, 'utf8');
     const tagRe = /<!--[\s\S]*?-->|<\/?[a-zA-Z][^>]*>/g;
@@ -75,6 +91,7 @@ function auditHtml(file) {
     const stack = [];
     const uncoveredText = [];
     const wiredElements = [];
+    const attrIssues = [];
     let m;
     let last = 0;
     while ((m = tagRe.exec(src))) {
@@ -101,6 +118,27 @@ function auditHtml(file) {
             }
             continue;
         }
+        // C 条：属性级漏网 / 挂错键 / 默认值 ≠ 键值。必须在 VOID 与自闭合的
+        // continue 之前跑 —— placeholder 恰恰长在 <input> 这种 void 元素上。
+        for (const [attr, i18nAttr] of Object.entries(ATTR_MAP)) {
+            const av = new RegExp(`(?<=[\\s"'])${attr}\\s*=\\s*"([^"]*)"`).exec(tag);
+            if (!av || !av[1].trim()) continue;
+            const val = av[1].trim();
+            if (!needsTranslation(val)) continue;
+            const wired = new RegExp(`\\b${i18nAttr}\\s*=\\s*"([^"]*)"`).exec(tag);
+            if (!wired) {
+                attrIssues.push({ line: lineAt(m.index), attr, val, why: `未挂 ${i18nAttr}` });
+                continue;
+            }
+            const zhVal = zhFlat[wired[1]];
+            if (zhVal === undefined) {
+                attrIssues.push({ line: lineAt(m.index), attr, val, why: `键不存在：${wired[1]}` });
+                continue;
+            }
+            if (!/\{\w+\}/.test(String(zhVal)) && String(zhVal).trim() !== val) {
+                attrIssues.push({ line: lineAt(m.index), attr, val, why: `${wired[1]} 的 zh 值是「${String(zhVal).slice(0, 32)}」` });
+            }
+        }
         if (VOID.has(name) || tag.endsWith('/>')) continue;
         if (name === 'html' || name === 'body') { stack.push({ tag: name, i18n: false, opaque: false, texts: [] }); continue; }
         const frame = {
@@ -126,14 +164,23 @@ function auditHtml(file) {
             zhValue: zhFlat[el.key] === undefined ? null : String(zhFlat[el.key]).trim(),
         }))
         .filter((x) => x.inline !== '' && x.inline !== x.zhValue);
-    return { uncoveredText, mismatches, wiredCount: wiredElements.length };
+    return { uncoveredText, mismatches, attrIssues, wiredCount: wiredElements.length };
 }
 
-// 上锁清单。minWired 是「这个文件本来有多少个接线元素」的下限，用来防止
-// 审计器某天因为解析退化而扫出空结果 —— 那样 A/B 两条会真空通过。
+// 上锁清单，按指标分别锁 —— 一个文件可能 A 干净而 B 还有存量，整体进出会连带把
+// 已经干净的那条退回「不检查」。每清完一条就把对应的字母打开，不许反向关。
+//   A 祖先链上没有 data-i18n 的 CJK 可见文本
+//   B 挂了 data-i18n 的元素，其直接内联文本 == 该键的 zh 值
+//   C title / aria-label / placeholder 属性已接线，且默认值 == 该键的 zh 值
+// minWired 是「这文件本来有多少个接线元素」的下限，防止解析退化成扫出空结果、
+// 让 A/B/C 在空集上真空通过。
 const ENFORCED = [
-    { file: 'settings/editor.html', minWired: 100 },
-    { file: 'pdf-viewer.html', minWired: 5 },
+    { file: 'settings/editor.html', metrics: 'AB', minWired: 100 },
+    { file: 'index.html', metrics: 'ABC', minWired: 90 },
+    { file: 'pdf-viewer.html', metrics: 'ABC', minWired: 5 },
+    { file: 'settings/backup.html', metrics: 'AC', minWired: 10 },
+    { file: 'settings/templates.html', metrics: 'AC', minWired: 20 },
+    { file: 'settings/compiler.html', metrics: 'A', minWired: 25 },
 ];
 
 const files = walkHtml(rendererDir).map((f) => path.relative(rendererDir, f).split(path.sep).join('/'));
@@ -142,17 +189,22 @@ check('递归能找到渲染层 HTML', files.length >= 6, files.join(', '));
 const results = new Map();
 for (const rel of files) results.set(rel, auditHtml(path.join(rendererDir, rel)));
 
-for (const { file: rel, minWired } of ENFORCED) {
+const METRIC_DESC = {
+    A: (r) => [r.uncoveredText.length === 0, r.uncoveredText.slice(0, 6).map((x) => `L${x.line}:${x.text.slice(0, 24)}`).join(' | ')],
+    B: (r) => [r.mismatches.length === 0, r.mismatches.slice(0, 6).map((x) => `L${x.line} ${x.key} 默认="${x.inline.slice(0, 26)}" 键值="${String(x.zhValue).slice(0, 26)}"`).join(' | ')],
+    C: (r) => [r.attrIssues.length === 0, r.attrIssues.slice(0, 6).map((x) => `L${x.line} ${x.attr}="${x.val.slice(0, 26)}" ${x.why}`).join(' | ')],
+};
+
+for (const { file: rel, metrics, minWired } of ENFORCED) {
     const r = results.get(rel);
     check(`${rel}: 审计结果可读`, !!r, '文件不存在于扫描结果里');
     if (!r) continue;
-    check(`${rel}: 无「有中文却没挂 data-i18n 祖先」的可见文本（A）`,
-        r.uncoveredText.length === 0,
-        r.uncoveredText.slice(0, 6).map((t) => `L${t.line}:${t.text.slice(0, 24)}`).join(' | '));
-    check(`${rel}: 每个 data-i18n 元素的行内默认值都等于该键的 zh-cn 值（B）`,
-        r.mismatches.length === 0,
-        r.mismatches.slice(0, 6).map((x) => `L${x.line} ${x.key} 默认="${x.inline.slice(0, 28)}" 键值="${String(x.zhValue).slice(0, 28)}"`).join(' | '));
-    check(`${rel}: 确实扫到了 data-i18n 元素（防止切片取空造成恒真）`, r.wiredCount >= minWired, `wired=${r.wiredCount} 下限=${minWired}`);
+    for (const metric of metrics) {
+        const [ok, extra] = METRIC_DESC[metric](r);
+        check(`${rel}: ${metric} 条`, ok, extra);
+    }
+    check(`${rel}: 确实扫到了 data-i18n 元素（防止切片取空造成恒真）`,
+        r.wiredCount >= minWired, `wired=${r.wiredCount} 下限=${minWired}`);
 }
 
 // 审计器自身必须能抓到缺陷，否则上面的 0 只是「什么都没查到」。
@@ -165,6 +217,11 @@ fs.writeFileSync(probeBad, [
     `<label data-i18n="settings.rawText">故意写错的默认值</label>`,
     // 英文默认值配中文键 —— B 条曾经套着 CJK 门槛，正是漏掉这一类
     `<span data-i18n="menu.browse">Browse</span>`,
+    // C 条：tooltip 没挂 data-i18n-title（按钮文字用中性的 OK，免得顺手造出一条 A 类，
+    // 让「恰好 1 条未接线」这条自证变成猜测）
+    '<button title="一条没接线的提示">OK</button>',
+    // C 条：挂了但键不存在（裸键会直接显示进 tooltip）
+    '<input type="text" data-i18n-placeholder="definitely.not.a.key" placeholder="提示">',
     '<!-- <span>注释里的中文不算未接线</span> -->',
     '</body></html>',
 ].join('\n'));
@@ -178,17 +235,36 @@ check('审计器能抓到默认值与键值不一致',
 check('英文默认值配中文键也要抓到（B 条不得套 CJK 门槛）',
     probe.mismatches.some((x) => x.key === 'menu.browse' && x.inline === 'Browse'),
     JSON.stringify(probe.mismatches));
+check('C 条能抓到没接线的 title 属性',
+    probe.attrIssues.some((x) => x.attr === 'title' && /未挂/.test(x.why)),
+    JSON.stringify(probe.attrIssues));
+check('C 条能抓到属性上指向不存在键的接线',
+    probe.attrIssues.some((x) => x.attr === 'placeholder' && /键不存在/.test(x.why)),
+    JSON.stringify(probe.attrIssues));
 check('审计器不把 HTML 注释算成可见文本',
     !probe.uncoveredText.some((t) => t.text.includes('注释里')), JSON.stringify(probe.uncoveredText));
+// 语言中性值不得进 C 条：SPJ / MB / Ctrl+P 这类要求翻译就是假阳性
+const probeNeutral = path.join(probeDir, 'neutral.html');
+fs.writeFileSync(probeNeutral, [
+    '<html><body>',
+    '<span title="SPJ">SPJ</span>',
+    '<span class="unit">MB</span>',
+    '<input type="text" title="Ctrl+P">',
+    '</body></html>',
+].join('\n'));
+check('缩写/快捷键/单位不算未接线（C 条不得造假阳性）',
+    auditHtml(probeNeutral).attrIssues.length === 0,
+    JSON.stringify(auditHtml(probeNeutral).attrIssues));
 fs.rmSync(probeDir, { recursive: true, force: true });
 
-// 未上锁文件的存量如实打印，不静默截断：把 backlog 藏起来就等于假装它不存在。
-console.log('--- 尚未上锁的文件（存量，供后续逐批收紧）---');
-const locked = new Set(ENFORCED.map((e) => e.file));
+// 每个文件的三条指标一律如实打印（含已上锁的），不静默截断：把存量藏起来就等于
+// 假装它不存在，而下一次收紧时没有人知道还剩多少。
+console.log('--- 各文件存量（括号内为本轮已上锁的指标）---');
 for (const rel of files) {
-    if (locked.has(rel)) continue;
     const r = results.get(rel);
-    console.log(`  ${rel}: 未接线文本 ${r.uncoveredText.length}，默认值不符 ${r.mismatches.length}，已接线元素 ${r.wiredCount}`);
+    const entry = ENFORCED.find((x) => x.file === rel);
+    console.log(`  ${rel}: A=${r.uncoveredText.length} B=${r.mismatches.length} C=${r.attrIssues.length} wired=${r.wiredCount}`
+        + `  [锁:${entry ? entry.metrics : '无'}]`);
 }
 
 clearTimeout(watchdog);

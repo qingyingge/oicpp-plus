@@ -272,7 +272,7 @@
                                     <path d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM7 7V4h2v3h3v2H9v3H7V9H4V7h3z"/>
                                 </svg>
                             </button>
-                            <button class="icon-btn" id="import-samples-zip-btn" data-i18n-title="tester.importPreview" title="从压缩包导入样例" tabindex="-1">
+                            <button class="icon-btn" id="import-samples-zip-btn" data-i18n-title="menu.importSamples" title="从压缩包导入样例" tabindex="-1">
                                 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
                                     <path d="M3 2h10a1 1 0 0 1 1 1v2H2V3a1 1 0 0 1 1-1zm-1 4h12v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6zm5 1v2H5l3 3 3-3H9V7H7z"/>
                                 </svg>
@@ -307,13 +307,13 @@
                             <div class="setting-group" id="global-grader-group" style="display: none;">
                                 <div class="spj-header-row">
                                     <span class="setting-label" data-i18n="tester.grader">grader.cpp</span>
-                                    <a href="#" class="spj-browse-link" id="browse-global-grader-btn" data-i18n="menu.browse" title="选择 grader.cpp 文件">
+                                    <a href="#" class="spj-browse-link" id="browse-global-grader-btn" data-i18n="menu.browse" data-i18n-title="tester.selectGraderFile" title="选择 grader.cpp 文件">
                                         浏览
                                     </a>
                                 </div>
                                 <div class="spj-file-display" id="grader-file-display" style="display: none;">
                                     <span class="spj-file-name" id="grader-file-name"></span>
-                                    <a href="#" class="spj-clear-link" onclick="sampleTester.clearGlobalGraderFile(); return false;" title="清除 grader.cpp 文件">
+                                    <a href="#" class="spj-clear-link" onclick="sampleTester.clearGlobalGraderFile(); return false;" data-i18n="menu.delete_grader" data-i18n-title="menu.clearGraderFile" title="清除 grader.cpp 文件">
                                         删除
                                     </a>
                                 </div>
@@ -322,13 +322,13 @@
                             <div class="setting-group" id="global-spj-group">
                                 <div class="spj-header-row">
                                     <span class="setting-label" data-i18n="menu.spj">SPJ</span>
-                                    <a href="#" class="spj-browse-link" onclick="sampleTester.selectGlobalSpjFile(); return false;" data-i18n="menu.browse" data-i18n-title="compare.selectSpjFile" title="Select SPJ file">
-                                        Browse
+                                    <a href="#" class="spj-browse-link" onclick="sampleTester.selectGlobalSpjFile(); return false;" data-i18n="menu.browse" data-i18n-title="compare.selectSpjFile" title="选择Special Judge文件">
+                                        浏览
                                     </a>
                                 </div>
                                 <div class="spj-file-display" id="spj-file-display" style="display: none;">
                                     <span class="spj-file-name" id="spj-file-name"></span>
-                                    <a href="#" class="spj-clear-link" onclick="sampleTester.clearGlobalSpjFile(); return false;" title="清除SPJ文件">
+                                    <a href="#" class="spj-clear-link" onclick="sampleTester.clearGlobalSpjFile(); return false;" data-i18n="menu.delete_spj" data-i18n-title="menu.clearSpjFile" title="清除 SPJ 文件">
                                         删除
                                     </a>
                                 </div>
@@ -337,9 +337,9 @@
                             <div class="setting-group global-bulk-row global-fileio-row">
                                 <span class="setting-label" data-i18n="menu.fileIO">文件IO</span>
                                 <div class="global-fileio-controls">
-                                    <input type="text" class="setting-input setting-input-wide" id="global-freopen-input-file" data-i18n-placeholder="menu.sampleInputPlaceholder" placeholder="Input file name, e.g. sample.in">
-                                    <input type="text" class="setting-input setting-input-wide" id="global-freopen-output-file" data-i18n-placeholder="menu.sampleOutputPlaceholder" placeholder="Output file name, e.g. sample.out">
-                                    <button class="bulk-apply-btn" id="apply-fileio-all-btn" type="button" title="将文件IO设置应用到全部样例" data-i18n="menu.apply">应用</button>
+                                    <input type="text" class="setting-input setting-input-wide" id="global-freopen-input-file" data-i18n-placeholder="menu.sampleInputPlaceholder" placeholder="输入文件名，如 sample.in">
+                                    <input type="text" class="setting-input setting-input-wide" id="global-freopen-output-file" data-i18n-placeholder="menu.sampleOutputPlaceholder" placeholder="输出文件名，如 sample.out">
+                                    <button class="bulk-apply-btn" id="apply-fileio-all-btn" type="button" data-i18n="menu.apply" data-i18n-title="menu.applyToFileIoAll" title="将文件IO设置应用到全部样例">应用</button>
                                 </div>
                             </div>
                             <div class="global-settings-pair">
@@ -347,13 +347,13 @@
                                     <span class="setting-label" data-i18n="menu.runTime">运行时间</span>
                                     <input type="number" class="setting-input" id="global-time-limit" min="1" value="1000">
                                     <span class="setting-unit">ms</span>
-                                    <button class="bulk-apply-btn" id="apply-time-limit-all-btn" type="button" title="将运行时间应用到全部样例" data-i18n="menu.apply">应用</button>
+                                    <button class="bulk-apply-btn" id="apply-time-limit-all-btn" type="button" data-i18n="menu.apply" data-i18n-title="menu.applyToTimeLimitAll" title="将运行时间应用到全部样例">应用</button>
                                 </div>
                                 <div class="setting-group global-bulk-row">
-                                    <span class="setting-label" data-i18n="tester.memoryLimit">内存</span>
+                                    <span class="setting-label" data-i18n="tester.memoryLimit">内存:</span>
                                     <input type="number" class="setting-input" id="global-memory-limit" min="0" step="0.1" value="0">
                                     <span class="setting-unit" data-i18n="tester.mb">MB</span>
-                                    <button class="bulk-apply-btn" id="apply-memory-limit-all-btn" type="button" title="将内存限制应用到全部样例" data-i18n="menu.apply">应用</button>
+                                    <button class="bulk-apply-btn" id="apply-memory-limit-all-btn" type="button" data-i18n="menu.apply" data-i18n-title="menu.applyToMemoryLimitAll" title="将内存限制应用到全部样例">应用</button>
                                 </div>
                             </div>
                         </div>
@@ -362,13 +362,13 @@
                     <div class="samples-content">
                         <div class="no-file-message" id="no-file-message" style="display: none;">
                             <div class="message-icon" data-ui-icon="file"></div>
-                            <p data-i18n="tester.noSamples">请先打开一个C++文件</p>
-                            <p class="sub-text" data-i18n="tester.noSamples">样例测试器需要一个活动的C++文件才能工作</p>
+                            <p data-i18n="tester.noCppFileTitle">请先打开一个 C++ 文件</p>
+                            <p class="sub-text" data-i18n="tester.noCppFileHint">样例测试器需要一个活动的 C++ 文件才能工作</p>
                         </div>
                         <div class="no-samples-message" id="no-samples-message">
                             <div class="message-icon" data-ui-icon="sparkle"></div>
-                            <p data-i18n="tester.noSamples">还没有样例组</p>
-                            <p class="sub-text" data-i18n="tester.noSamples">点击上方的 + 按钮添加第一个样例组</p>
+                            <p data-i18n="tester.noSampleGroupTitle">还没有样例组</p>
+                            <p class="sub-text" data-i18n="tester.noSampleGroupHint">点击上方的 + 按钮添加第一个样例组</p>
                         </div>
                         <div class="samples-list" id="samples-list">
                         </div>
@@ -377,15 +377,15 @@
                 
                 <div class="panel-content" id="compare-panel">
                     <div class="panel-header">
-                        <span class="panel-title" data-i18n="compare.title">Code Comparer</span>
+                        <span class="panel-title" data-i18n="compare.title">代码对拍器</span>
                     </div>
                     <div class="compare-content">
                         <div class="no-compiler-message" id="no-compiler-message" style="display: none;">
                             <div class="message-icon" data-ui-icon="gear"></div>
-                            <p data-i18n="menu.setCompilerFirst">Please configure the compiler first</p>
-                            <p class="sub-text" data-i18n="menu.compilerNeeded">The comparison tool needs a compiler. Go to settings to configure it.</p>
+                            <p data-i18n="menu.setCompilerFirst">请先设置编译器</p>
+                            <p class="sub-text" data-i18n="menu.compilerNeeded">对拍器需要编译器才能工作，请前往设置页面配置编译器</p>
                             <button class="empty-state-button" onclick="window.electronAPI?.openCompilerSettings?.()" data-i18n="compare.openCompilerSettings">
-                                Open Compiler Settings
+                                打开编译器设置
                             </button>
                         </div>
 
@@ -393,68 +393,68 @@
                             <div class="compare-notice">
                                 <div class="notice-icon" data-ui-icon="warning"></div>
                                 <div class="notice-text">
-                                    <strong data-i18n="dialog.note">Note:</strong><span data-i18n="menu.importantNotice">Uses stdin/stdout by default. If your code uses freopen, configure the I/O filenames below.</span>
+                                    <strong data-i18n="dialog.note">注意：</strong><span data-i18n="menu.importantNotice">重要提醒：默认使用标准输入输出(stdin/stdout)；如代码使用了 freopen，可在下方设置输入/输出文件名。</span>
                                 </div>
                             </div>
                             
                             <div class="file-select-group">
                                 <div class="file-select-item">
                                     <div class="file-select-header">
-                                        <span class="file-select-label" data-i18n="menu.standardCode">Standard/Brute Force Code</span>
+                                        <span class="file-select-label" data-i18n="menu.standardCode">标准/暴力代码</span>
                                         <button class="file-browse-btn" id="std-code-browse" data-i18n="menu.browse">浏览</button>
                                     </div>
-                                    <div class="file-path-display" id="std-code-path" data-i18n="menu.noFile">No file selected</div>
+                                    <div class="file-path-display" id="std-code-path" data-i18n="menu.noFile">未选择文件</div>
                                 </div>
 
                                 <div class="file-select-item">
                                     <div class="file-select-header">
-                                        <span class="file-select-label" data-i18n="menu.testCode">Code to Compare</span>
+                                        <span class="file-select-label" data-i18n="menu.testCode">要对拍的代码</span>
                                         <button class="file-browse-btn" id="test-code-browse" data-i18n="menu.browse">浏览</button>
                                     </div>
-                                    <div class="file-path-display" id="test-code-path" data-i18n="menu.noFile">No file selected</div>
+                                    <div class="file-path-display" id="test-code-path" data-i18n="menu.noFile">未选择文件</div>
                                 </div>
 
                                 <div class="file-select-item">
                                     <div class="file-select-header">
-                                        <span class="file-select-label" data-i18n="menu.generator">Data Generator</span>
+                                        <span class="file-select-label" data-i18n="menu.generator">数据生成器</span>
                                         <button class="file-browse-btn" id="generator-browse" data-i18n="menu.browse">浏览</button>
                                     </div>
-                                    <div class="file-path-display" id="generator-path" data-i18n="menu.noFile">No file selected</div>
+                                    <div class="file-path-display" id="generator-path" data-i18n="menu.noFile">未选择文件</div>
                                 </div>
                             </div>
 
                             <div class="compare-config-section">
                                 <div class="config-item">
-                                    <label class="config-label" for="compare-count" data-i18n="menu.compareCount">Comparison Count:</label>
+                                    <label class="config-label" for="compare-count" data-i18n="menu.compareCount">对拍组数：</label>
                                     <input type="number" class="config-input" id="compare-count" value="100" min="1" max="100000">
                                 </div>
                                 <div class="config-item">
-                                    <label class="config-label" for="compare-threads" data-i18n="menu.parallelThreads">Parallel Threads:</label>
+                                    <label class="config-label" for="compare-threads" data-i18n="menu.parallelThreads">并行线程：</label>
                                     <input type="number" class="config-input" id="compare-threads" value="" min="1" data-i18n-placeholder="compare.threadsAutoPlaceholder">
-                                    <span class="config-unit" id="compare-threads-hint" data-i18n="compare.threadHint">Max = CPU threads x 0.6</span>
+                                    <span class="config-unit" id="compare-threads-hint" data-i18n="compare.threadHint">上限 = CPU 线程数 × 0.6</span>
                                 </div>
                                 <div class="config-item">
-                                    <label class="config-label" for="time-limit" data-i18n="menu.timeLimit">Time Limit:</label>
+                                    <label class="config-label" for="time-limit" data-i18n="menu.timeLimit">时间限制：</label>
                                     <input type="number" class="config-input" id="time-limit" value="1000" min="0">
                                     <span class="config-unit">ms</span>
                                 </div>
                                 <div class="config-item compare-freopen-row">
-                                    <label class="config-label" data-i18n="menu.fileIO_label">File I/O:</label>
+                                    <label class="config-label" data-i18n="menu.fileIO_label">文件IO：</label>
                                     <div class="file-input-group compare-freopen-group">
-                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-input-file" data-i18n-placeholder="menu.sampleInputPlaceholder" placeholder="Input file name, e.g. sample.in">
-                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-output-file" data-i18n-placeholder="menu.sampleOutputPlaceholder" placeholder="Output file name, e.g. sample.out">
+                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-input-file" data-i18n-placeholder="menu.sampleInputPlaceholder" placeholder="输入文件名，如 sample.in">
+                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-output-file" data-i18n-placeholder="menu.sampleOutputPlaceholder" placeholder="输出文件名，如 sample.out">
                                     </div>
                                 </div>
                                 <div class="config-item testlib-spj-row">
                                     <label class="config-label testlib-label" data-i18n="menu.useTestlib_label">
                                         <input type="checkbox" class="config-checkbox" id="compare-use-testlib">
-                                        Use Testlib
+                                        使用 testlib
                                     </label>
                                     <div class="spj-section">
                                         <label class="config-label spj-label" data-i18n="compare.spjLabel">Special Judge</label>
                                         <div class="file-input-group spj-input">
-                                            <input type="text" class="config-input" id="compare-spj-path" data-i18n-placeholder="menu.spjPlaceholder" placeholder="Select SPJ file (optional)" readonly>
-                                            <button class="file-browse-btn" id="compare-spj-browse" data-i18n="menu.browse">Browse</button>
+                                            <input type="text" class="config-input" id="compare-spj-path" data-i18n-placeholder="menu.spjPlaceholder" placeholder="选择SPJ文件（可选）" readonly>
+                                            <button class="file-browse-btn" id="compare-spj-browse" data-i18n="menu.browse">浏览</button>
                                         </div>
                                     </div>
                                 </div>
@@ -465,29 +465,29 @@
                                     <svg width="14" height="14" viewBox="0 0 14 14">
                                         <path d="M4 2l8 5-8 5V2z" fill="currentColor"/>
                                     </svg>
-                                    Start Comparison
+                                    开始对拍
                                 </button>
                                 <button class="compare-btn compare-stop-btn" id="compare-stop-btn" disabled data-i18n="compare.stop">
                                     <svg width="14" height="14" viewBox="0 0 14 14">
                                         <rect x="3" y="3" width="8" height="8" fill="currentColor"/>
                                     </svg>
-                                    Stop
+                                    停止
                                 </button>
                                 <button class="compare-btn compare-reset-btn" id="compare-reset-btn" data-i18n="compare.reset">
                                     <svg width="14" height="14" viewBox="0 0 14 14">
                                         <path d="M7 2a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3V2zM2 7a5 5 0 0 1 5-5v2a3 3 0 0 0-3 3H2z" fill="currentColor"/>
                                     </svg>
-                                    Reset
+                                    重置
                                 </button>
                             </div>
 
                             <div class="compare-status" id="compare-status" style="display: none;">
                                 <div class="status-header">
-                                    <div class="status-title" data-i18n="compare.statusTitle">Comparison Status</div>
+                                    <div class="status-title" data-i18n="compare.statusTitle">对拍状态</div>
                                     <div class="status-info">
                                         <span id="current-test"></span>
                                         <span class="status-separator">|</span>
-                                        <span id="status-text" data-i18n="compare.ready">Ready</span>
+                                        <span id="status-text" data-i18n="compare.ready">准备中</span>
                                     </div>
                                 </div>
                                 <div class="progress-bar">
@@ -498,33 +498,33 @@
                             <div class="compare-result" id="compare-result" style="display: none;">
                                 <div class="result-header">
                                     <div>
-                                        <span class="result-title" id="error-title" data-i18n="compare.foundDiff">Difference Found</span>
+                                        <span class="result-title" id="error-title" data-i18n="compare.foundDiff">发现差异</span>
                                         <span class="result-subtitle" id="error-test-num"></span>
                                     </div>
-                                    <button class="export-btn" id="export-btn" data-i18n="compare.export">Export Data</button>
+                                    <button class="export-btn" id="export-btn" data-i18n="compare.export">导出数据</button>
                                 </div>
                                 
                                 <div class="result-diff">
                                     <div class="diff-section">
                                         <div class="diff-header diff-header-with-action">
-                                            <span id="input-diff-label" data-i18n="compare.inputData">Input Data</span>
-                                            <button class="export-btn diff-expand-btn" id="input-expand-btn" data-i18n="compare.expand">Expand</button>
+                                            <span id="input-diff-label" data-i18n="compare.inputData">输入数据</span>
+                                            <button class="export-btn diff-expand-btn" id="input-expand-btn" data-i18n="compare.expand">展开</button>
                                         </div>
                                         <pre class="diff-content" id="input-diff"></pre>
                                     </div>
                                     
                                     <div class="diff-section">
                                         <div class="diff-header diff-header-with-action">
-                                            <span id="std-output-diff-label" data-i18n="compare.errorStandardOutput">Standard Program Output</span>
-                                            <button class="export-btn diff-expand-btn" id="std-output-expand-btn" data-i18n="compare.expand">Expand</button>
+                                            <span id="std-output-diff-label" data-i18n="compare.errorStandardOutput">标准程序输出</span>
+                                            <button class="export-btn diff-expand-btn" id="std-output-expand-btn" data-i18n="compare.expand">展开</button>
                                         </div>
                                         <pre class="diff-content" id="std-output-diff"></pre>
                                     </div>
                                     
                                     <div class="diff-section">
                                         <div class="diff-header diff-header-with-action">
-                                            <span id="test-output-diff-label" data-i18n="compare.errorTestOutput">Test Program Output</span>
-                                            <button class="export-btn diff-expand-btn" id="test-output-expand-btn" data-i18n="compare.expand">Expand</button>
+                                            <span id="test-output-diff-label" data-i18n="compare.errorTestOutput">待测程序输出</span>
+                                            <button class="export-btn diff-expand-btn" id="test-output-expand-btn" data-i18n="compare.expand">展开</button>
                                         </div>
                                         <pre class="diff-content" id="test-output-diff"></pre>
                                     </div>
@@ -538,7 +538,7 @@
                                         <polyline points="22 4 12 14.01 9 11.01"></polyline>
                                     </svg>
                                 </div>
-                                <div class="complete-text" data-i18n="compare.complete">Comparison Complete</div>
+                                <div class="complete-text" data-i18n="compare.complete">对拍完成</div>
                                 <div class="complete-info">
                                     <span>Completed <span id="completed-tests">0</span> tests, no differences found</span>
                                 </div>
@@ -589,7 +589,7 @@
                     <div class="cloud-summary" id="cloud-summary">
                         <div class="cloud-summary-text-row">
                             <div class="cloud-summary-text" id="cloud-remaining" data-i18n="cloud.remainingFilesUnknown">剩余文件数量: --</div>
-                            <button class="cloud-quota-help-btn" id="cloud-quota-help-btn" data-i18n-title="cloudPanel.quotaHelp" title="查看云空间限额说明" aria-label="查看云空间限额说明" tabindex="-1">?</button>
+                            <button class="cloud-quota-help-btn" id="cloud-quota-help-btn" data-i18n-title="cloudPanel.quotaHelp" data-i18n-aria-label="cloudPanel.quotaHelp" title="查看云空间限额说明" aria-label="查看云空间限额说明" tabindex="-1">?</button>
                         </div>
                         <div class="cloud-summary-hint" data-i18n="cloudPanel.supportedFilesHint">仅支持 .ans .in .out .cpp .py .txt .md .h .hpp，单文件 ≤ 50KB</div>
                         <div class="cloud-upload-progress" id="cloud-upload-progress" style="display: none;">
@@ -658,8 +658,8 @@
 
     <div id="quick-open-overlay" class="quick-open-overlay" aria-hidden="true">
         <div class="quick-open-container" role="dialog" aria-modal="true">
-            <input id="quick-open-input" class="quick-open-input" type="text" data-i18n-placeholder="menu.searchFiles" placeholder="输入文件名以在工作区搜索... (Esc 关闭)" aria-label="快速打开：输入文件名">
-            <div id="quick-open-results" class="quick-open-results" role="listbox" aria-label="搜索结果">
+            <input id="quick-open-input" class="quick-open-input" type="text" data-i18n-placeholder="panel.quickOpenInputPlaceholder" data-i18n-aria-label="panel.quickOpenInputAria" placeholder="输入文件名以在工作区搜索…（Esc 关闭）" aria-label="快速打开：输入文件名">
+            <div id="quick-open-results" class="quick-open-results" role="listbox" data-i18n-aria-label="panel.quickOpenResultsAria" aria-label="搜索结果">
             </div>
         </div>
     </div>

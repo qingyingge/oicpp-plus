@@ -1131,7 +1131,12 @@ const I18N_HARDCODED_EN_BASELINE = 0;
 // 全部转为已引用，201 → 195。这一档由 tests/static-html-i18n.test.js 的 A 条守住：
 // 该文件再出现「有中文没挂 data-i18n」就直接红，不许靠调高 baseline 消化。
 // 取 tests/i18n.test.js 的口径（更严格：只扫 src，键名全字符类）算出的值。
-const I18N_ORPHAN_KEY_BASELINE = 195;
+// 2026-10-30：index.html 收尾。grader/SPJ 两个「删除」链接一直没接线，挂上后
+// menu.delete_spj 转为已引用；同时退役两个从没被正确使用的键 —— tester.noSamples
+// （被 4 个不同句子共用，属挂错键，已拆成 tester.noCppFileTitle/Hint 与
+// tester.noSampleGroupTitle/Hint）与 tester.importPreview（与 dialog.importPreview
+// 逐字重复）。195 → 193。这一档由 tests/static-html-i18n.test.js 的 A/B/C 三条守住。
+const I18N_ORPHAN_KEY_BASELINE = 193;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {
