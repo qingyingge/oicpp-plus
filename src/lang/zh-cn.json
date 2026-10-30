@@ -629,6 +629,9 @@
     "exitedNoInfo": "已退出"
   },
   "compiler": {
+    "missingDownloadParams": "缺少必要的下载参数",
+    "versionAlreadyExists": "该版本已存在",
+    "nonWindowsDownloadDisabled": "非 Windows 平台已禁用内置编译器下载，请前往 GitHub Releases 获取: https://github.com/qingyingge/oicpp-plus/releases",
     "settings": "编译器设置",
     "title": "编译器配置",
     "compilerPath": "编译器路径 (g++.exe)",
@@ -729,6 +732,8 @@
     "saveBlockedLoadFailed": "设置未成功加载，已阻止保存以免覆盖你的配置。请重启设置窗口后重试。"
   },
   "tester": {
+    "invalidZipPath": "无效的压缩包路径",
+    "zipNotFound": "压缩包不存在",
     "title": "样例测试器",
     "overview": "总览",
     "testGroup": "样例 {i}",
@@ -1070,6 +1075,7 @@
     "debugErrorHint": "请检查调试器（Windows/Linux: GDB）是否可用，代码是否已编译（使用-g选项）。macOS 暂不支持调试功能。"
   },
   "cloud": {
+    "notLoggedIn": "未登录",
     "title": "云空间",
     "syncing": "同步中...",
     "syncComplete": "同步完成",
@@ -1201,6 +1207,9 @@
     "back": "返回"
   },
   "fileExplorer": {
+    "invalidPath": "路径无效",
+    "notADirectory": "指定路径不是目录",
+    "cannotClearRoot": "不允许清空根目录",
     "noFolder": "没有打开的文件夹",
     "noFolderDesc": "您还没有打开文件夹",
     "openFolder": "打开文件夹",

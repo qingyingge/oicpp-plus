@@ -19,7 +19,7 @@
 // 所以这里连自证用例一起锁死这两种形状。
 //
 // 锁法与前一个守卫（tests/static-html-i18n.test.js）一致：已清完的出口零容忍，
-// 仍有存量的出口用**只降不升**的 ratchet（见 ERROR_TEXT_BASELINE），并一律如实打印。
+// 每条出口都清零后设为 0（即零容忍）；未清零的用只降不升的 ratchet，并一律如实打印。
 
 const fs = require('fs');
 const path = require('path');
@@ -207,22 +207,15 @@ function auditErrorText(source) {
     return issues;
 }
 
-// 2026-10-30 实测 12 处：压缩包导入（L5654/5657/5726）、清空目录（L7124-7138）、
-// 编译器下载参数与版本冲突（L7238-7724，5 处）、云同步未登录（L11139）。
-// 下载窗、编译诊断、文件名校验三批本轮清完，所以 buttons / 过滤器 name / updateProgress /
-// 下载窗 HTML 四个出口零容忍，只有这一个还是 ratchet。每清一批压到实测值，只降不升。
-//
-// 取值区间用 valueSpan 而不是「紧跟其后的第一个字面量」：真实代码里有
-//     return { success: false, error: (error as Error)?.message || '读取压缩包失败' };
-// 这种写法，只看紧跟的字面量会整条漏掉（L5726 就是这么被吞的）。24 到 25 的差值其实来自
-// 这里，不是上一版注释写的 L1956 那对三元 —— 那句判断是错的，本次一并更正。
-//
-// 已知盲区（别把这个数当成「主进程界面文案全在此」）：先赋值给变量再传进来的写法
-//     const platformMsg = ... ? '中文A' : '中文B';  return { error: platformMsg };
-// 检测器只看 error: 后的表达式，看不见变量里的字面量，这类不计入 ratchet。彻底覆盖要
-// 做跨赋值的数据流分析，本轮不做；main.ts 的整体界面文案存量请以「非日志、非注释、
-// 且不在 t() 里的 CJK 字面量」口径另行核对。
-const ERROR_TEXT_BASELINE = 12;
+// 2026-10-30：主进程 IPC error 文本已全量接线，本条从 ratchet 升到 0（`<=` 配 0 就是
+// 零容忍）。清零过程中实测过的形状，改检测器时别把它们退回漏报：
+//   · error: (error as Error)?.message || '读取压缩包失败'   —— 取值必须用 valueSpan
+//     （按顶层 , } ; 收尾），只看紧跟 error: 的字面量会整条漏掉。
+//   · const platformMsg = ... ? '中文A' : '中文B'; return { error: platformMsg };
+//     —— 检测器至今看不见「先赋值给变量」这种形状，所以 0 不代表主进程界面文案已归零，
+//     它只覆盖 error:/errors.push 直接跟字面量的写法。别把这个数当分母。
+// 五个零容忍出口：buttons / 过滤器 name / updateProgress / 下载窗 HTML / 本条。
+const ERROR_TEXT_BASELINE = 0;
 
 for (const [label, src] of [['.ts 源', tsSource], ['.js 产物', jsSource]]) {
     const { issues, keys } = auditDialogText(src);

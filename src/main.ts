@@ -5651,10 +5651,10 @@ function setupIPC() {
         let zip = null;
         try {
             if (!zipPath || typeof zipPath !== 'string') {
-                return { success: false, error: '无效的压缩包路径' };
+                return { success: false, error: t('tester.invalidZipPath') };
             }
             if (!fs.existsSync(zipPath)) {
-                return { success: false, error: '压缩包不存在' };
+                return { success: false, error: t('tester.zipNotFound') };
             }
 
             zip = new StreamZip.async({ file: zipPath });
@@ -5723,7 +5723,7 @@ function setupIPC() {
             return { success: true, files };
         } catch (error) {
             logError('读取压缩包样例失败:', error);
-            return { success: false, error: (error as Error)?.message || '读取压缩包失败' };
+            return { success: false, error: (error as Error)?.message || t('tester.readZipFail') };
         } finally {
             if (zip) {
                 try { await zip.close(); } catch (_) { }
@@ -7121,7 +7121,7 @@ function setupIPC() {
         let previousWatchStates: FileWatchStateSnapshot[] = [];
         try {
             if (!dirPath || typeof dirPath !== 'string' || !dirPath.trim()) {
-                return { success: false, error: '路径无效' };
+                return { success: false, error: t('fileExplorer.invalidPath') };
             }
             const resolved = path.resolve(String(dirPath).trim());
             let stat = null;
@@ -7131,11 +7131,11 @@ function setupIPC() {
                 stat = null;
             }
             if (!stat || !stat.isDirectory()) {
-                return { success: false, error: '指定路径不是目录' };
+                return { success: false, error: t('fileExplorer.notADirectory') };
             }
             // 安全保护：禁止清空驱动器/文件系统根目录
             if (path.dirname(resolved) === resolved) {
-                return { success: false, error: '不允许清空根目录' };
+                return { success: false, error: t('fileExplorer.cannotClearRoot') };
             }
             // 并且限定在工作区之内：只禁盘根的话，渲染进程可清空用户任意目录
             try {
@@ -7235,13 +7235,13 @@ function setupIPC() {
 
     ipcMain.handle('download-compiler', async (event: Electron.IpcMainEvent, { url, version, name }: { url: string; version: string; name: string }) => {
         if (process.platform !== 'win32') {
-            return { success: false, error: '非 Windows 平台已禁用内置编译器下载，请前往 GitHub Releases 获取: https://github.com/qingyingge/oicpp-plus/releases' };
+            return { success: false, error: t('compiler.nonWindowsDownloadDisabled') };
         }
         logInfo('[编译器下载] 开始下载请求:', { version, name });
 
         if (!url || !version || !name) {
             logError('[编译器下载] 缺少必要参数:', { url, version, name });
-            return { success: false, error: '缺少必要的下载参数' };
+            return { success: false, error: t('compiler.missingDownloadParams') };
         }
 
         const versionNameCheck = validateFileName(version);
@@ -7270,7 +7270,7 @@ function setupIPC() {
 
             if (fs.existsSync(versionDir)) {
                 logInfo('[编译器下载] 版本目录已存在:', versionDir);
-                resolve({ success: false, error: '该版本已存在' });
+                resolve({ success: false, error: t('compiler.versionAlreadyExists') });
                 return;
             }
 
@@ -7692,7 +7692,7 @@ function setupIPC() {
 
         if (!url || !version || !name) {
             logError('[testlib下载] 缺少必要参数:', { url, version, name });
-            return { success: false, error: '缺少必要的下载参数' };
+            return { success: false, error: t('compiler.missingDownloadParams') };
         }
 
         const versionNameCheck = validateFileName(version);
@@ -7721,7 +7721,7 @@ function setupIPC() {
 
             if (fs.existsSync(versionDir)) {
                 logInfo('[testlib下载] 版本目录已存在:', versionDir);
-                resolve({ success: false, error: '该版本已存在' });
+                resolve({ success: false, error: t('compiler.versionAlreadyExists') });
                 return;
             }
 
@@ -11136,7 +11136,7 @@ interface SettingsBackupInfo {
 async function callCloudSyncApi(options: CloudSyncApiOptions = {}) {
     const loginToken = getLoginToken();
     if (!loginToken) {
-        return { ok: false, status: 401, error: '未登录' };
+        return { ok: false, status: 401, error: t('cloud.notLoggedIn') };
     }
 
     const method = String(options.method || 'GET').toUpperCase();

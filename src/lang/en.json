@@ -650,6 +650,9 @@
     "exitedNoInfo": "exited"
   },
   "compiler": {
+    "missingDownloadParams": "Missing required download parameters",
+    "versionAlreadyExists": "This version already exists",
+    "nonWindowsDownloadDisabled": "Built-in compiler download is disabled on non-Windows platforms. Get it from GitHub Releases: https://github.com/qingyingge/oicpp-plus/releases",
     "settings": "Compiler Settings",
     "compilerPath": "Compiler Path (g++.exe)",
     "compilerArgs": "Compiler Arguments",
@@ -750,6 +753,8 @@
     "saveBlockedLoadFailed": "Settings were not loaded successfully, so saving is blocked to avoid overwriting your configuration. Restart the settings window and try again."
   },
   "tester": {
+    "invalidZipPath": "Invalid archive path",
+    "zipNotFound": "The archive does not exist",
     "title": "Sample Tester",
     "overview": "Overview",
     "testGroup": "Test {i}",
@@ -1091,6 +1096,7 @@
     "debugErrorHint": "Please check whether the debugger (Windows/Linux: GDB) is available and whether the code has been compiled (with the -g option). macOS does not support debugging yet."
   },
   "cloud": {
+    "notLoggedIn": "Not signed in",
     "title": "Cloud Space",
     "syncing": "Syncing...",
     "syncComplete": "Sync complete",
@@ -1222,6 +1228,9 @@
     "back": "Back"
   },
   "fileExplorer": {
+    "invalidPath": "Invalid path",
+    "notADirectory": "The specified path is not a directory",
+    "cannotClearRoot": "The root directory cannot be cleared",
     "noFolder": "No Folder Open",
     "noFolderDesc": "You have not opened a folder yet",
     "openFolder": "Open Folder",
