@@ -7331,7 +7331,7 @@ function setupIPC() {
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>下载编译器</title>
+    <title>${t('main.downloadCompilerTitle')}</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -7388,8 +7388,8 @@ function setupIPC() {
     </style>
 </head>
 <body>
-    <h3>正在下载编译器: ${name} ${version}</h3>
-    <div id="status">准备开始下载...</div>
+    <h3>${t('main.downloadingCompiler', { name, version })}</h3>
+    <div id="status">${t('main.downloadWindowPreparing')}</div>
     <div id="progress-container">
         <div id="progress-bar">
             <div id="progress-text">0%</div>
@@ -7455,7 +7455,7 @@ function setupIPC() {
                             } catch (cleanupError) {
                                 logWarn('[编译器下载] 清理部分下载文件失败:', (cleanupError as Error).message);
                             }
-                            resolve({ success: false, error: '用户取消下载' });
+                            resolve({ success: false, error: t('main.userCancelledDownload') });
                             (progressWindow as Electron.BrowserWindow).destroy();
                             return;
                         }
@@ -7475,14 +7475,14 @@ function setupIPC() {
 
                 progressWindow.webContents.once('did-finish-load', () => {
                     (progressWindow as Electron.BrowserWindow).show();
-                    updateProgress('开始下载编译器...');
+                    updateProgress(t('main.startDownloadCompiler'));
                 });
 
                 progressWindow.webContents.on('did-fail-load', (event: Electron.Event, errorCode: number, errorDescription: string) => {
                     logError('[编译器下载] 页面加载失败:', errorCode, errorDescription);
                 });
 
-                updateProgress(`开始下载编译器: ${name} ${version}`);
+                updateProgress(t('main.downloadingCompiler', { name, version }));
 
                 if (typeof url !== 'string' || !url.includes('.')) {
                     throw new Error(t('error.invalidDownloadUrl'));
@@ -7517,25 +7517,25 @@ function setupIPC() {
                     progressCallback: (progress: DownloadProgressData) => {
                         let percent: number | null = null;
                         let speedText: string | null = null;
-                        let receivedMB: string | null = null;
-                        let totalMB: string | null = null;
                         if (progress.type === 'single' || progress.type === 'multi') {
                             percent = progress.progress;
                             speedText = progress.speed > 1024 * 1024
                                 ? `${(progress.speed / 1024 / 1024).toFixed(1)} MB/s`
                                 : `${(progress.speed / 1024).toFixed(0)} KB/s`;
-                            receivedMB = (progress.downloadedBytes / 1024 / 1024).toFixed(1);
-                            totalMB = progress.totalBytes > 0 ? (progress.totalBytes / 1024 / 1024).toFixed(1) : '未知';
-                            const prefix = progress.type === 'multi' ? `多线程下载中` : '下载中';
-                            const threadInfo = progress.type === 'multi' ? ` (${progress.activeChunks}线程)` : '';
-                            updateProgress(`${prefix}${threadInfo}: ${receivedMB}MB / ${totalMB}MB`, percent, speedText);
+                            const receivedMB = (progress.downloadedBytes / 1024 / 1024).toFixed(1);
+                            const totalMB = progress.totalBytes > 0 ? (progress.totalBytes / 1024 / 1024).toFixed(1) : null;
+                            const prefix = progress.type === 'multi' ? t('main.downloadingMulti') : t('main.downloading');
+                            const threadInfo = progress.type === 'multi' ? t('main.threadCount', { n: progress.activeChunks }) : '';
+                            updateProgress(`${prefix}${threadInfo}: ` + (totalMB === null
+                                ? t('main.downloadSizeUnknown', { received: receivedMB })
+                                : t('main.downloadSize', { received: receivedMB, total: totalMB })), percent, speedText);
                         }
                     }
                 }) as { download(url: string, outputFile: string): Promise<void>; cancel(): void };
 
                 await downloader.download(url, tempFile);
 
-                updateProgress('下载完成，开始解压...', 100);
+                updateProgress(t('main.downloadDoneExtracting'), 100);
                 logInfo('[编译器下载] 开始解压缩:', { archive: tempFile, targetDir: versionDir });
 
                 if (!fs.existsSync(versionDir)) {
@@ -7566,13 +7566,13 @@ function setupIPC() {
 
                 fs.unlinkSync(tempFile);
 
-                updateProgress('解压完成，查找编译器可执行文件...');
+                updateProgress(t('main.extractDoneFindingCompiler'));
 
                 const compilerPath = findCompilerExecutable(versionDir);
                 logInfo('[编译器下载] 编译器探测结果:', Boolean(compilerPath));
 
                 downloadCompleted = true;
-                updateProgress('编译器安装完成！');
+                updateProgress(t('main.compilerInstallDone'));
 
                 const result = {
                     success: true,
@@ -7643,13 +7643,13 @@ function setupIPC() {
             const versionDir = path.join(userHome, USER_DATA_DIR_NAME, 'Compilers', version);
 
             if (!fs.existsSync(versionDir)) {
-                return { success: false, error: '编译器版本不存在' };
+                return { success: false, error: t('main.compilerVersionMissing') };
             }
 
             const compilerPath = findCompilerExecutable(versionDir);
 
             if (!compilerPath) {
-                return { success: false, error: '未找到编译器可执行文件' };
+                return { success: false, error: t('main.compilerExecutableNotFound') };
             }
 
             settings.compilerPath = compilerPath;
@@ -7782,7 +7782,7 @@ function setupIPC() {
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>下载testlib</title>
+    <title>${t('main.downloadTestlibTitle')}</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -7839,8 +7839,8 @@ function setupIPC() {
     </style>
 </head>
 <body>
-    <h3>正在下载testlib: ${name} ${version}</h3>
-    <div id="status">准备开始下载...</div>
+    <h3>${t('main.downloadingTestlib', { name, version })}</h3>
+    <div id="status">${t('main.downloadWindowPreparing')}</div>
     <div id="progress-container">
         <div id="progress-bar">
             <div id="progress-text">0%</div>
@@ -7905,7 +7905,7 @@ function setupIPC() {
                             } catch (cleanupError) {
                                 logWarn('[testlib下载] 清理部分下载文件失败:', (cleanupError as Error).message);
                             }
-                            resolve({ success: false, error: '用户取消下载' });
+                            resolve({ success: false, error: t('main.userCancelledDownload') });
                             (progressWindow as Electron.BrowserWindow).destroy();
                             return;
                         }
@@ -7925,14 +7925,14 @@ function setupIPC() {
 
                 progressWindow.webContents.once('did-finish-load', () => {
                     (progressWindow as Electron.BrowserWindow).show();
-                    updateProgress('开始下载testlib...');
+                    updateProgress(t('main.startDownloadTestlib'));
                 });
 
                 progressWindow.webContents.on('did-fail-load', (event: Electron.Event, errorCode: number, errorDescription: string) => {
                     logError('[testlib下载] 页面加载失败:', errorCode, errorDescription);
                 });
 
-                updateProgress(`开始下载testlib: ${name} ${version}`);
+                updateProgress(t('main.downloadingTestlib', { name, version }));
 
                 if (typeof url !== 'string' || !url.includes('.')) {
                     throw new Error(t('error.invalidDownloadUrl'));
@@ -7971,17 +7971,19 @@ function setupIPC() {
                                 ? `${(progress.speed / 1024 / 1024).toFixed(1)} MB/s`
                                 : `${(progress.speed / 1024).toFixed(0)} KB/s`;
                             const receivedMB = (progress.downloadedBytes / 1024 / 1024).toFixed(1);
-                            const totalMB = progress.totalBytes > 0 ? (progress.totalBytes / 1024 / 1024).toFixed(1) : '未知';
-                            const prefix = progress.type === 'multi' ? `多线程下载中` : '下载中';
-                            const threadInfo = progress.type === 'multi' ? ` (${progress.activeChunks}线程)` : '';
-                            updateProgress(`${prefix}${threadInfo}: ${receivedMB}MB / ${totalMB}MB`, percent, speedText);
+                            const totalMB = progress.totalBytes > 0 ? (progress.totalBytes / 1024 / 1024).toFixed(1) : null;
+                            const prefix = progress.type === 'multi' ? t('main.downloadingMulti') : t('main.downloading');
+                            const threadInfo = progress.type === 'multi' ? t('main.threadCount', { n: progress.activeChunks }) : '';
+                            updateProgress(`${prefix}${threadInfo}: ` + (totalMB === null
+                                ? t('main.downloadSizeUnknown', { received: receivedMB })
+                                : t('main.downloadSize', { received: receivedMB, total: totalMB })), percent, speedText);
                         }
                     }
                 }) as { download(url: string, outputFile: string): Promise<void>; cancel(): void };
 
                 await downloader.download(url, tempFile);
 
-                updateProgress('下载完成，开始解压...', 100);
+                updateProgress(t('main.downloadDoneExtracting'), 100);
 
                 if (!fs.existsSync(versionDir)) {
                     fs.mkdirSync(versionDir, { recursive: true });
@@ -8011,12 +8013,12 @@ function setupIPC() {
 
                 fs.unlinkSync(tempFile);
 
-                updateProgress('解压完成，查找testlib文件...');
+                updateProgress(t('main.extractDoneFindingTestlib'));
 
                 const testlibPath = findTestlibFile(versionDir);
 
                 downloadCompleted = true;
-                updateProgress('testlib安装完成！');
+                updateProgress(t('main.testlibInstallDone'));
 
                 const result = {
                     success: true,
@@ -8085,7 +8087,7 @@ function setupIPC() {
 
             if (!fs.existsSync(versionDir)) {
                 logInfo('[选择testlib] 版本目录不存在');
-                return { success: false, error: 'testlib版本不存在' };
+                return { success: false, error: t('main.testlibVersionMissing') };
             }
 
             logInfo('[选择testlib] 版本目录存在，查找testlib文件');
@@ -8094,7 +8096,7 @@ function setupIPC() {
 
             if (!testlibPath) {
                 logInfo('[选择testlib] 未找到testlib文件');
-                return { success: false, error: '未找到testlib文件' };
+                return { success: false, error: t('main.testlibFileNotFound') };
             }
 
             settings.testlibPath = testlibPath;
