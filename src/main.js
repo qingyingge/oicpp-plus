@@ -2440,7 +2440,7 @@ function promptForPendingUpdateInstallQuit() {
         title: t('main.installSoonTitle'),
         message: t('main.installOnQuit'),
         detail: t('main.installDoNotPowerOff'),
-        buttons: ['继续退出并安装', '取消'],
+        buttons: [t('main.installAndQuit'), t('dialog.cancel')],
         defaultId: 0,
         cancelId: 1,
         noLink: true
@@ -5371,10 +5371,10 @@ function setupIPC() {
                 title: t('main.saveAsTitle'),
                 defaultPath: 'untitled.cpp',
                 filters: [
-                    { name: 'C++ Files', extensions: ['cpp', 'cc', 'cxx', 'c++'] },
-                    { name: 'C Files', extensions: ['c'] },
-                    { name: 'Header Files', extensions: ['h', 'hpp', 'hxx'] },
-                    { name: 'All Files', extensions: ['*'] }
+                    { name: t('dialog.cppFilter'), extensions: ['cpp', 'cc', 'cxx', 'c++'] },
+                    { name: t('dialog.cFilter'), extensions: ['c'] },
+                    { name: t('dialog.headerFilter'), extensions: ['h', 'hpp', 'hxx'] },
+                    { name: t('dialog.allFilter'), extensions: ['*'] }
                 ]
             });
             if (!result.canceled && result.filePath) {
@@ -5970,8 +5970,8 @@ function setupIPC() {
                 title: t('main.exportSettingsTitle'),
                 defaultPath: 'oicpp-settings.json',
                 filters: [
-                    { name: 'JSON文件', extensions: ['json'] },
-                    { name: '所有文件', extensions: ['*'] }
+                    { name: t('dialog.jsonFilter'), extensions: ['json'] },
+                    { name: t('dialog.allFilter'), extensions: ['*'] }
                 ]
             });
             if (!result.canceled && result.filePath) {
@@ -5990,8 +5990,8 @@ function setupIPC() {
             const result = await dialog.showOpenDialog(mainWindow, {
                 title: t('main.importSettingsTitle'),
                 filters: [
-                    { name: 'JSON文件', extensions: ['json'] },
-                    { name: '所有文件', extensions: ['*'] }
+                    { name: t('dialog.jsonFilter'), extensions: ['json'] },
+                    { name: t('dialog.allFilter'), extensions: ['*'] }
                 ],
                 properties: ['openFile']
             });
@@ -7163,7 +7163,7 @@ function setupIPC() {
                             title: t('main.backgroundDownloadTitle'),
                             message: t('main.continueDownloadCompiler'),
                             detail: t('main.backgroundDownloadDetail'),
-                            buttons: [t('main.backgroundDownloadTitle'), '取消下载'],
+                            buttons: [t('main.backgroundDownloadTitle'), t('main.cancelDownload')],
                             defaultId: 0
                         });
                         if (choice === 0) {
@@ -7563,7 +7563,7 @@ function setupIPC() {
                             title: t('main.backgroundDownloadTitle'),
                             message: t('main.continueDownloadTestlib'),
                             detail: t('main.backgroundDownloadDetail'),
-                            buttons: [t('main.backgroundDownloadTitle'), '取消下载'],
+                            buttons: [t('main.backgroundDownloadTitle'), t('main.cancelDownload')],
                             defaultId: 0
                         });
                         if (choice === 0) {
@@ -8199,9 +8199,9 @@ async function openFile() {
     const result = await dialog.showOpenDialog(mainWindow, {
         properties: ['openFile'],
         filters: [
-            { name: 'C++ Files', extensions: ['cpp', 'cxx', 'cc', 'c'] },
-            { name: 'Text Files', extensions: ['txt', 'in', 'out'] },
-            { name: 'All Files', extensions: ['*'] }
+            { name: t('dialog.cppFilter'), extensions: ['cpp', 'cxx', 'cc', 'c'] },
+            { name: t('dialog.textFilter'), extensions: ['txt', 'in', 'out'] },
+            { name: t('dialog.allFilter'), extensions: ['*'] }
         ]
     });
     if (!result.canceled && result.filePaths.length > 0) {
@@ -8302,9 +8302,9 @@ async function openFolder() {
 async function saveAsFile() {
     const result = await dialog.showSaveDialog(mainWindow, {
         filters: [
-            { name: 'C++ Files', extensions: ['cpp'] },
-            { name: 'Text Files', extensions: ['txt'] },
-            { name: 'All Files', extensions: ['*'] }
+            { name: t('dialog.cppFilter'), extensions: ['cpp'] },
+            { name: t('dialog.textFilter'), extensions: ['txt'] },
+            { name: t('dialog.allFilter'), extensions: ['*'] }
         ]
     });
     if (!result.canceled) {
@@ -8660,7 +8660,7 @@ function promptLinuxManualInstall(pendingUpdate) {
         title: t('main.updateDownloadedTitle'),
         message: t('main.updateDownloadedMessage', { version: pendingUpdate.version || '' }),
         detail: detailParts.join('\n'),
-        buttons: ['打开所在目录', '知道了'],
+        buttons: [t('main.openContainingFolder'), t('main.gotIt')],
         defaultId: 0
     }).then((result) => {
         if (result.response === 0) {
@@ -8733,7 +8733,7 @@ function runInstaller(installerPath) {
                 title: t('main.installSoonTitle'),
                 message: t('main.installOnQuit'),
                 detail: t('main.installDoNotPowerOff'),
-                buttons: ['确定'],
+                buttons: [t('dialog.ok')],
                 defaultId: 0
             });
         }
@@ -8762,7 +8762,7 @@ function runInstaller(installerPath) {
             title: t('main.installerLaunchFailedTitle'),
             message: t('main.installerLaunchFailed'),
             detail: errorDetail,
-            buttons: ['打开安装程序所在文件夹', '确定']
+            buttons: [t('main.openInstallerFolder'), t('dialog.ok')]
         }).then((res) => { if (res.response === 0)
             shell.showItemInFolder(installerPath); });
     }
