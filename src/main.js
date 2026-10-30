@@ -2405,7 +2405,7 @@ function showPostInstallNoticeIfNeeded() {
         return;
     }
     const desc = String(notice.description || '').replace(/\\n/g, '\n').trim();
-    const detail = desc || '本次更新未提供额外更新说明。';
+    const detail = desc || t('main.noReleaseNotes');
     setTimeout(() => {
         try {
             dialog.showMessageBox(mainWindow, {
@@ -8649,11 +8649,11 @@ function promptLinuxManualInstall(pendingUpdate) {
         return;
     const updateDesc = String(pendingUpdate.description || '').replace(/\\n/g, '\n').trim();
     const detailParts = [
-        `安装包已下载到：\n${pendingUpdate.installerPath}`,
-        '请手动运行安装包完成更新。'
+        `${t('main.installerDownloadedTo')}\n${pendingUpdate.installerPath}`,
+        t('main.runInstallerManually')
     ];
     if (updateDesc) {
-        detailParts.push('\n更新内容：');
+        detailParts.push(`\n${t('main.releaseNotesHeading')}`);
         detailParts.push(updateDesc);
     }
     dialog.showMessageBox(mainWindow, {
@@ -8757,7 +8757,9 @@ function runInstaller(installerPath) {
     }
     catch (error) {
         logError('运行安装程序失败:', error);
-        let errorDetail = `错误信息: ${error?.message}\n\n安装程序位置: ${installerPath}\n\n您可以手动运行安装程序来完成更新。`;
+        let errorDetail = `${t('main.errorInfoLabel')} ${error?.message}`
+            + `\n\n${t('main.installerLocationLabel')} ${installerPath}`
+            + `\n\n${t('main.manualInstallHint')}`;
         dialog.showMessageBox(mainWindow, {
             type: 'error',
             title: t('main.installerLaunchFailedTitle'),

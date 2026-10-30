@@ -59,6 +59,10 @@
     "cancelDownload": "Cancel download",
     "openContainingFolder": "Open containing folder",
     "gotIt": "Got it",
+    "noReleaseNotes": "This update has no additional release notes.",
+    "installerDownloadedTo": "Installer downloaded to:",
+    "runInstallerManually": "Please run the installer manually to complete the update.",
+    "releaseNotesHeading": "Release notes:",
     "openInstallerFolder": "Open the installer's folder",
     "continueDownloadCompiler": "Continue downloading the compiler in the background?",
     "backgroundDownloadDetail": "The download will continue in the background after this window is closed.",
@@ -134,7 +138,10 @@
     "loginTimeout": "Sign-in timed out. Please try again.",
     "loginCompleted": "Signed in successfully.",
     "debugReadyWithBreakpoints": "Debugger started with breakpoints loaded. Click continue to start debugging",
-    "debugReadyNoBreakpoints": "Debugger started and the program is ready. Click continue to run"
+    "debugReadyNoBreakpoints": "Debugger started and the program is ready. Click continue to run",
+    "errorInfoLabel": "Error:",
+    "installerLocationLabel": "Installer location:",
+    "manualInstallHint": "You can run the installer manually to complete the update."
   },
   "meta": {
     "name": "English",

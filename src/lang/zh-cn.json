@@ -59,6 +59,10 @@
     "cancelDownload": "取消下载",
     "openContainingFolder": "打开所在目录",
     "gotIt": "知道了",
+    "noReleaseNotes": "本次更新未提供额外更新说明。",
+    "installerDownloadedTo": "安装包已下载到：",
+    "runInstallerManually": "请手动运行安装包完成更新。",
+    "releaseNotesHeading": "更新内容：",
     "openInstallerFolder": "打开安装程序所在文件夹",
     "continueDownloadCompiler": "是否在后台继续下载编译器？",
     "backgroundDownloadDetail": "关闭此窗口后，下载将在后台继续进行。",
@@ -134,7 +138,10 @@
     "loginTimeout": "登录超时，请重试。",
     "loginCompleted": "已完成登录。",
     "debugReadyWithBreakpoints": "调试器已启动，程序已加载断点，点击继续执行开始调试",
-    "debugReadyNoBreakpoints": "调试器已启动，程序已准备就绪，点击继续执行开始运行"
+    "debugReadyNoBreakpoints": "调试器已启动，程序已准备就绪，点击继续执行开始运行",
+    "errorInfoLabel": "错误信息:",
+    "installerLocationLabel": "安装程序位置:",
+    "manualInstallHint": "您可以手动运行安装程序来完成更新。"
   },
   "meta": {
     "name": "中文（简体）",
