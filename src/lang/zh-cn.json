@@ -1,5 +1,6 @@
 {
   "main": {
+    "loginClosePage": "你可以关闭此页面。",
     "loginSuccess": "登录成功",
     "loginInProgress": "登录流程正在进行，请稍候完成。",
     "openBrowserFailed": "打开浏览器失败",
@@ -989,6 +990,11 @@
     "exportFailed": "导出失败: {error}"
   },
   "debug": {
+    "watchPendingStart": "(等待调试开始)",
+    "watchRunningWaitingPause": "(运行中，等待暂停)",
+    "currentPlatform": "当前平台",
+    "unsupportedPlatform": "调试功能暂未在 {platform} 上提供支持。",
+    "pausedInputRejected": "[调试] 当前处于暂停态，请点击继续运行后再输入",
     "title": "调试",
     "start": "开始调试",
     "continue": "继续(F6)",

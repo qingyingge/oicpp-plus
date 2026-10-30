@@ -20,7 +20,7 @@ catch (_) {
     sevenBinPath = null;
 }
 const logger = require('./utils/logger');
-const { t, setLanguage } = require('./lang');
+const { t, setLanguage, getCurrentLanguage } = require('./lang');
 const CONSOLE_PAUSER_SOURCE = require('./utils/consolepauser-source');
 const MEMWATCH_SOURCE = require('./utils/memwatch-source');
 const IntegratedTerminalManager = require('./terminal-manager');
@@ -1499,7 +1499,7 @@ function sendLoginHtml(res, title, message, statusCode = 200) {
         .replace(/'/g, '&#39;');
     const safeTitle = escapeHtml(title);
     const safeMsg = escapeHtml(message);
-    const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>${safeTitle}</title></head><body style="font-family: sans-serif; padding: 24px;"><h2>${safeTitle}</h2><p>${safeMsg}</p><p>你可以关闭此页面。</p></body></html>`;
+    const html = `<!DOCTYPE html><html lang="${getCurrentLanguage() || 'zh-CN'}"><head><meta charset="utf-8"><title>${safeTitle}</title></head><body style="font-family: sans-serif; padding: 24px;"><h2>${safeTitle}</h2><p>${safeMsg}</p><p>${t('main.loginClosePage')}</p></body></html>`;
     try {
         res.writeHead(statusCode, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
@@ -4935,7 +4935,7 @@ function setupIPC() {
                 try {
                     const isInferiorRunning = !!dbg._inferiorRunning;
                     if (isInferiorRunning) {
-                        broadcastPendingWatchSnapshot(event, '(运行中，等待暂停)');
+                        broadcastPendingWatchSnapshot(event, t('debug.watchRunningWaitingPause'));
                         return;
                     }
                     // addWatchVariable 内部已经抓过一次变量，这里直接取结果推送，
@@ -11525,7 +11525,7 @@ let gdbDebugger = null;
 let pendingWatchExprs = new Set();
 let lastDebugInputRejectedNoticeTs = 0;
 let autoStoppingOnProgramExit = false;
-function buildPendingWatchPayload(message = '(等待调试开始)') {
+function buildPendingWatchPayload(message = t('debug.watchPendingStart')) {
     const watchesObj = {};
     try {
         pendingWatchExprs.forEach((expr) => {
@@ -11549,7 +11549,7 @@ function buildPendingWatchPayload(message = '(等待调试开始)') {
         watches: watchesObj
     };
 }
-function broadcastPendingWatchSnapshot(event = null, message = '(等待调试开始)') {
+function broadcastPendingWatchSnapshot(event = null, message = t('debug.watchPendingStart')) {
     const payload = buildPendingWatchPayload(message);
     try {
         if (event && typeof event.reply === 'function') {
@@ -11648,8 +11648,8 @@ async function startDebugSession(filePath, options = {}) {
         }
         const supportedPlatforms = new Set(['win32', 'linux', 'darwin']);
         if (!supportedPlatforms.has(process.platform)) {
-            const platformName = process.platform === 'darwin' ? 'macOS' : '当前平台';
-            const errorMsg = `调试功能暂未在 ${platformName} 上提供支持。`;
+            const platformName = process.platform === 'darwin' ? 'macOS' : t('debug.currentPlatform');
+            const errorMsg = t('debug.unsupportedPlatform', { platform: platformName });
             logWarn(`[主进程] ${errorMsg}`);
             if (mainWindow) {
                 mainWindow.webContents.send('debug-error', errorMsg);
@@ -12364,7 +12364,7 @@ async function sendDebugInput(input) {
                 lastDebugInputRejectedNoticeTs = now;
                 try {
                     mainWindow.webContents.send('debug-terminal-output', {
-                        data: '\r\n[调试] 当前处于暂停态，请点击继续运行后再输入\r\n'
+                        data: `\r\n${t('debug.pausedInputRejected')}\r\n`
                     });
                 }
                 catch (_) { }

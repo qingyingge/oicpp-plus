@@ -1,5 +1,6 @@
 {
   "main": {
+    "loginClosePage": "You can close this page now.",
     "loginSuccess": "Signed in",
     "loginInProgress": "Sign-in is already in progress. Please wait for it to finish.",
     "openBrowserFailed": "Failed to open the browser",
@@ -1010,6 +1011,11 @@
     "exportFailed": "Export failed: {error}"
   },
   "debug": {
+    "watchPendingStart": "(Awaiting debug start)",
+    "watchRunningWaitingPause": "(Running, waiting to pause)",
+    "currentPlatform": "current platform",
+    "unsupportedPlatform": "Debugging is not yet supported on {platform}.",
+    "pausedInputRejected": "[Debug] Paused - click Continue before sending input.",
     "title": "Debug",
     "start": "Start Debug",
     "continue": "Continue(F6)",
