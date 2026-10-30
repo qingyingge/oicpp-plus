@@ -1716,6 +1716,7 @@
     "macOsDebugUnsupported": "macOS 暂不支持调试功能。",
     "linuxTtyMissing": "Linux 内置终端调试初始化失败：未获取到终端 TTY，请先重试调试启动。",
     "debuggerNotRunning": "调试器未运行",
+    "watchExpressionEmpty": "监视表达式不能为空",
     "programEnded": "程序已结束",
     "unknownDebugCommand": "未知的调试命令: {command}",
     "breakpointArgsIncomplete": "断点参数不完整",

@@ -4852,7 +4852,7 @@ function setupIPC() {
             });
         }
         else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
     ipcMain.on('debug-send-input', (event, input) => {
@@ -4920,7 +4920,7 @@ function setupIPC() {
     ipcMain.on('debug-add-watch', (event, variableName) => {
         const expr = String(variableName || '').trim();
         if (!expr) {
-            event.reply?.('debug-error', '监视表达式不能为空');
+            event.reply?.('debug-error', { code: 'watchExpressionEmpty', message: t('error.watchExpressionEmpty') });
             return;
         }
         try {
@@ -5029,7 +5029,7 @@ function setupIPC() {
             });
         }
         else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
     ipcMain.on('debug-expand-variable', (event, variableName, options = {}) => {
@@ -5061,7 +5061,7 @@ function setupIPC() {
             });
         }
         else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
     ipcMain.on('debug-load-more-variable', (event, variableName, options = {}) => {
@@ -5095,7 +5095,7 @@ function setupIPC() {
             });
         }
         else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
     ipcMain.on('debug-collapse-variable', (event, variableName, options = {}) => {
@@ -5109,7 +5109,7 @@ function setupIPC() {
             });
         }
         else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
     ipcMain.handle('get-current-file', () => {

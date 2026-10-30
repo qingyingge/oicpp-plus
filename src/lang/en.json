@@ -1716,6 +1716,7 @@
     "macOsDebugUnsupported": "Debugging is not supported on macOS yet.",
     "linuxTtyMissing": "Linux integrated terminal debugging failed to initialize: no terminal TTY was obtained, please retry the debug start.",
     "debuggerNotRunning": "The debugger is not running",
+    "watchExpressionEmpty": "Watch expression cannot be empty",
     "programEnded": "The program has ended",
     "unknownDebugCommand": "Unknown debug command: {command}",
     "breakpointArgsIncomplete": "Incomplete breakpoint parameters",

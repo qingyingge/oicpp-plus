@@ -5098,7 +5098,7 @@ function setupIPC() {
                 event.reply('debug-error', (error as Error)?.message);
             });
         } else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
 
@@ -5171,7 +5171,7 @@ function setupIPC() {
     ipcMain.on('debug-add-watch', (event: Electron.IpcMainEvent, variableName: string) => {
         const expr = String(variableName || '').trim();
         if (!expr) {
-            event.reply?.('debug-error', '监视表达式不能为空');
+            event.reply?.('debug-error', { code: 'watchExpressionEmpty', message: t('error.watchExpressionEmpty') });
             return;
         }
 
@@ -5270,7 +5270,7 @@ function setupIPC() {
                 event.reply('debug-error', (error as Error)?.message);
             });
         } else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
 
@@ -5304,7 +5304,7 @@ function setupIPC() {
                 event.reply('debug-error', (error as Error)?.message);
             });
         } else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
 
@@ -5332,7 +5332,7 @@ function setupIPC() {
                 event.reply('debug-error', (error as Error)?.message);
             });
         } else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
 
@@ -5348,7 +5348,7 @@ function setupIPC() {
                 event.reply('debug-error', (error as Error)?.message);
             });
         } else {
-            event.reply('debug-error', '调试器未运行');
+            event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
         }
     });
 
