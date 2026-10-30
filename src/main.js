@@ -1716,32 +1716,32 @@ global.logWarn = global.logwarn;
 global.logError = global.logerror;
 function validateFileName(name) {
     if (!name || typeof name !== 'string') {
-        return { valid: false, error: '名称不能为空' };
+        return { valid: false, error: t('dialog.nameRequired') };
     }
     const trimmedName = name.trim();
     if (trimmedName.length === 0) {
-        return { valid: false, error: '名称不能为空' };
+        return { valid: false, error: t('dialog.nameRequired') };
     }
     if (trimmedName === '.' || trimmedName === '..') {
-        return { valid: false, error: '名称不能为 . 或 ..' };
+        return { valid: false, error: t('fileExplorer.invalidDotName') };
     }
     const illegalCharsWin = /[<>:"/\\|?*]/;
     const illegalCharsUnix = /\//;
     const illegalChars = process.platform === 'win32' ? illegalCharsWin : illegalCharsUnix;
     if (illegalChars.test(trimmedName)) {
         const platformMsg = process.platform === 'win32'
-            ? '文件名不能包含以下字符: < > : " / \\ | ? *'
-            : '文件名不能包含字符: /';
+            ? t('dialog.invalidFileNameChars')
+            : t('dialog.invalidFileNameCharsUnix');
         return { valid: false, error: platformMsg };
     }
     if (process.platform === 'win32') {
         const reservedNames = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i;
         if (reservedNames.test(trimmedName)) {
-            return { valid: false, error: '该名称为系统保留名称，不能使用' };
+            return { valid: false, error: t('dialog.reservedFileName') };
         }
     }
     if (process.platform === 'win32' && /[\s.]$/.test(name)) {
-        return { valid: false, error: '文件名不能以空格或句点结尾' };
+        return { valid: false, error: t('dialog.fileNameEndDot') };
     }
     return { valid: true, error: null };
 }
@@ -9617,11 +9617,12 @@ async function compileFile(options) {
             detached: process.platform !== 'win32'
         });
         let timedOut = false;
+        const COMPILE_TIMEOUT_MS = 120000;
         const compilationTimeout = setTimeout(() => {
             timedOut = true;
             logWarn('[编译] 超过 120 秒，正在终止编译器进程:', inputFile);
             terminateProcessTree(compiler);
-        }, 120000);
+        }, COMPILE_TIMEOUT_MS);
         const stdoutChunks = [];
         const stderrChunks = [];
         const COMPILER_OUTPUT_LIMIT_BYTES = 16 * 1024 * 1024;
@@ -9669,18 +9670,18 @@ async function compileFile(options) {
                 diagnostics: []
             };
             if (timedOut) {
-                result.errors.push('编译超时（120 秒），已终止编译器进程。');
+                result.errors.push(t('main.compileTimeoutKilled', { seconds: COMPILE_TIMEOUT_MS / 1000 }));
             }
             if (compilerOutputTruncated) {
-                result.errors.push('编译器输出超过 16 MiB，已截断。');
+                result.errors.push(t('main.compileOutputTruncated', { limit: (COMPILER_OUTPUT_LIMIT_BYTES / 1024 / 1024) + ' MiB' }));
             }
             if (code !== 0 && !stderr.trim() && !stdout.trim()) {
-                result.errors.push('编译失败，但编译器未提供错误信息。可能的原因：');
-                result.errors.push('1. 编译器路径不正确');
-                result.errors.push('2. 编译器版本不兼容');
-                result.errors.push('3. 系统环境变量配置问题');
-                result.errors.push('4. 权限不足');
-                result.errors.push(`退出码: ${code}`);
+                result.errors.push(t('main.compileNoErrorInfo'));
+                result.errors.push(t('main.compileCausePath'));
+                result.errors.push(t('main.compileCauseVersion'));
+                result.errors.push(t('main.compileCauseEnv'));
+                result.errors.push(t('main.compileCausePerm'));
+                result.errors.push(t('main.exitCode', { status: code }));
             }
             if (stderr) {
                 const lines = stderr.split(/\r?\n/).filter((line) => line.trim());
@@ -9797,15 +9798,15 @@ async function compileFile(options) {
             logError('错误路径:', error.path);
             logError('系统错误号:', error.errno);
             logError('系统调用:', error.syscall);
-            let errorMessage = `编译器启动失败: ${error?.message}`;
+            let errorMessage = t('main.compilerSpawnFailed', { message: error?.message });
             if (error.code === 'ENOENT') {
-                errorMessage += ' (编译器文件不存在或路径错误)';
+                errorMessage += t('main.compilerEnoent');
             }
             else if (error.code === 'EACCES') {
-                errorMessage += ' (权限不足，无法执行编译器)';
+                errorMessage += t('main.compilerEacces');
             }
             else if (error.code === 'EPERM') {
-                errorMessage += ' (操作被拒绝)';
+                errorMessage += t('main.compilerEperm');
             }
             reject(new Error(errorMessage));
         });

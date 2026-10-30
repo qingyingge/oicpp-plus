@@ -207,14 +207,22 @@ function auditErrorText(source) {
     return issues;
 }
 
-// 2026-10-30 实测 25 处（用上面那个能识别三元的 valueSpan 口径，早期只看紧跟字面量的
-// 写法会数成 24 —— 少的那一处是 L1956/1957 的 `error: badChars ? 'A' : 'B'`）。
-// 构成：文件名校验（L1939-1969，6 处）、压缩包导入（L5654/5657）、清空目录
-// （L7124-7138）、编译器/testlib 下载参数与冲突（L7238-7724，5 处）、云同步未登录
-// （L11138）、编译诊断 errors.push（L10127-10139，8 处）。
-// 下载窗那一批本轮已清完，所以 buttons / 过滤器 / updateProgress / HTML 四个出口
-// 是零容忍，只有这一个还是 ratchet。每清一批就压到实测值，只降不升。
-const ERROR_TEXT_BASELINE = 25;
+// 2026-10-30 实测 12 处：压缩包导入（L5654/5657/5726）、清空目录（L7124-7138）、
+// 编译器下载参数与版本冲突（L7238-7724，5 处）、云同步未登录（L11139）。
+// 下载窗、编译诊断、文件名校验三批本轮清完，所以 buttons / 过滤器 name / updateProgress /
+// 下载窗 HTML 四个出口零容忍，只有这一个还是 ratchet。每清一批压到实测值，只降不升。
+//
+// 取值区间用 valueSpan 而不是「紧跟其后的第一个字面量」：真实代码里有
+//     return { success: false, error: (error as Error)?.message || '读取压缩包失败' };
+// 这种写法，只看紧跟的字面量会整条漏掉（L5726 就是这么被吞的）。24 到 25 的差值其实来自
+// 这里，不是上一版注释写的 L1956 那对三元 —— 那句判断是错的，本次一并更正。
+//
+// 已知盲区（别把这个数当成「主进程界面文案全在此」）：先赋值给变量再传进来的写法
+//     const platformMsg = ... ? '中文A' : '中文B';  return { error: platformMsg };
+// 检测器只看 error: 后的表达式，看不见变量里的字面量，这类不计入 ratchet。彻底覆盖要
+// 做跨赋值的数据流分析，本轮不做；main.ts 的整体界面文案存量请以「非日志、非注释、
+// 且不在 t() 里的 CJK 字面量」口径另行核对。
+const ERROR_TEXT_BASELINE = 12;
 
 for (const [label, src] of [['.ts 源', tsSource], ['.js 产物', jsSource]]) {
     const { issues, keys } = auditDialogText(src);

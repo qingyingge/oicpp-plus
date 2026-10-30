@@ -1136,7 +1136,11 @@ const I18N_HARDCODED_EN_BASELINE = 0;
 // （被 4 个不同句子共用，属挂错键，已拆成 tester.noCppFileTitle/Hint 与
 // tester.noSampleGroupTitle/Hint）与 tester.importPreview（与 dialog.importPreview
 // 逐字重复）。195 → 193。这一档由 tests/static-html-i18n.test.js 的 A/B/C 三条守住。
-const I18N_ORPHAN_KEY_BASELINE = 193;
+// 2026-10-30（同日第二批）：主进程开始接线后又降 5 —— validateFileName 一直在手写
+// 中文，而 dialog.nameRequired / invalidFileNameChars / invalidFileNameCharsUnix /
+// reservedFileName / fileNameEndDot 五个键早就躺在包里零引用。同批接线还吃掉了
+// main.exitCode（退出码: {status}）这个原本站着的孤儿。193 → 188。
+const I18N_ORPHAN_KEY_BASELINE = 188;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {
