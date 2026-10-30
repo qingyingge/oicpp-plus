@@ -6127,7 +6127,6 @@ function setupIPC() {
             const stdoutChunks = [];
             const stderrChunks = [];
             const OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
-            const limitLabel = `${Math.floor(OUTPUT_LIMIT_BYTES / (1024 * 1024))} MB`;
             let combinedOutputBytes = 0;
             let observedOutputBytes = 0;
             let outputLimitExceeded = false;
@@ -6374,16 +6373,16 @@ function setupIPC() {
                 const errorOutput = decodeBufferAuto(stderrBuf);
                 let finalOutput = '';
                 if (code !== 0 && code !== null) {
-                    finalOutput = errorOutput || output || `程序异常退出，退出码: ${code}`;
+                    finalOutput = errorOutput || output || t('main.abnormalExit', { code });
                 }
                 else if (code === null) {
-                    finalOutput = errorOutput || output || '程序被强制终止或异常退出';
+                    finalOutput = errorOutput || output || t('main.killedOrAbnormalExit');
                 }
                 else {
                     finalOutput = output;
                 }
                 if (outputLimitExceeded) {
-                    const notice = `输出超过限制 (${limitLabel})，程序已被终止。`;
+                    const notice = t('tester.outputLimitNotice', { limit: Math.floor(OUTPUT_LIMIT_BYTES / (1024 * 1024)) });
                     if (finalOutput) {
                         finalOutput = finalOutput.endsWith('\n') ? `${finalOutput}${notice}` : `${finalOutput}\n${notice}`;
                     }
@@ -6392,7 +6391,7 @@ function setupIPC() {
                     }
                 }
                 if (memoryLimitExceeded) {
-                    const notice = '内存超过限制 (' + effectiveMemoryLimitMb + ' MB)，程序已被终止。';
+                    const notice = t('tester.memoryLimitNotice', { limit: effectiveMemoryLimitMb });
                     if (finalOutput) {
                         finalOutput = finalOutput.endsWith('\n') ? finalOutput + notice : finalOutput + '\n' + notice;
                     }
@@ -7845,12 +7844,12 @@ function setupIPC() {
                         finish({
                             success: false,
                             message: t('main.testProgramFailed', { code: code }),
-                            details: stderr || output || '程序无输出'
+                            details: stderr || output || t('main.noProgramOutput')
                         });
                     }
                 });
                 proc.on('error', (error) => {
-                    let errorMessage = `运行测试程序失败: ${error?.message}`;
+                    let errorMessage = t('main.testRunFailed', { message: error?.message });
                     finish({ success: false, message: errorMessage });
                 });
             });
