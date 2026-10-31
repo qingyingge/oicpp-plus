@@ -3,6 +3,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  indexPack, pluralIssues, resolvesKey, mentionedLogical,
+} = require('./i18n-plural');
 const os = require('os');
 const { execSync } = require('child_process');
 
@@ -1190,18 +1193,28 @@ console.log(`\n${Y}[I2] Locale key alignment${R}`);
 const localeCodes = Object.keys(locales);
 if (localeCodes.length >= 2) {
   const base = localeCodes[0];
-  const baseKeys = Object.keys(locales[base]);
-  const baseSet = new Set(baseKeys);
   let aligned = true;
+  // 用逻辑键集比较：复数后缀本来就随语言不同（见 scripts/i18n-plural.js）
+  const baseLogical = indexPack(locales[base]).logical;
+  const baseSet = new Set(baseLogical.keys());
   for (const code of localeCodes.slice(1)) {
-    const other = Object.keys(locales[code]);
+    const otherIndex = indexPack(locales[code]);
+    const other = [...otherIndex.logical.keys()];
     const otherSet = new Set(other);
-    const missing = baseKeys.filter((k) => !otherSet.has(k));
+    const missing = [...baseSet].filter((k) => !otherSet.has(k));
     const extra = other.filter((k) => !baseSet.has(k));
     if (missing.length > 0) { fail(`${code}.json missing ${missing.length} key(s) in ${base}.json: ${summarize(missing)}`); aligned = false; }
     if (extra.length > 0) { fail(`${code}.json has ${extra.length} key(s) absent from ${base}.json: ${summarize(extra)}`); aligned = false; }
   }
-  if (aligned) ok(`all ${localeCodes.length} locales share the same ${baseKeys.length} keys`);
+  if (aligned) ok(`all ${localeCodes.length} locales share the same ${baseLogical.size} logical keys`);
+  // 复数形态按 Intl.PluralRules 逐语言校验：zh 只要 _other，en 要 _one+_other。
+  // 少一支是漏译，多一支是永远取不到的死键，两者都算失败 —— 这不是放宽，
+  // 是把「两份包不许漂移」从字面键名改成逻辑键之后，必须补上的等价约束。
+  let pluralOk = true;
+  for (const [code, flat] of Object.entries(locales)) {
+    for (const msg of pluralIssues(code, indexPack(flat))) { fail(`I2 plural: ${msg}`); pluralOk = false; }
+  }
+  if (pluralOk) ok(`plural forms match each locale's Intl.PluralRules (${localeCodes.join(', ')})`);
 } else {
   warn('fewer than 2 locales parsed — cannot cross-check key alignment');
 }
@@ -1210,6 +1223,9 @@ if (localeCodes.length >= 2) {
 console.log(`\n${Y}[I3] Placeholder alignment${R}`);
 if (localeCodes.length >= 2) {
   const base = localeCodes[0];
+  // 这里故意用字面键集：复数类别只对「两种语言都有该后缀」的组合才有可比性 ——
+  // zh 只有 _other，en 的 _one 没有对照物。逐类配对后，_other 与所有非复数键
+  // 照常校验，落空的 _one 由 I2 的 pluralIssues 保证它是 en 必需而非乱加。
   const baseSet = new Set(Object.keys(locales[base]));
   let phOk = true;
   let phChecked = 0;
@@ -1315,7 +1331,10 @@ console.log(`\n${Y}[I6] Referenced key resolution${R}`);
   } else {
     let refOk = true;
     for (const [code, flat] of Object.entries(locales)) {
-      const missing = [...refKeys].filter((k) => flat[k] === undefined);
+      // 复数化后源码仍引用基名，包里只有 _one/_other —— 用归一口径判可解析，
+      // 否则 I6 会对每个复数键误报「键不存在」
+      const i6Index = indexPack(flat);
+      const missing = [...refKeys].filter((k) => !resolvesKey(i6Index, k));
       if (missing.length > 0) {
         fail(`${code}.json is missing ${missing.length} referenced key(s): ${summarize(missing)}`);
         refOk = false;
@@ -1339,8 +1358,9 @@ if (localeCodes.length >= 1) {
     for (const m of content.matchAll(callRe)) refKeys.add(m.groups.key);
     for (const re of [bareCallRe, attrRe]) for (const m of content.matchAll(re)) refKeys.add(m[1]);
   }
-  const unused = Object.keys(base).filter((k) => !refKeys.has(k));
-  info(`${unused.length} of ${Object.keys(base).length} keys are not statically referenced (dynamic lookups are not detected)`);
+  const i7Logical = [...indexPack(base).logical.keys()];
+  const unused = i7Logical.filter((k) => !refKeys.has(k));
+  info(`${unused.length} of ${i7Logical.length} logical keys are not statically referenced (dynamic lookups are not detected)`);
 
   // --- 孤儿键 ratchet ---------------------------------------------------------
   // 口径比上面的 refKeys 宽：源码任意位置出现过的 dotted 字符串字面量都算引用，
@@ -1356,7 +1376,10 @@ if (localeCodes.length >= 1) {
     for (const m of content.matchAll(anyLiteralRe)) mentioned.add(m[1]);
     for (const m of content.matchAll(anyPropChainRe)) mentioned.add(m[1]);
   }
-  const orphans = Object.keys(base).filter((k) => !mentioned.has(k));
+  // 复数形态的任意一支被引用，整个逻辑键就算被引用；统计单位也换成逻辑键，
+  // 否则一个复数键会被数成 2-3 个孤儿，ratchet 数字失去可比性
+  const mentionedFinal = mentionedLogical(mentioned);
+  const orphans = i7Logical.filter((k) => !mentionedFinal.has(k));
   if (orphans.length > I18N_ORPHAN_KEY_BASELINE) {
     fail(`${orphans.length} orphaned i18n keys (baseline ${I18N_ORPHAN_KEY_BASELINE}, +${orphans.length - I18N_ORPHAN_KEY_BASELINE}) — every new key must be referenced: ${summarize(orphans)}`);
   } else if (orphans.length === 0) {

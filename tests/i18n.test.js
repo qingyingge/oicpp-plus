@@ -4,6 +4,9 @@
 // 防止批量正则替换（历史上出现过 `= ('key')` 这类静默空操作）再次悄悄破坏界面。
 
 const fs = require('fs');
+// 复数形态的归一口径必须和 scripts/ci-check.js 用的是同一份实现，
+// 否则「测试说一致、CI 说不一致」这类分歧迟早出现（本仓库已经踩过两次）。
+const plural = require('../scripts/i18n-plural');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
@@ -50,9 +53,11 @@ if (packs['zh-cn'] && packs.en) {
     const zhKeys = new Set(Object.keys(packs['zh-cn']));
 
     // --- key 对齐 ------------------------------------------------------------
-    const missingInZh = enKeys.filter((k) => !zhKeys.has(k));
-    const missingInEn = [...zhKeys].filter((k) => packs.en[k] === undefined);
-    check('en.json and zh-cn.json have identical key sets', missingInZh.length === 0 && missingInEn.length === 0,
+    const enLogical = [...plural.indexPack(packs.en).logical.keys()];
+    const zhLogical = new Set(plural.indexPack(packs['zh-cn']).logical.keys());
+    const missingInZh = enLogical.filter((k) => !zhLogical.has(k));
+    const missingInEn = [...zhLogical].filter((k) => !plural.indexPack(packs.en).logical.has(k));
+    check('en.json and zh-cn.json have identical logical key sets', missingInZh.length === 0 && missingInEn.length === 0,
         missingInZh.length + missingInEn.length ? `missing zh: ${missingInZh.slice(0, 5)} | missing en: ${missingInEn.slice(0, 5)}` : `${enKeys.length} keys`);
 
     // --- placeholder 对齐 ----------------------------------------------------
@@ -401,7 +406,9 @@ if (packs['zh-cn'] && packs.en) {
     for (const m of corpus.matchAll(/\.([a-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)/g)) mentioned.add(m[1]);
 
     const zhFlat2 = packs['zh-cn'];
-    const orphans = Object.keys(zhFlat2).filter((k) => !mentioned.has(k));
+    // 与 I7 同口径：按逻辑键统计，复数形态的一支被引用即算整键被引用
+    const mentionedLogical = plural.mentionedLogical(mentioned);
+    const orphans = [...plural.indexPack(zhFlat2).logical.keys()].filter((k) => !mentionedLogical.has(k));
 
     const ciSource2 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
     const baselineMatch = /const I18N_ORPHAN_KEY_BASELINE = (\d+);/.exec(ciSource2);
@@ -586,6 +593,42 @@ if (packs['zh-cn'] && packs.en) {
             }
         }
     }
+}
+
+// ---- 复数归一口径自身必须能咬（否则 I2 那句 PASS 是空集上的假绿）----------
+{
+    const issuesOf = (code, flat) => plural.pluralIssues(code, plural.indexPack(flat));
+    check('非复数包不产生任何复数问题（对照组）',
+        issuesOf('en', { 'a.one': 'x', 'b.two': 'y' }).length === 0,
+        JSON.stringify(issuesOf('en', { 'a.one': 'x', 'b.two': 'y' })));
+    // en 的 PluralRules 要 one+other；只给 other 就是漏译
+    const enMissing = issuesOf('en', { 'x_other': 'x' });
+    check('en 缺 _one 被判为漏译', enMissing.some((m) => /缺少必需的复数类别 _one/.test(m)), JSON.stringify(enMissing));
+    // zh 只有 other，多写 _one 是永远取不到的死键
+    const zhExtra = issuesOf('zh-cn', { 'x_other': 'x', 'x_one': 'x' });
+    check('zh 多写 _one 被判为死键', zhExtra.some((m) => /多余的复数类别 _one/.test(m)), JSON.stringify(zhExtra));
+    // 裸基名与复数形态并存时运行时取值不明
+    const ambiguous = issuesOf('en', { x: 'plain', x_one: 'a', x_other: 'b' });
+    check('基名与复数形态并存被判为取值不明', ambiguous.some((m) => /并存/.test(m)), JSON.stringify(ambiguous));
+    // 逻辑键归一：en 的 _one/_other 折回同一个 x，才能和 zh 的 _other 对齐
+    const enIdx = plural.indexPack({ x_one: '1 file', x_other: '{count} files' });
+    const zhIdx = plural.indexPack({ x_other: '{count} 个文件' });
+    check('复数形态折回同一逻辑键，两包逻辑键集因此仍然一致',
+        JSON.stringify([...enIdx.logical.keys()]) === JSON.stringify([...zhIdx.logical.keys()]),
+        JSON.stringify([...enIdx.logical.keys()]) + ' vs ' + JSON.stringify([...zhIdx.logical.keys()]));
+    // I6 等价：源码引用基名，包里只有带后缀形态，必须算可解析
+    check('I6 口径：引用基名而包里只有 _one/_other 时不算缺键',
+        plural.resolvesKey(enIdx, 'x') === true && plural.resolvesKey(enIdx, 'y') === false,
+        JSON.stringify([...enIdx.logical.keys()]));
+    // 归一口径必须跟 i18next 一致，而不是自创更宽的特例：引擎本来就按叶子的
+    // _one/_two/_few/_many/_other/_zero 后缀识别复数形态，所以以一个复数类别词
+    // 结尾的键**就是**复数形态。这条不是「别误折」的保护，而是一条命名约束：
+    // 不许拿 foo_other 这种名字当普通文案键用（引擎会按复数去找 foo_one）。
+    check('叶子以复数类别词结尾即视为复数形态（与 i18next 同口径）',
+        plural.splitPlural('a.other_two').category === 'two'
+            && plural.splitPlural('a.other_two').base === 'a.other'
+            && plural.splitPlural('a.count').category === null,
+        JSON.stringify(plural.splitPlural('a.other_two')));
 }
 
 console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
