@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  indexPack, pluralIssues, resolvesKey, mentionedLogical,
+  indexPack, pluralIssues, pluralTokenIssues, resolvesKey, mentionedLogical,
 } = require('./i18n-plural');
 const os = require('os');
 const { execSync } = require('child_process');
@@ -1211,9 +1211,14 @@ if (localeCodes.length >= 2) {
   // 少一支是漏译，多一支是永远取不到的死键，两者都算失败 —— 这不是放宽，
   // 是把「两份包不许漂移」从字面键名改成逻辑键之后，必须补上的等价约束。
   let pluralOk = true;
-  for (const [code, flat] of Object.entries(locales)) {
-    for (const msg of pluralIssues(code, indexPack(flat))) { fail(`I2 plural: ${msg}`); pluralOk = false; }
+  const pluralIndexes = {};
+  for (const [code, flat] of Object.entries(locales)) pluralIndexes[code] = indexPack(flat);
+  for (const [code, index] of Object.entries(pluralIndexes)) {
+    for (const msg of pluralIssues(code, index)) { fail(`I2 plural: ${msg}`); pluralOk = false; }
   }
+  // 复数各支不许引入默认语言 _other 没有的 {token}：调用点只传一份 params，
+  // 多出来的 token 会在单数句里原样印上屏（少用 token 是安全的，所以只查这个方向）
+  for (const msg of pluralTokenIssues(pluralIndexes)) { fail(`I2 plural tokens: ${msg}`); pluralOk = false; }
   if (pluralOk) ok(`plural forms match each locale's Intl.PluralRules (${localeCodes.join(', ')})`);
 } else {
   warn('fewer than 2 locales parsed — cannot cross-check key alignment');

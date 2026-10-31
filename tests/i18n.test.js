@@ -449,7 +449,10 @@ if (packs['zh-cn'] && packs.en) {
     check('the source tree actually references translation keys', referenced.size > 0, `${referenced.size} keys`);
 
     for (const [code, pack] of Object.entries(packs)) {
-        const missing = [...referenced].filter((k) => pack[k] === undefined);
+        // 必须用复数感知的解析：源码写 t('compare.completedText', {count})，而 zh 包里
+        // 只有 _other —— 拿 pack[k] 直查会把已归一的复数键全报成缺失。
+        const index = plural.indexPack(pack);
+        const missing = [...referenced].filter((k) => !plural.resolvesKey(index, k));
         check(`all ${referenced.size} referenced keys resolve in ${code}.json`, missing.length === 0, missing.slice(0, 8).join(', '));
     }
 }
@@ -629,6 +632,50 @@ if (packs['zh-cn'] && packs.en) {
             && plural.splitPlural('a.other_two').base === 'a.other'
             && plural.splitPlural('a.count').category === null,
         JSON.stringify(plural.splitPlural('a.other_two')));
+}
+
+// ---- 复数支的 {token} 只能少不能多：这条也必须能咬 -----------------------
+// 真 packs 已由 CI 的 I2 覆盖，这里守的是判定函数本身 —— 它一旦写反方向
+// （把「少用 token」也判成错），改文案时会一片红而没人知道为什么。
+{
+    const idx = (o) => plural.indexPack(o);
+    const tokensOf = (indexes) => plural.pluralTokenIssues(indexes);
+    check('正常复数键（各支 token 一致）不算问题（对照组）',
+        tokensOf({
+            'zh-cn': idx({ x_other: '有 {count} 个' }),
+            en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+        }).length === 0,
+        JSON.stringify(tokensOf({
+            'zh-cn': idx({ x_other: '有 {count} 个' }),
+            en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+        })));
+    // 单数句丢掉 {count} 是合法写法（"Delete this item?"），不许报
+    const dropped = tokensOf({
+        'zh-cn': idx({ x_other: '确定删除这 {count} 项吗？{preview}' }),
+        en: idx({ x_one: 'Delete this item? {preview}', x_other: 'Delete these {count} items? {preview}' }),
+    });
+    check('复数支少用 token 不判错（只查「多出来」这个方向）',
+        dropped.length === 0, JSON.stringify(dropped));
+    // 反过来：单数句引入 zh 的 _other 没有的 token，调用点不会传它 → 屏上留 {name}
+    const invented = tokensOf({
+        'zh-cn': idx({ x_other: '有 {count} 个' }),
+        en: idx({ x_one: 'Only {name} left', x_other: '{count} items left' }),
+    });
+    check('复数支引入默认语言没有的 token 被判错',
+        invented.some((m) => m.includes('x_one') && m.includes('{name}')), JSON.stringify(invented));
+    // 非复数键的 token 对齐归 I3 逐字面键管，这条不许把它们也扫进来
+    check('非复数键不由这条负责（对照组）',
+        tokensOf({ 'zh-cn': idx({ 'a.b': '{one}' }), en: idx({ 'a.b': '{two}' }) }).length === 0,
+        JSON.stringify(tokensOf({ 'zh-cn': idx({ 'a.b': '{one}' }), en: idx({ 'a.b': '{two}' }) })));
+    // 默认语言里没有参照 _other 时只能跳过，不能崩、也不能瞎报
+    check('默认语言缺该键时静默让位（缺键由 I2 报，不重复报）',
+        tokensOf({ 'zh-cn': idx({ unrelated: 'x' }), en: idx({ x_one: '{name}', x_other: '{count}' }) }).length === 0,
+        JSON.stringify(tokensOf({ 'zh-cn': idx({ unrelated: 'x' }), en: idx({ x_one: '{name}', x_other: '{count}' }) })));
+    const realIndexes = {};
+    for (const [code, flat] of Object.entries(packs)) if (flat) realIndexes[code] = idx(flat);
+    const realTokens = tokensOf(realIndexes);
+    check(`真语言包通过复数 {token} 方向检查（${Object.keys(realIndexes).length} 份）`,
+        realTokens.length === 0, realTokens.join(' | '));
 }
 
 console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);

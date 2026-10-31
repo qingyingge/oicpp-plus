@@ -46,18 +46,21 @@ function logicalKey(key) {
 }
 
 /**
- * 把一个扁平语言包整理成 { logical, forms }：
+ * 把一个扁平语言包整理成三份索引：
  *   logical: 逻辑键 -> Set<该键在此语言里出现的形态后缀>（'' 表示裸基名）
- *   forms:   原始扁平键 -> 值（原样保留，方便其它检查继续按扁平键取值）
+ *   values:  原始扁平键 -> 文案（原样保留，供按字面键取值的检查复用）
+ *   keys:    原始扁平键的集合
  */
 function indexPack(flat) {
     const logical = new Map();
+    const values = new Map();
     for (const key of Object.keys(flat)) {
         const { base, category } = splitPlural(key);
         if (!logical.has(base)) logical.set(base, new Set());
         logical.get(base).add(category === null ? '' : category);
+        values.set(key, flat[key]);
     }
-    return { logical, keys: new Set(Object.keys(flat)) };
+    return { logical, values, keys: new Set(Object.keys(flat)) };
 }
 
 /** 复数形态是否与该语言的 PluralRules 匹配。返回问题描述数组，空数组即合规。 */
@@ -91,6 +94,72 @@ function resolvesKey(index, referenced) {
     return !!forms && [...forms].some((f) => f !== '');
 }
 
+/** 扁平包里每条文案的 {token} 列表。 */
+const tokensOf = (value) => (String(value === undefined ? '' : value).match(/\{\w+\}/g) || []);
+
+/** 默认语言：i18next 的 fallbackLng，也是调用点那份 params 照抄的对象。 */
+const DEFAULT_LANGUAGE_CODE = 'zh-cn';
+
+/**
+ * 复数各支用到的 {token} 必须都在默认语言同键的 _other 里出现过。
+ *
+ * 为什么单独盯这一条：调用点只传一份 params，而这份 params 是照着默认语言的文案写的。
+ * 写单数句时顺手加一个新 token（"Only {name} left"），zh 的 _other 里没有它，调用点
+ * 也就不会传 —— count=1 时屏幕上原样印出 {name}。少用 token 是安全的
+ * （"Delete this item?" 丢掉 {count}），只有多用才会漏，所以只查这个方向。
+ *
+ * 非复数键不归这里管：那些由 I3 逐字面键配对，zh/en 一一对得上。
+ */
+function pluralTokenIssues(indexes) {
+    const issues = [];
+    const refIdx = indexes[DEFAULT_LANGUAGE_CODE];
+    if (!refIdx) return issues;
+    for (const [code, index] of Object.entries(indexes)) {
+        if (!index || !index.logical) continue;
+        for (const [base, forms] of index.logical) {
+            const ref = refIdx.values.get(`${base}_other`);
+            if (ref === undefined) continue;   // 默认语言没这一键，缺键由 I2 负责报
+            const allowed = new Set(tokensOf(ref));
+            for (const form of forms) {
+                if (form === '') continue;
+                const flatKey = `${base}_${form}`;
+                const extra = tokensOf(index.values.get(flatKey)).filter((t) => !allowed.has(t));
+                if (extra.length) {
+                    issues.push(`${code}.${flatKey}: 用了 ${DEFAULT_LANGUAGE_CODE} 的 _other 里没有的 ${extra.join(', ')} —— 调用点不会传它，{token} 会原样印上屏`);
+                }
+            }
+        }
+    }
+    return issues;
+}
+
+/**
+ * 复刻 i18next 的复数取值：给出语言码、源码里写的键与 count，返回实际应命中的扁平键名。
+ * 没有 count 参数时不做后缀查找（和 i18next 一致，此时它按普通键取）。
+ */
+function pluralKey(code, referenced, count) {
+    if (count === undefined || count === null) return referenced;
+    const locale = INTL_LOCALE[code] || code;
+    let category = 'other';
+    try {
+        category = new Intl.PluralRules(locale).select(Number(count));
+    } catch (_) {
+        // 未知语言码退回 other，与 requiredCategories 的兜底保持同一个方向
+    }
+    return `${referenced}_${category}`;
+}
+
+/**
+ * 按语言码 + params 从一个扁平语言包里取值，取不到回原键。
+ * 测试里的假 i18n 必须走这里，不要各写一份 `pack[key]` —— 那种桩一旦和真引擎的
+ * 复数解析漂移，就会退化成「返回裸键名」，而它本该守住的正是不让裸键上屏。
+ */
+function lookupFlat(flat, code, referenced, params) {
+    const suffixed = pluralKey(code, referenced, params ? params.count : undefined);
+    const raw = flat[suffixed] !== undefined ? flat[suffixed] : flat[referenced];
+    return raw === undefined ? referenced : String(raw);
+}
+
 /** 给 I7 用：复数形态的任意一支被引用，即算这个逻辑键被引用。 */
 function mentionedLogical(mentionedRaw) {
     const out = new Set();
@@ -108,6 +177,9 @@ module.exports = {
     logicalKey,
     indexPack,
     pluralIssues,
+    pluralTokenIssues,
     resolvesKey,
+    pluralKey,
+    lookupFlat,
     mentionedLogical,
 };

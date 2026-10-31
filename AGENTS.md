@@ -113,9 +113,12 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   2. 同一句键可能同时喂 HTML 和 `textContent`（下载窗的 `main.downloadingCompiler`：h3 要转义、`updateProgress` 绝不能转义），所以别把它做成全局行为。
   3. 接主进程译文时一律做「与原硬编码 byte-equal」比对 —— 转义残渣、以及往 JSON 里写 `\n` 结果落成字面反斜杠+n，这两类都只有逐字比对抓得到。
   `tests/i18n-main-process.test.js` 锁住两处配置与四个 HTML 出口；`tests/i18n-renderer-runtime.test.js` 用真实 UMD 断言插值不再被转义。注意别用 `/\{[^}]*\}/` 去框 `interpolation` 配置对象 —— `suffix: '}'` 里那个花括号会让它提前截断（本条第一版就假红了）。
-- I7 拦孤儿键（baseline 188，`scripts/ci-check.js:1143`）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
+- I7 拦孤儿键（baseline 188，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
 - I7 自己报的「未静态引用」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
-- 改语言包时 `zh-cn.json` 与 `en.json` 键集必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
+- 改语言包时 `zh-cn.json` 与 `en.json` 的**逻辑键集**必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
+- **数量文案用 i18next 复数形态**（`key_one` / `key_other`），不要写 `{count} 个文件` 这种硬量词。规则都在 `scripts/i18n-plural.js`（唯一实现，CI 与测试都从它取）：需要的类别由该语言的 `Intl.PluralRules` 决定 —— **zh 只许有 `_other`，en 必须 `_one`+`_other` 两支齐全**（少一支是漏译，多一支是永远取不到的死键，I2 都判失败）。源码照旧写 `t('compare.completedText', { count })`，引擎自己挑后缀。
+  - I2 因此比的是逻辑键集，I3 只能逐字面键配对 —— **en 的 `_one` 在 I3 里没有对照物**，兜住它的是「复数各支的 `{token}` 只能少不能多」：单数句丢掉 `{count}`（`"Delete this item?"`）合法，引入默认语言 `_other` 没有的新 token 会让屏幕上原样印出 `{name}`，I2 直接判失败。
+  - 测试里的假 i18n **必须**用 `plural.lookupFlat(pack, code, key, params)` 取值，不许再写 `pack[key]`。那种桩一旦和真引擎的复数解析漂移，就静默退化成「返回裸键名」，而它守的恰好是不让裸键上屏 —— 于是所有下游断言变成假绿。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
 
 ### 迁移 .js → .ts（TypeScript 路线甲）
@@ -133,7 +136,7 @@ node tests/run-tests.js          # 快速回归，定位断言失败
 pnpm run ci                      # 完整校验（75 项检查 + 35 个回归测试）
 npx tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
 ```
-迁移完必须把新文件自身的 error 清到 0，再把 `scripts/ci-check.js:1332` 的 `TS_ERROR_BASELINE` **往下压到实测总数**（ratchet 只减不增，每清一批降一档）。
+迁移完必须把新文件自身的 error 清到 0，再把 `scripts/ci-check.js` 里的 `TS_ERROR_BASELINE` **往下压到实测总数**（ratchet 只减不增，每清一批降一档）。
 
 **反模式：**
 

@@ -289,7 +289,27 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                 !/\{\w+\}/.test(full), full);
         }
 
-        // --- 3. 缺 key 返回 key 本身（而非 undefined / 空串）---
+        // --- 2b. 复数形态：zh 只有 _other，count 取任何值都必须照样命中 ---
+        // 语言包归一成 i18next 复数形态后，基名（compare.completedText）在包里没有对应
+        // 条目了。zh 若没有正确的解析行为，界面会直接显示裸键名 —— 这一条就是挡这个的。
+        {
+            const PK = 'compare.completedText';
+            const fill = (s, p) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in p ? String(p[k]) : m));
+            check('zh: 基名已不在包里（复数化确实落地了，不是名义上的）',
+                flatZh[PK] === undefined && flatZh[`${PK}_other`] !== undefined,
+                JSON.stringify({ base: flatZh[PK], other: flatZh[`${PK}_other`] }));
+            const z1 = i18n.t(PK, { count: 1 });
+            const z5 = i18n.t(PK, { count: 5 });
+            check('zh: count=1/5 都解析到 _other 且都不吐裸键',
+                z1 === fill(flatZh[`${PK}_other`], { count: 1 })
+                    && z5 === fill(flatZh[`${PK}_other`], { count: 5 })
+                    && !z1.includes(PK) && !z5.includes(PK),
+                JSON.stringify({ z1, z5 }));
+            check('zh: zh-cn.json 里没有多余的 _one（该语言用不到，属死键）',
+                flatZh[`${PK}_one`] === undefined, String(flatZh[`${PK}_one`]));
+        }
+
+        // --- 4. 缺 key 返回 key 本身（而非 undefined / 空串）---
         check('unknown key falls back to the key itself',
             i18n.t('no.such.key.here') === 'no.such.key.here');
 
@@ -418,6 +438,21 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                         escProbe.includes("/tmp/a.cpp") && escProbe.includes("& <b>")
                             && !/&#x2F;|&#39;|&amp;|&lt;|&gt;/.test(escProbe),
                         escProbe);
+
+                    // --- 7b. en 的复数分支必须由真实 i18next 选对 ---
+                    // 只测 zh 是不够的：en 有 _one/_other 两支，选错支是静默的语法错误
+                    //（"Completed 1 tests"），界面照样有字、CI 照样绿。
+                    {
+                        const PK = 'compare.completedText';
+                        const fill = (s, p) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in p ? String(p[k]) : m));
+                        const e1 = s2.window.i18n.t(PK, { count: 1 });
+                        const e5 = s2.window.i18n.t(PK, { count: 5 });
+                        check('en: count=1 取 _one、count=5 取 _other，两支是不同文案且都不是裸键',
+                            e1 === fill(flatEn[`${PK}_one`], { count: 1 })
+                                && e5 === fill(flatEn[`${PK}_other`], { count: 5 })
+                                && e1 !== e5 && !e1.includes(PK) && !e5.includes(PK),
+                            JSON.stringify({ e1, e5 }));
+                    }
 
                     // --- 8. i18n-language-changed DOM 事件 ---
                     let evtLang = null;
