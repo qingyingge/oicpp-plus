@@ -24,6 +24,24 @@ const check = (name, cond, extra = '') => {
 };
 
 const ROOT = path.resolve(__dirname, '..');
+
+/** 取某个 key: 之后第一个花括号配平的对象（跳过引号内的花括号）。 */
+function balancedObjectAfter(src, keyRe) {
+    const m = keyRe.exec(src);
+    if (!m) return null;
+    const open = src.indexOf('{', m.index + m[0].length);
+    if (open < 0) return null;
+    let depth = 0, q = null;
+    for (let i = open; i < src.length; i++) {
+        const c = src[i];
+        if (q) { if (c === '\\') i++; else if (c === q) q = null; continue; }
+        if (c === "'" || c === '"' || c === '`') { q = c; continue; }
+        if (c === '{') depth++;
+        else if (c === '}') { depth--; if (depth === 0) return src.slice(open, i + 1); }
+    }
+    return null;
+}
+
 const ciSource = fs.readFileSync(path.join(ROOT, 'scripts', 'ci-check.js'), 'utf8');
 const mainSource = fs.readFileSync(path.join(ROOT, 'src', 'main.js'), 'utf8');
 const compilerSource = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'settings', 'compiler.js'), 'utf8');
@@ -433,6 +451,55 @@ const enMain = en.main || {};
     check('守卫覆盖的广播调用点真实存在',
         callCounts.broadcastIdeLoginError >= 8 && callCounts.sendLoginHtml >= 7 && callCounts.notifyUser >= 5,
         JSON.stringify(callCounts));
+}
+
+// ---- 插值转义边界（#11）----
+{
+    // 两处 i18next init 都必须显式关掉对插值的 HTML 转义。i18next 默认转义是为
+    // innerHTML 准备的，而本项目绝大多数消息的终点是 textContent / toast /
+    // 原生对话框（showMessageBox 的 title/message/detail/buttons），转义只留下
+    // &#x2F; &#39; 残渣。HTML 出口改由调用点自行转义（escapeHtmlText /
+    // escapeDebugHtml / escapeHtml），所以这里既锁「配置关掉了」，也锁「HTML 侧
+    // 确实带上了显式转义」—— 少任何一边都会打开一个真实的渲染进程 XSS。
+    const langTs = fs.readFileSync(path.join(ROOT, 'src', 'lang', 'index.ts'), 'utf8');
+    const i18nTs = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'js', 'i18n.ts'), 'utf8');
+    for (const [name, src] of [['src/lang/index.ts', langTs], ['src/renderer/js/i18n.ts', i18nTs]]) {
+        // 不能用 /\{[^}]*\}/ 取这个对象：值里有 suffix: '}'，那个花括号会让非配平
+        // 正则提前截断，于是 escape 明明在配置里却被判成缺失（本条第一版就栽在这）。
+        const obj = balancedObjectAfter(src, /interpolation\s*:/);
+        check(`${name}: interpolation 配置存在`, obj !== null, '没找到 interpolation 块');
+        check(`${name}: 显式关闭插值 HTML 转义`, obj !== null && /escape\s*:/.test(obj),
+            obj ? obj.replace(/\s+/g, ' ').slice(0, 96) : '');
+    }
+
+    // HTML 出口必须自带转义：这几处一旦有人重构成裸插值，就是注入点
+    const htmlSink = [
+        ['src/main.js', /escapeHtmlText\(name\),\s*version:\s*escapeHtmlText\(version\)/,
+            '下载窗 h3 对 name/version 转义'],
+        ['src/main.js', /const safeTitle = escapeHtml\(title\);[\s\S]{0,80}const safeMsg = escapeHtml\(message\);/,
+            '登录回调页对 title/message 转义'],
+        ['src/renderer/js/sidebar/codeComparer.js', /completedWithWarning'[\s\S]{0,120}escapeHtml\(warningMessage\)/,
+            '对拍完成提示的 warning 在 innerHTML 前转义'],
+        ['src/renderer/js/main.js', /escapeDebugHtml\(message\)/,
+            '调试信息写 innerHTML 前转义'],
+    ];
+    for (const [file, re, why] of htmlSink) {
+        const src = fs.readFileSync(path.join(ROOT, file), 'utf8');
+        check(`${file}: ${why}`, re.test(src));
+    }
+
+    // 行为断言：真起主进程那份 i18next 模块（不依赖 Electron），验插值原样落地
+    try {
+        const lang = require(path.join(ROOT, 'src', 'lang'));
+        const probe = lang.t('main.installerDownloadedTo');
+        const withValue = lang.t('main.compileTimeoutKilled', { seconds: 120 });
+        check('主进程 t() 真调用：插值不被 HTML 转义',
+            withValue.includes('120') && !/&#\w+;|&lt;|&amp;/.test(withValue), withValue);
+        check('主进程 t() 真调用：静态文案无转义残渣',
+            !/&#\w+;|&amp;/.test(probe), probe);
+    } catch (e) {
+        check('主进程 t() 真调用可加载', false, e && e.message);
+    }
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);

@@ -1490,13 +1490,22 @@ function broadcastIdeLoginError(message) {
         catch (_) { }
     }
 }
-function sendLoginHtml(res, title, message, statusCode = 200) {
-    const escapeHtml = (input) => String(input || '')
+/**
+ * HTML 文本转义。主进程 t() 已不再对插值做转义（原生对话框与菜单不是 HTML），
+ * 所以凡把译文写进 HTML 的位置必须自己转义 —— 目前是登录回调页与两个下载窗模板。
+ * 同一个键常常同时喂 HTML 和 textContent（下载窗的 main.downloadingCompiler 就是：
+ * h3 走 HTML、updateProgress 走 statusElement.textContent），只在 HTML 那一侧转义。
+ */
+function escapeHtmlText(input) {
+    return String(input || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+function sendLoginHtml(res, title, message, statusCode = 200) {
+    const escapeHtml = escapeHtmlText;
     const safeTitle = escapeHtml(title);
     const safeMsg = escapeHtml(message);
     const html = `<!DOCTYPE html><html lang="${getCurrentLanguage() || 'zh-CN'}"><head><meta charset="utf-8"><title>${safeTitle}</title></head><body style="font-family: sans-serif; padding: 24px;"><h2>${safeTitle}</h2><p>${safeMsg}</p><p>${t('main.loginClosePage')}</p></body></html>`;
@@ -7125,7 +7134,7 @@ function setupIPC() {
     </style>
 </head>
 <body>
-    <h3>${t('main.downloadingCompiler', { name, version })}</h3>
+    <h3>${t('main.downloadingCompiler', { name: escapeHtmlText(name), version: escapeHtmlText(version) })}</h3>
     <div id="status">${t('main.downloadWindowPreparing')}</div>
     <div id="progress-container">
         <div id="progress-bar">
@@ -7525,7 +7534,7 @@ function setupIPC() {
     </style>
 </head>
 <body>
-    <h3>${t('main.downloadingTestlib', { name, version })}</h3>
+    <h3>${t('main.downloadingTestlib', { name: escapeHtmlText(name), version: escapeHtmlText(version) })}</h3>
     <div id="status">${t('main.downloadWindowPreparing')}</div>
     <div id="progress-container">
         <div id="progress-bar">

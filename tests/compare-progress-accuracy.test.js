@@ -251,11 +251,25 @@ const called = (calls, name) => calls.some((c) => c.name === name);
     check('stopped=true 的提示用 stoppedText 且带上同一个计数',
         s.named('compare-complete').children['.complete-info span'].innerHTML.startsWith('compare.stoppedText|{"count":7}'),
         s.named('compare-complete').children['.complete-info span'].innerHTML);
-    const s2 = comparerHarness(['showComplete', 'hideStatus', 'hideError']);
+    // escapeHtml 真实实现走的是 div.textContent → div.innerHTML，在 vm 替身里没有 DOM
+    // 语义可依赖；这里注入一个可辨识的桩，锁的是「warning 确实经过转义才进
+    // t()/innerHTML」这件事本身，而不是转义函数的正确性。
+    // 模板 compare.completedWithWarning 的 {warning} 外面包着 <span style=…>，
+    // 所以整串不能转义 —— 只能转义插进去的那个值（i18next 的插值转义已全局关掉，
+    // 见 #11，HTML 出口现在自负转义）。
+    const escapeStub = (t) => `ESC(${t})`;
+    const s2 = comparerHarness(['showComplete', 'hideStatus', 'hideError'], { escapeHtml: escapeStub });
     s2.real.showComplete.call(s2.self, 5, 'WARN');
-    check('带 warningMessage 时改用 completedWithWarning，count 与 warning 都传下去',
-        s2.seen.t.some(([k, p]) => k === 'compare.completedWithWarning' && p.count === 5 && p.warning === 'WARN'),
+    check('带 warningMessage 时改用 completedWithWarning，count 原样、warning 经 escapeHtml 传下去',
+        s2.seen.t.some(([k, p]) => k === 'compare.completedWithWarning'
+            && p.count === 5 && p.warning === 'ESC(WARN)'),
         JSON.stringify(s2.seen.t));
+    const s2b = comparerHarness(['showComplete', 'hideStatus', 'hideError'], { escapeHtml: escapeStub });
+    s2b.real.showComplete.call(s2b.self, 5, '<img src=x onerror=y>');
+    const warned = s2b.seen.t.find(([k]) => k === 'compare.completedWithWarning');
+    check('含标签的告警文本不会被原样拼进 innerHTML',
+        !!warned && warned[1].warning === 'ESC(<img src=x onerror=y>)',
+        warned ? JSON.stringify(warned[1].warning) : '没有 recorded t() 调用');
     const s3 = comparerHarness(['showComplete']);
     s3.real.showComplete.call(s3.self, 3);
     check('无告警、未停止时用 completedText，并收起状态区与错误区',

@@ -16,7 +16,10 @@ i18next.init({
         'zh-cn': { translation: zhCN },
         'en': { translation: en }
     },
-    interpolation: { prefix: '{', suffix: '}' },
+    // 与渲染层 i18n.ts 保持一致：关掉对插值的 HTML 转义。主进程 t() 的终点是原生对话框
+    // （showMessageBox 的 title/message/detail/buttons）和菜单标签，不是 HTML，
+    // 转义只会把路径变成 &#x2F; 残渣。唯一喂 HTML 的下载窗模板由调用点自行处理。
+    interpolation: { prefix: '{', suffix: '}', escape: (value: unknown) => String(value) },
     returnNull: false,
     returnEmptyString: false,
     parseMissingKeyHandler: (key: string) => key

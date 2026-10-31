@@ -108,11 +108,11 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   * 取 `error:` 的值要用 `valueSpan`（按顶层 `,` `}` `;` 收尾）而不是「紧跟其后的第一个字面量」，否则会漏掉 `error: err?.message || '读取压缩包失败'` 这种写法。
   * 该守卫**看不见** `const msg = '中文'; return { error: msg }` 这类先赋值给变量的形状，所以 `ERROR_TEXT_BASELINE` 不等于主进程界面文案总量，别拿它当分母。
   * 判据必须是 `name:` 后紧跟 `extensions:` —— 只有 Electron 对话框过滤器是这个形状。编译器预设 `{ name: 'utf8', sourceMode: ... }` 也用 `name:`，但那是内部标识符、永不上屏，用裸 `name:` 会把它们翻译掉。
-- **主进程 `t()` 会对插值做 HTML 转义**（i18next 默认 `interpolation.escape`）。`src/lang/index.ts` 只设了 `prefix/suffix`，没关 escape，所以 `t('main.x', { path: '/opt/a.exe' })` 在**原生对话框**里会渲染成 `&#x2F;opt&#x2F;a.exe` —— 原生窗口不是 HTML，转义纯属有害。正解：**别把路径/URL/错误原文这类任意字符串塞进译文占位符**，措辞进键、排版留代码，例如
-  ```js
-  `${t('main.errorInfoLabel')} ${msg}\n\n${t('main.installerLocationLabel')} ${installerPath}`
-  ```
-  不要顺手关掉全局 escape：主进程的 `t()` 也喂给「写进临时 HTML 文件再 `loadFile`」的下载窗，那里的插值需要转义。**接主进程译文时一律做一遍「与原硬编码 byte-equal」比对**，这两类问题（转义、以及往 JSON 里写 `\n` 结果落成字面反斜杠+n）都只有逐字比对才抓得到。
+- **两处 i18next init 都已关掉对插值的 HTML 转义**（`src/lang/index.ts` 与 `src/renderer/js/i18n.ts` 的 `interpolation.escape`）。i18next 默认转义是为 innerHTML 准备的，而本项目绝大多数消息的终点是 `textContent`、toast 或**原生对话框**，默认值会把插进去的路径 / URL / 带引号的错误原文变成 `&#x2F;` `&#39;` 残渣（曾波及 317 处带插值的 `t()`）。代价是 **HTML 出口现在必须自己转义**，`t()` 不再兜底：主进程 `escapeHtmlText`（登录页 + 两个下载窗模板）、渲染层 `escapeDebugHtml`（调试面板所有 innerHTML）、`codeComparer.escapeHtml`（完成告警）。三条规矩：
+  1. 只转义**插进去的那个值**，不要转义整串结果 —— 模板常带 `<br><span style=…>` 这类有意排版（`compare.completedWithWarning` 就是）。
+  2. 同一句键可能同时喂 HTML 和 `textContent`（下载窗的 `main.downloadingCompiler`：h3 要转义、`updateProgress` 绝不能转义），所以别把它做成全局行为。
+  3. 接主进程译文时一律做「与原硬编码 byte-equal」比对 —— 转义残渣、以及往 JSON 里写 `\n` 结果落成字面反斜杠+n，这两类都只有逐字比对抓得到。
+  `tests/i18n-main-process.test.js` 锁住两处配置与四个 HTML 出口；`tests/i18n-renderer-runtime.test.js` 用真实 UMD 断言插值不再被转义。注意别用 `/\{[^}]*\}/` 去框 `interpolation` 配置对象 —— `suffix: '}'` 里那个花括号会让它提前截断（本条第一版就假红了）。
 - I7 拦孤儿键（baseline 188，`scripts/ci-check.js:1143`）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
 - I7 自己报的「未静态引用」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
 - 改语言包时 `zh-cn.json` 与 `en.json` 键集必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。

@@ -1857,7 +1857,11 @@ class CodeComparer {
             completedTests.textContent = completedCount;
         }
         if (warningMessage && completeInfo) {
-            completeInfo.innerHTML = (window.i18n.t('compare.completedWithWarning', { count: completedCount, warning: warningMessage }));
+            // 这里是 innerHTML 出口。以前靠 i18next 对插值做 HTML 转义兜底，而那个转义
+            // 会同时把喂给 textContent / 原生对话框的消息弄成 &#x2F; 残渣（见 #11）。
+            // 关掉全局 escape 后，必须在 sink 处显式转义 —— 同文件 2430 行的 escapeHtml
+            // 就是为这种位置准备的。
+            completeInfo.innerHTML = (window.i18n.t('compare.completedWithWarning', { count: completedCount, warning: this.escapeHtml(warningMessage) }));
         }
         else if (completeInfo) {
             completeInfo.innerHTML = stopped

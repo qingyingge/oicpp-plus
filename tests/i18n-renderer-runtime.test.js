@@ -408,6 +408,17 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                     check('getCurrentLanguage follows the switch',
                         s2.window.i18n.getCurrentLanguage() === 'en');
 
+                    // i18next 默认对插值做 HTML 转义，而本项目绝大多数消息的终点是
+                    // textContent / toast / 原生对话框 —— 转义只会把路径与带引号的
+                    // 错误原文变成 &#x2F; &#39; 残渣（#11）。两处 init 已显式关掉
+                    // escape，这里用真实 UMD 验它真的关掉了：以后谁删掉那行，
+                    // 这条会在 CI 里变红，而不是等用户在 toast 里看到残渣。
+                    const escProbe = s2.window.i18n.t('debug.error', { error: "open '/tmp/a.cpp' & <b>" });
+                    check('插值不被 HTML 转义（#11：消息终点是 textContent / 原生对话框）',
+                        escProbe.includes("/tmp/a.cpp") && escProbe.includes("& <b>")
+                            && !/&#x2F;|&#39;|&amp;|&lt;|&gt;/.test(escProbe),
+                        escProbe);
+
                     // --- 8. i18n-language-changed DOM 事件 ---
                     let evtLang = null;
                     d2.addEventListener('i18n-language-changed', (e) => { evtLang = e.detail.language; });

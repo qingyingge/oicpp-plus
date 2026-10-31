@@ -50,8 +50,12 @@ class I18nManager {
             // return the key itself. Keep codes lowercase to match the file names
             // and the main process's lng.
             lowerCaseLng: true,
-            // Keep the hand-written placeholder syntax: {token}, not {{token}}.
-            interpolation: { prefix: '{', suffix: '}' },
+            // 保留手写的占位符语法：{token}，不是 {{token}}。
+            // escape 必须显式关掉：i18next 默认对插值做 HTML 转义，而本项目绝大多数消息的
+            // 终点是 textContent、toast 或原生对话框，不是 HTML —— 于是插值里的路径/URL/
+            // 带引号的错误原文会原样显示成 &#x2F; &#39;。HTML 出口自己负责转义
+            // （escapeDebugHtml / escapeHtml），不再依赖这里兜底。
+            interpolation: { prefix: '{', suffix: '}', escape: (value: unknown) => String(value) },
             returnNull: false,
             returnEmptyString: false,
             parseMissingKeyHandler: (key: string) => key,

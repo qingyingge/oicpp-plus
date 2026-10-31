@@ -459,7 +459,10 @@ if (packs['zh-cn'] && packs.en) {
     // 契约：渲染层已接 i18next，且配置与主进程 lang/index.js 保持一致
     check('renderer delegates lookup to i18next', i18nSource.includes('i18next.t('));
     check('renderer configures the {token} placeholder syntax',
-        /interpolation:\s*\{\s*prefix:\s*'\{',\s*suffix:\s*'\}'\s*\}/.test(i18nSource));
+        // 只看 prefix/suffix 这两个键在不在，不管后面还挂了别的配置项。
+        // 不能用 /\{[^}]*\}/ 去框整个对象：suffix 的值就是 '}'，非配平正则会在它这里
+        // 截断，于是加了 escape 之后这条会假红（实测踩过）。lookahead 限定窗口最稳。
+        /interpolation:\s*\{(?=[\s\S]{0,160}prefix:\s*'\{')(?=[\s\S]{0,160}suffix:\s*'\}')/.test(i18nSource));
     check('renderer loads the current language over IPC',
         i18nSource.includes('getLanguageFile') && i18nSource.includes('addResourceBundle'));
     // 兜底语言交给 i18next 的 fallbackLng，不再自持 _fallbackMessages
