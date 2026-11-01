@@ -507,13 +507,21 @@ const runEngineOnce = async (Ctor, progressCount) => {
 // ---------------------------------------------------------------------------
 {
     const ciSrc = fs.readFileSync(path.join(root, 'scripts/ci-check.js'), 'utf8');
-    const I8 = blockByIndent(ciSrc, /\[I8\] Hardcoded CJK ratchet/);
+    // I8 与 I8b 现在共用一条 USER_VISIBLE_RE，它声明在两个块的外面。整块抽出来单跑时
+    // 必须把这条声明一起带上，否则 vm 里 ReferenceError，而 runCiBlock 会把「什么都没报」
+    // 写成 0 fails —— 那就成了假绿。（本文件第一次踩到是它自己红出来的。）
+    const sharedRe = /^const USER_VISIBLE_RE = .*$/m.exec(ciSrc);
+    const I8Block = blockByIndent(ciSrc, /\[I8\] Hardcoded CJK ratchet/);
+    const I8 = (sharedRe ? sharedRe[0] + '\n' : '') + I8Block;
     // 兜底豁免的判据是「这行的 t() 键在不在语言包里」，所以必须喂真包；
     // 键名也不写死 —— 写死的那个哪天被删，这条就会假红。取包里第一个键当「确实存在」的样本。
     const knownKey = Object.keys(loadLocales()['zh-cn'])[0];
 
     check('I8 检查项整块抽出来', () => {
-        assert.ok(I8.startsWith('{') && I8.length > 1000, JSON.stringify(I8.slice(0, 40)));
+        assert.ok(I8Block.startsWith('{') && I8Block.length > 1000, JSON.stringify(I8Block.slice(0, 40)));
+        // 共用判据抽不到的话，下面几条会在 vm 里 ReferenceError，
+        // 而 runCiBlock 会把异常吞成「0 fails」—— 那是假绿，必须在这里就断掉
+        assert.ok(sharedRe && /^const USER_VISIBLE_RE = /.test(sharedRe[0]), 'USER_VISIBLE_RE 没抽到');
     });
 
     check('I8 真跑：兜底串挂在真实存在的键上时豁免生效，一处都不报', () => {
@@ -535,6 +543,27 @@ const runEngineOnce = async (Ctor, progressCount) => {
         const { fails } = runCiBlock(I8, virtualFile('a.js', "showError('出错了');\n"));
         assert.strictEqual(fails.length, 1, JSON.stringify(fails));
         assert.ok(/baseline/.test(fails[0]) && !/language pack/.test(fails[0]), JSON.stringify(fails[0]));
+    });
+
+    // I8 的 baseline 从 1 降到 0，靠的是把「三元表达式里的 e.message :」与「标签 message:」
+    // 分开。下面一正一反两条钉住这个改动：只留正向的话，判据被写宽到连标签都不认也照样绿。
+    check('I8 真跑：属性访问后跟三元冒号不是文案标签，不许计入存量', () => {
+        const { fails, infos } = runCiBlock(I8, virtualFile('a.js',
+            "console.error('[Logger] 写入日志失败:', e instanceof Error ? e.message : String(e));\n"));
+        assert.deepStrictEqual(fails, [], JSON.stringify({ fails, infos }));
+    });
+
+    check('I8 真跑：真正的标签出口仍然计入（message/label/detail/title 各一种写法）', () => {
+        const lines = [
+            "dialog.show({ message: '端口已被占用' });\n",
+            "return { label: '确认删除', value: 1 };\n",
+            "send({ detail: '缺少配置文件' });\n",
+            "node.title = '新建标签页';\n",
+        ];
+        for (const src of lines) {
+            const { fails } = runCiBlock(I8, virtualFile('a.js', src));
+            assert.strictEqual(fails.length, 1, JSON.stringify({ src, fails }));
+        }
     });
 }
 

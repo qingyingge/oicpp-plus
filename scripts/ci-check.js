@@ -1112,8 +1112,20 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
 // Ratcheting baselines. Lower these whenever a migration batch lands.
 // Exceeding one means new regressions were introduced, not that the
 // remaining backlog grew — that is a FAIL.
-const I18N_HARDCODED_CJK_BASELINE = 1;
-const I18N_EN_PUNCT_BASELINE = 1;
+// 降到 0 的那一档（本批）：原先挂在 1 是 userVisibleRe 把三元表达式里的 `e.message :`
+// 当成 `message:` 标签造成的**误报**（src/utils/logger.js 的 stderr 自诊断），不是存量。
+// 判据修好后这一档归零，含义回到「一处都不许有」；不许再用「反正还有一条」当理由。
+const I18N_HARDCODED_CJK_BASELINE = 0;
+// 这一档不是「还有活的没迁」，是一条**判据形状上的误报**，留着而不是放宽：
+// src/utils/logger.js:83 `console.error('[Logger] 写入日志失败:', ...)` —— 日志文件写不进去
+// 时的自我诊断，走的是主进程 stderr，不进任何界面（渲染层 logInfo 也是 IPC 到日志文件）。
+// 没有把它豁免掉，因为「豁免 console.*」会顺手放过未来真阳性；也没有翻译它，
+// 因为给一条只出现在终端的自诊断建键，等于给语言包加一条没人看的死文案。
+// 想清零的话，正确做法是让 I8 的 userVisibleRe 认得出「主进程 console 不是界面」这件事，
+// 并把这条连同理由一起摘掉 —— 不要直接改成 0。
+// 降到 0 的那一档（本批）：原先挂在 1 是上面那条正则把英文弯引号当成中文标点造成的
+// **误报**，不是存量。清零以后含义回到「en.json 里一处中文标点都不许有」。
+const I18N_EN_PUNCT_BASELINE = 0;
 // 存量「用户可见行上的硬编码英文散文」。I8 只查 CJK，而项目默认语言是 zh-cn
 // —— 硬编码英文同样会原样显示给用户，只是查不出来（tabs.js 的
 // 'Markdown API not available' 就是这样长期存活的）。
@@ -1267,9 +1279,12 @@ if (locales.en) {
   } else {
     ok('en.json has no CJK ideographs');
   }
-  // Fullwidth forms, ideographic comma and CJK brackets/quotes are unambiguous;
-  // U+2026 / U+2014 are legitimate English typography and must not be flagged.
-  const cnPunctRe = /[\uff0c\u3002\uff1b\uff1a\u3001\uff08\uff09\u300c\u300d\u3010\u3011\u201c\u201d\u2018\u2019]/;
+  // 只列**中文专属**的标点：全角逗号/句号/分号/冒号/顿号、全角括号、直角引号、书名号。
+  // 弯引号 U+201C-201D / U+2019 以前也在这一串里 —— 那是错的：它们是标准英文排版引号
+  //（en.json 的 settings.fontUnavailableMessage 用 “ {font} ” 被冤枉成「中文标点」，
+  // 于是这条 ratchet 一直挂着 1 这个没人解释的档位）。中文里出现的弯引号一定伴随汉字，
+  // 由上面的 enCjk（不许有汉字）负责，所以去掉这四个码位不损失判别力。
+  const cnPunctRe = /[\uff0c\u3002\uff1b\uff1a\u3001\uff08\uff09\u300c\u300d\u3010\u3011]/;
   const enPunct = Object.entries(locales.en).filter(([, v]) => cnPunctRe.test(String(v)));
   if (enPunct.length > I18N_EN_PUNCT_BASELINE) {
     fail(`en.json has CJK punctuation in ${enPunct.length} key(s) (baseline ${I18N_EN_PUNCT_BASELINE}): ${summarize(enPunct.map(([k]) => k))}`);
@@ -1468,12 +1483,20 @@ console.log(`\n${Y}[I9] Plural call sites pass count${R}`);
   }
 }
 
+// 「用户可见出口」的行判据 —— I8 与 I8b 共用一份。两处各写一条正则时，改一处忘另一处
+// 会让中文与英文散文的覆盖面悄悄分叉。
+//
+// label:/message:/title:/detail: 是原生对话框与 IPC 载荷的文案出口，但必须限定
+// 「前面不是点或词字符」：`e instanceof Error ? e.message : String(e)` 里那个三元冒号
+// 会被当成 `message:` 标签，于是 logger 的一条 stderr 自诊断被计成用户可见文案 ——
+// I8 那条挂了许久的 baseline 1 就是这么来的，不是存量。加 (?<![.\w]) 之后
+// `{ message: '中文' }` 照样命中，`x.message : y` 不再误判。
+const USER_VISIBLE_RE = /(?:showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|(?<![.\w])label\s*:|(?<![.\w])message\s*:|(?<![.\w])title\s*:|(?<![.\w])detail\s*:|new Error\(|throw Error)/;
+
 // I8: Hardcoded CJK ratchet
 console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
 {
-  // message:/title:/detail: 是原生 dialog 与 IPC 载荷的用户可见文案出口，
-  // innerText 同理；漏掉它们会让「I8 baseline 0」虚高
-  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|message\s*:|title\s*:|detail\s*:|new Error\(|throw Error)/;
+  const userVisibleRe = USER_VISIBLE_RE;
   // A line carrying a data-i18n-* attribute is already wired for translation; the inline
   // CJK is only the pre-JS default that _applyToDOM overwrites. Counting it would keep the
   // ratchet permanently stuck on a backlog that no migration batch can ever clear.
@@ -1555,7 +1578,7 @@ console.log(`\n${Y}[I8b] Hardcoded English prose ratchet${R}`);
   //   1. 必须含 ≥2 个 ≥3 字母的完整词 —— 标识符、属性名、枚举值都过不了这一关
   //   2. 排除路径 / URL / 文件名 / MIME / CSS 类名
   //   3. 只在 I8 的 userVisibleRe 命中后才判定
-  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|message\s*:|title\s*:|detail\s*:|new Error\(|throw Error)/;
+  const userVisibleRe = USER_VISIBLE_RE;
   const alreadyMigratedRe = /data-i18n(-[a-z]+)?\s*=/;
   const stripTFallback = (line) => line
     .replace(/\b(?:window\s*\.\s*)?(?:i18n|i18next|__|this)\s*(?:\?\.|\.)\s*t\s*(?:\?\.|\.)?\s*\((?:[^()]|\([^()]*\))*\)(?:\s*\|\|\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\([^()]*\)|[A-Za-z_$][\w.$]*))?/g, 't()')

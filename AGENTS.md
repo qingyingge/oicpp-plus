@@ -113,7 +113,21 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   2. 同一句键可能同时喂 HTML 和 `textContent`（下载窗的 `main.downloadingCompiler`：h3 要转义、`updateProgress` 绝不能转义），所以别把它做成全局行为。
   3. 接主进程译文时一律做「与原硬编码 byte-equal」比对 —— 转义残渣、以及往 JSON 里写 `\n` 结果落成字面反斜杠+n，这两类都只有逐字比对抓得到。
   `tests/i18n-main-process.test.js` 锁住两处配置与四个 HTML 出口；`tests/i18n-renderer-runtime.test.js` 用真实 UMD 断言插值不再被转义。注意别用 `/\{[^}]*\}/` 去框 `interpolation` 配置对象 —— `suffix: '}'` 里那个花括号会让它提前截断（本条第一版就假红了）。
-- I7 拦孤儿键（baseline 188，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
+- I7 拦孤儿键（baseline 187，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
+- **I8 与 I4 各有一档「看着像存量、其实是判据误报」的 baseline，已经查清并降到 0，别再往回抬**：
+  * I8 的 `userVisibleRe` 里 `message:` / `label:` / `title:` / `detail:` 是**标签** sink，但
+    `e instanceof Error ? e.message : String(e)` 里的三元冒号长得一模一样，于是 `src/utils/logger.js`
+    的一条 stderr 自诊断被当成用户可见文案，ratchet 一直挂着 1。正解是给这四个候选加 `(?<![.\w])`
+    —— 属性访问不算标签。判据现在叫 `USER_VISIBLE_RE`，**I8 与 I8b 共用这一份**（两处各写一条正则时，
+    改一处忘另一处会让中文与英文散文的覆盖面悄悄分叉）。
+  * I4 的「中文标点」原先把 U+201C/201D/2018/2019 也算进去，而它们是**标准英文排版弯引号**；
+    en.json 里 `The font “{font}” was not found…` 被冤枉成违规，档位挂着 1 没人解释。
+    去掉这四个码位不损失判别力：中文里出现弯引号必然伴随汉字，由「en 不许有汉字」那条负责。
+  * 两条都由 `tests/audit-fixes-2026-10-01.test.js`（I8 用 `runCiBlock` 真跑整块）与
+    `tests/i18n.test.js`（I4 抽出 `cnPunctRe` 实跑正反两组）钉住，且都验过反向：
+    把改动撤掉会立刻红。**降档位必须连「为什么这一档本来就该是 0」一起写进注释**，
+    否则下一个人会以为是存量没清完而把它抬回去。
+
 - I7 自己报的「未静态引用」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
 - 改语言包时 `zh-cn.json` 与 `en.json` 的**逻辑键集**必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
 - **数量文案用 i18next 复数形态**（`key_one` / `key_other`），不要写 `{count} 个文件` 这种硬量词。规则都在 `scripts/i18n-plural.js`（唯一实现，CI 与测试都从它取）：需要的类别由该语言的 `Intl.PluralRules` 决定 —— **zh 只许有 `_other`，en 必须 `_one`+`_other` 两支齐全**（少一支是漏译，多一支是永远取不到的死键，I2 都判失败）。源码照旧写 `t('compare.completedText', { count })`，引擎自己挑后缀。

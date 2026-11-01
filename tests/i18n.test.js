@@ -537,6 +537,47 @@ if (packs['zh-cn'] && packs.en) {
     check('application menu is rebuilt when keybindings change', keybindingGate, `${rebuildTriggers.length} call site(s)`);
 }
 
+// ---- I4 的「中文标点」判据：弯引号不是中文标点 --------------------------------
+// 这条判据原先把 U+201C/201D/2018/2019 也算中文标点，于是 en.json 里那句
+// “字体未找到” 的英文文案被冤枉成违规，ratchet 一直挂着 1 这个没人解释的档位。
+// 降回 0 的前提是去掉这四个码位之后判别力没丢 —— 下面正反两组用例就是钉这个的。
+{
+    const ciSrc4 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
+    const punctDecl = /const cnPunctRe = (\/[^;]+\/);/.exec(ciSrc4);
+    check('I4 的中文标点判据能抽出来（抽不到下面全是空转）', !!punctDecl, punctDecl && punctDecl[1].slice(0, 70));
+    if (punctDecl) {
+        const cnPunctRe = new Function('return ' + punctDecl[1])();
+        const mustFlag = [
+            '端口已被占用，请换一个',     // 全角逗号
+            '字体「宋体」不存在',         // 直角引号
+            '第（1）项',                 // 全角括号
+            '状态：空闲',                 // 全角冒号
+            '一、二、三',                 // 顿号
+            '保存失败。请重试',           // 全角句号
+        ];
+        const mustNotFlag = [
+            'The font \u201c{font}\u201d was not found and has been replaced with \u201c{fallback}\u201d',
+            'It\u2019s already running',
+            'Delete \u201ca.cpp\u201d now?',
+            'Truncated\u2026 see log',   // 省略号本来就豁免
+        ];
+        for (const probe of mustFlag) {
+            check('I4 中文标点仍能判出 ' + JSON.stringify(probe).slice(0, 24), cnPunctRe.test(probe) === true, probe);
+        }
+        for (const probe of mustNotFlag) {
+            check('I4 不误判英文排版引号/省略号：' + JSON.stringify(probe).slice(0, 26), cnPunctRe.test(probe) === false, probe);
+        }
+        // 真 en 包必须一处都不剩 —— baseline 0 不是喊出来的
+        const enHits = Object.entries(packs.en).filter(([, v]) => cnPunctRe.test(String(v)));
+        check('en.json 真包里中文标点为 0（这才允许 baseline 降到 0）',
+            enHits.length === 0, enHits.map(([k]) => k).join(','));
+        // 汉字本身由另一条 enCjk 兜住，所以去掉弯引号不会放过混中文的条目
+        const ideographRe = /[\u4e00-\u9fff]/;
+        check('混了汉字的 en 文案仍被「不许有汉字」那条抓住（判据分工没漏）',
+            ideographRe.test('字体 “宋体” 未找到') === true, '');
+    }
+}
+
 // --- I8b（硬编码英文）不得被悄悄放宽 -----------------------------------------
 // I8b 与 I8 一样是 ratchet：baseline 0，含义是「现在一处都不许有」。它比 I8 更依赖
 // 一串豁免规则（开发者诊断、机器可读载荷、判别字段回看）—— 任何一条被无意删掉或

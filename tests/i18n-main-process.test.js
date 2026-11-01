@@ -115,12 +115,23 @@ const enMain = en.main || {};
 // ---------------------------------------------------------------------------
 
 {
-    const m = ciSource.match(/const userVisibleRe = \/(.*)\/;/);
-    check('I8 userVisibleRe 存在', !!m);
+    // I8 与 I8b 现在共用一条 USER_VISIBLE_RE（两处各写一份时，改一处忘另一处会让
+    // 中文与英文散文的覆盖面悄悄分叉）。所以这里既查判据本身，也查两个块真的都引用了它 ——
+    // 后者才是「共用」这件事的保障，只查前者的话哪天退回本地副本也照样绿。
+    const m = ciSource.match(/const USER_VISIBLE_RE = \/(.*)\/;/);
+    check('共用的用户可见出口判据存在', !!m);
     const re = m ? m[1] : '';
     for (const pat of ['message\\s*:', 'title\\s*:', 'detail\\s*:', 'innerText']) {
-        check(`I8 userVisibleRe 覆盖 ${pat}`, re.includes(pat));
+        check(`USER_VISIBLE_RE 覆盖 ${pat}`, re.includes(pat));
     }
+    const uses = [...ciSource.matchAll(/const userVisibleRe = USER_VISIBLE_RE;/g)].length;
+    check('I8 与 I8b 两处都引用共用判据（不许再出现本地字面量副本）',
+        uses === 2, `引用 ${uses} 处；本地副本残留 ${(ciSource.match(/const userVisibleRe = \//g) || []).length} 处`);
+    // 「标签 sink 必须限定前面不是点」不在这里用正则验（这段源码本身就是正则，再套一层
+    // 只会多一处写错的地方）。它的行为面在 tests/audit-fixes-2026-10-01.test.js：
+    // 那边用 runCiBlock 真跑 I8 整块，一条三元冒号不该计、四条真标签都该计。
+    // 这一档的由来：`? e.message : String(e)` 的三元冒号曾被当成 message: 标签，
+    // 于是 src/utils/logger.js 的一条 stderr 自诊断变成 I8 存量里挂着的 baseline 1。
 }
 
 // ---------------------------------------------------------------------------
