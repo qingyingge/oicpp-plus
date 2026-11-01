@@ -224,6 +224,81 @@ app.whenReady().then(async () => {
         w2.destroy();
     }
 
+    // ---- #9：切一次语言后，JS 按平台覆写的文案还在不在 ------------------------------------
+    // tests/i18n-dom-owner-conflict.test.js 能静态扫出「同一元素同一属性被两套机制写不同键」，
+    // 但「谁后跑」是运行期时序：i18n 先 _notifyListeners() 再同步跑 _applyToDOM()，补偿方要
+    // 延后一拍才盖得回去。vm 里看不见这个顺序，所以这里真起一个窗口、真切一次语言。
+    // smoke-preload 的 getPlatform 固定返回 'linux'，因此本段验的是「非 Windows」那条分支；
+    // Windows 分支写的就是静态默认值，与 _applyToDOM 同值，本无冲突。
+    {
+        const before = consoleErrors.length;
+        const w3 = new BrowserWindow({
+            width: 1000, height: 700, show: false,
+            webPreferences: {
+                preload: path.join(__dirname, 'smoke-preload.js'),
+                contextIsolation: true, nodeIntegration: false, sandbox: false,
+            },
+        });
+        attach(w3, 'settings-compiler-langswitch');
+        await w3.loadFile(path.join(RENDERER, 'settings', 'compiler.html'));
+        await new Promise((r) => setTimeout(r, 3000));
+
+        const READ_I18N_CLASH = `(function(){
+            const sel = document.getElementById('run-mode');
+            const hint = sel && sel.parentElement ? sel.parentElement.querySelector('.hint') : null;
+            const btn = document.getElementById('install-compiler');
+            const popup = sel ? sel.querySelector('option[value="popup"]') : null;
+            return {
+                lang: window.i18n.getCurrentLanguage(),
+                popupDisabled: popup ? popup.disabled : null,
+                hint: hint ? hint.textContent : null,
+                btnText: btn ? btn.textContent : null,
+                btnDisabled: btn ? btn.disabled : null,
+                vGeneric: window.i18n.t('compiler.runModeDesc'),
+                vPlatformHint: window.i18n.t('compiler.integratedOnlyHint'),
+                vBtnDisabled: window.i18n.t('compiler.downloadDisabled'),
+                vBtnDefault: window.i18n.t('compiler.installOnline')
+            };
+        })()`;
+        const zh9 = await w3.webContents.executeJavaScript(READ_I18N_CLASH, true);
+        check('settings/compiler.html: #9 探针取到的是译文而不是裸键',
+            !!zh9.hint && zh9.hint !== 'compiler.runModeDesc' && zh9.vPlatformHint !== 'compiler.integratedOnlyHint',
+            JSON.stringify({ hint: zh9.hint, lang: zh9.lang }));
+        // 两条候选文案必须真的不同，否则下面的判等在「平台条 == 通用条」的语种里是真空通过
+        check('settings/compiler.html: #9 的两条候选文案确实不同（探针不空转）',
+            zh9.vGeneric !== zh9.vPlatformHint && zh9.vBtnDisabled !== zh9.vBtnDefault,
+            JSON.stringify({ generic: zh9.vGeneric, platform: zh9.vPlatformHint }));
+
+        await w3.webContents.executeJavaScript(`window.electronAPI.__broadcastLanguage('en')`, true);
+        await new Promise((r) => setTimeout(r, 1500));
+        const en9 = await w3.webContents.executeJavaScript(READ_I18N_CLASH, true);
+        check('settings/compiler.html: 语言确实切到了 en',
+            en9.lang === 'en' && en9.vPlatformHint !== zh9.vPlatformHint,
+            JSON.stringify({ lang: en9.lang, platform: en9.vPlatformHint }));
+        check('settings/compiler.html: 切语言后「运行方式提示」仍是平台专属那条（#9 主案）',
+            en9.popupDisabled === true
+                ? (en9.hint === en9.vPlatformHint && en9.hint !== en9.vGeneric)
+                : (en9.hint === en9.vGeneric),
+            `hint="${en9.hint}" 平台条="${en9.vPlatformHint}" 通用条="${en9.vGeneric}" popupDisabled=${en9.popupDisabled}`);
+        check('settings/compiler.html: 切语言后安装按钮仍是「已禁用」那条（同一个洞的第二处）',
+            en9.popupDisabled === true
+                ? (en9.btnText === en9.vBtnDisabled && en9.btnText !== en9.vBtnDefault && en9.btnDisabled === true)
+                : true,
+            `text="${en9.btnText}" 禁用条="${en9.vBtnDisabled}" 默认条="${en9.vBtnDefault}" disabled=${en9.btnDisabled}`);
+
+        await w3.webContents.executeJavaScript(`window.electronAPI.__broadcastLanguage('zh-cn')`, true);
+        await new Promise((r) => setTimeout(r, 1500));
+        const back9 = await w3.webContents.executeJavaScript(READ_I18N_CLASH, true);
+        check('settings/compiler.html: 切回 zh-cn 两条仍成立（双向都验，单向通过说明不了补偿在跑）',
+            back9.hint === back9.vPlatformHint && back9.hint !== back9.vGeneric
+                && back9.btnText === back9.vBtnDisabled,
+            `hint="${back9.hint}" btn="${back9.btnText}"`);
+        const newErrs9 = consoleErrors.slice(before);
+        check('settings/compiler.html: #9 语言切换过程无渲染层 console 错误',
+            newErrs9.length === 0, newErrs9.slice(0, 2).join(' | '));
+        w3.destroy();
+    }
+
     if (pageErrors.length) {
         console.log('--- 渲染层致命错误 ---');
         for (const e of pageErrors) console.log('  ' + e);

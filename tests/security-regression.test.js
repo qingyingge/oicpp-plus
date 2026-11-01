@@ -980,6 +980,7 @@ const deferredRows = (async () => {
         const setupSrc = classMethod(compilerSettingsSource, 'setupEventListeners');
         push('方法体抽取成功: CompilerSettings.setupEventListeners', setupSrc.length > 0);
         let listeners = [];
+        let docListeners = [];
         let navCalls = 0;
         const els = {};
         const el = (id) => (els[id] || (els[id] = {
@@ -992,7 +993,14 @@ const deferredRows = (async () => {
             getCurrentPlatform: () => Promise.resolve('windows')
         }, { get: (target, key) => (key in target ? target[key] : spy) });
         const ctx = vm.createContext({
-            document: { getElementById: el },
+            // #9 之后 setupEventListeners 还会在 document 上挂一个 i18n-language-changed，
+            // 桩里没有 addEventListener 就直接 TypeError，把这条幂等断言整段吞掉。
+            // 补上之后顺手把它一起纳入「第二次调用零新增监听」的范围 —— 全局监听漏摘
+            // 是真正的泄漏，只数元素级监听等于没查它。
+            document: {
+                getElementById: el,
+                addEventListener: (t) => { docListeners.push(t); }
+            },
             window: { i18n: { t: (k) => k }, electronAPI: {} },
             logInfo: () => { }, logError: () => { }, logWarn: () => { },
             setTimeout, clearTimeout, console,
@@ -1003,13 +1011,19 @@ const deferredRows = (async () => {
         let firstErr = null;
         try { setup.call(self); await Promise.resolve(); await Promise.resolve(); } catch (e) { firstErr = e; }
         const firstCount = listeners.length;
+        const firstDocCount = docListeners.length;
+        const firstDoc = docListeners.slice();
         listeners = [];
+        docListeners = [];
         let secondErr = null;
         try { setup.call(self); } catch (e) { secondErr = e; }
-        push('R14 重复绑定被幂等守卫拦住：第二次调用零新增监听、零导航重建',
+        push('R14 重复绑定被幂等守卫拦住：第二次调用零新增监听（元素级与 document 级都算）、零导航重建',
             firstErr === null && firstCount >= 3 && secondErr === null &&
-            listeners.length === 0 && navCalls === 1,
-            JSON.stringify({ firstCount, second: listeners, navCalls, firstErr: String(firstErr && firstErr.message), secondErr: String(secondErr && secondErr.message) }));
+            listeners.length === 0 && docListeners.length === 0 && navCalls === 1,
+            JSON.stringify({ firstCount, firstDocCount, second: listeners, secondDoc: docListeners, navCalls, firstErr: String(firstErr && firstErr.message), secondErr: String(secondErr && secondErr.message) }));
+        push('R14 语言切换重放确实挂在 document 上（#9 的补偿链路，不是只写在注释里）',
+            firstErr === null && firstDocCount === 1 && firstDoc.includes('i18n-language-changed'),
+            JSON.stringify({ firstDocCount, firstDoc }));
     }
     {
         // 透明度预览：原来只 includes 一句 sendSettingsPreview 的字面量，

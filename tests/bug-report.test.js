@@ -353,9 +353,13 @@ if (report) {
         const methods = {
             testTestlib: classMethod(compilerSource, 'testTestlib'),
             setTestlibPath: classMethod(compilerSource, 'setTestlibPath'),
-            updateUI: classMethod(compilerSource, 'updateUI')
+            updateUI: classMethod(compilerSource, 'updateUI'),
+            // #9 之后 updateUI 不再内联写运行方式提示，改为委派这个幂等方法。
+            // 桩里必须也把它抽出来挂到 self 上，否则 updateUI 跑的只是残缺的一份，
+            // 「五个元素都在时各归各位」那条就退化成只验四个。
+            refreshRunModeHint: classMethod(compilerSource, 'refreshRunModeHint')
         };
-        check('L28 三个方法体整段抽取成功（真跑的必须是源码里那三段）',
+        check('L28 四个方法体整段抽取成功（真跑的必须是源码里那四段）',
             Object.values(methods).every((m) => m.length > 150),
             JSON.stringify(Object.fromEntries(Object.entries(methods).map(([k, m]) => [k, m.length]))));
 
@@ -414,7 +418,8 @@ if (report) {
                         compilerPath: '/usr/bin/g++', pythonInterpreterPath: '/usr/bin/python3',
                         compilerArgs: '-O2', runMode: 'popup', testlibPath: '/from-settings.txt'
                     },
-                    isIntegratedOnlyPlatform: false
+                    isIntegratedOnlyPlatform: false,
+                    refreshRunModeHint: ctx.__fns.refreshRunModeHint
                 };
                 await ctx.__fns[name].apply(self, args);
                 return {

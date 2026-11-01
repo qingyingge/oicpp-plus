@@ -20,6 +20,8 @@ class CompilerSettings {
     settings;
     isMacPlatform;
     isIntegratedOnlyPlatform;
+    // null = 平台还没探测出来；false = 非 Windows，「在线安装」这条路不存在
+    onlineInstallSupported;
     _compilerListAbort;
     _testlibListAbort;
     // loadSettings 成功后才为 true；false 表示加载失败，保存被阻断
@@ -34,6 +36,7 @@ class CompilerSettings {
         };
         this.isMacPlatform = false;
         this.isIntegratedOnlyPlatform = false;
+        this.onlineInstallSupported = null;
         this._compilerListAbort = null;
         this._testlibListAbort = null;
         this._settingsLoaded = true;
@@ -160,10 +163,9 @@ class CompilerSettings {
         const installBtn = document.getElementById('install-compiler');
         if (installBtn) {
             this.getCurrentPlatform().then(p => {
+                this.onlineInstallSupported = p === 'windows';
                 if (p !== 'windows') {
-                    installBtn.disabled = true;
-                    installBtn.title = window.i18n.t('compiler.nonWindowsHint');
-                    installBtn.textContent = window.i18n.t('compiler.downloadDisabled');
+                    this.refreshInstallButton();
                 }
                 else {
                     logInfo('[编译器设置] 安装编译器按钮事件已绑定');
@@ -288,6 +290,17 @@ class CompilerSettings {
                     : 'popup';
             });
         }
+        // #9：两处文案由 JS 按平台覆写，而宿主元素同时挂着 data-i18n（运行方式提示 =
+        // compiler.runModeDesc，安装按钮 = compiler.installOnline）。i18n 的 _applyToDOM()
+        // 在语言切换时把所有 [data-i18n] 无条件重刷成静态键值，会把平台专属那两条冲回通用
+        // 文案，直到下次重开窗口。照 titlebar.ts / main.ts setupLanguageChangeRefresh() 的
+        // 先例：延后一拍重放同一段取文案逻辑（幂等，只读设置与平台标记）。
+        document.addEventListener('i18n-language-changed', () => {
+            setTimeout(() => {
+                this.refreshRunModeHint();
+                this.refreshInstallButton();
+            }, 0);
+        });
         // #close-install-dialog 的绑定已在上方完成：
         // 原先同一函数内对同一按钮绑了两次（当前幂等，后续加动画/埋点即双触发）
     }
@@ -335,7 +348,6 @@ class CompilerSettings {
         const compilerPathInput = document.getElementById('compiler-path');
         const pythonInterpreterPathInput = document.getElementById('python-interpreter-path');
         const compilerOptionsInput = document.getElementById('compiler-options');
-        const runModeSelect = document.getElementById('run-mode');
         const testlibPathInput = document.getElementById('testlib-path');
         if (compilerPathInput)
             compilerPathInput.value = this.settings.compilerPath || '';
@@ -343,28 +355,57 @@ class CompilerSettings {
             pythonInterpreterPathInput.value = this.settings.pythonInterpreterPath || '';
         if (compilerOptionsInput)
             compilerOptionsInput.value = this.settings.compilerArgs || '-std=c++14 -O2 -static';
-        if (runModeSelect) {
-            const popupOption = runModeSelect.querySelector('option[value="popup"]');
-            const runModeHint = runModeSelect.parentElement ? runModeSelect.parentElement.querySelector('.hint') : null;
-            if (this.isIntegratedOnlyPlatform) {
-                if (popupOption)
-                    popupOption.disabled = true;
-                runModeSelect.value = 'integrated-terminal';
-                if (runModeHint) {
-                    runModeHint.textContent = window.i18n.t('compiler.integratedOnlyHint');
-                }
-            }
-            else {
-                if (popupOption)
-                    popupOption.disabled = false;
-                runModeSelect.value = this.settings.runMode || 'popup';
-                if (runModeHint) {
-                    runModeHint.textContent = window.i18n.t('compiler.runModeDesc');
-                }
-            }
-        }
+        this.refreshRunModeHint();
         if (testlibPathInput)
             testlibPathInput.value = this.settings.testlibPath || '';
+    }
+    /**
+     * 非 Windows 上没有「在线下载安装包」这条路，按钮要禁用并换成说明文案。
+     *
+     * 和 refreshRunModeHint() 同一个病（#9）：#install-compiler 带着
+     * data-i18n="compiler.installOnline"，而 _applyToDOM() 在语言切换时把所有
+     * [data-i18n] 无条件重刷成静态键值，会把这条平台专属文案冲回「在线安装」。
+     * 所以取文案的动作抽成幂等方法，由平台探测结论驱动，语言切换后重放一次。
+     */
+    refreshInstallButton() {
+        if (this.onlineInstallSupported !== false)
+            return;
+        const installBtn = document.getElementById('install-compiler');
+        if (!installBtn)
+            return;
+        installBtn.disabled = true;
+        installBtn.title = window.i18n.t('compiler.nonWindowsHint');
+        installBtn.textContent = window.i18n.t('compiler.downloadDisabled');
+    }
+    /**
+     * 运行方式下面的提示与下拉可用项，按平台取文案。
+     *
+     * 抽出来是因为它要从两个地方调用：updateUI()，以及语言切换后把被 _applyToDOM()
+     * 冲回的平台专属文案再盖一次（见 setupEventListeners 里的 i18n-language-changed）。
+     * 必须幂等且只读 settings / 平台标记，不许带副作用 —— 语言切换会重跑。
+     */
+    refreshRunModeHint() {
+        const runModeSelect = document.getElementById('run-mode');
+        if (!runModeSelect)
+            return;
+        const popupOption = runModeSelect.querySelector('option[value="popup"]');
+        const runModeHint = runModeSelect.parentElement ? runModeSelect.parentElement.querySelector('.hint') : null;
+        if (this.isIntegratedOnlyPlatform) {
+            if (popupOption)
+                popupOption.disabled = true;
+            runModeSelect.value = 'integrated-terminal';
+            if (runModeHint) {
+                runModeHint.textContent = window.i18n.t('compiler.integratedOnlyHint');
+            }
+        }
+        else {
+            if (popupOption)
+                popupOption.disabled = false;
+            runModeSelect.value = this.settings.runMode || 'popup';
+            if (runModeHint) {
+                runModeHint.textContent = window.i18n.t('compiler.runModeDesc');
+            }
+        }
     }
     async browsePythonInterpreter() {
         try {
