@@ -142,7 +142,8 @@
     "debugReadyNoBreakpoints": "调试器已启动，程序已准备就绪，点击继续执行开始运行",
     "errorInfoLabel": "错误信息:",
     "installerLocationLabel": "安装程序位置:",
-    "manualInstallHint": "您可以手动运行安装程序来完成更新。"
+    "manualInstallHint": "您可以手动运行安装程序来完成更新。",
+    "pressEnterToContinue": "程序执行完成，按回车键继续..."
   },
   "meta": {
     "name": "中文（简体）",

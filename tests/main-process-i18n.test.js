@@ -164,6 +164,29 @@ function auditWindowText(source) {
 }
 
 /**
+ * 第 6 个出口：发去外部终端的 shell 命令字符串。
+ * 用户在外部终端窗口里看到的那句「程序执行完成，按回车键继续...」就是它 ——
+ * 按行判定的 I8 看不见（中文在数组元素里，那一行没有 showMessage/title: 这类 sink 关键字），
+ * 前面五个出口也不覆盖（不是对话框、不是进度条、不是下载窗 HTML）。
+ */
+function auditShellText(source) {
+    const lineAt = (idx) => source.slice(0, idx).split('\n').length;
+    const issues = [];
+    const holes = [];
+    for (const m of source.matchAll(/const bashCmd = \[([\s\S]*?)\]\.join/g)) {
+        const body = m[1];
+        // ${...} 里的是代码算出来的（t() 就在其中），剥掉后剩下的字面文本才是直接进 shell 的中文
+        const stripped = body.replace(/\$\{[^}]*\}/g, '').replace(/\/\/[^\n]*/g, '');
+        for (const lit of stripped.matchAll(/'([^']*\s*)'|`([^`]*)`/g)) {
+            const text = (lit[1] ?? lit[2] ?? '');
+            if (CJK_RE.test(text)) issues.push({ kind: 'shell', line: lineAt(m.index), text: text.trim().slice(0, 44) });
+        }
+        for (const h of body.matchAll(/t\(\s*['"]([^'"]+)['"]/g)) holes.push({ key: h[1], line: lineAt(m.index) });
+    }
+    return { issues, holes };
+}
+
+/**
  * 取 `error:` 后面的**整个值区间**，而不是只看紧跟的第一个字面量。
  * 三元写法 `error: badChars ? 'A' : 'B'` 有两个候选值，跨行时更多；若只认紧跟的
  * 那个字面量，这一类会被静默漏掉 —— ratchet 数字会比真实存量小，等于假绿。
@@ -214,7 +237,7 @@ function auditErrorText(source) {
 //   · const platformMsg = ... ? '中文A' : '中文B'; return { error: platformMsg };
 //     —— 检测器至今看不见「先赋值给变量」这种形状，所以 0 不代表主进程界面文案已归零，
 //     它只覆盖 error:/errors.push 直接跟字面量的写法。别把这个数当分母。
-// 五个零容忍出口：buttons / 过滤器 name / updateProgress / 下载窗 HTML / 本条。
+// 六个零容忍出口：buttons / 过滤器 name / updateProgress / 下载窗 HTML / IPC error 文本 / shell 命令。
 const ERROR_TEXT_BASELINE = 0;
 
 for (const [label, src] of [['.ts 源', tsSource], ['.js 产物', jsSource]]) {
@@ -230,11 +253,14 @@ for (const [label, src] of [['.ts 源', tsSource], ['.js 产物', jsSource]]) {
     check(`${label}: 下载窗 HTML 模板没有 ${'} 之外的硬编码中文'}`,
         win.issues.filter((x) => x.kind === 'html').length === 0,
         win.issues.filter((x) => x.kind === 'html').map((x) => `L${x.line}:${x.text}`).join(' | '));
+    const sh = auditShellText(src);
+    check(`${label}: 发去外部终端的 shell 命令里没有硬编码中文`,
+        sh.issues.length === 0, sh.issues.map((x) => `L${x.line}:${x.text}`).join(' | '));
     const errs = auditErrorText(src);
     check(`${label}: IPC error 文本存量不超过 ratchet（当前 ${errs.length}，上限 ${ERROR_TEXT_BASELINE}）`,
         errs.length <= ERROR_TEXT_BASELINE,
         errs.length > ERROR_TEXT_BASELINE ? `+${errs.length - ERROR_TEXT_BASELINE}: ` + errs.slice(0, 6).map((x) => `L${x.line}:${x.text}`).join(' | ') : `${errs.length}/${ERROR_TEXT_BASELINE}`);
-    const allKeys = keys.concat(win.holes.map((h) => ({ key: h.key, line: h.line })));
+    const allKeys = keys.concat(win.holes.map((h) => ({ key: h.key, line: h.line })), sh.holes.map((h) => ({ key: h.key, line: h.line })));
     const missing = allKeys.filter((k) => zhFlat[k.key] === undefined || enFlat[k.key] === undefined);
     check(`${label}: 用到的键在两包都存在（缺键会让原生对话框/窗口直接显示裸键名）`,
         missing.length === 0, missing.map((k) => `L${k.line}:${k.key}`).join(' | '));
@@ -290,6 +316,33 @@ check('HTML 检测器能抓到模板里的裸中文',
 check('HTML 检测器把 ${t(...)} 插孔记为键引用',
     winProbed.holes.length === 1 && winProbed.holes[0].key === 'main.downloadWindowPreparing',
     JSON.stringify(winProbed.holes));
+
+// --- 自证：shell 命令检测器。这条是本轮新加的第六个出口，没自证就等于凭空多一条假绿 ---
+const shellProbe = [
+    'const bashCmd = [',
+    "    `cd ${quoteForBash(cwd)}`,",
+    "    `printf '\\n程序执行完成，按回车键继续...\\n'`,",       // 违规：直接进终端的中文
+    "    'read -r',",
+    "].join('; ');",
+].join('\n');
+const shellProbed = auditShellText(shellProbe);
+check('shell 检测器能抓到写死在命令里的中文（就是接线前那个形状）',
+    shellProbed.issues.filter((x) => x.kind === 'shell').length === 1
+        && /程序执行完成/.test(shellProbed.issues[0].text),
+    JSON.stringify(shellProbed.issues));
+const shellOk = [
+    'const bashCmd = [',
+    "    `cd ${quoteForBash(cwd)}`,",
+    "    `printf ${quoteForBash('\\n' + t('main.pressEnterToContinue') + '\\n')}`,",  // 合法：t() 在插孔里
+    "    'read -r',",
+    "].join('; ');",
+].join('\n');
+const shellOkProbed = auditShellText(shellOk);
+check('shell 检测器不把 t() 接线后的写法当违规（否则真阳性会被当噪声忽略）',
+    shellOkProbed.issues.length === 0, JSON.stringify(shellOkProbed.issues));
+check('shell 检测器把接线的键记为引用（键不存在时终端会显示裸键名）',
+    shellOkProbed.holes.length === 1 && shellOkProbed.holes[0].key === 'main.pressEnterToContinue',
+    JSON.stringify(shellOkProbed.holes));
 
 const errProbe = [
     "return { success: false, error: '压缩包不存在' };",

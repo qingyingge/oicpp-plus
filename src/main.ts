@@ -10434,7 +10434,10 @@ async function runExecutable(options: Record<string, unknown>) {
             const bashCmd = [
                 `cd ${quoteForBash(cwd)}`,
                 `${quoteForBash(absExe)}`,
-                `printf '\\n程序执行完成，按回车键继续...\\n'`,
+                // 这句是外部终端里给用户看的，所以走 t()。整段再过一遍 quoteForBash：
+                // 原先单引号是硬写在模板里的，译文里一旦出现撇号（英文缩写、法语），
+                // 整条 bash 命令就会被截断 —— 接线顺手把这个引号隐患一起去掉。
+                `printf ${quoteForBash('\\n' + t('main.pressEnterToContinue') + '\\n')}`,
                 'read -r'
             ].join('; ');
             if (picked === 'gnome-terminal') {
