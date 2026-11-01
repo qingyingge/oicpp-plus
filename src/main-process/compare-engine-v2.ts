@@ -29,6 +29,13 @@ interface CompareConfig {
 interface WorkerMessageProgress {
     type: 'progress';
     testIndex: number;
+    // worker 每条 progress 都带上这三段耗时与生成数据字节数（compare-worker-v6.ts 的
+    // fastspawn 与 child_process 两条路径都是），引擎不许再把它们吞掉：
+    // 渲染层的 TPS / 最慢组 / 数据大小统计全靠这几个数。
+    genMs?: number;
+    stdMs?: number;
+    testMs?: number;
+    genLen?: number;
 }
 
 interface WorkerMessageError {
@@ -190,7 +197,10 @@ export class CompareEngineV2 extends EventEmitter {
                         if (!isCurrentRun()) { settle(); return; }
                         if (msg.type === 'progress') {
                             this._completed++;
-                            this.emit('progress', { current: this._completed, total: this._total, testIndex: msg.testIndex });
+                            this.emit('progress', {
+                                current: this._completed, total: this._total, testIndex: msg.testIndex,
+                                genMs: msg.genMs, stdMs: msg.stdMs, testMs: msg.testMs, genLen: msg.genLen
+                            });
                         } else if (msg.type === 'error') {
                             this._errors++;
                             this.emit('error', {

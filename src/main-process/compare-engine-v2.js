@@ -169,7 +169,10 @@ class CompareEngineV2 extends events_1.EventEmitter {
                         }
                         if (msg.type === 'progress') {
                             this._completed++;
-                            this.emit('progress', { current: this._completed, total: this._total, testIndex: msg.testIndex });
+                            this.emit('progress', {
+                                current: this._completed, total: this._total, testIndex: msg.testIndex,
+                                genMs: msg.genMs, stdMs: msg.stdMs, testMs: msg.testMs, genLen: msg.genLen
+                            });
                         }
                         else if (msg.type === 'error') {
                             this._errors++;
