@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  indexPack, pluralIssues, pluralTokenIssues, pluralConsistencyIssues, resolvesKey, mentionedLogical,
+  indexPack, pluralIssues, pluralTokenIssues, pluralConsistencyIssues, pluralCountIssues, resolvesKey, mentionedLogical,
 } = require('./i18n-plural');
 const os = require('os');
 const { execSync } = require('child_process');
@@ -1143,7 +1143,12 @@ const I18N_HARDCODED_EN_BASELINE = 0;
 // 中文，而 dialog.nameRequired / invalidFileNameChars / invalidFileNameCharsUnix /
 // reservedFileName / fileNameEndDot 五个键早就躺在包里零引用。同批接线还吃掉了
 // main.exitCode（退出码: {status}）这个原本站着的孤儿。193 → 188。
-const I18N_ORPHAN_KEY_BASELINE = 188;
+// 2026-11-01（#7 复数批）：退役 compare.compareComplete（188 → 187）。判定不是「grep 不到
+// t('字面量')」—— 全仓 .ts/.js/.html/tests/scripts/docs 都搜过，连动态形状也查了：本仓唯一
+// 动态拼键的地方是 codeComparer.getEngineErrorMessage 的 {code: 'compare.xxx'} 码表，值全是
+// 字面量，折不出这个键。真正上屏的那句已经是复数化的 compare.completedText（本批之前刚验过
+// n=1/n=5 的实际译文），这个键是它复数化之前留下的前身。留着只是每年多一条要绕的孤儿。
+const I18N_ORPHAN_KEY_BASELINE = 187;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {
@@ -1394,6 +1399,72 @@ if (localeCodes.length >= 1) {
   } else {
     ok(`${orphans.length} orphaned i18n keys remain (baseline ${I18N_ORPHAN_KEY_BASELINE}${orphans.length < I18N_ORPHAN_KEY_BASELINE ? `, ${I18N_ORPHAN_KEY_BASELINE - orphans.length} cleared — lower the baseline` : ''})`);
     if (verbose) for (const k of orphans) info(`  ${k}`);
+  }
+}
+
+// I9: 复数键的调用侧契约 —— 包里只剩 _one/_other 之后，调用点不传 count 就是裸键上屏
+console.log(`\n${Y}[I9] Plural call sites pass count${R}`);
+{
+  const i9Indexes = {};
+  for (const [code, flat] of Object.entries(locales)) i9Indexes[code] = indexPack(flat);
+  const pluralizedAny = new Set();
+  for (const index of Object.values(i9Indexes)) {
+    for (const [base, forms] of index.logical) {
+      if ([...forms].some((f) => f !== '')) pluralizedAny.add(base);
+    }
+  }
+  if (pluralizedAny.size === 0) {
+    warn('没有任何复数形态键 —— I9 无从检查');
+  } else {
+    // 从 t('k' 之后扫到与本层调用括号配对的位置，那段就是实参。
+    // 判 count 要按「顶层实参里的 count:」而不是整段里有没有 count 这个字 ——
+    // 嵌套对象里也可能出现 count，但那不是传给这一键的，宁可放过也别误报，
+    // 于是这里只在整段找不到 count 时才判失败（存在即放过）。
+    const argSpan = (src, from) => {
+      let depth = 1;
+      for (let i = from; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === '(' || ch === '{' || ch === '[') depth++;
+        else if (ch === ')' || ch === '}' || ch === ']') {
+          depth--;
+          if (depth === 0) return src.slice(from, i);
+        } else if (ch === ';' && depth === 1) break;   // 明显越界，别一路扫到文件尾
+      }
+      return src.slice(from, from + 4000);
+    };
+    const refs = [];
+    const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*|\.\s*)t\s*(?:\?\s*\.\s*)?\(\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+    const bareRe = /(?<![.\w])t\s*\(\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+    const attrRe = /data-i18n(?:-[a-z-]+)?\s*=\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+    for (const f of [...jsFiles, ...htmlFiles].filter((x) => !x.startsWith(langDir))) {
+      const content = readFile(f);
+      if (!content) continue;
+      const rel = path.relative(root, f);
+      const lineAt = (i) => content.slice(0, i).split('\n').length;
+      for (const re of [callRe, bareRe]) {
+        for (const m of content.matchAll(re)) {
+          if (!pluralizedAny.has(m.groups.key)) continue;
+          const after = (m.index + m[0].length);
+          refs.push({ key: m.groups.key, kind: 't', file: rel, line: lineAt(m.index),
+            hasCount: /(^|[,{\s])count\s*:/.test(argSpan(content, after)) || /\.\.\./.test(argSpan(content, after)) });
+        }
+      }
+      for (const m of content.matchAll(attrRe)) {
+        if (!pluralizedAny.has(m.groups.key)) continue;
+        // 元素上的 data-i18n-args 才是 DOM 路径的 params 来源
+        const tagStart = content.lastIndexOf('<', m.index);
+        const tagEnd = content.indexOf('>', m.index);
+        const tag = tagStart >= 0 && tagEnd > tagStart ? content.slice(tagStart, tagEnd + 1) : '';
+        refs.push({ key: m.groups.key, kind: 'attr', file: rel, line: lineAt(m.index),
+          hasCount: /data-i18n-args\s*=\s*['"][^'"]*\bcount\b/.test(tag) });
+      }
+    }
+    const i9Issues = pluralCountIssues(i9Indexes, refs);
+    if (i9Issues.length) {
+      for (const msg of i9Issues) fail(`I9: ${msg}`);
+    } else {
+      ok(`${pluralizedAny.size} pluralized keys, all ${refs.length} static reference(s) pass count`);
+    }
   }
 }
 

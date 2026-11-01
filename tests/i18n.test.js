@@ -728,5 +728,31 @@ if (packs['zh-cn'] && packs.en) {
     check('真语言包没有半转换的键', realConsist.length === 0, realConsist.join(' | '));
 }
 
+// ---- I9 的判定函数：复数键 + 调用点不传 count = 裸键上屏 ------------------
+// 扫文件的部分在 ci-check.js（那边已实测能咬：把 t('tabs.closeAllConfirm', {count}) 改成
+// {total} 就报出 file:line）。这里守的是判定函数本身与它的两种出口文案。
+{
+    const idx = (o) => plural.indexPack(o);
+    const indexes = {
+        'zh-cn': idx({ x_other: '有 {count} 个', plain: '普通文案' }),
+        en: idx({ x_one: '{count} item', x_other: '{count} items', plain: 'plain' }),
+    };
+    const refs = (list) => plural.pluralCountIssues(indexes, list);
+    check('复数键传了 count → 不报', refs([
+        { key: 'x', kind: 't', hasCount: true, file: 'a.ts', line: 1 },
+    ]).length === 0, JSON.stringify(refs([{ key: 'x', kind: 't', hasCount: true, file: 'a.ts', line: 1 }])));
+    const missed = refs([{ key: 'x', kind: 't', hasCount: false, file: 'a.ts', line: 7 }]);
+    check('复数键没传 count → 报，且带上 file:line 与键名（否则没法定位）',
+        missed.length === 1 && missed[0].includes('a.ts:7') && missed[0].includes('x'),
+        JSON.stringify(missed));
+    check('非复数键不归这条管（对照组）', refs([
+        { key: 'plain', kind: 't', hasCount: false, file: 'a.ts', line: 2 },
+    ]).length === 0, JSON.stringify(refs([{ key: 'plain', kind: 't', hasCount: false, file: 'a.ts', line: 2 }])));
+    const attrIssue = refs([{ key: 'x', kind: 'attr', hasCount: false, file: 'p.html', line: 3 }]);
+    check('data-i18n 挂复数键时给的是 DOM 路径的修法（要 data-i18n-args，不是补 count:）',
+        attrIssue.length === 1 && attrIssue[0].includes('data-i18n-args') && !attrIssue[0].includes('补 count:'),
+        JSON.stringify(attrIssue));
+}
+
 console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

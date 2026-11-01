@@ -117,8 +117,13 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 - I7 自己报的「未静态引用」大半是误报：它只认 `t('key')`，认不出 `t(c ? 'a' : 'b')`、`_t(key, fb)`、`t(el.dataset.i18n)`。判断键是否真的没人用，要用宽松口径重算。
 - 改语言包时 `zh-cn.json` 与 `en.json` 的**逻辑键集**必须完全一致（I1/I2）、`{token}` 占位符一一对应（I3）；`en.json` 不允许残留中文（I4）或中文标点。
 - **数量文案用 i18next 复数形态**（`key_one` / `key_other`），不要写 `{count} 个文件` 这种硬量词。规则都在 `scripts/i18n-plural.js`（唯一实现，CI 与测试都从它取）：需要的类别由该语言的 `Intl.PluralRules` 决定 —— **zh 只许有 `_other`，en 必须 `_one`+`_other` 两支齐全**（少一支是漏译，多一支是永远取不到的死键，I2 都判失败）。源码照旧写 `t('compare.completedText', { count })`，引擎自己挑后缀。
+  - **I9：复数键的调用点必须传 `count`。** i18next 只按 `options.count` 选后缀，`{total}` / `{bytes}` / `{uploaded}` 这些名字它不认。所以把一个 `{uploaded} files` 的键复数化而不让调用点补 `count: uploaded`，**不是「没改善」，是裸键上屏**（包里已经没基名了）。这条比复数化本身更容易踩中，因为改语言包时看得见、改调用点看不见。
   - I2 因此比的是逻辑键集，I3 只能逐字面键配对 —— **en 的 `_one` 在 I3 里没有对照物**，兜住它的是「复数各支的 `{token}` 只能少不能多」：单数句丢掉 `{count}`（`"Delete this item?"`）合法，引入默认语言 `_other` 没有的新 token 会让屏幕上原样印出 `{name}`，I2 直接判失败。
+  - **不许只转换一半**：一份包拆了 `_one`/`_other`、另一份还留裸基名时，`pluralIssues`（按「这里的键名带后缀」判复数形态）和 `pluralTokenIssues`（参照物正是默认语言的 `_other`）会**同时**跳过这一键，而 i18next 靠回落裸键继续正常渲染，界面毫无症状 —— 守卫在但不干活。`pluralConsistencyIssues` 钉住这一形状，转换必须两边同步。
   - 测试里的假 i18n **必须**用 `plural.lookupFlat(pack, code, key, params)` 取值，不许再写 `pack[key]`。那种桩一旦和真引擎的复数解析漂移，就静默退化成「返回裸键名」，而它守的恰好是不让裸键上屏 —— 于是所有下游断言变成假绿。
+  - **两种情况不要复数化**：①**标签式文案**（`剩余文件数量: {count}` / `Remaining files: {count}`）—— 那个名词属于标签而非被数的宾语，n=1 时换成 `1 file remaining` 是整句变形，既不自然也不再镜像 zh；②**没有名词可变的**（`attempt {count}`、`({count} ahead)`），1 和 5 长得一样，加 `_one` 只是死键。`cloud.remainingFiles` 在 7b 被错误地复数化过一次，已撤销。
+  - **一句话里有两个可数名词时，先消掉第二个**。i18next 只有一根复数轴（只按 `count` 选支），`({count} items, {remaining} slots left)` 这种无论怎么加 `_one` 都会在 `remaining=1` 时写成 `1 slots left`。正解是把第二处改成无需配合的 `{remaining} left`，而不是硬造 `_one`。
+  - **数字不是以 `count` 传进来的键根本没法复数化**：`{n}` / `{total}` / `{bytes}` / `{uploaded}` / `{errors}` 都要先让调用点补上 `count: <同一个表达式>`，否则界面直接显示裸键名（比不复数化更糟）。en 里剩下的 `file(s)` / `error(s)` 这类规避写法就是这么来的。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
 
 ### 迁移 .js → .ts（TypeScript 路线甲）

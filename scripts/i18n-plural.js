@@ -170,6 +170,37 @@ function pluralConsistencyIssues(indexes) {
 }
 
 /**
+ * 复数键的调用侧契约：既然包里只剩 _one/_other，调用点就**必须**传 count，
+ * 否则 i18next 选不出后缀、也回落不到裸键 —— 界面直接显示键名本身。
+ *
+ * 这条为什么必须在 CI 里：把 `t('x', {total})` 这类键复数化是**无声**的失败，
+ * 而且比不改更糟（不改顶多是 "1 files"，改了是屏幕上出现 "tester.totalGroups"）。
+ * 转换一批键的时候，人眼会盯语言包，不会回头逐个核对调用点 —— 正是最需要机器兜住的地方。
+ *
+ * references 由调用方扫描源码喂进来（扫文件不归本模块管）：
+ *   { key, kind: 't' | 'attr', hasCount, file, line }
+ * hasCount 未知（参数是变量或带展开）时调用方应传 true —— 宁可漏报也不误报，
+ * 因为误报会让人开始忽略这条检查。
+ */
+function pluralCountIssues(indexes, references) {
+    const pluralized = new Set();
+    for (const index of Object.values(indexes)) {
+        if (!index || !index.logical) continue;
+        for (const [base, forms] of index.logical) {
+            if ([...forms].some((f) => f !== '')) pluralized.add(base);
+        }
+    }
+    const issues = [];
+    for (const ref of references) {
+        if (!pluralized.has(ref.key)) continue;
+        if (ref.hasCount) continue;
+        issues.push(`${ref.file}:${ref.line} 引用复数键 ${ref.key} 却没传 count —— `
+            + `i18next 只按 options.count 选后缀，裸键已从包里移除，屏幕上会是键名本身（${ref.kind === 'attr' ? 'data-i18n 需要在同一元素上给 data-i18n-args' : '补 count: <同一个表达式>'}）`);
+    }
+    return issues;
+}
+
+/**
  * 复刻 i18next 的复数取值：给出语言码、源码里写的键与 count，返回实际应命中的扁平键名。
  * 没有 count 参数时不做后缀查找（和 i18next 一致，此时它按普通键取）。
  */
@@ -215,6 +246,7 @@ module.exports = {
     pluralIssues,
     pluralTokenIssues,
     pluralConsistencyIssues,
+    pluralCountIssues,
     resolvesKey,
     pluralKey,
     lookupFlat,
