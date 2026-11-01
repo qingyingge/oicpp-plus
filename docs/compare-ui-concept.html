@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>对拍前端概念稿 · Code Comparer UI Concept</title>
+<style>
+/* ============================================================
+   这是「对拍」侧栏面板的概念稿：不依赖 Electron、不依赖构建，
+   双击用浏览器打开即可调。类名 / id / 层级与 src/renderer/index.html
+   的 #compare-panel 和 src/renderer/css/compare.css 保持一致，
+   所以在这里改出来的样式可以原样搬回实装。
+   主题变量抄自 src/renderer/css/main.css（dark / light / dracula 三套）。
+   ============================================================ */
+
+:root, body[data-theme="dark"] {
+    --bg-color: #1e1e1e;
+    --text-color: #cccccc;
+    --text-secondary: #9a9a9a;
+    --text-muted: #6a6a6a;
+    --primary-color: #007acc;
+    --primary-color-hover: #4a9eff;
+    --card-bg: #2d2d30;
+    --border-color: #3c3c3c;
+    --hover-bg: #2a2d2e;
+    --primary-bg: #252526;
+    --sidebar-bg: #252526;
+    --input-bg: #3c3c3c;
+    --input-border: #464647;
+    --secondary-bg: #444444;
+    --secondary-bg-hover: #555555;
+    --secondary-fg: #ffffff;
+    --success-bg: #1e4620;
+    --success-fg: #a3d9a5;
+    --error-bg: #4a1e1e;
+    --error-fg: #f5a3a3;
+    --warning-bg: #fff3cd;
+    --warning-fg: #856404;
+    --warning-border: #ffeaa7;
+}
+body[data-theme="light"] {
+    --bg-color: #ffffff;
+    --text-color: #333333;
+    --text-secondary: #6a6a6a;
+    --text-muted: #a0a0a0;
+    --primary-color: #0066cc;
+    --primary-color-hover: #004499;
+    --card-bg: #ffffff;
+    --border-color: #e1e1e1;
+    --hover-bg: #f0f0f0;
+    --primary-bg: #ffffff;
+    --sidebar-bg: #f3f3f3;
+    --input-bg: #ffffff;
+    --input-border: #cccccc;
+    --secondary-bg: #e5e5e5;
+    --secondary-bg-hover: #e9ecef;
+    --secondary-fg: #333333;
+    --success-bg: #d7f0d9;
+    --success-fg: #14532d;
+    --error-bg: #fadcdc;
+    --error-fg: #8a1f1f;
+    --warning-bg: #fff3cd;
+    --warning-fg: #856404;
+    --warning-border: #ffeaa7;
+}
+body[data-theme="dracula"] {
+    --bg-color: #282a36;
+    --text-color: #f8f8f2;
+    --text-secondary: #bfc7c5;
+    --text-muted: #6272a4;
+    --primary-color: #bd93f9;
+    --primary-color-hover: #d6acff;
+    --card-bg: #343746;
+    --border-color: #44475a;
+    --hover-bg: #383c4a;
+    --primary-bg: #282a36;
+    --sidebar-bg: #21222c;
+    --input-bg: #44475a;
+    --input-border: #525568;
+    --secondary-bg: #44475a;
+    --secondary-bg-hover: #565a6e;
+    --secondary-fg: #f8f8f2;
+    --success-bg: #1f4030;
+    --success-fg: #50fa7b;
+    --error-bg: #46202c;
+    --error-fg: #ff79c6;
+    --warning-bg: #4d4330;
+    --warning-fg: #f1fa8c;
+    --warning-border: #6a5b3a;
+}
+
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--bg-color);
+    color: var(--text-color);
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* ── 概念稿自己的控制条（不属于实装） ───────────────────── */
+.concept-bar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+    padding: 8px 12px;
+    background: var(--sidebar-bg);
+    border-bottom: 2px solid var(--border-color);
+    font-size: 12px;
+}
+.concept-bar b { color: var(--text-muted); font-weight: 600; margin-right: 4px; }
+.concept-bar button {
+    background: var(--secondary-bg);
+    color: var(--secondary-fg);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.concept-bar button[aria-pressed="true"] {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+}
+.concept-bar input[type="range"] { vertical-align: middle; }
+.concept-stage {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    background:
+        repeating-conic-gradient(rgba(128,128,128,.07) 0% 25%, transparent 0% 50%) 0 0 / 24px 24px;
+}
+.stage-note {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 16px;
+    text-align: center;
+}
+
+/* ── 侧栏骨架（对齐 index.html / sidebar.css） ─────────── */
+.sidebar {
+    display: flex;
+    flex: 0 0 auto;
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--border-color);
+    min-width: 48px;
+    height: 100%;
+}
+.sidebar-icons {
+    flex: 0 0 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 0;
+    border-right: 1px solid var(--border-color);
+}
+.sidebar-icon {
+    width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+}
+.sidebar-icon.active { background: var(--primary-color); color: #fff; }
+.sidebar-panel { flex: 1; min-width: 0; position: relative; }
+.panel-content { display: none; height: 100%; flex-direction: column; }
+.panel-content.active { display: flex; }
+.panel-header {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* ── 以下与 compare.css 同步 ───────────────────────────── */
+.cmp-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    min-width: 0;
+    width: 100%;
+}
+.cmp-panel-body::-webkit-scrollbar { width: 8px; }
+.cmp-panel-body::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+
+.compare-file-section { display: flex; flex-direction: column; gap: 10px; }
+
+.cmp-block {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--card-bg);
+    overflow: hidden;
+}
+.cmp-block-head {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%;
+    padding: 6px 8px;
+    background-color: var(--hover-bg);
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-color);
+    font-size: 12px; font-weight: 600; font-family: inherit;
+    text-align: left; cursor: pointer;
+}
+.cmp-block.collapsed .cmp-block-head { border-bottom-color: transparent; }
+.cmp-block-head:hover { background-color: var(--secondary-bg-hover); }
+.cmp-block-caret::before {
+    content: '\25BE';
+    display: inline-block; width: 10px;
+    color: var(--text-secondary); font-size: 10px;
+}
+.cmp-block.collapsed .cmp-block-caret::before { content: '\25B8'; }
+.cmp-block-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-block-badge {
+    font-size: 10px; font-weight: 400;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+.cmp-block-body { display: flex; flex-direction: column; gap: 8px; padding: 8px; }
+.cmp-block.collapsed .cmp-block-body { display: none; }
+
+.cmp-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cmp-field-top {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; min-width: 0;
+}
+.cmp-field-label {
+    font-size: 12px; color: var(--text-color);
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.file-browse-btn {
+    height: 22px; padding: 3px 8px;
+    border: none; border-radius: 3px;
+    background-color: var(--primary-color); color: #fff;
+    font-size: 11px; font-family: inherit; cursor: pointer;
+    flex: 0 0 auto; white-space: nowrap;
+}
+.file-browse-btn:hover { background-color: var(--primary-color-hover); }
+.file-path-display {
+    padding: 0 2px;
+    font-size: 11px; color: var(--text-secondary);
+    font-family: Consolas, monospace;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-all;
+    line-height: 1.35;
+}
+.file-path-display.selected { color: var(--primary-color); }
+
+.cmp-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.cmp-kv-label {
+    font-size: 12px; color: var(--text-color);
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cmp-kv-tail { display: flex; align-items: center; gap: 4px; }
+.cmp-hint { font-size: 11px; color: var(--text-secondary); }
+.config-input {
+    width: 80px; padding: 3px 8px;
+    border: 1px solid var(--input-border); border-radius: 3px;
+    background-color: var(--input-bg); color: var(--text-color);
+    font-size: 12px; font-family: inherit;
+}
+.config-input:focus { outline: none; border-color: var(--primary-color); }
+.config-unit { font-size: 11px; color: var(--text-secondary); }
+.config-item { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.config-label { font-size: 12px; color: var(--text-color); min-width: 80px; }
+.config-checkbox { margin-right: 6px; accent-color: var(--primary-color); }
+.file-input-group { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; }
+.file-input-group .config-input { flex: 1; min-width: 0; }
+.testlib-spj-row { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; }
+.testlib-label { display: flex; align-items: center; gap: 6px; min-width: auto; white-space: nowrap; flex: 0 0 auto; }
+.spj-section { display: flex; align-items: center; gap: 6px 8px; flex: 1 1 200px; min-width: 0; flex-wrap: wrap; }
+.spj-label { min-width: auto; white-space: nowrap; flex: 0 0 auto; }
+.spj-input { flex: 1 1 120px; min-width: 0; }
+.spj-input .config-input { width: auto; min-width: 0; }
+.compare-freopen-row { flex-direction: column; align-items: stretch; gap: 6px; }
+.compare-freopen-group { width: 100%; display: flex; flex-wrap: wrap; }
+.compare-freopen-input { flex: 1 1 100px; width: auto; min-width: 0; }
+
+.compare-notice {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 8px;
+    background-color: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    border-left: 4px solid var(--warning-border);
+    border-radius: 4px;
+}
+.notice-icon { font-size: 13px; line-height: 1.3; }
+.notice-text { flex: 1; font-size: 11px; color: var(--warning-fg); line-height: 1.45; }
+
+.compare-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.compare-btn {
+    display: flex; align-items: center; gap: 5px;
+    padding: 6px 10px;
+    border: none; border-radius: 4px;
+    font-size: 12px; font-weight: 500; font-family: inherit;
+    cursor: pointer;
+}
+.compare-btn .cmp-ico { display: none; }
+.compare-btn[data-cmp-state="start"] { background-color: var(--success-bg); color: var(--success-fg); }
+.compare-btn[data-cmp-state="stop"] { background-color: var(--error-bg); color: var(--error-fg); }
+.compare-btn[data-cmp-state="clear"] { background-color: var(--secondary-bg); color: var(--secondary-fg); }
+.compare-btn[data-cmp-state="start"] .cmp-ico-start,
+.compare-btn[data-cmp-state="stop"] .cmp-ico-stop,
+.compare-btn[data-cmp-state="clear"] .cmp-ico-clear { display: inline; }
+.cmp-run-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-repro-btn { background-color: var(--card-bg); color: var(--text-color); border: 1px solid var(--border-color); }
+.compare-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 统计条 */
+.cmp-stats {
+    display: flex; flex-direction: column; gap: 4px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color); border-radius: 6px;
+    background-color: var(--card-bg);
+    font-family: Consolas, monospace; font-size: 11px;
+    color: var(--text-secondary);
+}
+.cmp-stats-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 8px; }
+.cmp-stat { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-stat-strong { color: var(--text-color); font-weight: 600; }
+.cmp-stats-warn { display: flex; align-items: flex-start; gap: 4px; color: var(--warning-fg); }
+
+.compare-status {
+    border: 1px solid var(--border-color); border-radius: 6px;
+    background-color: var(--card-bg); padding: 8px;
+}
+.status-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.status-title { font-size: 12px; font-weight: 500; }
+.status-info { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-secondary); min-width: 0; }
+.status-separator { color: var(--border-color); }
+.progress-bar { width: 100%; height: 6px; background-color: var(--border-color); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background-color: var(--primary-color); border-radius: 3px; width: 0%; transition: width .2s; }
+
+.compare-result {
+    border: 1px solid var(--error-bg); border-radius: 6px;
+    background-color: var(--card-bg); overflow: hidden;
+}
+.result-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 10px; background-color: var(--error-bg);
+}
+.result-title { font-size: 13px; font-weight: 600; color: var(--error-fg); }
+.result-subtitle { font-size: 11px; color: var(--error-fg); opacity: .85; margin-left: 6px; }
+.export-btn {
+    height: 22px; padding: 3px 8px;
+    border: 1px solid var(--error-fg); border-radius: 3px;
+    background: transparent; color: var(--error-fg);
+    font-size: 11px; font-family: inherit; cursor: pointer; flex: 0 0 auto;
+}
+.diff-section { border: 1px solid var(--border-color); border-radius: 4px; overflow: hidden; margin: 8px; }
+.diff-header {
+    padding: 5px 8px; background-color: var(--hover-bg);
+    font-size: 11px; font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+}
+.diff-header-with-action { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.diff-header-with-action > span:first-child { flex: 1 1 auto; min-width: 0; }
+.diff-info { color: var(--error-fg); font-weight: 400; font-size: 10px; }
+.diff-expand-btn { height: 18px; padding: 0 6px; min-width: 40px; flex: 0 0 auto; border-color: var(--border-color); color: var(--text-secondary); }
+.diff-content {
+    padding: 6px 8px; margin: 0;
+    background-color: var(--bg-color); color: var(--text-color);
+    font-family: Consolas, monospace; font-size: 11px; line-height: 1.45;
+    max-height: 170px; overflow: auto;
+    white-space: pre-wrap; word-break: break-all;
+}
+.diff-line-num { color: var(--text-muted); user-select: none; }
+.diff-highlight { background-color: var(--error-bg); color: var(--error-fg); border-radius: 2px; }
+
+.compare-complete {
+    border: 1px solid var(--success-bg); border-radius: 6px;
+    background-color: var(--success-bg); color: var(--success-fg);
+    padding: 14px 10px; text-align: center;
+}
+.complete-text { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.complete-info { font-size: 11px; opacity: .9; }
+
+/* ── 概念稿新增：diff 的三种候选方案 ─────────────────────── */
+.cmp-diff-meta {
+    display: flex; flex-wrap: wrap; gap: 2px 10px;
+    padding: 6px 10px 0;
+    font-family: Consolas, monospace; font-size: 10px;
+    color: var(--text-secondary);
+}
+.cmp-diff-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+.cmp-diff-toolbar .spacer { flex: 1; }
+.mode-toggle {
+    display: flex; border: 1px solid var(--border-color); border-radius: 3px; overflow: hidden;
+}
+.mode-toggle button {
+    border: none; background: var(--hover-bg); color: var(--text-secondary);
+    font-size: 10px; padding: 2px 6px; cursor: pointer; font-family: inherit;
+}
+.mode-toggle button[aria-pressed="true"] { background: var(--primary-color); color: #fff; }
+
+/* 方案 B：monaco inline diff 的样子（单栏 unified） */
+.diff-inline { font-family: Consolas, monospace; font-size: 11px; line-height: 1.5; max-height: 220px; overflow: auto; }
+.diff-inline .dl { display: flex; gap: 6px; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
+.diff-inline .dl .ln { color: var(--text-muted); flex: 0 0 2.5em; text-align: right; user-select: none; }
+.diff-inline .dl.del { background: var(--error-bg); color: var(--error-fg); }
+.diff-inline .dl.ins { background: var(--success-bg); color: var(--success-fg); }
+.diff-inline .dl.same { color: var(--text-color); }
+.diff-inline .ch { border-radius: 2px; padding: 0 1px; }
+.diff-inline .del .ch { background: rgba(255,0,0,.28); }
+.diff-inline .ins .ch { background: rgba(0,200,80,.30); }
+
+/* 方案 C：并排 */
+.diff-side { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border-color); max-height: 220px; overflow: auto; }
+.diff-side > div { background: var(--bg-color); padding: 6px 8px; font-family: Consolas, monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; }
+.diff-side .head { background: var(--hover-bg); font-size: 10px; color: var(--text-secondary); }
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body data-theme="dark">
+
+<!-- ── 概念稿控制条（不属于实装，仅用于对比方案） ────────────── -->
+<div class="concept-bar">
+    <span><b>宽度</b>
+        <input type="range" id="ctlWidth" min="220" max="620" value="300" step="10">
+        <span id="ctlWidthOut">300px</span>
+    </span>
+    <span><b>主题</b>
+        <button data-theme-btn="dark" aria-pressed="true">dark</button>
+        <button data-theme-btn="light" aria-pressed="false">light</button>
+        <button data-theme-btn="dracula" aria-pressed="false">dracula</button>
+    </span>
+    <span><b>语言</b>
+        <button data-lang-btn="zh" aria-pressed="true">中文</button>
+        <button data-lang-btn="en" aria-pressed="false">EN</button>
+    </span>
+    <span><b>状态</b>
+        <button data-state-btn="idle" aria-pressed="true">空闲</button>
+        <button data-state-btn="running" aria-pressed="false">运行中</button>
+        <button data-state-btn="error" aria-pressed="false">发现差异</button>
+        <button data-state-btn="complete" aria-pressed="false">全部通过</button>
+    </span>
+    <span><b>diff 方案</b>
+        <button data-diff-btn="a" aria-pressed="false">A 现状(三段)</button>
+        <button data-diff-btn="b" aria-pressed="true">B 单栏行内</button>
+        <button data-diff-btn="c" aria-pressed="false">C 并排</button>
+    </span>
+    <span><b>告警</b>
+        <button data-warn-btn="none" aria-pressed="true">无</button>
+        <button data-warn-btn="watchdog" aria-pressed="false">看门狗</button>
+        <button data-warn-btn="fastspawn" aria-pressed="false">fastspawn</button>
+    </span>
+</div>
+
+<div class="concept-stage">
+    <div class="sidebar" id="sidebar" style="width:300px">
+        <div class="sidebar-icons">
+            <div class="sidebar-icon" title="文件">&#128193;</div>
+            <div class="sidebar-icon" title="样例">&#9989;</div>
+            <div class="sidebar-icon active" title="对拍">&#128464;</div>
+            <div class="sidebar-icon" title="调试">&#128027;</div>
+            <div class="sidebar-icon" title="云">&#9729;</div>
+        </div>
+        <div class="sidebar-panel">
+            <div class="panel-content active" id="compare-panel">
+                <div class="panel-header"><span class="panel-title" data-i18n="compare.title">代码对拍器</span></div>
+                <div class="cmp-panel-body">
+
+                    <div class="compare-file-section" id="compare-file-section">
+
+                        <section class="cmp-block" id="cmp-block-files">
+                            <button class="cmp-block-head" type="button" aria-expanded="true">
+                                <span class="cmp-block-caret"></span>
+                                <span class="cmp-block-title" data-i18n="compare.blockPrograms">程序与生成器</span>
+                                <span class="cmp-block-badge" id="cmp-files-badge"></span>
+                            </button>
+                            <div class="cmp-block-body">
+                                <div class="cmp-field">
+                                    <div class="cmp-field-top">
+                                        <span class="cmp-field-label" data-i18n="menu.standardCode">标准/暴力代码</span>
+                                        <button class="file-browse-btn" id="std-code-browse" data-i18n="menu.browse">浏览</button>
+                                    </div>
+                                    <div class="file-path-display" id="std-code-path"></div>
+                                </div>
+                                <div class="cmp-field">
+                                    <div class="cmp-field-top">
+                                        <span class="cmp-field-label" data-i18n="menu.testCode">要对拍的代码</span>
+                                        <button class="file-browse-btn" id="test-code-browse" data-i18n="menu.browse">浏览</button>
+                                    </div>
+                                    <div class="file-path-display selected" id="test-code-path"></div>
+                                </div>
+                                <div class="cmp-field">
+                                    <div class="cmp-field-top">
+                                        <span class="cmp-field-label" data-i18n="menu.generator">数据生成器</span>
+                                        <button class="file-browse-btn" id="generator-browse" data-i18n="menu.browse">浏览</button>
+                                    </div>
+                                    <div class="file-path-display" id="generator-path"></div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="cmp-block" id="cmp-block-params">
+                            <button class="cmp-block-head" type="button" aria-expanded="true">
+                                <span class="cmp-block-caret"></span>
+                                <span class="cmp-block-title" data-i18n="compare.blockRunParams">运行参数</span>
+                            </button>
+                            <div class="cmp-block-body">
+                                <div class="cmp-kv">
+                                    <label class="cmp-kv-label" for="compare-count" data-i18n="menu.compareCount">对拍组数：</label>
+                                    <input type="number" class="config-input" id="compare-count" value="300" min="1" max="100000">
+                                </div>
+                                <div class="cmp-kv">
+                                    <label class="cmp-kv-label" for="compare-threads" data-i18n="menu.parallelThreads">并行线程：</label>
+                                    <input type="number" class="config-input" id="compare-threads" value="" min="1" data-i18n-placeholder="compare.threadsAutoPlaceholder" placeholder="留空自动">
+                                </div>
+                                <div class="cmp-kv">
+                                    <label class="cmp-kv-label" for="time-limit" data-i18n="menu.timeLimit">时间限制：</label>
+                                    <div class="cmp-kv-tail">
+                                        <input type="number" class="config-input" id="time-limit" value="1000" min="0">
+                                        <span class="config-unit">ms</span>
+                                    </div>
+                                </div>
+                                <div class="cmp-hint" id="compare-threads-hint" data-i18n="compare.threadHint">上限 = CPU 线程数 × 0.6</div>
+                            </div>
+                        </section>
+
+                        <section class="cmp-block collapsed" id="cmp-block-io">
+                            <button class="cmp-block-head" type="button" aria-expanded="false">
+                                <span class="cmp-block-caret"></span>
+                                <span class="cmp-block-title" data-i18n="compare.blockJudgeIO">文件 IO 与 SPJ</span>
+                            </button>
+                            <div class="cmp-block-body">
+                                <div class="compare-notice">
+                                    <div class="notice-icon">&#9888;</div>
+                                    <div class="notice-text"><strong data-i18n="dialog.note">注意：</strong><span data-i18n="menu.importantNotice">默认使用标准输入输出(stdin/stdout)；如代码使用了 freopen，请在下方设置输入/输出文件名。</span></div>
+                                </div>
+                                <div class="config-item compare-freopen-row">
+                                    <label class="config-label" data-i18n="menu.fileIO_label">文件IO：</label>
+                                    <div class="file-input-group compare-freopen-group">
+                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-input-file" placeholder="sample.in">
+                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-output-file" placeholder="sample.out">
+                                    </div>
+                                </div>
+                                <div class="config-item testlib-spj-row">
+                                    <label class="config-label testlib-label">
+                                        <input type="checkbox" class="config-checkbox" id="compare-use-testlib">
+                                        <span data-i18n="menu.useTestlib_label">使用 testlib</span>
+                                    </label>
+                                    <div class="spj-section">
+                                        <label class="config-label spj-label" data-i18n="compare.spjLabel">Special Judge</label>
+                                        <div class="file-input-group spj-input">
+                                            <input type="text" class="config-input" id="compare-spj-path" placeholder="选择 SPJ 文件">
+                                            <button class="file-browse-btn" id="compare-spj-browse" data-i18n="menu.browse">浏览</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
+
+                        <div class="compare-actions">
+                            <button class="compare-btn" type="button" id="compare-run-btn" data-cmp-state="start">
+                                <span class="cmp-ico cmp-ico-start">&#9654;</span>
+                                <span class="cmp-ico cmp-ico-stop">&#9632;</span>
+                                <span class="cmp-ico cmp-ico-clear">&#8635;</span>
+                                <span class="cmp-run-label" id="compare-run-label" data-i18n="compare.start">开始对拍</span>
+                            </button>
+                            <button class="compare-btn compare-repro-btn hidden" id="compare-reproduce-btn"><span>&#128260;</span><span data-i18n="compare.reproduce">复现这组</span></button>
+                        </div>
+
+                        <div class="cmp-stats hidden" id="compare-stats"></div>
+
+                        <div class="compare-status hidden" id="compare-status">
+                            <div class="status-header">
+                                <div class="status-title" data-i18n="compare.statusTitle">对拍状态</div>
+                                <div class="status-info">
+                                    <span id="current-test"></span>
+                                    <span class="status-separator">|</span>
+                                    <span id="status-text" data-i18n="compare.ready">准备中</span>
+                                </div>
+                            </div>
+                            <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+                        </div>
+
+                        <div class="compare-result hidden" id="compare-result">
+                            <div class="result-header">
+                                <div>
+                                    <span class="result-title" id="error-title" data-i18n="compare.foundDiff">发现差异</span>
+                                    <span class="result-subtitle" id="error-test-num"></span>
+                                </div>
+                                <button class="export-btn" id="export-btn" data-i18n="compare.export">导出数据</button>
+                            </div>
+                            <div class="cmp-diff-toolbar">
+                                <div class="mode-toggle" id="compare-diff-mode-toggle">
+                                    <button type="button" data-mode="inline" aria-pressed="true" data-i18n="compare.diffModeInline">行内</button>
+                                    <button type="button" data-mode="side" aria-pressed="false" data-i18n="compare.diffModeSide">并排</button>
+                                </div>
+                                <span class="spacer"></span>
+                                <button class="export-btn" id="compare-jump-diff" data-i18n="compare.jumpToDiff">跳到差异</button>
+                            </div>
+                            <div class="cmp-diff-meta" id="cmp-diff-meta"></div>
+                            <div id="diff-host"></div>
+                        </div>
+
+                        <div class="compare-complete hidden" id="compare-complete">
+                            <div class="complete-text" data-i18n="compare.complete">对拍完成</div>
+                            <div class="complete-info"><span id="complete-line"></span></div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="stage-note">右侧留白是编辑器区。概念稿只画侧栏；<br>宽度滑杆对应 .sidebar 的实际可拖范围（48px ~ 60%）。</div>
+</div>
+
+<script>
+// ── 双语词典：只放概念稿要展示的键，键名与 src/lang/*.json 对齐 ──
+const I18N = {
+    zh: {
+        'compare.title': '代码对拍器',
+        'compare.blockPrograms': '程序与生成器',
+        'compare.blockRunParams': '运行参数',
+        'compare.blockJudgeIO': '文件 IO 与 SPJ',
+        'menu.standardCode': '标准/暴力代码',
+        'menu.testCode': '要对拍的代码',
+        'menu.generator': '数据生成器',
+        'menu.browse': '浏览',
+        'menu.compareCount': '对拍组数：',
+        'menu.parallelThreads': '并行线程：',
+        'menu.timeLimit': '时间限制：',
+        'menu.fileIO_label': '文件IO：',
+        'menu.useTestlib_label': '使用 testlib',
+        'menu.importantNotice': '默认使用标准输入输出(stdin/stdout)；如代码使用了 freopen，请在下方设置输入/输出文件名。',
+        'dialog.note': '注意：',
+        'compare.threadHint': '上限 = CPU 线程数 × 0.6',
+        'compare.threadsAutoPlaceholder': '留空自动',
+        'compare.spjLabel': 'Special Judge',
+        'compare.start': '开始对拍',
+        'compare.stop': '停止',
+        'compare.clear': '清空',
+        'compare.reproduce': '复现这组',
+        'compare.statusTitle': '对拍状态',
+        'compare.ready': '准备中',
+        'compare.running': '对拍中',
+        'compare.export': '导出数据',
+        'compare.foundDiff': '发现差异',
+        'compare.complete': '对拍完成',
+        'compare.errorGroup': '第 {number} 组',
+        'compare.testGroup': '第 {i} 组测试',
+        'compare.progressGroup': '已完成 {current}/{total} 组',
+        'compare.completedText': '已完成 {count} 组测试，未发现差异',
+        'compare.stoppedText': '已完成 {count} 组测试（已手动停止）',
+        'compare.statsTps': 'TPS {value}',
+        'compare.statsElapsed': '用时 {value}',
+        'compare.statsSlowest': '最慢 第{number}组 {value}',
+        'compare.statsSlowestNone': '最慢 —',
+        'compare.statsDataSize': '数据 {size}',
+        'compare.statsWatchdogWarn': '看门狗超时：仅完成 {completed}/{total} 组',
+        'compare.statsFastspawnWarn': 'fastspawn 不可用，已退回较慢的进程路径',
+        'compare.inputData': '输入数据',
+        'compare.errorStandardOutput': '标准程序输出',
+        'compare.errorTestOutput': '待测程序输出',
+        'compare.diffPosition': '第 {line} 行第 {char} 字符有差异',
+        'compare.jumpToDiff': '跳到差异',
+        'compare.diffModeInline': '行内',
+        'compare.diffModeSide': '并排',
+        'compare.expand': '展开',
+        'compare.memNote': '配置已记住'
+    },
+    en: {
+        'compare.title': 'Code Comparer',
+        'compare.blockPrograms': 'Programs & Generator',
+        'compare.blockRunParams': 'Run Settings',
+        'compare.blockJudgeIO': 'File I/O & SPJ',
+        'menu.standardCode': 'Standard/Brute Force Code',
+        'menu.testCode': 'Code to Compare',
+        'menu.generator': 'Data Generator',
+        'menu.browse': 'Browse',
+        'menu.compareCount': 'Comparison Count:',
+        'menu.parallelThreads': 'Parallel Threads:',
+        'menu.timeLimit': 'Time Limit:',
+        'menu.fileIO_label': 'File I/O:',
+        'menu.useTestlib_label': 'Use Testlib',
+        'menu.importantNotice': 'Uses stdin/stdout by default. If your code uses freopen, configure the I/O filenames below.',
+        'dialog.note': 'Note: ',
+        'compare.threadHint': 'Max = CPU threads x 0.6',
+        'compare.threadsAutoPlaceholder': 'blank = auto',
+        'compare.spjLabel': 'Special Judge',
+        'compare.start': 'Start Comparison',
+        'compare.stop': 'Stop',
+        'compare.clear': 'Clear',
+        'compare.reproduce': 'Reproduce',
+        'compare.statusTitle': 'Comparison Status',
+        'compare.ready': 'Ready',
+        'compare.running': 'Running',
+        'compare.export': 'Export Data',
+        'compare.foundDiff': 'Difference Found',
+        'compare.complete': 'Comparison Complete',
+        'compare.errorGroup': 'Group {number}',
+        'compare.testGroup': 'Test {i}',
+        'compare.progressGroup': 'Completed {current}/{total}',
+        'compare.completedText': 'Completed {count} tests, no differences found',
+        'compare.stoppedText': 'Completed {count} tests (stopped manually)',
+        'compare.statsTps': 'TPS {value}',
+        'compare.statsElapsed': 'Elapsed {value}',
+        'compare.statsSlowest': 'Slowest #{number} {value}',
+        'compare.statsSlowestNone': 'Slowest —',
+        'compare.statsDataSize': 'Data {size}',
+        'compare.statsWatchdogWarn': 'Watchdog stopped the run: {completed}/{total} groups done',
+        'compare.statsFastspawnWarn': 'fastspawn unavailable; using the slower process path',
+        'compare.inputData': 'Input Data',
+        'compare.errorStandardOutput': 'Standard Program Output',
+        'compare.errorTestOutput': 'Test Program Output',
+        'compare.diffPosition': 'differs at line {line}, char {char}',
+        'compare.jumpToDiff': 'Jump to diff',
+        'compare.diffModeInline': 'Inline',
+        'compare.diffModeSide': 'Side by side',
+        'compare.expand': 'Expand',
+        'compare.memNote': 'Settings remembered'
+    }
+};
+let lang = 'zh';
+const t = (key, params) => {
+    let s = (I18N[lang] && I18N[lang][key]) || key;
+    if (params) Object.keys(params).forEach((k) => { s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), params[k]); });
+    return s;
+};
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+// ── mock 数据：形状对齐引擎真实回传的 error 事件字段 ──────────
+const MOCK = {
+    paths: {
+        std: 'D:/Users/admin/Desktop/C++/b3637 最长上升子序列_暴力解法.cpp',
+        test: 'D:/Users/admin/Desktop/C++/b3637 最长上升子序列.cpp',
+        gen: 'D:/Users/admin/Desktop/C++/gen_random.cpp'
+    },
+    input: '12 5\n5 2 9 1 7 3 8 6 4 10 2\n2 7 1 4 3 9 6 5 8 10 11 12\n3 1 2 3 4 5 6 7 8 9 10 11\n4 6 1 3 2 5 8 7 9 12 10 11\n5 11 1 2 3 4 5 6 7 8 9 10\n',
+    stdOut: '3 1 4 1 5 9 2 6 5 3 5\n7 1 3 5 2 8 4 6 7 9 1\n6 2 7 1 8 2 8 1 8 2 8\n',
+    testOut: '3 1 4 1 5 9 2 6 5 3 5\n7 1 3 5 2 8 4 6 7 9 0\n6 2 7 1 8 2 8 1 8 2 8\n'
+};
+
+const state = { mode: 'idle', diffVariant: 'b', warn: 'none', groups: 0, total: 300, slowest: null, elapsed: 0, startedAt: 0 };
+
+function renderStaticText() {
+    document.querySelectorAll('[data-i18n]').forEach((n) => {
+        const k = n.getAttribute('data-i18n');
+        if (I18N[lang][k] !== undefined) n.textContent = I18N[lang][k];
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((n) => {
+        const k = n.getAttribute('data-i18n-placeholder');
+        if (I18N[lang][k] !== undefined) n.placeholder = I18N[lang][k];
+    });
+    $('test-code-path').textContent = MOCK.paths.test;
+    $('test-code-path').title = MOCK.paths.test;
+    $('std-code-path').textContent = MOCK.paths.std;
+    $('std-code-path').title = MOCK.paths.std;
+    $('generator-path').textContent = MOCK.paths.gen;
+    $('generator-path').title = MOCK.paths.gen;
+    const filled = [MOCK.paths.std, MOCK.paths.test, MOCK.paths.gen].filter(Boolean).length;
+    $('cmp-files-badge').textContent = filled + '/3';
+}
+
+function fmtMs(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return '—';
+    if (ms < 1000) return Math.round(ms) + 'ms';
+    return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + 's';
+}
+function fmtBytes(b) {
+    if (!Number.isFinite(b) || b <= 0) return '0 B';
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    return (b / 1048576).toFixed(2) + ' MB';
+}
+
+// 跑着的时候用时是活的墙钟；停下来（完成/停止/重置）就冻结在最后一次的读数上
+function elapsedOf() {
+    return state.mode === 'running' && state.startedAt ? performance.now() - state.startedAt : state.elapsed;
+}
+
+function renderStats() {
+    const box = $('compare-stats');
+    if (state.mode === 'idle') { box.classList.add('hidden'); box.textContent = ''; return; }
+    box.classList.remove('hidden');
+    box.textContent = '';
+    const grid = el('div', 'cmp-stats-grid');
+    const tps = state.groups < 2 ? null : (state.groups * 1000 / Math.max(elapsedOf(), 1));
+    [
+        [t('compare.statsTps', { value: tps === null ? '—' : tps.toFixed(1) }), true],
+        [t('compare.statsElapsed', { value: fmtMs(elapsedOf()) }), false],
+        state.slowest
+            ? [t('compare.statsSlowest', { number: state.slowest.n, value: fmtMs(state.slowest.ms) }), false]
+            : [t('compare.statsSlowestNone'), false],
+        [t('compare.statsDataSize', { size: state.slowest ? fmtBytes(state.slowest.len) : '—' }), false]
+    ].forEach(([text, strong]) => grid.appendChild(el('span', strong ? 'cmp-stat cmp-stat-strong' : 'cmp-stat', text)));
+    box.appendChild(grid);
+    if (state.warn === 'watchdog') {
+        box.appendChild(el('div', 'cmp-stats-warn', t('compare.statsWatchdogWarn', { completed: 120, total: 300 })));
+    } else if (state.warn === 'fastspawn') {
+        box.appendChild(el('div', 'cmp-stats-warn', t('compare.statsFastspawnWarn')));
+    }
+}
+
+// ── 三种 diff 方案 ────────────────────────────────────────
+// 判定口径与实装一致：逐行去行尾空白后比第一个不同的行，再定位行内第一个不同的字符
+function firstDiff(a, b) {
+    const al = a.split('\n'), bl = b.split('\n');
+    const n = Math.max(al.length, bl.length);
+    for (let i = 0; i < n; i++) {
+        const x = (al[i] || '').replace(/[ \t]+$/, '');
+        const y = (bl[i] || '').replace(/[ \t]+$/, '');
+        if (x !== y) {
+            let j = 0;
+            while (j < x.length && j < y.length && x[j] === y[j]) j++;
+            return { line: i, char: j };
+        }
+    }
+    return { line: 0, char: 0 };
+}
+const DIFF = firstDiff(MOCK.stdOut, MOCK.testOut);
+const stdLines = MOCK.stdOut.split('\n');
+const testLines = MOCK.testOut.split('\n');
+const windowStart = Math.max(0, DIFF.line - 2);
+const windowEnd = Math.min(stdLines.length, DIFF.line + 3);
+
+// 把一行拆成「相同前缀 + 高亮尾巴」，与实装 formatCompareOutput 的观感对齐
+function paintLine(text, fromChar, highlight) {
+    const span = el('span');
+    if (!highlight) { span.textContent = text; return span; }
+    span.textContent = text.slice(0, fromChar);
+    if (text.slice(fromChar)) span.appendChild(el('span', 'ch diff-highlight', text.slice(fromChar)));
+    return span;
+}
+
+function buildDiffA(host) {
+    const section = (label, lines, isDiffSide) => {
+        const s = el('div', 'diff-section');
+        const h = el('div', 'diff-header diff-header-with-action');
+        const labelSpan = el('span', null, label);
+        if (isDiffSide) labelSpan.appendChild(el('span', 'diff-info',
+            ' (' + t('compare.diffPosition', { line: DIFF.line + 1, char: DIFF.char + 1 }) + ')'));
+        h.appendChild(labelSpan);
+        h.appendChild(el('button', 'export-btn diff-expand-btn', t('compare.expand')));
+        s.appendChild(h);
+        const pre = el('pre', 'diff-content');
+        lines.slice(0, 6).forEach((line, idx) => {
+            pre.appendChild(el('span', 'diff-line-num', String(idx + 1).padStart(4) + ' '));
+            pre.appendChild(paintLine(line, DIFF.char, isDiffSide && idx === DIFF.line));
+            pre.appendChild(document.createTextNode('\n'));
+        });
+        s.appendChild(pre);
+        return s;
+    };
+    host.appendChild(section(t('compare.inputData'), MOCK.input.split('\n'), false));
+    host.appendChild(section(t('compare.errorStandardOutput'), stdLines, true));
+    host.appendChild(section(t('compare.errorTestOutput'), testLines, true));
+}
+
+function buildDiffB(host) {
+    const box = el('div', 'diff-inline');
+    const inputSummary = el('div', 'dl same');
+    inputSummary.appendChild(el('span', 'ln', '#'));
+    inputSummary.appendChild(el('span', null, t('compare.inputData') + ': ' + MOCK.input.split('\n').length + ' ' + (lang === 'en' ? 'lines' : '行') + ' · ' + fmtBytes(MOCK.input.length)));
+    box.appendChild(inputSummary);
+    for (let i = windowStart; i < windowEnd; i++) {
+        if (i === DIFF.line) {
+            [['del', stdLines], ['ins', testLines]].forEach(([cls, src]) => {
+                const row = el('div', 'dl ' + cls);
+                row.appendChild(el('span', 'ln', String(i + 1)));
+                row.appendChild(paintLine(src[i] || '', DIFF.char, true));
+                box.appendChild(row);
+            });
+        } else {
+            const row = el('div', 'dl same');
+            row.appendChild(el('span', 'ln', String(i + 1)));
+            row.appendChild(el('span', null, stdLines[i] || ''));
+            box.appendChild(row);
+        }
+    }
+    host.appendChild(box);
+}
+
+function buildDiffC(host) {
+    const grid = el('div', 'diff-side');
+    grid.appendChild(el('div', 'head', t('compare.errorStandardOutput')));
+    grid.appendChild(el('div', 'head', t('compare.errorTestOutput')));
+    for (let i = windowStart; i < windowEnd; i++) {
+        const isDiff = i === DIFF.line;
+        const left = el('div');
+        if (isDiff) { left.className = ''; left.appendChild(paintLine(stdLines[i] || '', DIFF.char, true)); left.style.background = 'var(--error-bg)'; }
+        else left.textContent = stdLines[i] || '';
+        const right = el('div');
+        if (isDiff) { right.appendChild(paintLine(testLines[i] || '', DIFF.char, true)); right.style.background = 'var(--success-bg)'; }
+        else right.textContent = testLines[i] || '';
+        grid.appendChild(left); grid.appendChild(right);
+    }
+    host.appendChild(grid);
+}
+
+function renderDiff() {
+    const host = $('diff-host');
+    host.textContent = '';
+    if (state.diffVariant === 'a') buildDiffA(host);
+    else if (state.diffVariant === 'b') buildDiffB(host);
+    else buildDiffC(host);
+    const meta = $('cmp-diff-meta');
+    meta.textContent = '';
+    [
+        t('compare.diffPosition', { line: DIFF.line + 1, char: DIFF.char + 1 }),
+        t('compare.inputData') + ': ' + fmtBytes(MOCK.input.length),
+        t('compare.errorStandardOutput') + ': ' + fmtBytes(MOCK.stdOut.length)
+    ].forEach((s) => meta.appendChild(el('span', null, s)));
+}
+
+function render() {
+    renderStaticText();
+    renderStats();
+    const running = state.mode === 'running' || state.mode === 'stopping';
+    // 三个按钮的分工（与实装 updateUIForTask 一致）：
+    //   停止 = 中止这一轮，已跑出来的结果与统计留着看
+    //   重置 = 中止 + 清空，回到没跑过的样子
+    // 以前运行中把重置禁掉（点了没反应），全新面板上它又是可点的死按钮，两头都别扭。
+    const hasTrace = state.mode !== 'idle' || state.groups > 0 || state.startedAt > 0;
+    // 第二个槽位按上下文只出现一个按钮：跑的时候「停止」，跑完/出错后「清空」，
+    // 空闲且无可清时整槽收起（点「开始」本来就会先清场，所以不需要第三个键）
+    // 一个键三种状态：空闲→开始、跑着→停止、跑完/出错/已停止→清空
+    const action = running ? 'stop' : (hasTrace ? 'clear' : 'start');
+    const actionKey = 'compare.' + (action === 'stop' ? 'stop' : action === 'clear' ? 'clear' : 'start');
+    const runBtn = $('compare-run-btn');
+    runBtn.dataset.cmpState = action;
+    runBtn.disabled = action === 'stop' && state.mode === 'stopping';
+    const runLabel = $('compare-run-label');
+    runLabel.setAttribute('data-i18n', actionKey);
+    runLabel.textContent = t(actionKey);
+    runBtn.title = runLabel.textContent;
+    $('compare-status').classList.toggle('hidden', !running && !hasTrace);
+    $('compare-result').classList.toggle('hidden', state.mode !== 'error');
+    $('compare-complete').classList.toggle('hidden', !(state.mode === 'complete' || state.mode === 'stopped'));
+    $('compare-reproduce-btn').classList.toggle('hidden', state.mode !== 'error');
+    if (running) {
+        $('current-test').textContent = t('compare.progressGroup', { current: state.groups, total: state.total });
+        // 并行引擎下不报「第 N 组测试」：十几个 worker 各自跳号、完成顺序也不定，
+        // 拿一个随机组号冒充进度只会让人以为进度是顺序走的。组号只在差异面板上出现。
+        $('status-text').textContent = t('compare.running');
+        $('progress-fill').style.width = Math.min(100, state.groups / state.total * 100).toFixed(1) + '%';
+    }
+    if (state.mode === 'error') {
+        $('error-test-num').textContent = t('compare.errorGroup', { number: 43 });
+        renderDiff();
+    }
+    if (state.mode === 'complete') $('complete-line').textContent = t('compare.completedText', { count: state.total });
+    if (state.mode === 'stopped') $('complete-line').textContent = t('compare.stoppedText', { count: state.groups });
+}
+
+// ── 模拟一轮对拍 ──
+// 数据推进（dataTimer）与用时走表（clockTimer）分开：一组慢程序跑两秒期间一条 progress
+// 都没有，只靠事件刷新的话数字会先冻住、再突然跳一大截，看着像卡死或计时不准。
+let dataTimer = null, clockTimer = null;
+function stopTimers() {
+    if (dataTimer) { clearInterval(dataTimer); dataTimer = null; }
+    if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+}
+function startRun() {
+    stopTimers();
+    state.mode = 'running'; state.groups = 0; state.startedAt = performance.now(); state.elapsed = 0;
+    state.slowest = null; state.warn = 'none';
+    dataTimer = setInterval(() => {
+        const batch = 3 + Math.floor(Math.random() * 6);
+        for (let i = 0; i < batch && state.groups < state.total; i++) {
+            state.groups++;
+            const ms = 40 + Math.random() * 220;
+            if (!state.slowest || ms > state.slowest.ms) state.slowest = { n: state.groups, ms, len: 1200 + Math.floor(Math.random() * 2600) };
+        }
+        renderStats();
+        $('current-test').textContent = t('compare.progressGroup', { current: state.groups, total: state.total });
+        $('progress-fill').style.width = Math.min(100, state.groups / state.total * 100).toFixed(1) + '%';
+        if (state.groups >= state.total) { stopTimers(); state.mode = 'complete'; state.elapsed = performance.now() - state.startedAt; render(); }
+    }, 240);
+    clockTimer = setInterval(() => { renderStats(); }, 200);
+    render();
+}
+
+// 一个键按当前状态派发：跑着→停止（中止但留住已跑出来的结果）；
+// 跑完/出错/已停止→清空（回到没跑过的样子）；其余→开始。
+$('compare-run-btn').addEventListener('click', () => {
+    const action = $('compare-run-btn').dataset.cmpState;
+    if (action === 'stop') {
+        stopTimers();
+        if (state.startedAt) state.elapsed = performance.now() - state.startedAt;
+        state.mode = 'stopped';
+        render();
+        return;
+    }
+    if (action === 'clear') {
+        stopTimers();
+        state.mode = 'idle'; state.groups = 0; state.elapsed = 0; state.startedAt = 0; state.slowest = null;
+        $('progress-fill').style.width = '0%';
+        $('current-test').textContent = '';
+        $('status-text').textContent = t('compare.ready');
+        render();
+        return;
+    }
+    startRun();
+});
+
+document.querySelectorAll('.cmp-block-head').forEach((head) => {
+    head.addEventListener('click', () => {
+        const block = head.closest('.cmp-block');
+        const collapsed = !block.classList.contains('collapsed');
+        block.classList.toggle('collapsed', collapsed);
+        head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    });
+});
+
+// 概念稿控制条
+$('ctlWidth').addEventListener('input', (e) => {
+    $('sidebar').style.width = e.target.value + 'px';
+    $('ctlWidthOut').textContent = e.target.value + 'px';
+});
+const pressGroup = (attr, value) => {
+    document.querySelectorAll('[' + attr + ']').forEach((b) => b.setAttribute('aria-pressed', String(b.getAttribute(attr) === value)));
+};
+document.querySelectorAll('[data-theme-btn]').forEach((b) => b.addEventListener('click', () => {
+    document.body.setAttribute('data-theme', b.dataset.themeBtn); pressGroup('data-theme-btn', b.dataset.themeBtn);
+}));
+document.querySelectorAll('[data-lang-btn]').forEach((b) => b.addEventListener('click', () => {
+    lang = b.dataset.langBtn; pressGroup('data-lang-btn', b.dataset.langBtn); render();
+}));
+document.querySelectorAll('[data-state-btn]').forEach((b) => b.addEventListener('click', () => {
+    stopTimers(); state.startedAt = 0;
+    state.mode = b.dataset.stateBtn;
+    if (state.mode === 'running') { state.groups = 128; state.elapsed = 3400; state.startedAt = performance.now() - 3400; state.slowest = { n: 41, ms: 244, len: 2048 }; state.total = 300; }
+    if (state.mode === 'complete') { state.groups = 300; state.elapsed = 5400; state.slowest = { n: 97, ms: 246, len: 1980 }; }
+    if (state.mode === 'error') { state.groups = 42; state.elapsed = 1200; state.slowest = { n: 12, ms: 238, len: 1536 }; }
+    pressGroup('data-state-btn', b.dataset.stateBtn); render();
+    // 概念稿的便利：切状态就把对应区块滚进视野，不然每次都要手拖滚动条才能看到效果
+    const target = state.mode === 'error' ? 'compare-result' : state.mode === 'complete' ? 'compare-complete' : 'compare-stats';
+    $(target).scrollIntoView({ block: 'nearest' });
+}));
+document.querySelectorAll('[data-diff-btn]').forEach((b) => b.addEventListener('click', () => {
+    state.diffVariant = b.dataset.diffBtn; pressGroup('data-diff-btn', b.dataset.diffVariant);
+    $('compare-diff-mode-toggle').classList.toggle('hidden', state.diffVariant === 'a');
+    render();
+}));
+document.querySelectorAll('[data-warn-btn]').forEach((b) => b.addEventListener('click', () => {
+    state.warn = b.dataset.warnBtn; pressGroup('data-warn-btn', state.warn); renderStats();
+}));
+
+$('compare-diff-mode-toggle').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    state.diffVariant = b.dataset.mode === 'side' ? 'c' : 'b';
+    pressGroup('data-diff-btn', state.diffVariant);
+    render();
+}));
+
+render();
+</script>
+</body>
+</html>
