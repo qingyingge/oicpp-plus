@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  indexPack, pluralIssues, pluralTokenIssues, resolvesKey, mentionedLogical,
+  indexPack, pluralIssues, pluralTokenIssues, pluralConsistencyIssues, resolvesKey, mentionedLogical,
 } = require('./i18n-plural');
 const os = require('os');
 const { execSync } = require('child_process');
@@ -1219,6 +1219,8 @@ if (localeCodes.length >= 2) {
   // 复数各支不许引入默认语言 _other 没有的 {token}：调用点只传一份 params，
   // 多出来的 token 会在单数句里原样印上屏（少用 token 是安全的，所以只查这个方向）
   for (const msg of pluralTokenIssues(pluralIndexes)) { fail(`I2 plural tokens: ${msg}`); pluralOk = false; }
+  // 只转换了一半（一份包拆了后缀、另一份留裸基名）会让上面两条一起失明，必须单独判
+  for (const msg of pluralConsistencyIssues(pluralIndexes)) { fail(`I2 plural half-converted: ${msg}`); pluralOk = false; }
   if (pluralOk) ok(`plural forms match each locale's Intl.PluralRules (${localeCodes.join(', ')})`);
 } else {
   warn('fewer than 2 locales parsed — cannot cross-check key alignment');

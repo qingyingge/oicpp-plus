@@ -118,7 +118,9 @@ function pluralTokenIssues(indexes) {
         if (!index || !index.logical) continue;
         for (const [base, forms] of index.logical) {
             const ref = refIdx.values.get(`${base}_other`);
-            if (ref === undefined) continue;   // 默认语言没这一键，缺键由 I2 负责报
+            // 参照物不存在时跳过是安全的，前提是 I2 还挂着 pluralConsistencyIssues ——
+            // 「默认语言没 _other 而别的语言有」正是半转换，那边会判失败。
+            if (ref === undefined) continue;
             const allowed = new Set(tokensOf(ref));
             for (const form of forms) {
                 if (form === '') continue;
@@ -127,6 +129,40 @@ function pluralTokenIssues(indexes) {
                 if (extra.length) {
                     issues.push(`${code}.${flatKey}: 用了 ${DEFAULT_LANGUAGE_CODE} 的 _other 里没有的 ${extra.join(', ')} —— 调用点不会传它，{token} 会原样印上屏`);
                 }
+            }
+        }
+    }
+    return issues;
+}
+
+/**
+ * 跨语言的「只转换了一半」检查：某键在一份包里已拆成 _one/_other，另一份还留着裸基名。
+ *
+ * 为什么必须单列一条：pluralIssues 是逐语言判的，它认「这一键在此语言是复数形态」的依据
+ * 是「键名带后缀」。zh 留裸基名 → zh 侧 isPluralized 为假 → 整条跳过；而
+ * pluralTokenIssues 的参照物恰好是 zh 的 _other，参照物不存在时它 continue。
+ * 于是**两条守卫同时失明**，I2 的逻辑键集却照样对齐；更糟的是 i18next 会回落到裸键，
+ * 界面一点症状都没有 —— 正是最难发现的「守卫在，但不干活」。
+ *
+ * 只报这一种形状。同一份包里裸基名与复数形态并存由 pluralIssues 报，整键缺失由 I2 报，
+ * 这里重复报只会刷屏。
+ */
+function pluralConsistencyIssues(indexes) {
+    const issues = [];
+    const entries = Object.entries(indexes).filter(([, index]) => index && index.logical);
+    const pluralized = new Set();
+    for (const [, index] of entries) {
+        for (const [base, forms] of index.logical) {
+            if ([...forms].some((f) => f !== '')) pluralized.add(base);
+        }
+    }
+    for (const [code, index] of entries) {
+        for (const base of pluralized) {
+            const forms = index.logical.get(base);
+            if (!forms || forms.size > 1) continue;   // 整键缺失交给 I2；并存交给 pluralIssues
+            if (forms.has('')) {
+                issues.push(`${base}: ${code} 还是裸基名，但别的语言已把它复数化 —— `
+                    + `pluralIssues 与 pluralTokenIssues 都会跳过这一键，而 i18next 靠回落裸键掩盖，界面无症状`);
             }
         }
     }
@@ -178,6 +214,7 @@ module.exports = {
     indexPack,
     pluralIssues,
     pluralTokenIssues,
+    pluralConsistencyIssues,
     resolvesKey,
     pluralKey,
     lookupFlat,

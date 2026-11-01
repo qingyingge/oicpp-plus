@@ -678,5 +678,55 @@ if (packs['zh-cn'] && packs.en) {
         realTokens.length === 0, realTokens.join(' | '));
 }
 
+// ---- 半转换必须抓得到：只改一份包会让上面两条守卫同时失明 ----------------
+{
+    const idx = (o) => plural.indexPack(o);
+    const consist = (indexes) => plural.pluralConsistencyIssues(indexes);
+    const both = {
+        'zh-cn': idx({ x_other: '有 {count} 个' }),
+        en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+    };
+    check('两份都正确复数化 → 无半转换（对照组）', consist(both).length === 0, JSON.stringify(consist(both)));
+    check('两份都还是裸基名（压根没复数化）→ 不归这条管', consist({
+        'zh-cn': idx({ x: '有 {count} 个' }),
+        en: idx({ x: '{count} items' }),
+    }).length === 0, JSON.stringify(consist({ 'zh-cn': idx({ x: 'x' }), en: idx({ x: 'x' }) })));
+
+    const half = {
+        'zh-cn': idx({ x: '有 {count} 个' }),
+        en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+    };
+    const halfIssues = consist(half);
+    check('只转换了 en、zh 留裸基名 → 判半转换', halfIssues.some((m) => m.includes('x')), JSON.stringify(halfIssues));
+    // 这条是新增守卫存在的全部理由：把「旧守卫看不见」这件事本身钉成断言，
+    // 否则下一个人会以为 pluralTokenIssues 已经覆盖了这一形状。
+    check('并且证明旧守卫对这个形状确实是瞎的（所以这条必须存在）',
+        plural.pluralTokenIssues(half).length === 0
+            && plural.pluralIssues('zh-cn', half['zh-cn']).length === 0,
+        JSON.stringify({ tokens: plural.pluralTokenIssues(half), zhIssues: plural.pluralIssues('zh-cn', half['zh-cn']) }));
+    // token 校验被跳过的实际代价：单数句里塞一个非法 token 也报不出来
+    const halfSneaky = {
+        'zh-cn': idx({ x: '有 {count} 个' }),
+        en: idx({ x_one: 'Only {name} left', x_other: '{count} items' }),
+    };
+    check('半转换时非法 token 能从 pluralTokenIssues 脚下滑过去（记录盲区，不是新守卫的）',
+        plural.pluralTokenIssues(halfSneaky).length === 0
+            && consist(halfSneaky).length > 0,
+        JSON.stringify({ tokens: plural.pluralTokenIssues(halfSneaky), consist: consist(halfSneaky) }));
+    check('反向半转换同样判（zh 拆了、en 留裸基名）', consist({
+        'zh-cn': idx({ x_other: '有 {count} 个' }),
+        en: idx({ x: '{count} items' }),
+    }).length > 0);
+    // 整键在一边完全没有 → I2 缺键检查负责，这里不许重复报
+    check('整键缺失由 I2 报，这条不重复报', consist({
+        'zh-cn': idx({ unrelated: 'x' }),
+        en: idx({ x_one: 'a', x_other: 'b' }),
+    }).length === 0, JSON.stringify(consist({ 'zh-cn': idx({ unrelated: 'x' }), en: idx({ x_one: 'a', x_other: 'b' }) })));
+    const realPacks = {};
+    for (const [code, flat] of Object.entries(packs)) if (flat) realPacks[code] = idx(flat);
+    const realConsist = consist(realPacks);
+    check('真语言包没有半转换的键', realConsist.length === 0, realConsist.join(' | '));
+}
+
 console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;
