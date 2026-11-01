@@ -1,4 +1,13 @@
 "use strict";
+/**
+ * 「不是失败、只是当前状态」的调试错误码 —— 只有出现在这里的行为良性。
+ *
+ * 生产者侧的同名码写在 src/main.ts（codedDebugError）与 src/gdb-mi-debugger.ts
+ * （codedError），三处必须对齐；tests/debug-error-classification.test.js 双向核对：
+ * 生产侧新增一个良性码而这里没登记 → 红；这里登记了而没人发 → 也红。
+ * 方向是安全的：不在集合里的码一律按真错误弹出去，宁可多报也不静默吞失败。
+ */
+const BENIGN_DEBUG_CODES = new Set(['debuggerNotRunning', 'programAlreadyRunning']);
 class OICPPApp {
     currentFile;
     files;
@@ -2934,17 +2943,14 @@ class OICPPApp {
     }
     onDebugError(error) {
         const msg = this.stringifyError(error) || '';
-        const lower = msg.toLowerCase();
-        // 良性与否首先看错误码。下面那条文本正则的问题不只是「靠译文判定」（M57），
-        // 更在于它裸的 running / executing 分支会**吞掉真错误**：实测
-        //   "Error running target: signal SIGSEGV" → 判成良性，不弹错，状态显示运行中
+        // 只看码。原来这里挂着一条文本正则，裸的 running / executing 分支会**吞掉真错误**：
+        //   "Error running target: signal SIGSEGV"     → 判成良性，不弹错，状态显示「运行中」
         //   "Not running: cannot attach, process vanished" → 同样被吞
-        // 有码就按码定性，判定不再依赖措辞。正则先留给没有码的生产者
-        // （直接把 GDB error.message 转发过来的那十几处），收紧它属于调试子系统改造，
-        // 需要给每个生产者补码，另开 issue 跟踪，不在本批顺手改行为。
+        //   "target is executing but faulted at 0x0"       → 同样被吞
+        // 兜底之所以存在，是因为主进程那十几处 `reply('debug-error', error.message)` 把码丢在
+        // 了 IPC 边界上；现在统一走 debugErrorPayload，生产者有码就用码，没码就按真错误报出去。
         const code = (error && typeof error === 'object') ? error.code : undefined;
-        if (code === 'debuggerNotRunning'
-            || /running|not\s*stopped|already\s*running|already\s*started|target\s+is\s+executing|debugger\s+not\s+running|调试器未运行/.test(lower)) {
+        if (code !== undefined && BENIGN_DEBUG_CODES.has(code)) {
             logInfo('收到良性调试提示:', msg);
             this.updateDebugStatus(window.i18n.t('debug.programRunningStatus'));
             return;

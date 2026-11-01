@@ -38,6 +38,16 @@ function numberValue(value, fallback = 0) {
     return Number.isFinite(num) ? num : fallback;
 }
 /**
+ * 带错误码的 Error：调试子系统的「良性状态」与「真失败」必须靠码区分，不能靠措辞。
+ *
+ * 措辞会被翻译改掉，而渲染层曾经用**裸 running 分支**匹配 message，于是
+ * "Error running target: signal SIGSEGV" 也被判成良性、连段错误都不报（#10）。
+ * 主进程的 debug-error 统一出口会把 code 一起送过 IPC，码在这里不设就永远丢在边界上。
+ */
+function codedError(code, message) {
+    return Object.assign(new Error(message), { code });
+}
+/**
  * Creates a frame data object from a GDB frame record.
  * @param frame - The frame object (default: empty object).
  * @returns An object with file, line, function, and address properties.
@@ -135,7 +145,7 @@ class GDBDebugger extends events_1.EventEmitter {
      */
     _writeMi(line) {
         if (!this.gdbProcess || !this.gdbProcess.stdin || this.gdbProcess.exitCode !== null) {
-            throw new Error((0, lang_1.t)('debug.gdbProcessNotRunning'));
+            throw codedError('debuggerNotRunning', (0, lang_1.t)('debug.gdbProcessNotRunning'));
         }
         this.gdbProcess.stdin.write(line + '\n');
     }
@@ -550,7 +560,7 @@ class GDBDebugger extends events_1.EventEmitter {
         if (this.programExited)
             throw new Error((0, lang_1.t)('debug.programHasExited'));
         if (this._inferiorRunning)
-            throw new Error((0, lang_1.t)('debug.programAlreadyRunning'));
+            throw codedError('programAlreadyRunning', (0, lang_1.t)('debug.programAlreadyRunning'));
         if (this._isStarted && !this.programExited)
             return this.continue();
         if (process.platform === 'linux') {
@@ -581,7 +591,7 @@ class GDBDebugger extends events_1.EventEmitter {
         if (this.programExited)
             throw new Error((0, lang_1.t)('debug.programHasExited'));
         if (this._inferiorRunning)
-            throw new Error((0, lang_1.t)('debug.programAlreadyRunning'));
+            throw codedError('programAlreadyRunning', (0, lang_1.t)('debug.programAlreadyRunning'));
         if (!this._isStarted)
             return this.run();
         this._manualBreakOnEntry = false;
@@ -622,7 +632,7 @@ class GDBDebugger extends events_1.EventEmitter {
         if (this.programExited)
             throw new Error((0, lang_1.t)('debug.programHasExited'));
         if (this._inferiorRunning)
-            throw new Error((0, lang_1.t)('debug.programAlreadyRunning'));
+            throw codedError('programAlreadyRunning', (0, lang_1.t)('debug.programAlreadyRunning'));
         this._manualBreakOnEntry = false;
         this._inferiorRunning = true;
         this._programStopped = false;

@@ -5046,7 +5046,7 @@ function setupIPC() {
         startDebugSession(filePath, options).then(result => {
             event.reply('debug-started', result);
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5054,7 +5054,7 @@ function setupIPC() {
         stopDebugSession().then(result => {
             event.reply('debug-stopped', result);
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5062,7 +5062,7 @@ function setupIPC() {
         sendDebugCommand('step').then(result => {
             event.reply('debug-output', { message: t('main.debugStepOver'), type: 'debug' });
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5070,7 +5070,7 @@ function setupIPC() {
         sendDebugCommand('stepi').then(result => {
             event.reply('debug-output', { message: t('main.debugStepInto'), type: 'debug' });
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5078,7 +5078,7 @@ function setupIPC() {
         sendDebugCommand('finish').then(result => {
             event.reply('debug-output', { message: t('main.debugStepOut'), type: 'debug' });
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5089,7 +5089,7 @@ function setupIPC() {
             event.reply('debug-output', { message: t('main.debugContinue'), type: 'debug' });
         }).catch(error => {
             logError('[主进程] 继续执行命令失败:', error);
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5105,7 +5105,7 @@ function setupIPC() {
                 }
             }).catch((error: Error ) => {
                 logError('[主进程] 手动启动程序失败:', error);
-                event.reply('debug-error', (error as Error)?.message);
+                event.reply('debug-error', debugErrorPayload(error));
             });
         } else {
             event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
@@ -5116,7 +5116,7 @@ function setupIPC() {
         sendDebugInput(input).then(result => {
             void result;
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5133,7 +5133,7 @@ function setupIPC() {
         } catch (error) {
             logError('[主进程] 断点添加失败:', error);
             if (event.sender) {
-                event.sender.send('debug-error', (error as Error).message);
+                event.sender.send('debug-error', debugErrorPayload(error));
             }
             return { success: false, file: breakpoint?.file, line: breakpoint?.line, error: (error as Error).message };
         }
@@ -5150,7 +5150,7 @@ function setupIPC() {
         } catch (error) {
             logError('[主进程] 断点移除失败:', error);
             if (event.sender) {
-                event.sender.send('debug-error', (error as Error).message);
+                event.sender.send('debug-error', debugErrorPayload(error));
             }
             return { success: false, file: breakpoint?.file, line: breakpoint?.line, error: (error as Error).message };
         }
@@ -5160,7 +5160,7 @@ function setupIPC() {
         getDebugVariables().then(variables => {
             event.reply('debug-variables-updated', variables);
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5168,7 +5168,7 @@ function setupIPC() {
         getDebugCallStack().then(callStack => {
             event.reply('debug-callstack-updated', callStack);
         }).catch(error => {
-            event.reply('debug-error', (error as Error)?.message);
+            event.reply('debug-error', debugErrorPayload(error));
         });
     });
 
@@ -5215,7 +5215,7 @@ function setupIPC() {
                 } catch (_) { }
             }).catch((error: Error ) => {
                 try { pendingWatchExprs.delete(expr); } catch (_) { }
-                event.reply('debug-error', (error as Error)?.message);
+                event.reply('debug-error', debugErrorPayload(error));
             });
         } else {
             broadcastPendingWatchSnapshot(event);
@@ -5253,7 +5253,7 @@ function setupIPC() {
                     }).catch(() => { });
                 } catch (_) { }
             }).catch((error: Error ) => {
-                event.reply('debug-error', (error as Error)?.message);
+                event.reply('debug-error', debugErrorPayload(error));
             });
         } else {
             removeFromCache();
@@ -5277,7 +5277,7 @@ function setupIPC() {
                     mainWindow.webContents.send('debug-variables-updated', payload);
                 }
             }).catch((error: Error ) => {
-                event.reply('debug-error', (error as Error)?.message);
+                event.reply('debug-error', debugErrorPayload(error));
             });
         } else {
             event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
@@ -5311,7 +5311,7 @@ function setupIPC() {
                     try { mainWindow.webContents.send('debug-variable-expanded', payload); } catch (_) { }
                 }
             }).catch((error: Error ) => {
-                event.reply('debug-error', (error as Error)?.message);
+                event.reply('debug-error', debugErrorPayload(error));
             });
         } else {
             event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
@@ -5339,7 +5339,7 @@ function setupIPC() {
                     try { mainWindow.webContents.send('debug-variable-expanded', payload); } catch (_) { }
                 }
             }).catch((error: Error ) => {
-                event.reply('debug-error', (error as Error)?.message);
+                event.reply('debug-error', debugErrorPayload(error));
             });
         } else {
             event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
@@ -5355,7 +5355,7 @@ function setupIPC() {
                 event.reply('debug-output', { message: t('main.debugVarCollapsed', { name: variableName }), type: 'info' });
                 broadcastCurrentVariablesSnapshot(event);
             }).catch((error: Error ) => {
-                event.reply('debug-error', (error as Error)?.message);
+                event.reply('debug-error', debugErrorPayload(error));
             });
         } else {
             event.reply('debug-error', { code: 'debuggerNotRunning', message: t('error.debuggerNotRunning') });
@@ -12267,7 +12267,9 @@ async function startDebugSession(filePath: string, options: DebugSessionOptions 
             logWarn(`[主进程] ${errorMsg}`);
 
             if (mainWindow) {
-                mainWindow.webContents.send('debug-error', errorMsg);
+                mainWindow.webContents.send('debug-error', debugErrorPayload(
+                    codedDebugError('debugUnsupportedPlatform', errorMsg)
+                ));
             }
 
             throw new Error(errorMsg);
@@ -12489,7 +12491,7 @@ async function startDebugSession(filePath: string, options: DebugSessionOptions 
         autoSkipInternalCounter = 0;
 
         if (mainWindow) {
-            mainWindow.webContents.send('debug-error', (error as Error)?.message);
+            mainWindow.webContents.send('debug-error', debugErrorPayload(error));
         }
 
         throw error;
@@ -12815,7 +12817,7 @@ function setupDebuggerEvents() {
     gdbDebugger.on('error', (error: Error) => {
         logError('[主进程] 调试器错误:', error);
         if (mainWindow) {
-            mainWindow.webContents.send('debug-error', error);
+            mainWindow.webContents.send('debug-error', debugErrorPayload(error));
         }
     });
 
@@ -12916,12 +12918,43 @@ function setupDebuggerEvents() {
     logInfo('[主进程] 调试器事件监听已设置完成');
 }
 
+/**
+ * 给主进程自己抛出的状态错误打码（GDB 侧的同款工具在 gdb-mi-debugger.ts）。
+ * 码必须一路走到渲染层，否则那边只能匹配措辞 —— 而措辞是译文（#10、M57）。
+ */
+function codedDebugError(code: string, message: string): Error {
+    return Object.assign(new Error(message), { code });
+}
+
+/**
+ * debug-error 的统一出口：把错误**连码一起**送过 IPC。
+ *
+ * 以前这十几处写的是 `event.reply('debug-error', (error as Error)?.message)` —— 把错误对象
+ * 拍成字符串，生产者即使设了 code 也在这道边界上被丢掉。渲染层拿不到码，就只能匹配措辞来
+ * 猜性质，而那句正则里有裸的 running / executing 分支，于是
+ * "Error running target: signal SIGSEGV" 被判成良性提示、一个 toast 都不弹（#10）。
+ * 所以收紧渲染层的判定之前，必须先把码送过来，否则等于拆了兜底又不补来源。
+ */
+function debugErrorPayload(error: unknown): { code?: string; message: string } {
+    const err = error as { code?: unknown; message?: unknown } | null;
+    const message = typeof err?.message === 'string' && err.message
+        ? err.message
+        : String(error ?? '');
+    const code = typeof err?.code === 'string' && err.code ? err.code : undefined;
+    return code ? { code, message } : { message };
+}
+
+/** 只认 gdb-mi-debugger.ts 的 programAlreadyRunning —— 措辞判定已经整体废掉（#10）。 */
+function isAlreadyRunning(error: unknown): boolean {
+    return (error as { code?: unknown } | null)?.code === 'programAlreadyRunning';
+}
+
 async function sendDebugCommand(command: string) {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error(t('error.debuggerNotRunning'));
+        throw codedDebugError('debuggerNotRunning', t('error.debuggerNotRunning'));
     }
     if (gdbDebugger.programExited) {
-        throw new Error(t('error.programEnded'));
+        throw codedDebugError('programEnded', t('error.programEnded'));
     }
     lastDebugCommand = command;
     try {
@@ -12929,17 +12962,19 @@ async function sendDebugCommand(command: string) {
 
         switch (command) {
             case 'continue':
+                // 「已经在运行」是状态而不是失败，用户点继续时常常真的在跑。这里以前和渲染层
+                // 一样在匹配措辞（/running|not stopped/...），而 run()/continue() 抛的是**译文** ——
+                // 换一次语言就能让同一个动作从「忽略」变成「弹错」，反过来也会把真失败咽掉。
+                // 现在只认 gdb-mi-debugger.ts 打的码。
                 try { await gdbDebugger.run(); logInfo('[主进程] 程序已启动'); }
                 catch (error) {
-                    const msg = String((error as Error)?.message || error || '').toLowerCase();
-                    if (/running|already\s*running|already\s*started|not\s*stopped/.test(msg)) {
-                        logInfo('[主进程] 程序已在运行（run 报 running），忽略错误');
+                    if (isAlreadyRunning(error)) {
+                        logInfo('[主进程] 程序已在运行（run 报 programAlreadyRunning），忽略');
                     } else {
                         try { await gdbDebugger.continue(); }
                         catch (err2) {
-                            const msg2 = String((err2 as Error)?.message || err2 || '').toLowerCase();
-                            if (/running|not\s*stopped/.test(msg2)) {
-                                logInfo('[主进程] 程序处于 running/非暂停状态（continue 报错），忽略');
+                            if (isAlreadyRunning(err2)) {
+                                logInfo('[主进程] 程序已在运行（continue 报 programAlreadyRunning），忽略');
                             } else { throw err2; }
                         }
                     }
@@ -12969,7 +13004,7 @@ async function sendDebugCommand(command: string) {
 
 async function sendDebugInput(input: string) {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error(t('error.debuggerNotRunning'));
+        throw codedDebugError('debuggerNotRunning', t('error.debuggerNotRunning'));
     }
 
     try {
@@ -13011,7 +13046,7 @@ async function addBreakpoint(breakpoint: { file?: string; line?: number }) {
     logInfo('[主进程] 添加断点:', breakpoint);
 
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error(t('error.debuggerNotRunning'));
+        throw codedDebugError('debuggerNotRunning', t('error.debuggerNotRunning'));
     }
 
     try {
@@ -13045,7 +13080,7 @@ async function removeBreakpoint(breakpoint: { file?: string; line?: number }) {
     logInfo('[主进程] 移除断点:', breakpoint);
 
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error(t('error.debuggerNotRunning'));
+        throw codedDebugError('debuggerNotRunning', t('error.debuggerNotRunning'));
     }
 
     try {
@@ -13091,7 +13126,7 @@ async function removeBreakpoint(breakpoint: { file?: string; line?: number }) {
 
 async function getDebugVariables() {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error(t('error.debuggerNotRunning'));
+        throw codedDebugError('debuggerNotRunning', t('error.debuggerNotRunning'));
     }
 
     try {
@@ -13111,7 +13146,7 @@ async function getDebugVariables() {
 
 async function getDebugCallStack() {
     if (!gdbDebugger || !gdbDebugger.isRunning) {
-        throw new Error(t('error.debuggerNotRunning'));
+        throw codedDebugError('debuggerNotRunning', t('error.debuggerNotRunning'));
     }
 
     try {
