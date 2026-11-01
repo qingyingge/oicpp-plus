@@ -379,7 +379,7 @@
                     <div class="panel-header">
                         <span class="panel-title" data-i18n="compare.title">Code Comparer</span>
                     </div>
-                    <div class="compare-content">
+                    <div class="cmp-panel-body">
                         <div class="no-compiler-message" id="no-compiler-message" style="display: none;">
                             <div class="message-icon" data-ui-icon="gear"></div>
                             <p data-i18n="menu.setCompilerFirst">Please configure the compiler first</p>
@@ -390,96 +390,114 @@
                         </div>
 
                         <div class="compare-file-section" id="compare-file-section">
-                            <div class="compare-notice">
-                                <div class="notice-icon" data-ui-icon="warning"></div>
-                                <div class="notice-text">
-                                    <strong data-i18n="dialog.note">Note:</strong><span data-i18n="menu.importantNotice">Uses stdin/stdout by default. If your code uses freopen, configure the I/O filenames below.</span>
-                                </div>
-                            </div>
-                            
-                            <div class="file-select-group">
-                                <div class="file-select-item">
-                                    <div class="file-select-header">
-                                        <span class="file-select-label" data-i18n="menu.standardCode">Standard/Brute Force Code</span>
-                                        <button class="file-browse-btn" id="std-code-browse" data-i18n="menu.browse">浏览</button>
+                            <section class="cmp-block" id="cmp-block-files">
+                                <button class="cmp-block-head" type="button" aria-expanded="true" aria-controls="cmp-block-files-body">
+                                    <span class="cmp-block-caret" aria-hidden="true"></span>
+                                    <span class="cmp-block-title" data-i18n="compare.blockPrograms">程序与生成器</span>
+                                </button>
+                                <div class="cmp-block-body" id="cmp-block-files-body">
+                                    <div class="cmp-field">
+                                        <div class="cmp-field-top">
+                                            <span class="cmp-field-label" data-i18n="menu.standardCode" data-i18n-title="menu.standardCode">Standard/Brute Force Code</span>
+                                            <button class="file-browse-btn" id="std-code-browse" data-i18n="menu.browse">浏览</button>
+                                        </div>
+                                        <div class="file-path-display" id="std-code-path" data-i18n="menu.noFile">No file selected</div>
                                     </div>
-                                    <div class="file-path-display" id="std-code-path" data-i18n="menu.noFile">No file selected</div>
-                                </div>
 
-                                <div class="file-select-item">
-                                    <div class="file-select-header">
-                                        <span class="file-select-label" data-i18n="menu.testCode">Code to Compare</span>
-                                        <button class="file-browse-btn" id="test-code-browse" data-i18n="menu.browse">浏览</button>
+                                    <div class="cmp-field">
+                                        <div class="cmp-field-top">
+                                            <span class="cmp-field-label" data-i18n="menu.testCode" data-i18n-title="menu.testCode">Code to Compare</span>
+                                            <button class="file-browse-btn" id="test-code-browse" data-i18n="menu.browse">浏览</button>
+                                        </div>
+                                        <div class="file-path-display" id="test-code-path" data-i18n="menu.noFile">No file selected</div>
                                     </div>
-                                    <div class="file-path-display" id="test-code-path" data-i18n="menu.noFile">No file selected</div>
-                                </div>
 
-                                <div class="file-select-item">
-                                    <div class="file-select-header">
-                                        <span class="file-select-label" data-i18n="menu.generator">Data Generator</span>
-                                        <button class="file-browse-btn" id="generator-browse" data-i18n="menu.browse">浏览</button>
+                                    <div class="cmp-field">
+                                        <div class="cmp-field-top">
+                                            <span class="cmp-field-label" data-i18n="menu.generator" data-i18n-title="menu.generator">Data Generator</span>
+                                            <button class="file-browse-btn" id="generator-browse" data-i18n="menu.browse">浏览</button>
+                                        </div>
+                                        <div class="file-path-display" id="generator-path" data-i18n="menu.noFile">No file selected</div>
                                     </div>
-                                    <div class="file-path-display" id="generator-path" data-i18n="menu.noFile">No file selected</div>
                                 </div>
-                            </div>
+                            </section>
 
-                            <div class="compare-config-section">
-                                <div class="config-item">
-                                    <label class="config-label" for="compare-count" data-i18n="menu.compareCount">Comparison Count:</label>
-                                    <input type="number" class="config-input" id="compare-count" value="100" min="1" max="100000">
-                                </div>
-                                <div class="config-item">
-                                    <label class="config-label" for="compare-threads" data-i18n="menu.parallelThreads">Parallel Threads:</label>
-                                    <input type="number" class="config-input" id="compare-threads" value="" min="1" data-i18n-placeholder="compare.threadsAutoPlaceholder">
-                                    <span class="config-unit" id="compare-threads-hint" data-i18n="compare.threadHint">Max = CPU threads x 0.6</span>
-                                </div>
-                                <div class="config-item">
-                                    <label class="config-label" for="time-limit" data-i18n="menu.timeLimit">Time Limit:</label>
-                                    <input type="number" class="config-input" id="time-limit" value="1000" min="0">
-                                    <span class="config-unit">ms</span>
-                                </div>
-                                <div class="config-item compare-freopen-row">
-                                    <label class="config-label" data-i18n="menu.fileIO_label">File I/O:</label>
-                                    <div class="file-input-group compare-freopen-group">
-                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-input-file" data-i18n-placeholder="menu.sampleInputPlaceholder" placeholder="Input file name, e.g. sample.in">
-                                        <input type="text" class="config-input compare-freopen-input" id="compare-freopen-output-file" data-i18n-placeholder="menu.sampleOutputPlaceholder" placeholder="Output file name, e.g. sample.out">
+                            <section class="cmp-block" id="cmp-block-params">
+                                <button class="cmp-block-head" type="button" aria-expanded="true" aria-controls="cmp-block-params-body">
+                                    <span class="cmp-block-caret" aria-hidden="true"></span>
+                                    <span class="cmp-block-title" data-i18n="compare.blockRunParams">运行参数</span>
+                                </button>
+                                <div class="cmp-block-body" id="cmp-block-params-body">
+                                    <div class="cmp-kv">
+                                        <label class="cmp-kv-label" for="compare-count" data-i18n="menu.compareCount">Comparison Count:</label>
+                                        <input type="number" class="config-input" id="compare-count" value="100" min="1" max="100000">
                                     </div>
+                                    <div class="cmp-kv">
+                                        <label class="cmp-kv-label" for="compare-threads" data-i18n="menu.parallelThreads">Parallel Threads:</label>
+                                        <input type="number" class="config-input" id="compare-threads" value="" min="1" data-i18n-placeholder="compare.threadsAutoPlaceholder">
+                                    </div>
+                                    <div class="cmp-kv">
+                                        <label class="cmp-kv-label" for="time-limit" data-i18n="menu.timeLimit">Time Limit:</label>
+                                        <div class="cmp-kv-tail">
+                                            <input type="number" class="config-input" id="time-limit" value="1000" min="0">
+                                            <span class="config-unit">ms</span>
+                                        </div>
+                                    </div>
+                                    <div class="cmp-hint" id="compare-threads-hint" data-i18n="compare.threadHint">Max = CPU threads x 0.6</div>
                                 </div>
-                                <div class="config-item testlib-spj-row">
-                                    <label class="config-label testlib-label" data-i18n="menu.useTestlib_label">
-                                        <input type="checkbox" class="config-checkbox" id="compare-use-testlib">
-                                        Use Testlib
-                                    </label>
-                                    <div class="spj-section">
-                                        <label class="config-label spj-label" data-i18n="compare.spjLabel">Special Judge</label>
-                                        <div class="file-input-group spj-input">
-                                            <input type="text" class="config-input" id="compare-spj-path" data-i18n-placeholder="menu.spjPlaceholder" placeholder="Select SPJ file (optional)" readonly>
-                                            <button class="file-browse-btn" id="compare-spj-browse" data-i18n="menu.browse">Browse</button>
+                            </section>
+
+                            <section class="cmp-block collapsed" id="cmp-block-io">
+                                <button class="cmp-block-head" type="button" aria-expanded="false" aria-controls="cmp-block-io-body">
+                                    <span class="cmp-block-caret" aria-hidden="true"></span>
+                                    <span class="cmp-block-title" data-i18n="compare.blockJudgeIO">文件 IO 与 SPJ</span>
+                                </button>
+                                <div class="cmp-block-body" id="cmp-block-io-body">
+                                    <div class="compare-notice">
+                                        <div class="notice-icon" data-ui-icon="warning"></div>
+                                        <div class="notice-text">
+                                            <strong data-i18n="dialog.note">Note:</strong><span data-i18n="menu.importantNotice">Uses stdin/stdout by default. If your code uses freopen, configure the I/O filenames below.</span>
+                                        </div>
+                                    </div>
+                                    <div class="config-item compare-freopen-row">
+                                        <label class="config-label" data-i18n="menu.fileIO_label">File I/O:</label>
+                                        <div class="file-input-group compare-freopen-group">
+                                            <input type="text" class="config-input compare-freopen-input" id="compare-freopen-input-file" data-i18n-placeholder="menu.sampleInputPlaceholder" placeholder="Input file name, e.g. sample.in">
+                                            <input type="text" class="config-input compare-freopen-input" id="compare-freopen-output-file" data-i18n-placeholder="menu.sampleOutputPlaceholder" placeholder="Output file name, e.g. sample.out">
+                                        </div>
+                                    </div>
+                                    <div class="config-item testlib-spj-row">
+                                        <label class="config-label testlib-label" data-i18n="menu.useTestlib_label">
+                                            <input type="checkbox" class="config-checkbox" id="compare-use-testlib">
+                                            Use Testlib
+                                        </label>
+                                        <div class="spj-section">
+                                            <label class="config-label spj-label" data-i18n="compare.spjLabel">Special Judge</label>
+                                            <div class="file-input-group spj-input">
+                                                <input type="text" class="config-input" id="compare-spj-path" data-i18n-placeholder="menu.spjPlaceholder" placeholder="Select SPJ file (optional)" readonly>
+                                                <button class="file-browse-btn" id="compare-spj-browse" data-i18n="menu.browse">Browse</button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                            </section>
 
                             <div class="compare-actions">
-                                <button class="compare-btn compare-start-btn" id="compare-start-btn" data-i18n="compare.start">
-                                    <svg width="14" height="14" viewBox="0 0 14 14">
+                                <button class="compare-btn" type="button" id="compare-run-btn" data-cmp-state="start">
+                                    <svg class="cmp-ico cmp-ico-start" width="14" height="14" viewBox="0 0 14 14">
                                         <path d="M4 2l8 5-8 5V2z" fill="currentColor"/>
                                     </svg>
-                                    Start Comparison
-                                </button>
-                                <button class="compare-btn compare-stop-btn" id="compare-stop-btn" disabled data-i18n="compare.stop">
-                                    <svg width="14" height="14" viewBox="0 0 14 14">
+                                    <svg class="cmp-ico cmp-ico-stop" width="14" height="14" viewBox="0 0 14 14">
                                         <rect x="3" y="3" width="8" height="8" fill="currentColor"/>
                                     </svg>
-                                    Stop
-                                </button>
-                                <button class="compare-btn compare-reset-btn" id="compare-reset-btn" data-i18n="compare.reset">
-                                    <svg width="14" height="14" viewBox="0 0 14 14">
+                                    <svg class="cmp-ico cmp-ico-clear" width="14" height="14" viewBox="0 0 14 14">
                                         <path d="M7 2a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3V2zM2 7a5 5 0 0 1 5-5v2a3 3 0 0 0-3 3H2z" fill="currentColor"/>
                                     </svg>
-                                    Reset
+                                    <span class="cmp-run-label" id="compare-run-label" data-i18n="compare.start">开始对拍</span>
                                 </button>
                             </div>
+
+                            <div class="cmp-stats" id="compare-stats" style="display: none;"></div>
 
                             <div class="compare-status" id="compare-status" style="display: none;">
                                 <div class="status-header">

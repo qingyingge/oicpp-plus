@@ -44,7 +44,7 @@ const en = JSON.parse(read('src', 'lang', 'en.json'));
 // ---------------------------------------------------------------------------
 
 const PURE_METHODS = ['updateProgress', 'getCompletedCount', 'isEngineErrorType',
-    'getOutputSizeBytes', 'getOutputSizeText', 'addLineNumbers', 'normalizeForCompare',
+    'getOutputSizeBytes', 'getOutputSizeText', 'formatCompareBytes', 'addLineNumbers', 'normalizeForCompare',
     'highlightCharacterDifferences', 'limitOutputLines', 'formatCompareOutput', 'getDifferenceInfo',
     'exportResults'];
 const cmp = {};
@@ -74,7 +74,7 @@ cmp.escapeHtml = (s) => String(s)
 
 const INPUT_IDS = new Set(['compare-count', 'compare-threads', 'time-limit', 'compare-use-testlib',
     'compare-spj-path', 'compare-freopen-input-file', 'compare-freopen-output-file']);
-const BUTTON_IDS = new Set(['compare-start-btn', 'compare-stop-btn']);
+const BUTTON_IDS = new Set(['compare-run-btn']);
 
 class FakeEl {
     constructor(id) {
@@ -88,13 +88,27 @@ class FakeEl {
         this.value = '';
         this.checked = false;
         this.children = {};
+        this.kids = [];
+        // 单按钮三状态靠 data-cmp-state 驱动，data-i18n 靠 setAttribute 挂 —— 桩不接就是测不到
+        this.dataset = {};
+        this._attrs = {};
     }
+    setAttribute(k, v) { this._attrs[k] = String(v); }
+    getAttribute(k) { return k in this._attrs ? this._attrs[k] : null; }
     get textContent() { return this._text; }
-    set textContent(v) { this._text = String(v); this._last = ['textContent', this._text]; }
+    set textContent(v) {
+        this._text = String(v);
+        this._last = ['textContent', this._text];
+        // 浏览器里给元素赋 textContent 会连带清掉原有子节点。统计条正是靠这一步
+        // 清空上一轮，不模型出来的话「重画变叠加」这种真 bug 在这儿测不出来。
+        this.kids = [];
+    }
     get innerHTML() { return this._html; }
     set innerHTML(v) { this._html = String(v); this._last = ['innerHTML', this._html]; }
     get shown() { return this._last ? this._last[1] : ''; }
     get lastKind() { return this._last ? this._last[0] : null; }
+    // 统计条是 createElement + appendChild 拼出来的，FakeEl 不接就什么都测不到。
+    appendChild(node) { this.kids.push(node); return node; }
     querySelector(sel) {
         if (!this.children[sel]) this.children[sel] = new FakeEl(`${this.id}::${sel}`);
         return this.children[sel];
@@ -135,9 +149,18 @@ const comparerHarness = (names, own = {}) => {
         return seen.elements[id];
     };
     const api = { stopCompareCalls: 0, stopCompare: () => { api.stopCompareCalls++; return Promise.resolve(); } };
+    // 假时钟：统计条的 TPS 滑窗、累计耗时和 250ms 重画节流全是时间敏感的，
+    // 用真实 performance.now() 测出来的断言会在负载高的机器上随机红。
+    let clockNow = 0;
+    // 「用时」是独立定时器走表，测试里要能手动跳表、也要能确认停表时真的清掉了
+    const intervals = new Map();
+    let intervalId = 0;
     const ctx = vm.createContext({
         Number, String, Object, Array, JSON, Math, Map, Set, Promise, RegExp, Error, isNaN, parseInt, parseFloat,
         setTimeout, clearTimeout, console,
+        setInterval: (fn, ms) => { const id = ++intervalId; intervals.set(id, { fn, ms }); return id; },
+        clearInterval: (id) => { intervals.delete(id); },
+        performance: { now: () => clockNow },
         document: { getElementById: element, createElement: (tag) => new FakeNode(tag) },
         HTMLInputElement: FakeInput,
         HTMLButtonElement: FakeButton,
@@ -149,10 +172,18 @@ const comparerHarness = (names, own = {}) => {
         logWarn: (...a) => seen.warns.push(a),
         logError: (...a) => seen.errors.push(a)
     });
+    // 文件级常量在方法体里是自由标识符，不注进沙箱就是 ReferenceError；
+    // 从源码抽而不是在测试里重抄一遍，阈值一改这里跟着走，不会各说一套。
+    for (const name of ['COMPARE_STATS_WINDOW', 'COMPARE_STATS_PAINT_MS', 'COMPARE_STATS_TICK_MS']) {
+        const decl = scalarConst(comparerSource, name).replace(/^const\s+/, 'var ');
+        check(`文件级常量抽取成功: ${name}`, decl.startsWith(`var ${name}`), decl);
+        vm.runInContext(decl, ctx);
+    }
     // 这两个文件级小工具本身就是守卫的一部分（类型门槛写错，renderTask 就什么都写不到）
-    for (const [global, pattern] of [['ccInput', /const ccInput = /], ['ccButton', /const ccButton = /]]) {
+    // ccT 是文件级 i18n 别名，applyCompareActionState 靠它取文案，不注进沙箱就是 ReferenceError
+    for (const [global, pattern] of [['ccInput', /const ccInput = /], ['ccButton', /const ccButton = /], ['ccT', /const ccT = /]]) {
         const src = arrowExpr(comparerSource, pattern);
-        check(`文件级工具抽取成功: ${global}`, src.startsWith('(id) =>'), src.slice(0, 20));
+        check(`文件级工具抽取成功: ${global}`, src.startsWith('('), src.slice(0, 20));
         vm.runInContext(`this.${global} = ${src}`, ctx);
     }
     const real = {};
@@ -163,12 +194,17 @@ const comparerHarness = (names, own = {}) => {
         check(`状态机方法可调用: ${name}`, typeof real[name] === 'function');
     }
     const calls = [];
-    const target = { calls, tasks: new Map(), ...real, ...own };
+    // runCleanups / statsTicker / compareRunSeq 是构造函数里的实例字段：resetComparison
+    // 现在要查这张表来摘监听，缺了它 Proxy 会把字段当方法返回，.get/.delete 当场炸。
+    const target = { calls, tasks: new Map(), runCleanups: new Map(), statsTicker: null, compareRunSeq: 0, ...real, ...own };
     const self = new Proxy(target, {
         get: (t, k) => (k in t ? t[k] : (typeof k === 'string'
             ? (...args) => { t.calls.push({ name: k, args }); } : undefined))
     });
-    return { ctx, self, seen, calls, real, api, el: (id) => element(id), named: (id) => seen.elements[id] };
+    return { ctx, self, seen, calls, real, api, el: (id) => element(id), named: (id) => seen.elements[id],
+        setClock: (v) => { clockNow = v; },
+        intervals,
+        fireTicks: () => { [...intervals.values()].forEach((entry) => entry.fn()); return intervals.size; } };
 };
 // Proxy 记下来的 this.* 调用里挑某个方法的实参表
 const argsOf = (calls, name) => calls.filter((c) => c.name === name).map((c) => c.args);
@@ -355,6 +391,113 @@ const called = (calls, name) => calls.some((c) => c.name === name);
     check('没有活动任务时 reset 不碰进度条',
         rIdle.named('progress-fill') === undefined && rIdle.calls.length === 0,
         JSON.stringify(rIdle.seen.lookups));
+
+    // 重置 = 中止 + 清空。以前运行中把按钮禁掉（点了没反应），现在允许中途清场，
+    // 但必须先把引擎停掉、把这一轮的监听摘掉 —— 否则迟到的 complete 会在已经清空
+    // 的面板上弹一个「已手动停止」。
+    const abortTask = {
+        key: 'k1',
+        state: {
+            isRunning: true, mode: 'running', completedTests: 4, currentTest: 4, totalTests: 9,
+            failedTests: 0, stopped: false, statusText: 'x', errorResult: null,
+            warningMessage: null, incompleteRun: null, runId: 3, stats: null, engineWarnings: []
+        }
+    };
+    let detached = 0;
+    const ra = comparerHarness(['resetComparison'], {
+        getActiveTask: () => abortTask,
+        activeTaskKey: 'k1',
+        runCleanups: new Map([['k1', () => { detached++; }]])
+    });
+    ra.real.resetComparison.call(ra.self);
+    check('运行中重置先摘掉本轮监听（迟到的 complete 不能再复活面板）',
+        detached === 1, String(detached));
+    check('运行中重置同时叫引擎停手', ra.api.stopCompareCalls === 1, String(ra.api.stopCompareCalls));
+    check('中止之后计数照样清零', abortTask.state.completedTests === 0 && abortTask.state.mode === 'idle',
+        JSON.stringify({ c: abortTask.state.completedTests, m: abortTask.state.mode }));
+    const raIdle = comparerHarness(['resetComparison'], { getActiveTask: () => abortTask });
+    raIdle.real.resetComparison.call(raIdle.self);
+    check('空闲时重置不去叫引擎（没在跑，停它是多余的一次 IPC）',
+        raIdle.api.stopCompareCalls === 0, String(raIdle.api.stopCompareCalls));
+
+    // ── 一个键三种状态 ──
+    // 空闲→开始；跑着→停止（中止并留住已跑出来的结果）；跑完/出错/已停止→清空。
+    // 三个键并排时「重置」在运行中是死按钮、空闲时又是空操作，而点「开始」本来就会先清场。
+    const ui = (state) => {
+        const u = comparerHarness(['applyCompareActionState', 'getCompareActionState'], { activeTaskKey: 'k1' });
+        u.real.applyCompareActionState.call(u.self, { key: 'k1', state });
+        return {
+            action: u.named('compare-run-btn').dataset?.cmpState,
+            disabled: u.named('compare-run-btn').disabled,
+            labelKey: u.named('compare-run-label').shown,
+            i18nAttr: u.named('compare-run-label').getAttribute('data-i18n')
+        };
+    };
+    const base = { isRunning: false, starting: false, shouldStop: false, mode: 'idle',
+        errorResult: null, completedTests: 0, stats: null, engineWarnings: [] };
+    const done = { ...base, mode: 'complete', completedTests: 300, stats: { startedAt: 1 } };
+    const run = { ...base, isRunning: true, mode: 'running', stats: { startedAt: 1 } };
+    check('空闲且没跑过 → 一个键就是「开始对拍」',
+        ui({ ...base }).action === 'start' && ui({ ...base }).disabled === false
+        && ui({ ...base }).labelKey === 'compare.start', JSON.stringify(ui({ ...base })));
+    check('跑着 → 同一个键变「停止」，还能点（中止要留结果）',
+        ui({ ...run }).action === 'stop' && ui({ ...run }).disabled === false
+        && ui({ ...run }).labelKey === 'compare.stop', JSON.stringify(ui({ ...run })));
+    check('跑完 → 同一个键变「清空」',
+        ui({ ...done }).action === 'clear' && ui({ ...done }).disabled === false
+        && ui({ ...done }).labelKey === 'compare.clear', JSON.stringify(ui({ ...done })));
+    check('按过停止、正在收尾 → 键禁用（再点一次是空操作）',
+        ui({ ...run, mode: 'stopping', shouldStop: true }).disabled === true,
+        JSON.stringify(ui({ ...run, mode: 'stopping', shouldStop: true })));
+    check('只有差异结果也算有痕迹 → 键是「清空」而不是「开始」',
+        ui({ ...base, mode: 'error', errorResult: { testNumber: 1 } }).action === 'clear');
+    check('跑过但没跑完（有统计无结果）→ 也是「清空」',
+        ui({ ...base, mode: 'stopped', completedTests: 12 }).action === 'clear');
+    check('有统计痕迹（stats.startedAt）就够判定，不依赖 completedTests',
+        ui({ ...base, stats: { startedAt: 1 } }).action === 'clear');
+    // 文案挂在 data-i18n 上，切语言时由 _applyToDOM 自己刷；不挂就会半中半英
+    check('键的文案挂着 data-i18n，切语言会跟着换',
+        ui({ ...base }).i18nAttr === 'compare.start' && ui({ ...run }).i18nAttr === 'compare.stop',
+        JSON.stringify([ui({ ...base }).i18nAttr, ui({ ...run }).i18nAttr]));
+    check('没有活动任务时键回到「开始」（不能让面板卡在清空态）', (() => {
+        const u = comparerHarness(['applyCompareActionState', 'getCompareActionState'], { activeTaskKey: null });
+        u.real.applyCompareActionState.call(u.self, null);
+        return u.named('compare-run-btn').dataset?.cmpState === 'start';
+    })(), JSON.stringify(ui({ ...base })));
+
+    // ── 「用时」独立走表 ──
+    // 只在 progress 到达时刷的话：一组慢程序跑 2 秒期间一条事件都没有，数字先冻住、
+    // 再突然跳一大截，看着就像卡死或计时不准（用户原话：用时跳动得不很稳定）。
+    const tickerHarness = () => comparerHarness(['startStatsTicker', 'stopStatsTicker'],
+        { activeTaskKey: 'k1', statsTicker: null });
+    const th = tickerHarness();
+    const runTaskState = { key: 'k1', state: { mode: 'running', stats: null, engineWarnings: [] } };
+    th.real.startStatsTicker.call(th.self, runTaskState);
+    check('开跑后挂了一个走表定时器', th.intervals.size === 1, JSON.stringify([...th.intervals.values()].map(v => v.ms)));
+    check('走表间隔在 100~400ms 之间（够顺眼，又不至于每帧重排 DOM）', (() => {
+        const ms = [...th.intervals.values()][0].ms;
+        return ms >= 100 && ms <= 400;
+    })(), String([...th.intervals.values()][0].ms));
+    th.calls.length = 0;
+    th.fireTicks();
+    check('每跳一次就强制重画统计条（force=true，不能再被 250ms 节流挡掉）', (() => {
+        const c = th.calls.find((x) => x.name === 'renderCompareStats');
+        return !!c && c.args[0] === runTaskState && c.args[1] === true;
+    })(), JSON.stringify(th.calls.map((c) => c.name)));
+    th.real.stopStatsTicker.call(th.self);
+    check('停表把定时器真的清掉（只把字段置 null 会留下一个永跑的 interval 白烧 CPU）',
+        th.intervals.size === 0 && th.self.statsTicker === null,
+        JSON.stringify({ n: th.intervals.size, t: th.self.statsTicker }));
+    const th2 = tickerHarness();
+    th2.real.startStatsTicker.call(th2.self, { key: 'k1', state: { mode: 'idle', stats: null } });
+    th2.fireTicks();
+    check('本轮已被重置时走表自己退出（不在后台无限刷一个已经不存在的轮次）',
+        th2.intervals.size === 0, String(th2.intervals.size));
+    const th3 = tickerHarness();
+    th3.real.startStatsTicker.call(th3.self, runTaskState);
+    th3.real.startStatsTicker.call(th3.self, runTaskState);
+    check('重复开表不叠第二个定时器（切任务/重开一轮都会走这里）',
+        th3.intervals.size === 1, String(th3.intervals.size));
 }
 // 停止收尾（result.stopped → mode='stopped' + compare.compareStopped）改成真跑：
 // 见文件尾 handlerBehaviour 的完成回调段。原守卫是
@@ -1077,8 +1220,12 @@ check('只出 MB 的旧尺寸助手确实不在这张表里', !declaredNames.has
 {
     const warnCb = callbackBody(mainSource, /engine\.on\('warning',\s*/);
     check('主进程 warning 回调体抽取成功', warnCb.length > 10, JSON.stringify(warnCb.slice(0, 48)));
-    const wCtx = vm.createContext({ mainWindow: undefined, String, Object });
-    vm.runInContext(`this.__f = (data) => ${warnCb};`, wCtx);
+    // runId 盖章函数也从主进程抽真身：自己造一个桩的话，「每个事件都带上身份」这条
+    // 契约就只在测我的桩，把 stamp(data) 写成 data 也照样绿。
+    const stampSrc = arrowExpr(mainSource, /const stamp\s*=\s*/);
+    check('主进程 runId 盖章函数抽取成功', stampSrc.startsWith('('), stampSrc.slice(0, 36));
+    const wCtx = vm.createContext({ mainWindow: undefined, String, Object, Number, runId: 42 });
+    vm.runInContext(`this.stamp = ${stampSrc}; this.__f = (data) => ${warnCb};`, wCtx);
     const fires = [];
     const emit = (win, data) => {
         fires.length = 0;
@@ -1089,9 +1236,10 @@ check('只出 MB 的旧尺寸助手确实不在这张表里', !declaredNames.has
     };
     const recWin = (onSend) => ({ webContents: { send: (ch, payload) => { if (onSend) onSend(ch, payload); fires.push([ch, payload]); } } });
     const fwd = emit(recWin(), { code: 'disk-nearly-full', taskId: 't1' });
-    check('引擎非致命告警按 compare-warning 通道原样转给渲染层',
+    check('引擎非致命告警按 compare-warning 通道转给渲染层，并盖上本轮 runId',
         fwd.threw === undefined && fwd.fires.length === 1 && fwd.fires[0][0] === 'compare-warning'
-            && fwd.fires[0][1].code === 'disk-nearly-full' && fwd.fires[0][1].taskId === 't1',
+            && fwd.fires[0][1].code === 'disk-nearly-full' && fwd.fires[0][1].taskId === 't1'
+            && fwd.fires[0][1].runId === 42,
         JSON.stringify(fwd));
     const brokenWin = { webContents: { send: () => { throw new Error('Object has been destroyed'); } } };
     const dead = emit(brokenWin, { code: 'x' });
@@ -1355,7 +1503,12 @@ const HANDLER_SITES = [
     ['complete', /window\.electronAPI\.onCompareComplete\(/, false]
 ];
 const RECORD_METHODS = ['updateProgress', 'updateTaskStatus', 'updateTaskProgress',
-    'renderIfActive', 'finishCompareTask', 'cleanupAllListeners', 'showError', 'showComplete'];
+    'renderIfActive', 'finishCompareTask', 'cleanupAllListeners', 'showError', 'showComplete',
+    'recordCompareSample', 'recordEngineWarning', 'settleCompareStats', 'renderCompareStats'];
+
+// 轮次身份：四个回调都按 data.runId === task.state.runId 认事件属于自己那一轮。
+// 这里默认给 task 和事件盖同一个号，要测「别的轮次被丢掉」时显式传别的 runId 覆盖。
+const COMPARE_RUN_ID = 7;
 
 const handlerHarness = (realMethods) => {
     const h = comparerHarness(realMethods);
@@ -1370,10 +1523,17 @@ const handlerHarness = (realMethods) => {
         const src = arrowExpr(comparerSource, pattern);
         check(`引擎事件回调抽取成功: ${name}`, src.startsWith('('), src.slice(0, 24));
         vm.runInContext(`this.${name}Handler = ${isAsync ? 'async ' : ''}${src};`, h.ctx);
-        handlers[name] = h.ctx[`${name}Handler`];
-        check(`回调可调用: ${name}`, typeof handlers[name] === 'function');
+        const raw = h.ctx[`${name}Handler`];
+        check(`回调可调用: ${name}`, typeof raw === 'function');
+        handlers[name] = (data) => raw({ runId: COMPARE_RUN_ID, ...(data || {}) });
     }
-    return { ...h, handlers, task: (state) => { h.ctx.task = { state }; return h.ctx.task; } };
+    return {
+        ...h, handlers,
+        task: (state) => {
+            h.ctx.task = { state: { runId: COMPARE_RUN_ID, ...(state || {}) } };
+            return h.ctx.task;
+        }
+    };
 };
 
 const handlerBehaviour = async () => {
@@ -1382,16 +1542,20 @@ const handlerBehaviour = async () => {
     // ---- 进度回调 ----
     const p = h.task({ totalTests: 50, completedTests: 0, currentTest: 0 });
     h.calls.length = 0;
-    h.handlers.progress({ current: '3', total: 9, testIndex: 4 });
+    h.handlers.progress({ current: '3', total: 9, testIndex: 4, genMs: 11, stdMs: 22, testMs: 33, genLen: 4096 });
     check('进度回调把引擎报的组号归一成数字后写进任务状态',
         p.state.completedTests === 3 && p.state.currentTest === 3,
         JSON.stringify({ c: p.state.completedTests, n: p.state.currentTest }));
     check('进度条按引擎给的 total 画，不拿计划数 50 顶',
         JSON.stringify(argsOf(h.calls, 'updateProgress')) === '[[3,9]]',
         JSON.stringify(argsOf(h.calls, 'updateProgress')));
-    check('状态文案走 compare.testGroup 并带上 testIndex',
-        h.seen.t.some(([k, prm]) => k === 'compare.testGroup' && prm.i === 4),
+    // 并行引擎下逐组报「第 N 组测试」是假信息：十几个 worker 各自跳号、完成顺序也不定，
+    // 拿一个随机组号冒充进度会让人以为进度是顺序推进的。组号只在差异面板上出现。
+    check('进度回调不再逐组报「第 N 组测试」',
+        !h.seen.t.some(([k]) => k === 'compare.testGroup'),
         JSON.stringify(h.seen.t.map(([k]) => k)));
+    // 进度回调的轮次身份 / 重置后不回写，见本段末尾（h.task 会换掉沙箱里的当前任务，
+    // 放在中间会把上面那几条断言打到别的任务上）。
     h.seen.t.length = 0;
     h.handlers.progress({ current: 'abc', total: 9 });
     check('current 不是数字时收成 0，不把 NaN 写进状态（NaN 会一路带到百分比里）',
@@ -1399,6 +1563,46 @@ const handlerBehaviour = async () => {
         String(p.state.completedTests));
     check('进度回调不碰错误区与完成面板', !called(h.calls, 'showError') && !called(h.calls, 'showComplete'),
         JSON.stringify(h.calls.map((c) => c.name)));
+    // 统计条的 TPS / 最慢组 / 数据大小全部源自这条样本，引擎已经把 genMs/stdMs/testMs/genLen
+    // 发上来了，接线断在回调里才算数：事后从 current/total 反推不出任何一段耗时。
+    const recorded = h.calls.find((c) => c.name === 'recordCompareSample');
+    check('每组样本连同引擎原始事件一并交给统计窗口',
+        !!recorded && recorded.args[0] === p && recorded.args[1].genMs === 11
+        && recorded.args[1].stdMs === 22 && recorded.args[1].testMs === 33 && recorded.args[1].genLen === 4096,
+        JSON.stringify(recorded && recorded.args[1]));
+    // 节流写在 renderCompareStats 里（它才知道上一次是什么时候画的），
+    // 回调只管每组交一次；两边都锁住，才不会一边改成不画、一边改成不节流。
+    check('每组进度都交一次统计条重画', called(h.calls, 'renderCompareStats'),
+        JSON.stringify(h.calls.map((c) => c.name)));
+
+    // ── 轮次身份（多实例竞态）──
+    // 实测日志里出现过「对拍完成 7219 组」早于本轮「启动引擎」：上一轮引擎被 compare-start
+    // 顶掉时补发的终止事件，到达渲染层时本轮监听已经挂上了。没有身份就会被本轮收下，
+    // 表现为进度与完成数凭空跳到别人的数字上。
+    const otherRun = h.task({ mode: 'running', completedTests: 0, currentTest: 0, totalTests: 9 });
+    h.calls.length = 0;
+    h.handlers.progress({ runId: 999, current: 5, total: 9, testIndex: 5 });
+    check('别的轮次的 progress 被丢弃：不写计数、不画进度条',
+        otherRun.state.completedTests === 0 && otherRun.state.currentTest === 0
+        && !called(h.calls, 'updateProgress'), JSON.stringify(h.calls.map((c) => c.name)));
+    h.calls.length = 0;
+    h.handlers.complete({ runId: 999, completed: 9, failed: 0 });
+    check('别的轮次的 complete 被丢弃：不改 mode、不摘监听、不收尾',
+        otherRun.state.mode === 'running' && otherRun.state.completedTests === 0
+        && !called(h.calls, 'cleanupAllListeners') && !called(h.calls, 'finishCompareTask'),
+        JSON.stringify(h.calls.map((c) => c.name)));
+    h.calls.length = 0;
+    const resetTask = h.task({ mode: 'idle', completedTests: 0, currentTest: 0, totalTests: 9 });
+    h.handlers.progress({ current: 3, total: 9, testIndex: 3 });
+    check('本轮已被重置（mode=idle）时自己的事件也只摘监听、不回写',
+        resetTask.state.completedTests === 0 && called(h.calls, 'cleanupAllListeners')
+        && !called(h.calls, 'updateProgress'), JSON.stringify(h.calls.map((c) => c.name)));
+    h.calls.length = 0;
+    const idleErr = h.task({ mode: 'idle' });
+    await h.handlers.error({ testNumber: 5, input: 'IN' });
+    check('重置后迟到的 error 不弹差异面板、不覆盖已清空的 errorResult',
+        idleErr.state.errorResult === undefined && !called(h.calls, 'renderIfActive')
+        && called(h.calls, 'cleanupAllListeners'), JSON.stringify(h.calls.map((c) => c.name)));
 
     // ---- 错误回调 ----
     const e = h.task({ mode: 'running' });
@@ -1407,7 +1611,7 @@ const handlerBehaviour = async () => {
     await h.handlers.error({
         testNumber: 7, input: 'IN', stdOutput: 'S', testOutput: 'T',
         inputTruncated: 1, stdOutputTruncated: 0, type: 'std_re', code: 'std_exit',
-        exitCode: 2, message: 'boom'
+        exitCode: 2, message: 'boom', genMs: 12, stdMs: 34, testMs: 56
     });
     const er = e.state.errorResult || {};
     check('三个截断标记各按布尔收窄（1→true、0→false、缺省→false，不许留 undefined）',
@@ -1425,6 +1629,11 @@ const handlerBehaviour = async () => {
         called(h.calls, 'cleanupAllListeners') && h.api.stopCompareCalls === 1
         && called(h.calls, 'finishCompareTask'),
         JSON.stringify({ calls: h.calls.map((c) => c.name), stop: h.api.stopCompareCalls }));
+    // 引擎的 error 事件本来就带这三段耗时（compare-engine-v2 的 emit 里），
+    // 不接进 errorResult，差异面板就只能说「这组错了」而说不出它跑了多久。
+    check('三段实测耗时落到 errorResult，供差异面板显示这组的用时',
+        er.genMs === 12 && er.stdMs === 34 && er.testMs === 56,
+        JSON.stringify({ gen: er.genMs, std: er.stdMs, test: er.testMs }));
     h.calls.length = 0;
     await h.handlers.error({ testNumber: 1 });
     const thin = h.ctx.task.state.errorResult;
@@ -1480,10 +1689,18 @@ const handlerBehaviour = async () => {
     check('告警是非致命的：不改状态、不弹错误面板、不停引擎',
         w.state.mode === 'running' && !called(h.calls, 'showError') && h.api.stopCompareCalls === 0,
         JSON.stringify(h.calls.map((c) => c.name)));
+    // 只进 logWarn 的告警等于没说：看门狗砍掉一半跑量、fastspawn 缺失退化成串行，
+    // 用户看到的都只是「今天怎么这么慢」。必须留一份给统计条并重绘，chip 才上得来。
+    check('非致命告警也留痕给统计条并触发重绘（这是它唯一的上屏出口）',
+        called(h.calls, 'recordEngineWarning') && called(h.calls, 'renderIfActive'),
+        JSON.stringify(h.calls.map((c) => c.name)));
+    h.calls.length = 0;
     h.handlers.warning({});
     check('缺 code/message 的告警用占位串，不把 undefined 写进日志',
         h.seen.warns[1][1] === 'warning' && h.seen.warns[1][2] === '',
         JSON.stringify(h.seen.warns[1]));
+    check('没有 code 的告警不进统计条（占位串不是引擎码，留痕会造出一条假警示）',
+        !called(h.calls, 'recordEngineWarning'), JSON.stringify(h.calls.map((c) => c.name)));
 
     // ---- 跑漏缺口（incomplete_run）：记下来，并在收尾时上屏 ----
     // 引擎把「有 worker 崩了/提前退出，它那批组根本没跑」发成告警而不是错误 ——
@@ -1517,9 +1734,25 @@ const handlerBehaviour = async () => {
         wStr.state.incompleteRun?.completed === 0 && wStr.state.incompleteRun?.total === 16
         && wStr.state.incompleteRun?.missing === 0, JSON.stringify(wStr.state.incompleteRun));
     const wOther = h.task({ mode: 'running' });
+    h.calls.length = 0;
     h.handlers.warning({ code: 'disk-nearly-full', completed: 3, total: 9, missing: 6 });
     check('别的告警不碰缺口字段（只有 incomplete_run 这一支会写）',
         wOther.state.incompleteRun === undefined, JSON.stringify(wOther.state.incompleteRun));
+    check('认不出的告警码不进统计条（统计条只呈现引擎自己定义的两类）',
+        !called(h.calls, 'recordEngineWarning'), JSON.stringify(h.calls.map((c) => c.name)));
+    // 看门狗触发时引擎发的是 engine_timeout + completed/total：这一半跑量是被砍掉的，
+    // 不说出来，完成面板报的「N 组无差异」其实是「只跑了一半」。
+    const wWatchdog = h.task({ mode: 'running' });
+    h.calls.length = 0;
+    h.handlers.warning({ code: 'engine_timeout', completed: 40, total: 100 });
+    const wdRecord = h.calls.find((c) => c.name === 'recordEngineWarning');
+    check('看门狗超时留痕并带上被砍掉的跑量（completed/total 原样交下去）',
+        !!wdRecord && wdRecord.args[0] === wWatchdog && wdRecord.args[1].completed === 40
+        && wdRecord.args[1].total === 100 && called(h.calls, 'renderIfActive'),
+        JSON.stringify(wdRecord && wdRecord.args[1]));
+    check('看门狗超时同样是告警不是错误：不停引擎、不弹差异面板',
+        wWatchdog.state.mode === 'running' && !called(h.calls, 'showError'),
+        JSON.stringify(h.calls.map((c) => c.name)));
 
     const g = h.task({
         mode: 'running', completedTests: 3, totalTests: 16,
@@ -1554,11 +1787,14 @@ const handlerBehaviour = async () => {
     // ---- 下发给引擎的 config ----
     const configSrc = objectConst(comparerSource, 'config');
     check('下发配置的整条 const 抽取成功', configSrc.startsWith('const config = {'), configSrc.slice(0, 30));
-    const buildConfig = new Function('compiledPrograms', 'task', 'effectiveTimeLimit', 'workerCount',
+    // runId 是 runTask 分配的轮次身份（自由标识符），构建 config 时一并注入
+    const buildConfig = new Function('compiledPrograms', 'task', 'effectiveTimeLimit', 'workerCount', 'runId',
         `${configSrc}; return config;`);
     const taskForConfig = (state, config = {}) => ({ state, config });
     const cfg = buildConfig({ stdExe: 'a.exe', testExe: 'b.exe', generatorExe: 'g.exe', spjExe: null },
-        taskForConfig({ totalTests: 9 }), 2000, 4);
+        taskForConfig({ totalTests: 9 }), 2000, 4, 7);
+    check('config 带上本轮 runId（主进程靠它给每个事件盖章，缺了就没有轮次身份）',
+        cfg.runId === 7, String(cfg.runId));
     check('config 显式给 generatorTimeout = 0（时限由 worker 侧按 0=不限时处理）',
         cfg.generatorTimeout === 0, String(cfg.generatorTimeout));
     check('时限用折算后的 effectiveTimeLimit，组数与线程数各归各处',
@@ -1631,10 +1867,232 @@ const handlerBehaviour = async () => {
 // 原先只有一条「withNotice(errorResult.xxx, errorResult.xxxTruncated) 这行字还在」的文本断言：
 // 把两个 flag 对调、或者让 null 输出写成 'null'、取消选择时照样落盘，全都照样绿。
 
+// ---- 统计窗口真跑一遍：单组时长按 max(std,test)、TPS 按墙钟 ----
+//
+// 这两条都属于「看着合理但算错」：std 与 test 是并发跑的（fastspawn 的 runFastPair
+// 一次调用给两侧同一个 pair.ms，js 路径也是 Promise.all），三段相加等于把并行度
+// 从时长里抹掉；TPS 若写成「平均单组耗时的倒数」，算出来的是单个 worker 的吞吐，
+// 12 路并行会显示成 1/12 的可怜数字，面板反而把「开了并行」报成「引擎变慢」。
+// 窗口封顶则是计划 10 万组时渲染层唯一的内存闸。
+const statsBehaviour = () => {
+    const windowSrc = scalarConst(comparerSource, 'COMPARE_STATS_WINDOW');
+    const createSrc = classMethod(comparerSource, 'createCompareStats');
+    const recordSrc = classMethod(comparerSource, 'recordCompareSample');
+    const tpsSrc = classMethod(comparerSource, 'getCompareTps');
+    check('统计四件套抽取成功（窗口常量 / 建槽 / 记样本 / 算 TPS）',
+        windowSrc.startsWith('const COMPARE_STATS_WINDOW') && createSrc.length > 40
+        && recordSrc.length > 200 && tpsSrc.length > 100,
+        JSON.stringify({ w: windowSrc.length, c: createSrc.length, r: recordSrc.length, t: tpsSrc.length }));
+
+    let nowMs = 0;
+    const ctx = vm.createContext({
+        Object, Array, String, Number, Boolean, Math, JSON, Set, Map,
+        performance: { now: () => nowMs }
+    });
+    // 窗口常量必须注进沙箱：recordCompareSample 是在 ctx 里编译的，它找的是 ctx 的
+    // 全局绑定，不是 Node 侧的。放 var 而不是 const，图的是它落到 globalThis 上、
+    // 后面 LIMIT 也直接从 ctx 读 —— 方法真能看见这个数才算数，看不见就当场抛，
+    // 而不是拿一个 Node 侧算出的 LIMIT 去断言沙箱里的行为。
+    vm.runInContext(windowSrc.replace(/^const\s+/, 'var '), ctx);
+    vm.runInContext('this.__LIMIT = COMPARE_STATS_WINDOW;', ctx);
+    const LIMIT = ctx.__LIMIT;
+    const createStats = compileMethod(ctx, createSrc);
+    const record = compileMethod(ctx, recordSrc);
+    const tps = compileMethod(ctx, tpsSrc);
+    check('统计三方法重建成功', typeof createStats === 'function'
+        && typeof record === 'function' && typeof tps === 'function');
+    check('窗口长度是个正经常量，且不至于抖成一两条', Number.isFinite(LIMIT) && LIMIT >= 5, String(LIMIT));
+
+    const mkTask = () => ({ state: { stats: createStats(0) } });
+
+    const t = mkTask();
+    nowMs = 1000;
+    record(t, { testIndex: 1, genMs: 10, stdMs: 100, testMs: 40, genLen: 2048 });
+    const first = t.state.stats.window[0];
+    check('单组时长 = gen + max(std,test)，不是三段相加（std/test 并发）',
+        first.totalMs === 110, JSON.stringify(first));
+    check('生成数据字节数原样入库，不加工（对拍只如实复现，统计也一样）',
+        first.genLen === 2048, String(first.genLen));
+    check('atMs 取的是记录那一刻的墙钟（TPS 全靠它，缺了就永远算不出吞吐）',
+        first.atMs === 1000, String(first.atMs));
+    check('最慢组与末组都指向这条样本',
+        t.state.stats.slowest === first && t.state.stats.lastSample === first);
+    nowMs = 1100;
+    record(t, { testIndex: 2 });
+    check('字段整个缺席时归 0，不把 undefined 写进窗口（undefined 会一路带进插值）',
+        t.state.stats.window[1].genMs === 0 && t.state.stats.window[1].totalMs === 0
+        && t.state.stats.window[1].genLen === 0, JSON.stringify(t.state.stats.window[1]));
+    nowMs = 1200;
+    record(t, { genMs: 'x', stdMs: null, testMs: undefined });
+    check('坏值（字符串/null）按 Number 归 0，不把 NaN 带进 TPS',
+        t.state.stats.window[2].totalMs === 0, JSON.stringify(t.state.stats.window[2]));
+
+    const big = mkTask();
+    for (let i = 0; i < LIMIT + 30; i++) {
+        nowMs += 100;
+        record(big, { testIndex: i + 1, genMs: 1, stdMs: 1, testMs: 1 });
+    }
+    check('窗口封顶：跑满上限也不许无限增长（10 万组计划数下的内存闸）',
+        big.state.stats.window.length === LIMIT
+        && big.state.stats.totalGroups === LIMIT + 30,
+        JSON.stringify({ len: big.state.stats.window.length, total: big.state.stats.totalGroups }));
+    check('滑窗丢头不丢尾（留的是最近这几组，TPS 才反映当下）',
+        big.state.stats.window[0].testIndex === 31
+        && big.state.stats.window[LIMIT - 1].testIndex === LIMIT + 30,
+        JSON.stringify([big.state.stats.window[0].testIndex, big.state.stats.window[LIMIT - 1].testIndex]));
+
+    check('不足两条样本时不报 TPS（画 0 会被读成「慢到停」，画 ∞ 更是灾难）',
+        tps(mkTask().state.stats) === null && tps(null) === null && tps(undefined) === null);
+    const t3 = mkTask();
+    nowMs = 0; record(t3, { testIndex: 1, genMs: 5, stdMs: 5, testMs: 5 });
+    nowMs = 100; record(t3, { testIndex: 2, genMs: 5, stdMs: 5, testMs: 5 });
+    nowMs = 200; record(t3, { testIndex: 3, genMs: 5, stdMs: 5, testMs: 5 });
+    check('TPS = 窗口内首尾墙钟间隔倒推：3 组跨 200ms → 每秒 10 组',
+        Math.abs(tps(t3.state.stats) - 10) < 1e-9, String(tps(t3.state.stats)));
+    const tSame = mkTask();
+    nowMs = 500; record(tSame, { testIndex: 1 }); record(tSame, { testIndex: 2 });
+    check('同一毫秒完成两组时不除零：span=0 出 null，不出 Infinity',
+        tps(tSame.state.stats) === null, String(tps(tSame.state.stats)));
+};
+
+// ---- 统计条真画一遍 ----
+//
+// 四个格子 + 告警 chip 全在 renderCompareStats 里，而它最容易错的恰好是文本断言
+// 锁不住的那几样：拿后台任务的数字刷当前面板、每条 progress 都重排一次 DOM
+// （渲染层自己变成瓶颈）、TPS 还没意义时画 0（被读成「慢到停」）、重画时把上一轮
+// 的 chip 叠在下面越跑越长。所以这里全程真调用，读的是落到 DOM 桩上的最终形状。
+const statsPaintBehaviour = () => {
+    const PAINT_METHODS = ['renderCompareStats', 'getCompareTps', 'getCompareElapsedMs',
+        'formatCompareMs', 'formatCompareBytes', 'createCompareStats', 'recordCompareSample'];
+    const h = comparerHarness(PAINT_METHODS, { activeTaskKey: 'k1', statsPaintedAt: 0 });
+    const box = () => h.named('compare-stats');
+    const grid = () => (box().kids || []).find((n) => n.className === 'cmp-stats-grid');
+    const cells = () => (grid() ? grid().children.map((c) => c.textContent) : []);
+    const cellCls = (i) => (grid() && grid().children[i] ? grid().children[i].className : null);
+    const chips = () => (box().kids || []).filter((n) => n.className === 'cmp-stats-warn').map((n) => n.textContent);
+    const mkTask = (key) => ({
+        key: key || 'k1',
+        state: { stats: h.real.createCompareStats.call(h.self, 1000), engineWarnings: [] }
+    });
+
+    const idle = mkTask();
+    idle.state.stats = h.real.createCompareStats.call(h.self, 0);
+    h.real.renderCompareStats.call(h.self, idle, true);
+    check('本轮没开始时统计条收起，不留一个空框',
+        box().style.display === 'none' && !grid(), JSON.stringify({ d: box().style.display, kids: (box().kids || []).length }));
+
+    const other = mkTask('other-file.cpp');
+    h.setClock(1000);
+    h.real.recordCompareSample.call(h.self, other, { testIndex: 1, genMs: 10, stdMs: 20, testMs: 30, genLen: 512 });
+    h.real.renderCompareStats.call(h.self, other, true);
+    check('不是当前任务时一个字都不画（后台跑着的任务不能顶掉眼前的数字）',
+        cells().length === 0 && box().style.display === 'none', JSON.stringify(cells()));
+
+    const t = mkTask();
+    h.setClock(1000);
+    h.real.recordCompareSample.call(h.self, t, { testIndex: 7, genMs: 10, stdMs: 20, testMs: 30, genLen: 512 });
+    h.setClock(1500);
+    h.real.recordCompareSample.call(h.self, t, { testIndex: 8, genMs: 20, stdMs: 40, testMs: 90, genLen: 2048 });
+    h.real.renderCompareStats.call(h.self, t, true);
+    check('四格齐全：TPS / 用时 / 最慢组 / 数据大小', cells().length === 4, JSON.stringify(cells()));
+    check('TPS 按墙钟：两组跨 500ms → 每秒 2.0 组', cells()[0] === 'compare.statsTps|{"value":"2.0"}', cells()[0]);
+    check('累计用时是本轮墙钟（1500 - startedAt 1000 = 500ms）',
+        cells()[1] === 'compare.statsElapsed|{"value":"500ms"}', cells()[1]);
+    check('最慢组按 wall time 挑（第 8 组 110ms = gen + max(std,test)），不是按 std 单段',
+        cells()[2] === 'compare.statsSlowest|{"number":8,"value":"110ms"}', cells()[2]);
+    check('数据大小与差异区共用同一套单位口径', cells()[3] === 'compare.statsDataSize|{"size":"2.0 KB"}', cells()[3]);
+    check('TPS 那一格加粗，其余次要', cellCls(0) === 'cmp-stat cmp-stat-strong' && cellCls(3) === 'cmp-stat',
+        `${cellCls(0)} / ${cellCls(3)}`);
+    check('统计条显示出来后不再留着 display:none', box().style.display === '', JSON.stringify(box().style));
+
+    const one = mkTask();
+    h.setClock(2000);
+    h.real.recordCompareSample.call(h.self, one, { testIndex: 1, genMs: 5, stdMs: 5, testMs: 5, genLen: 10 });
+    h.real.renderCompareStats.call(h.self, one, true);
+    check('只有一组样本时 TPS 画占位而不是 0（0 会被读成「慢到停」）',
+        cells()[0] === 'compare.statsTps|{"value":"—"}', cells()[0]);
+
+    h.self.statsPaintedAt = 0;
+    h.setClock(5000);
+    h.real.renderCompareStats.call(h.self, t, false);
+    const before = cells().join('|');
+    h.real.recordCompareSample.call(h.self, t, { testIndex: 9, genMs: 900, stdMs: 10, testMs: 10, genLen: 8 });
+    h.setClock(5100);
+    h.real.renderCompareStats.call(h.self, t, false);
+    check('节流窗口内的 progress 不重画（每条都重排 DOM 会把渲染层跑成瓶颈）',
+        cells().join('|') === before, cells().join('|'));
+    h.setClock(5300);
+    h.real.renderCompareStats.call(h.self, t, false);
+    check('过了节流窗口照常重画，不是画一次就不管了',
+        cells().join('|') !== before && cells()[2] === 'compare.statsSlowest|{"number":9,"value":"910ms"}',
+        cells().join('|'));
+    check('重画是替换不是叠加（跑一万组也只有这一张格子表）',
+        cells().length === 4 && (box().kids || []).length === 1,
+        JSON.stringify({ cells: cells().length, kids: (box().kids || []).length }));
+
+    const w = mkTask();
+    w.state.engineWarnings = [
+        { code: 'engine_timeout', completed: 40, total: 100, missing: 60, message: '' },
+        { code: 'fastspawn_fallback', completed: 0, total: 0, missing: 0, message: 'fastspawn unavailable: <b>boom</b>' }
+    ];
+    h.setClock(6000);
+    h.real.renderCompareStats.call(h.self, w, true);
+    check('看门狗与 fastspawn 回退各占一行，并把被砍掉的跑量写出来',
+        chips().length === 2
+        && chips()[0] === 'compare.statsWatchdogWarn|{"completed":40,"total":100}'
+        && chips()[1] === 'compare.statsFastspawnWarn', JSON.stringify(chips()));
+    check('引擎回传的英文技术细节不进界面（留在日志里，界面只给本地化定性提示）',
+        !(box().kids || []).some((n) => String(n.textContent).includes('boom')), JSON.stringify(chips()));
+    // Windows 上 fastspawn.node 按设计不编译（scripts/build-fastspawn.js 直接跳过），
+    // 照原样提示等于给每个 Windows 用户挂一条永远消不掉的假警告。
+    h.ctx.window.process = { platform: 'win32' };
+    h.setClock(6500);
+    h.real.renderCompareStats.call(h.self, w, true);
+    check('win32 上 fastspawn 回退不上屏（那是本平台正常路径），看门狗仍然要报',
+        chips().length === 1 && chips()[0] === 'compare.statsWatchdogWarn|{"completed":40,"total":100}',
+        JSON.stringify(chips()));
+    h.ctx.window.process = { platform: 'linux' };
+    h.setClock(7000);
+    h.real.renderCompareStats.call(h.self, w, true);
+    check('换到 POSIX 又恢复上报（不是把这条提示整个删掉）', chips().length === 2, JSON.stringify(chips()));
+    delete h.ctx.window.process;
+
+    // 本轮已开始、一组还没跑完时的占位：不能拼成「最慢 第—组 —」这种读不通的串
+    const fresh = mkTask();
+    h.setClock(8000);
+    h.real.renderCompareStats.call(h.self, fresh, true);
+    check('还没有样本时最慢格用整句占位，不拼出「第—组」',
+        cells()[2] === 'compare.statsSlowestNone', cells()[2]);
+    check('同一格在跑起来后换回带组号的正文', (() => {
+        h.real.recordCompareSample.call(h.self, fresh, { testIndex: 3, genMs: 1, stdMs: 2, testMs: 3, genLen: 4 });
+        h.real.renderCompareStats.call(h.self, fresh, true);
+        return cells()[2] === 'compare.statsSlowest|{"number":3,"value":"4ms"}';
+    })(), cells()[2]);
+
+    // 毫秒档位：统计条每 250ms 刷一次，进位规则一抖用户就看不出趋势
+    const ms = (v) => h.real.formatCompareMs.call(h.self, v);
+    check('毫秒档：<1000 取整带 ms，1000 起进秒并留两位',
+        ms(0) === '0ms' && ms(999) === '999ms' && ms(1000) === '1.00s' && ms(1234) === '1.23s',
+        [ms(0), ms(999), ms(1000), ms(1234)].join(','));
+    check('十秒整起收成一位小数（窄栏里放不下长数字），9999ms 仍按两位档进位到 10.00s',
+        ms(9999) === '10.00s' && ms(10000) === '10.0s' && ms(12345) === '12.3s',
+        `${ms(9999)},${ms(10000)},${ms(12345)}`);
+    check('坏值（NaN / 负数）画占位，不把 NaNms 印到界面上',
+        ms(NaN) === '—' && ms(-1) === '—' && ms(undefined) === '—', `${ms(NaN)},${ms(-1)}`);
+
+    ['statsTps', 'statsElapsed', 'statsSlowest', 'statsSlowestNone', 'statsDataSize',
+        'statsWatchdogWarn', 'statsFastspawnWarn',
+        'blockPrograms', 'blockRunParams', 'blockJudgeIO'].forEach((k) => {
+        check(`compare.${k} 中英双语都在`, hasLangKey(`compare.${k}`));
+    });
+};
+
 (async () => {
     await engineBehaviour();
     await workerBehaviour();
     await handlerBehaviour();
+    statsBehaviour();
+    statsPaintBehaviour();
     const NOTICE = '⟪导出数据不完整⟫';
     const realWindow = global.window;
     const realLogError = global.logError;

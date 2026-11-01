@@ -1,4 +1,6 @@
-.compare-content {
+/* 对拍面板根容器。原先叫 .compare-content，与 sidebar.css 里的同名规则撞车
+   （那边把面板内所有 <p> 居中并加 50px 顶距），改名后各面板互不污染。 */
+.cmp-panel-body {
     flex: 1;
     overflow-y: auto;
     padding: 8px;
@@ -6,20 +8,20 @@
     width: 100%;
 }
 
-.compare-content::-webkit-scrollbar {
+.cmp-panel-body::-webkit-scrollbar {
     width: 8px;
 }
 
-.compare-content::-webkit-scrollbar-track {
+.cmp-panel-body::-webkit-scrollbar-track {
     background: var(--bg-color);
 }
 
-.compare-content::-webkit-scrollbar-thumb {
+.cmp-panel-body::-webkit-scrollbar-thumb {
     background: var(--border-color);
     border-radius: 4px;
 }
 
-.compare-content::-webkit-scrollbar-thumb:hover {
+.cmp-panel-body::-webkit-scrollbar-thumb:hover {
     background: var(--secondary-bg-hover);
 }
 
@@ -52,7 +54,7 @@
 .compare-file-section {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 10px;
 }
 
 .compare-notice {
@@ -82,37 +84,160 @@
     opacity: 0.9;
 }
 
-.file-select-group {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.file-select-item {
+/* 窄侧栏（默认 300px，可拖到 60%）里的分组容器：块头可点，块体在收起时整块移出布局。
+   收起态用 class 驱动，aria-expanded 由 CodeComparer 同步，两者一起改。 */
+.cmp-block {
     border: 1px solid var(--border-color);
     border-radius: 6px;
     background-color: var(--card-bg);
     overflow: hidden;
-    transition: border-color 0.2s;
 }
 
-.file-select-item:hover {
-    border-color: var(--primary-color);
+.cmp-block-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 8px;
+    background-color: var(--hover-bg);
+    border: none;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-color);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
 }
 
-.file-select-header {
+.cmp-block.collapsed .cmp-block-head {
+    border-bottom-color: transparent;
+}
+
+.cmp-block-head:hover {
+    background-color: var(--secondary-bg-hover);
+}
+
+.cmp-block-caret::before {
+    content: '\25BE';
+    display: inline-block;
+    width: 10px;
+    color: var(--text-secondary);
+    font-size: 10px;
+}
+
+.cmp-block.collapsed .cmp-block-caret::before {
+    content: '\25B8';
+}
+
+.cmp-block-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cmp-block-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px;
+}
+
+.cmp-block.collapsed .cmp-block-body {
+    display: none;
+}
+
+.cmp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.cmp-field-top {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
-    background-color: var(--hover-bg);
-    border-bottom: 1px solid var(--border-color);
+    gap: 8px;
+    min-width: 0;
 }
 
-.file-select-label {
-    font-size: 13px;
-    font-weight: 500;
+.cmp-field-label {
+    font-size: 12px;
     color: var(--text-color);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cmp-kv {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.cmp-kv-label {
+    font-size: 12px;
+    color: var(--text-color);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cmp-kv-tail {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.cmp-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+/* 运行统计条：并行对拍的实时吞吐、本轮墙钟、最慢组、生成数据大小。
+   数字一律等宽字体，否则跑起来每 250ms 重画会把整行抖来抖去。 */
+.cmp-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--card-bg);
+    font-family: 'Consolas';
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+.cmp-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 8px;
+}
+
+.cmp-stat {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cmp-stat-strong {
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+.cmp-stats-warn {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    color: var(--warning-fg);
 }
 
 .file-browse-btn {
@@ -135,22 +260,22 @@
 }
 
 .file-path-display {
-    padding: 8px 12px;
-    font-size: 12px;
+    padding: 0 2px;
+    font-size: 11px;
     color: var(--text-secondary);
     font-family: 'Consolas';
+    /* 路径一律绝对路径，300px 宽栏里 break-all 能堆四五行；限两行并加省略号，
+       完整路径靠 title 悬浮（updateFilePath 写），不要为了看全路径把面板撑高。 */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
     word-break: break-all;
+    line-height: 1.35;
 }
 
 .file-path-display.selected {
     color: var(--primary-color);
-}
-
-.compare-config-section {
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    background-color: var(--card-bg);
-    padding: 12px;
 }
 
 .config-item {
@@ -264,7 +389,11 @@
 }
 
 .compare-freopen-input {
-    width: 170px;
+    /* 原先写死 width:170px：侧栏拖窄时两个文件名输入框会被裁成「sample.i」，
+       宁可让它跟着容器收缩，最小 100px 还能看清 in/out 后缀 */
+    flex: 1 1 100px;
+    width: auto;
+    min-width: 0;
 }
 
 .spj-help-text {
@@ -294,31 +423,42 @@
     transition: all 0.2s;
 }
 
-.compare-start-btn {
+/* 一个键三种状态：颜色与图标都跟着 data-cmp-state 走，按钮自己就是状态提示 */
+.compare-btn .cmp-ico {
+    display: none;
+    flex: 0 0 auto;
+}
+
+.compare-btn[data-cmp-state="start"] {
     background-color: var(--success-bg);
     color: var(--success-fg);
 }
 
-.compare-start-btn:hover:not(:disabled) {
-    opacity: 0.9;
-}
-
-.compare-stop-btn {
+.compare-btn[data-cmp-state="stop"] {
     background-color: var(--error-bg);
     color: var(--error-fg);
 }
 
-.compare-stop-btn:hover:not(:disabled) {
-    opacity: 0.9;
-}
-
-.compare-reset-btn {
+.compare-btn[data-cmp-state="clear"] {
     background-color: var(--secondary-bg);
     color: var(--secondary-fg);
 }
 
-.compare-reset-btn:hover:not(:disabled) {
+.compare-btn[data-cmp-state="start"] .cmp-ico-start,
+.compare-btn[data-cmp-state="stop"] .cmp-ico-stop,
+.compare-btn[data-cmp-state="clear"] .cmp-ico-clear {
+    display: block;
+}
+
+.compare-btn:hover:not(:disabled) {
     opacity: 0.9;
+}
+
+.cmp-run-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .compare-btn:disabled {
@@ -455,6 +595,15 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+    flex-wrap: wrap;
+}
+
+/* 标签里会被 showError 追加一段「(第 N 行第 M 个字符)」的差异定位信息，
+   300px 窄栏里 flex 项默认 min-width:auto 不肯收缩，会把右侧「展开」按钮整个挤出面板。
+   放开收缩，让定位信息自己换行，按钮留在原位。 */
+.diff-header-with-action > span:first-child {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .diff-expand-btn {

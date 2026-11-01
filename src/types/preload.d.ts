@@ -67,10 +67,10 @@ interface ElectronAPI {
   runInteractive(options: Record<string, unknown>): Promise<{ success?: boolean; executablePath?: string; diagnostics?: unknown; stderr?: string; stdout?: string; exitCode?: number; graderExitCode?: number; contestantExitCode?: number; timeout?: boolean; outputLimitExceeded?: boolean; output?: string; time?: number; memoryBytes?: number; memoryLimitExceeded?: boolean; outputLimitBytes?: number; capturedOutputBytes?: number; observedOutputBytes?: number; cached?: boolean; error?: unknown } | null>;
   startCompare(config: Record<string, unknown>): Promise<unknown>;
   stopCompare(): Promise<unknown>;
-  onCompareProgress(cb: (data: { current: number; total: number; testIndex: number }) => void): () => void;
-  onCompareError(cb: (error: { testNumber?: unknown; input?: string; stdOutput?: string; testOutput?: string; inputTruncated?: boolean; stdOutputTruncated?: boolean; testOutputTruncated?: boolean; type?: unknown; code?: string; message?: string }) => void): () => void;
-  onCompareComplete(cb: (result: { completed?: number; failed?: number; stopped?: boolean }) => void): () => void;
-  onCompareWarning(cb: (data: { code?: string; type?: string; message?: string; completed?: number; total?: number; missing?: number }) => void): () => void;
+  onCompareProgress(cb: (data: { current: number; total: number; testIndex: number; genMs?: number; stdMs?: number; testMs?: number; genLen?: number; runId?: number }) => void): () => void;
+  onCompareError(cb: (error: { testNumber?: unknown; input?: string; stdOutput?: string; testOutput?: string; inputTruncated?: boolean; stdOutputTruncated?: boolean; testOutputTruncated?: boolean; type?: unknown; code?: string; message?: string; genMs?: number; stdMs?: number; testMs?: number; runId?: number }) => void): () => void;
+  onCompareComplete(cb: (result: { completed?: number; failed?: number; stopped?: boolean; runId?: number }) => void): () => void;
+  onCompareWarning(cb: (data: { code?: string; type?: string; message?: string; completed?: number; total?: number; missing?: number; runId?: number }) => void): () => void;
   readDirectory(dirPath: string): Promise<Array<{ path?: string; name?: string; type?: string; ext?: string } | null>>;
   renameFile(oldPath: string, newPath: string, options?: Record<string, unknown>): Promise<{ success?: boolean } | null>;
   deleteFile(filePath: string, options?: Record<string, unknown>): Promise<{ success?: boolean; error?: string } | null>;

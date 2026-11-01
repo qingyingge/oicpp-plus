@@ -8285,34 +8285,43 @@ function setupIPC() {
             try { await activeEngine.stop(); } catch(_) {}
             activeEngine = null;
         }
+        // 轮次身份由渲染层生成、随 config 带上来，主进程只负责给每个事件盖章。
+        // 为什么必须有：停掉上一轮引擎时它会补发一个终止事件，而它到达渲染层的时刻往往已经
+        // 在新一轮注册监听之后 —— 全局广播 + 无身份 = 新轮把上一轮的「已完成 N 组」当成
+        // 自己的结果收下（实测日志里出现过「对拍完成 7219 组」早于本轮「启动引擎」）。
+        const cfg = (config && typeof config === 'object') ? config as Record<string, unknown> : {};
+        const runId = Number.isFinite(cfg['runId']) ? Number(cfg['runId']) : 0;
+        const stamp = (data: unknown): Record<string, unknown> => {
+            return { ...(data as Record<string, unknown>), runId };
+        };
         const { CompareEngineV2 } = require('./main-process/compare-engine-v2');
         const engine = new CompareEngineV2();
         activeEngine = engine;
 
         engine.on('progress', (data: unknown) => {
-            try { mainWindow?.webContents.send('compare-progress', data); } catch(_) {}
+            try { mainWindow?.webContents.send('compare-progress', stamp(data)); } catch(_) {}
         });
         engine.on('error', (data: unknown) => {
-            try { mainWindow?.webContents.send('compare-error', data); } catch(_) {}
+            try { mainWindow?.webContents.send('compare-error', stamp(data)); } catch(_) {}
         });
         engine.on('warning', (data: unknown) => {
-            try { mainWindow?.webContents.send('compare-warning', data); } catch(_) {}
+            try { mainWindow?.webContents.send('compare-warning', stamp(data)); } catch(_) {}
         });
         engine.on('stopped', (data: Record<string, unknown>) => {
-            try { mainWindow?.webContents.send('compare-complete', { ...data, stopped: true }); } catch(_) {}
+            try { mainWindow?.webContents.send('compare-complete', stamp({ ...data, stopped: true })); } catch(_) {}
             if (activeEngine === engine) activeEngine = null;
         });
         engine.on('complete', (data: unknown) => {
-            try { mainWindow?.webContents.send('compare-complete', data); } catch(_) {}
+            try { mainWindow?.webContents.send('compare-complete', stamp(data)); } catch(_) {}
             if (activeEngine === engine) activeEngine = null;
         });
 
         engine.start(config).catch((err: Error) => {
-            try { mainWindow?.webContents.send('compare-error', { testNumber: 0, type: 'engine', message: (err as Error)?.message }); } catch(_) {}
+            try { mainWindow?.webContents.send('compare-error', stamp({ testNumber: 0, type: 'engine', message: (err as Error)?.message })); } catch(_) {}
             if (activeEngine === engine) activeEngine = null;
         });
 
-        return { started: true };
+        return { started: true, runId };
     });
 
     ipcMain.handle('compare-stop', async () => {
