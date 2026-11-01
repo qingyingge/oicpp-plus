@@ -113,7 +113,7 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   2. 同一句键可能同时喂 HTML 和 `textContent`（下载窗的 `main.downloadingCompiler`：h3 要转义、`updateProgress` 绝不能转义），所以别把它做成全局行为。
   3. 接主进程译文时一律做「与原硬编码 byte-equal」比对 —— 转义残渣、以及往 JSON 里写 `\n` 结果落成字面反斜杠+n，这两类都只有逐字比对抓得到。
   `tests/i18n-main-process.test.js` 锁住两处配置与四个 HTML 出口；`tests/i18n-renderer-runtime.test.js` 用真实 UMD 断言插值不再被转义。注意别用 `/\{[^}]*\}/` 去框 `interpolation` 配置对象 —— `suffix: '}'` 里那个花括号会让它提前截断（本条第一版就假红了）。
-- I7 拦孤儿键（baseline 187，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
+- I7 拦孤儿键（baseline 1，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`；2026-11-02 一次退役 186 个从未接线/随功能一起停用的键，判定分「引用面 / git 来源 / I6 回归」三层，缺任何一层都不许清仓，理由写在那常量的注释里）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
 - **I8 与 I4 各有一档「看着像存量、其实是判据误报」的 baseline，已经查清并降到 0，别再往回抬**：
   * I8 的 `userVisibleRe` 里 `message:` / `label:` / `title:` / `detail:` 是**标签** sink，但
     `e instanceof Error ? e.message : String(e)` 里的三元冒号长得一模一样，于是 `src/utils/logger.js`

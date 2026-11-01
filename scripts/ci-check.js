@@ -1158,9 +1158,23 @@ const I18N_HARDCODED_EN_BASELINE = 0;
 // 2026-11-01（#7 复数批）：退役 compare.compareComplete（188 → 187）。判定不是「grep 不到
 // t('字面量')」—— 全仓 .ts/.js/.html/tests/scripts/docs 都搜过，连动态形状也查了：本仓唯一
 // 动态拼键的地方是 codeComparer.getEngineErrorMessage 的 {code: 'compare.xxx'} 码表，值全是
-// 字面量，折不出这个键。真正上屏的那句已经是复数化的 compare.completedText（本批之前刚验过
-// n=1/n=5 的实际译文），这个键是它复数化之前留下的前身。留着只是每年多一条要绕的孤儿。
-const I18N_ORPHAN_KEY_BASELINE = 187;
+// 2026-11-02（孤儿键清仓）：187 → 1。一次退役 186 个逻辑键，判定分三层，缺任何一层都不许动手：
+//   · 引用面：I7 的口径只看 src/**/*.js 与 *.html 里的字面量与属性链；本仓唯一的动态取键是
+//     codeComparer.getEngineErrorMessage 的 {code: 'compare.xxx'} 码表，值全是字面量，拼不出新键。
+//     全仓（含 tests/docs/scripts）再搜一遍键名字面量，零命中。
+//   · 来源：每个键 git log -S（排除 src/lang，否则「加进包」那次提交自己会命中）查曾否被引用。
+//     绝大多数从未接线；有历史的那几个里，cloudCompile.* 与 message.cloudCompileCppOnly 随 c7e0ea2
+//     整块停用云编译一起消失（菜单项是 disabled 桩），app.qqGroup 随关于页那一行删掉，
+//     tester.runSingle 是 b93bab1 纠正「添加样例组按钮挂错键」后留下的空键 —— 都是有意删除，不是误伤。
+//     tester.ac/re/wa/tle/ce/mle/ole 存的是 "AC"/"RE" 这类判题代码，代码后来直接印字面量
+//     （sampleTester 的 overallLabel = 'AC'），这是对的：判题代码本来就不该按语言变，
+//     那几个键是早期把判题代码当文案的残留。
+//   · 回归：CI 的 I6「被引用的键必须存在于包里」是硬安全网 —— 删错任何一条在用的键它会立刻红；
+//     80 项检查 / 58 个回归测试文件全绿。
+// 剩下的这 1 个是**故意留的**，不是没清干净：tests/bug-report.test.js 的 L10 拿
+// compileOutput.analysisEmpty 当契约（「en 侧必须是英文」）。为了让孤儿数归零去改那条台账断言，
+// 等于把「改测试迎合数字」这条路开个头，不值这一个键。
+const I18N_ORPHAN_KEY_BASELINE = 1;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {
