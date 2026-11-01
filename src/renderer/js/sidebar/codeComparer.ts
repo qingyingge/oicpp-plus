@@ -875,7 +875,7 @@ class CodeComparer {
                     task.state.stopped = true;
                     task.state.mode = 'stopped';
                     task.state.warningMessage = this.getCompletionWarningMessage(task, failed);
-                    this.updateTaskStatus(task, window.i18n.t('compare.compareStopped', { completed, failed }));
+                    this.updateTaskStatus(task, window.i18n.t('compare.compareStopped', { completed, failed, count: completed }));
                 } else if (task.state.mode === 'running' || task.state.mode === 'stopping') {
                     task.state.mode = 'complete';
                     task.state.warningMessage = this.getCompletionWarningMessage(task, failed);
@@ -1308,7 +1308,8 @@ class CodeComparer {
                 : null;
             this.updateTaskStatus(task, window.i18n.t('compare.compareStopped', {
                 completed: executed,
-                failed: failedGenerations
+                failed: failedGenerations,
+                count: executed
             }));
             this.renderIfActive(task);
             return;

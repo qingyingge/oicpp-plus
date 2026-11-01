@@ -7254,7 +7254,7 @@ function setupIPC() {
                             const receivedMB = (progress.downloadedBytes / 1024 / 1024).toFixed(1);
                             const totalMB = progress.totalBytes > 0 ? (progress.totalBytes / 1024 / 1024).toFixed(1) : null;
                             const prefix = progress.type === 'multi' ? t('main.downloadingMulti') : t('main.downloading');
-                            const threadInfo = progress.type === 'multi' ? t('main.threadCount', { n: progress.activeChunks }) : '';
+                            const threadInfo = progress.type === 'multi' ? t('main.threadCount', { n: progress.activeChunks, count: progress.activeChunks }) : '';
                             updateProgress(`${prefix}${threadInfo}: ` + (totalMB === null
                                 ? t('main.downloadSizeUnknown', { received: receivedMB })
                                 : t('main.downloadSize', { received: receivedMB, total: totalMB })), percent, speedText);
@@ -7651,7 +7651,7 @@ function setupIPC() {
                             const receivedMB = (progress.downloadedBytes / 1024 / 1024).toFixed(1);
                             const totalMB = progress.totalBytes > 0 ? (progress.totalBytes / 1024 / 1024).toFixed(1) : null;
                             const prefix = progress.type === 'multi' ? t('main.downloadingMulti') : t('main.downloading');
-                            const threadInfo = progress.type === 'multi' ? t('main.threadCount', { n: progress.activeChunks }) : '';
+                            const threadInfo = progress.type === 'multi' ? t('main.threadCount', { n: progress.activeChunks, count: progress.activeChunks }) : '';
                             updateProgress(`${prefix}${threadInfo}: ` + (totalMB === null
                                 ? t('main.downloadSizeUnknown', { received: receivedMB })
                                 : t('main.downloadSize', { received: receivedMB, total: totalMB })), percent, speedText);

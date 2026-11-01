@@ -868,7 +868,7 @@ class CloudSyncPanel {
             }
             this.expandedFolders.add(cloudRoot);
             this.renderTree();
-            let message = window.i18n.t('dialog.uploadComplete', { uploaded });
+            let message = window.i18n.t('dialog.uploadComplete', { uploaded, count: uploaded });
             if (skippedSize > 0) {
                 message += window.i18n.t('dialog.uploadSkipped', { count: skippedSize });
             }

@@ -1173,7 +1173,7 @@ class SampleTester {
             <div class="summary-left">
                 <span class="summary-label">${window.i18n.t('tester.overview')}</span>
                 <span class="status-badge ${overallClass}">${overallLabel}</span>
-                <span class="summary-label">${window.i18n.t('tester.totalGroups', { total })}</span>
+                <span class="summary-label">${window.i18n.t('tester.totalGroups', { total, count: total })}</span>
             </div>
             <div class="summary-right">
                 ${badges}

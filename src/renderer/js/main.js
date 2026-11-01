@@ -4386,12 +4386,14 @@ class OICPPApp {
             const diffDay = Math.floor(diffMs / 86400000);
             if (diffMin < 1)
                 return window.i18n.t('app.justNow');
+            // count 是 i18next 选复数后缀的唯一依据（{n} 只是文案里的占位），
+            // 少了它 app.*Ago 的 _one 永远取不到，界面会直接显示裸键名 —— CI 的 I9 钉这条。
             if (diffMin < 60)
-                return window.i18n.t('app.minutesAgo', { n: diffMin });
+                return window.i18n.t('app.minutesAgo', { n: diffMin, count: diffMin });
             if (diffHour < 24)
-                return window.i18n.t('app.hoursAgo', { n: diffHour });
+                return window.i18n.t('app.hoursAgo', { n: diffHour, count: diffHour });
             if (diffDay < 7)
-                return window.i18n.t('app.daysAgo', { n: diffDay });
+                return window.i18n.t('app.daysAgo', { n: diffDay, count: diffDay });
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
             const day = String(date.getDate()).padStart(2, '0');

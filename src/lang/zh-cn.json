@@ -41,7 +41,7 @@
     "userCancelledDownload": "用户取消下载",
     "downloadSizeUnknown": "{received}MB / 未知",
     "downloadSize": "{received}MB / {total}MB",
-    "threadCount": " ({n} 线程)",
+    "threadCount_other": " ({n} 线程)",
     "downloadingMulti": "多线程下载中",
     "downloading": "下载中",
     "testlibInstallDone": "testlib 安装完成！",
@@ -559,7 +559,7 @@
     "loginExpired": "登录已过期，请重新登录",
     "fileSizeExceeded": "文件大小超过 50KB，无法上传",
     "fileTypeNotSupported": "仅支持 .ans .in .out .cpp .py .txt .md .h .hpp",
-    "uploadComplete": "上传完成：{uploaded} 个文件",
+    "uploadComplete_other": "上传完成：{uploaded} 个文件",
     "uploadSkipped_other": "，跳过 {count} 个超出 50KB 的文件",
     "uploadFolderEmpty": "文件夹内没有可上传的文件",
     "cloudStorageFull": "云端剩余文件数量不足",
@@ -830,7 +830,7 @@
     "grader": "grader.cpp",
     "graderPathEmpty": "grader.cpp 文件路径为空",
     "graderContentEmpty": "grader.cpp 文件内容为空",
-    "totalGroups": "共 {total} 组",
+    "totalGroups_other": "共 {total} 组",
     "collapseOutput": "收起输出",
     "expandFullOutput": "展开完整输出",
     "stderrLabel": "标准错误",
@@ -912,7 +912,7 @@
     "foundDiff": "发现差异",
     "diffPosition": "第 {line} 行第 {char} 字符有差异",
     "compareError": "对拍过程出错: ",
-    "compareStopped": "对拍被手动停止，已执行 {completed} 组测试，其中有 {failed} 组生成失败",
+    "compareStopped_other": "对拍被手动停止，已执行 {completed} 组测试，其中有 {failed} 组生成失败",
     "genFailedWarning_other": "有 {count} 组数据生成失败，请检查数据生成器",
     "spjResult": "SPJ 结果: {result}",
     "pythonPathInvalid": "Python 解释器路径无效，请重新设置",
@@ -1358,9 +1358,9 @@
     "appInitFailed": "应用初始化失败: {msg}",
     "errorRetry": "发生错误，请稍后重试",
     "justNow": "刚刚",
-    "minutesAgo": "{n} 分钟前",
-    "hoursAgo": "{n} 小时前",
-    "daysAgo": "{n} 天前"
+    "minutesAgo_other": "{n} 分钟前",
+    "hoursAgo_other": "{n} 小时前",
+    "daysAgo_other": "{n} 天前"
   },
   "templates": {
     "templateTab": "文件模板",
@@ -1651,7 +1651,7 @@
     "sampleCompile": "样例编译",
     "compileSuccessWithTime": "编译成功 ({time}s)",
     "bytes": "字节",
-    "formatBytes": "{bytes} 字节"
+    "formatBytes_other": "{bytes} 字节"
   },
   "welcome": {
     "subtitle": "为 OIer 优化的 C++ 编程环境",

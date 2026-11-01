@@ -43,6 +43,7 @@ function balancedObjectAfter(src, keyRe) {
 }
 
 const ciSource = fs.readFileSync(path.join(ROOT, 'scripts', 'ci-check.js'), 'utf8');
+const plural = require('../scripts/i18n-plural');
 const mainSource = fs.readFileSync(path.join(ROOT, 'src', 'main.js'), 'utf8');
 const compilerSource = fs.readFileSync(path.join(ROOT, 'src', 'renderer', 'settings', 'compiler.js'), 'utf8');
 const zh = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'lang', 'zh-cn.json'), 'utf8'));
@@ -127,20 +128,27 @@ const enMain = en.main || {};
 // ---------------------------------------------------------------------------
 
 {
-    const zhKeys = Object.keys(zhMain).sort();
-    const enKeys = Object.keys(enMain).sort();
+    // 复数形态本来就随语言不同（zh 只要 _other，en 要 _one+_other），
+    // 所以这里必须比「逻辑键集」而不是字面键集 —— 与 CI 的 I2 同一口径，取自 scripts/i18n-plural.js。
+    // 7d 把 main.threadCount 复数化以后，字面比较会把只有 en 有的 threadCount_one 报成漂移。
+    const zhIndex = plural.indexPack(zhMain);
+    const enIndex = plural.indexPack(enMain);
+    const zhKeys = [...zhIndex.logical.keys()].sort();
+    const enKeys = [...enIndex.logical.keys()].sort();
     check('main.* 命名空间已建立', zhKeys.length > 50, `${zhKeys.length} 键`);
-    check('zh-cn 与 en 的 main.* 键集完全一致',
+    check('zh-cn 与 en 的 main.* 逻辑键集完全一致',
         JSON.stringify(zhKeys) === JSON.stringify(enKeys),
-        zhKeys.filter((k) => !(k in enMain)).join(',') || enKeys.filter((k) => !(k in zhMain)).join(','));
+        zhKeys.filter((k) => !enIndex.logical.has(k)).join(',') || enKeys.filter((k) => !zhIndex.logical.has(k)).join(','));
 
     // en 不得残留中文或中文标点
     const cjk = enKeys.filter((k) => /[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]/.test(String(enMain[k])));
     check('en.json 的 main.* 无中文/中文标点残留', cjk.length === 0, cjk.join(','));
 
-    // 占位符必须一一对应（I3 同款要求）
+    // 占位符必须一一对应（I3 同款要求）：逐字面键配对，只比两边都存在的那个形态 ——
+    // en 独有的 _one 没有对照物，由 CI 的 pluralTokenIssues 管方向，这里不重复判
     const mismatch = [];
-    for (const k of zhKeys) {
+    for (const k of Object.keys(zhMain)) {
+        if (!(k in enMain)) continue;
         const ph = (s) => (String(s).match(/\{[a-zA-Z0-9_]+\}/g) || []).sort().join(',');
         if (ph(zhMain[k]) !== ph(enMain[k])) mismatch.push(`${k}: zh[${ph(zhMain[k])}] vs en[${ph(enMain[k])}]`);
     }
@@ -231,8 +239,8 @@ const enMain = en.main || {};
     // 每个被调用的 main.* 键都必须真实存在，且不在孤儿名单里
     const calledKeys = [...mainSource.matchAll(/t\('(main\.[A-Za-z]+)'/g)].map((m) => m[1]);
     const unresolved = [...new Set(calledKeys)].filter((k) => {
-        const short = k.slice('main.'.length);
-        return zhMain[short] === undefined;
+        // 引用的是基名，包里可能是基名也可能是 _one/_other —— 归一口径与 I6 一致
+        return !plural.resolvesKey(plural.indexPack(zhMain), k.slice('main.'.length));
     });
     check('main.js 引用的每个 main.* 键都存在于语言包', unresolved.length === 0, unresolved.join(','));
 }

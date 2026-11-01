@@ -731,7 +731,7 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
             && stoppedByUser.task.state.failedTests === 3
             && stoppedByUser.task.state.warningMessage === fill(packs['zh-cn']['compare.genFailedWarning_other'], { count: 3 })
             && stoppedByUser.calls.updateTaskStatus.length === 1
-            && stoppedByUser.calls.updateTaskStatus[0] === fill(packs['zh-cn']['compare.compareStopped'], { completed: 8, failed: 3 }),
+            && stoppedByUser.calls.updateTaskStatus[0] === fill(packs['zh-cn']['compare.compareStopped_other'], { completed: 8, failed: 3 }),
         stoppedByUser.task.state);
     const stoppedClean = await runComplete({ mode: 'running', result: { stopped: true, completed: 8, failed: 0 } });
     add('中止但一组都没失败：不留假警告（warningMessage 归 null）',
@@ -743,7 +743,7 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
             && NaNed.task.state.failedTests === 0, NaNed.task.state);
     const enDone = await runComplete({ mode: 'running', result: { stopped: true, completed: 6, failed: 2 }, lang: 'en' });
     add('换 en 语言包：这两句状态文案跟着换成英文，且屏幕上不出现裸键名',
-        enDone.calls.updateTaskStatus[0] === fill(packs['en']['compare.compareStopped'], { completed: 6, failed: 2 })
+        enDone.calls.updateTaskStatus[0] === fill(packs['en']['compare.compareStopped_other'], { completed: 6, failed: 2 })
             // 复数形态在这里显式写死 _other：断言的是「count=2 落到哪一支」这个预期行为，
             // 不是拿同一个解析函数算两遍自证
             && enDone.task.state.warningMessage === fill(packs['en']['compare.genFailedWarning_other'], { count: 2 })

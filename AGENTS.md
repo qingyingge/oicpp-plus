@@ -124,6 +124,7 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   - **两种情况不要复数化**：①**标签式文案**（`剩余文件数量: {count}` / `Remaining files: {count}`）—— 那个名词属于标签而非被数的宾语，n=1 时换成 `1 file remaining` 是整句变形，既不自然也不再镜像 zh；②**没有名词可变的**（`attempt {count}`、`({count} ahead)`），1 和 5 长得一样，加 `_one` 只是死键。`cloud.remainingFiles` 在 7b 被错误地复数化过一次，已撤销。
   - **一句话里有两个可数名词时，先消掉第二个**。i18next 只有一根复数轴（只按 `count` 选支），`({count} items, {remaining} slots left)` 这种无论怎么加 `_one` 都会在 `remaining=1` 时写成 `1 slots left`。正解是把第二处改成无需配合的 `{remaining} left`，而不是硬造 `_one`。
   - **数字不是以 `count` 传进来的键根本没法复数化**：`{n}` / `{total}` / `{bytes}` / `{uploaded}` / `{errors}` 都要先让调用点补上 `count: <同一个表达式>`，否则界面直接显示裸键名（比不复数化更糟）。en 里剩下的 `file(s)` / `error(s)` 这类规避写法就是这么来的。
+    补的时候 `count` 必须**就是文案里那个数的表达式**（`{ n: diffMin, count: diffMin }`），只改一边会单复数和数字各说各话。这一条机器判不出可靠的样子（`dialog.importDetected` 那种 `{count}` 本身就在文案里、其它 token 是别的数，任何「count 要等于某个 token」的规则都会误报），所以靠 I9 兜住「有没有传」，「传得对不对」靠人 —— 改这类调用点时把两边一起看。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
 
 ### 迁移 .js → .ts（TypeScript 路线甲）
