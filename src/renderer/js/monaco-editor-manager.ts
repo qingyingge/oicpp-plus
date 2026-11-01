@@ -1259,7 +1259,7 @@ class MonacoEditorManager {
                 const line = scanSource.slice(0, arrayMatch.index).split(/\r?\n/).length;
                 const result = {
                     safe: false,
-                    reason: window.i18n.t('monaco.largeArrayDetail', { dims: dimensionCount, bytes: elementSize }),
+                    reason: window.i18n.t('monaco.largeArrayDetail', { dims: dimensionCount, bytes: elementSize, count: dimensionCount }),
                     line,
                     elementSize,
                     estimatedBytes

@@ -1504,7 +1504,7 @@
     "userSnippet": "用户代码片段",
     "largeArrayWarning": "{file} 包含潜在超大静态数组{lineInfo}，已禁用 clangd LSP 以保护内存。基础语法高亮仍可用。",
     "largeArrayDetected": "检测到潜在超大静态数组",
-    "largeArrayDetail": "检测到潜在超大静态数组（约 {dims} 维，按 {bytes} 字节/元素估算占用超过 1 GiB）",
+    "largeArrayDetail_other": "检测到潜在超大静态数组（约 {dims} 维，按 {bytes} 字节/元素估算占用超过 1 GiB）",
     "commonItems": "C++ 常用",
     "compilerPathNotSet": "编译器路径未设置，语法检查将找不到头文件，请先设置编译器路径。",
     "renameSymbol": "重命名标识符",
