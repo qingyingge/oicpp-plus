@@ -360,6 +360,24 @@ const check = (name, condition, extra = '') => {
                 && entries.every((e) => locales['zh-cn'][e[2]] !== undefined && locales.en[e[2]] !== undefined),
             JSON.stringify(entries.map((e) => `${e[1]}→${e[2]}`)));
     }
+    // 「把译文插进句子」的这些帧，英文必须自带冠词或把槽放在冠词不需要的位置 ——
+    // cloud.file「file」这种裸名词插进 "Cannot overwrite with {target}." 会得到
+    // "Cannot overwrite with file."，不成句；而中文「无法用{target}覆盖」不需要冠词，
+    // 所以这个坑只在 en 侧，也只在**填译文的那些帧**上。
+    //
+    // 这是一张**逐条人工核过**的表，不是语法检查器：新增一个填译文的槽，正确做法是自己
+    // 读一遍那句英文再往表里加一行，而不是指望机器替你判断 —— 判据本身没法机械化。
+    const WORD_SLOT_FRAMES = [
+        { key: 'message.cloudFileLocalOnly', enMust: /Using \{feature\} requires/, why: 'feature 填译文，槽在 Using 的宾语位' },
+        { key: 'cloud.uploadConflictFolderMsg', enMust: /A \{target\} cannot/, why: 'target 填 cloud.file/folder 这种裸名词，帧必须自带冠词' },
+        { key: 'cloud.uploadConflictOverwriteMsg', enMust: /A \{kind\} with the same name/, why: '同上：kind 填裸名词' },
+        { key: 'fileExplorer.pasteFail', enMust: /^\{op\} failed/, why: 'op 填 fileExplorer.copy/move 的标签（自带大写），槽在句首所以不需要冠词' },
+        { key: 'tester.opSuccess', enMust: /^\{title\} succeeded$/, why: 'title 填译文的编译标题，槽在句首' },
+    ];
+    for (const frame of WORD_SLOT_FRAMES) {
+        const enText = String(locales.en[frame.key] || '');
+        check(`填译文的帧形态人工核过：${frame.key}`, frame.enMust.test(enText), `${frame.why} | ${enText}`);
+    }
 }
 
 console.log(`i18n duplicate-value tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
