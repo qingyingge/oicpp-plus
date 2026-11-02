@@ -1583,6 +1583,73 @@ console.log(`\n${Y}[I11] One source sentence, one translation${R}`);
   }
 }
 
+// I12: 含中文的字面量被赋给变量 —— I8 按行找 sink，这个形状它是瞎的
+console.log(`\n${Y}[I12] CJK string assigned to a variable${R}`);
+{
+  // I8 的判据要求同一行上出现用户可见 sink 关键字（textContent/label:/message:/…）。
+  // 于是 `const msg = '[样例测试器] …'` 先把中文存进变量、下一行再塞进 appendOutput
+  // 的写法一条都不报 —— 这是 AGENTS.md 里记着的盲区（主进程同形：const msg='中文';
+  // return { error: msg }）。真实代价：sampleTester.notifyCompileCacheHit 的前缀
+  // 一直是硬编码中文，切到英文界面后编译输出面板里仍然显示「[样例测试器]」。
+  //
+  // 「这个变量最终去了哪」机械化不了，所以这里只认一种形状并配一张白名单：
+  // 白名单里的变量必须**每一次使用都落在 logX( 里** —— 日志是开发者可见的，允许硬编码。
+  // 白名单不是名字清单而是行为约束：哪天有人把 logLine 塞进 showMessage，这条立刻红。
+  const LOG_ONLY_CJK_VARS = [
+    { file: 'src/main.ts', name: 'logLine' },   // LSP 失败诊断，只进 logError
+  ];
+  const tsFiles = getAllFiles(srcDir, '.ts').filter((f) => !f.endsWith('.d.ts') && !f.startsWith(langDir));
+  // 中文判定沿用本仓统一的 [\u4e00-\u9fff]（I8/I4 都是这个范围）。**不要**换成 \p{Han}：
+  // 本机 node（V8 的 unicode 属性表在这里缺项）会对 /…\p{Han}/u 抛
+  // "Invalid regular expression: Invalid property name"，整个 ci-check 直接起不来。
+  const assignRe = new RegExp(`(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*['"\`]([^'"\`\\n]*[\\u4e00-\\u9fff])`);
+  // 只认「字面量直接赋给变量」：等号右边第一个字符就是开引号，且闭合前含中文。
+  // 别把 `.*` 加回去 —— 那样 `let currentTheme = 'dark'; // 默认深色主题` 里的**闭合引号**
+  // 会被当成开引号，注释里的中文也算命中（monaco-editor-manager.ts:4743/4745 就是这么假阳的）。
+  // 代价是 `const x = prefix + '中文'` 这种拼接形状看不见；宁缺毋滥，误报会把守卫挤成噪声。
+  const hits = [];
+  const usedNames = new Set();
+  for (const f of tsFiles) {
+    const content = readFile(f);
+    if (!content) continue;
+    const rel = path.relative(root, f).split(path.sep).join('/');
+    content.split('\n').forEach((line, i) => {
+      const m = assignRe.exec(line);
+      if (!m) return;
+      // 注释里的「代码样子」不算：整行以 // * /* 开头，或赋值点之前已出现 //
+      if (/^\s*(?:\/\/|\*|\/\*)/.test(line) || line.slice(0, m.index).includes('//')) return;
+      const key = `${rel}#${m[1]}`;
+      usedNames.add(key);
+      if (!LOG_ONLY_CJK_VARS.some((e) => e.file === rel && e.name === m[1])) {
+        hits.push(`${rel}:${i + 1} ${m[1]} —— 中文存进变量后 I8 就看不见它了，挂 data-i18n/t() 或登记进 LOG_ONLY_CJK_VARS`);
+      }
+    });
+  }
+  // 白名单逐条复跑：每个使用点都必须在 logX 调用里
+  for (const entry of LOG_ONLY_CJK_VARS) {
+    const content = readFile(path.join(root, entry.file));
+    if (!content) { fail(`I12 白名单指向的文件不存在: ${entry.file}`); continue; }
+    if (!usedNames.has(`${entry.file}#${entry.name}`)) {
+      fail(`I12 白名单条目已失效：${entry.file} 里再没有「${entry.name} = <含中文的字面量>」，划掉它`);
+      continue;
+    }
+    const bad = [];
+    content.split('\n').forEach((line, i) => {
+      if (!new RegExp(`\\b${entry.name}\\b`).test(line)) return;
+      if (assignRe.test(line)) return;                        // 声明那一行本身
+      if (!/log(?:Error|Warn|Info|Debug)\s*\(/.test(line)) bad.push(`${entry.file}:${i + 1} ${line.trim().slice(0, 70)}`);
+    });
+    if (bad.length > 0) {
+      fail(`${entry.file} 的 ${entry.name} 被用在日志之外（白名单的前提是「只进 logX」）: ${summarize(bad)}`);
+    }
+  }
+  if (hits.length === 0) {
+    ok(`no CJK literals captured into variables (${tsFiles.length} .ts files, ${LOG_ONLY_CJK_VARS.length} log-only exemption(s) verified)`);
+  } else {
+    fail(`${hits.length} CJK literal(s) assigned to a variable — I8 的按行 sink 判据看不见这种: ${summarize(hits)}`);
+  }
+}
+
 // I8: Hardcoded CJK ratchet
 console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
 {

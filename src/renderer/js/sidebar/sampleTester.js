@@ -2690,7 +2690,9 @@ class SampleTester {
     }
     notifyCompileCacheHit(targetName) {
         const brief = (window.i18n.t('tester.compileCacheHit', { target: targetName }));
-        const msg = `[样例测试器] ${brief}`;
+        // msg 会进 appendOutput（编译输出面板是用户可见的），所以前缀那个面板名也必须走译文；
+        // 原来这里写死 [样例测试器]，切到英文界面后仍然是一串中文。
+        const msg = `[${window.i18n.t('tester.title')}] ${brief}`;
         try {
             logInfo(msg);
         }
