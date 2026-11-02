@@ -52,19 +52,19 @@ const DUPLICATE_EXEMPTIONS = [
 const DRIFT_EXEMPTIONS = [
     {
         keys: ['menu.run', 'menu.runCode', 'message.featureRun', 'tester.run'],
-        reason: 'message.featureRun 插进 cloudFileLocalOnly 的 {feature} 名词槽，需动名词 Running；其余三支是命令标签',
+        reason: 'message.featureRun 被插进 cloudFileLocalOnly 的「Using {feature} requires…」主语位，形态由那句决定；其余三支是命令标签',
     },
     {
         keys: ['menu.compile', 'message.featureCompile'],
-        reason: '同上：{feature} 名词槽要 Compiling，菜单是命令标签 Compile',
+        reason: '同上：插值槽要 compiling，菜单标签是 Compile',
     },
     {
         keys: ['menu.compileAndRun', 'keybinding.compileAndRun', 'message.featureCompileAndRun'],
-        reason: '同上：{feature} 名词槽要 Compiling and running，菜单与快捷键列表是命令标签',
+        reason: '同上：插值槽要 compiling and running，菜单与快捷键列表是命令标签',
     },
     {
         keys: ['menu.debug', 'sidebar.debug', 'message.featureDebug'],
-        reason: '同上：{feature} 名词槽要 Debugging，菜单与侧栏是命令标签',
+        reason: '同上：插值槽要 debugging，菜单与侧栏是命令标签',
     },
     {
         keys: ['debug.variables', 'settings.syntaxColorVariable'],

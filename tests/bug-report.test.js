@@ -250,6 +250,13 @@ if (report) {
             setTimeout: (fn) => { fn(); },
             JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Map, Set
         });
+        // showPanel 现在从模块级 CLOUD_LOCKED_PANELS 取标签键（此前它把 'samples' 这种内部 id
+        // 直接当 {feature} 插进句子，屏幕上出现的是键名）。假 DOM 的 vm 里没有这张表，
+        // 方法体会当场 ReferenceError —— 但**不在测试里抄一份**：把源码里那段 const 声明
+        // 原样灌进同一个 context，表哪天改键名、增删面板，测试跟着真表走。
+        const mapDecl = /const CLOUD_LOCKED_PANELS[\s\S]*?\n\};/.exec(sidebarSource);
+        check('CLOUD_LOCKED_PANELS 的声明从源码抽到了（守卫不抄第二份表）', !!mapDecl, String(!!mapDecl));
+        if (mapDecl) vm.runInContext(mapDecl[0], sidebarCtx);
         const showPanel = compileMethod(sidebarCtx, classMethod(sidebarSource, 'showPanel'));
         check('方法体抽取成功: SidebarManager.showPanel', showPanel !== null);
         if (showPanel) {

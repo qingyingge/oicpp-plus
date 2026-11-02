@@ -119,7 +119,9 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   * I11 —— 同一句中文的英文不许各自演化。比较**忽略大小写**，因为 `menu.*`/`keybinding.*` 走 Title Case 而 `main.*Title` 走句首大写是表面约定；比的是用词。
   * 两条的豁免都按**整组键集**逐条消费：登记的那组哪天不再分叉、或者新进来一支键，检查会反过来报红。所以豁免表不会随演化烂成没人核对的旧名单。
   * **判据必须跑在 zh-cn 上**。en 里 `spaceBeforeParensAlways` 与 `useTabAlways` 同为 "Always"，zh 却分得开（「始终」/「始终使用 Tab」）—— 源语言不同就是两个概念，拿 en 跑会误报一片（I10 第一版拿 `localeCodes[0]` 跑，那是 en，当场红 5 组）。
-  * **插值参数的形态由宿主句子决定，不由键自己决定**。`message.featureRun` 在英文里是 "Running" 而不是菜单标签那句 "Run"，因为它落在 `message.cloudFileLocalOnly` 的主语位；换句子框架就得换形态，所以 I11 核对这条豁免时会真去查那个 `{feature}` 槽还在不在。反过来说：给两参 `t()` 传进插值槽的键，值不能只按「这个词怎么译」定，要按它被读进哪一句定。
+  * **插值参数的形态由宿主句子决定，不由键自己决定**。`message.featureRun` 在英文里是 "running" 而不是菜单标签那句 "Run"，因为它被读进 `message.cloudFileLocalOnly` 的「Using {feature} requires a local file」主语位；换句子框架就得换形态，所以 I11 核对这条豁免时会真去查那个 `{feature}` 槽还在不在。反过来说：给两参 `t()` 传进插值槽的键，值不能只按「这个词怎么译」定，要按它被读进哪一句定。原来那句是「…再使用 {feature}」/"…before using {feature}."，填进去得到「再使用运行」和 "before using running" —— 两种语言都不成句，而 CI 全绿。
+  * **插值槽填的必须是能上屏的东西**。`sidebar.ts` 曾把 `'debug'/'samples'/'compare'` 这类**内部 id** 直接当 `{feature}` 传进去，屏幕上是「…，debug需要先下载到本地。」—— 也就是键名而不是语言，而 I6/I7 都看不见（它们只查键存不存在、有没有人引用）。现在这类 id→标签的映射写成一张表，被「哪几个面板被锁」、图标 title、提示句三处共用；`tests/i18n-duplicate-value.test.js` 第 8 段逐调用点核：值要么是 `t(...)`，要么是本文件里单独核过来源的联动变量。
+  * 顺带一条测试坑：把常量提到**模块级**之后，那些用 `vm` + 假 DOM 抽方法真跑的守卫会在 context 里查不到它，整段断言静默变空（本次是 M22 六条一起红）。修法是把源码里那段 `const` 声明原样灌进 context（`vm.runInContext(mapDecl[0], ctx)`），**不要在测试里抄一份表**。
 - **I8 与 I4 各有一档「看着像存量、其实是判据误报」的 baseline，已经查清并降到 0，别再往回抬**：
   * I8 的 `userVisibleRe` 里 `message:` / `label:` / `title:` / `detail:` 是**标签** sink，但
     `e instanceof Error ? e.message : String(e)` 里的三元冒号长得一模一样，于是 `src/utils/logger.js`

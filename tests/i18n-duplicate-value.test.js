@@ -234,9 +234,12 @@ const check = (name, condition, extra = '') => {
     check('豁免所依赖的 {feature} 插值槽仍在两份包里',
         zhFrame.includes('{feature}') && enFrame.includes('{feature}'),
         JSON.stringify({ zh: zhFrame, en: enFrame }));
-    // 顺带锁死本批修掉的语法错配：{feature} 不再被放在动词后面
-    check('{feature} 不落在「再使用 …」/「before using …」那种动词槽里',
-        !/再使用\s*\{feature\}/.test(zhFrame) && !/before using \{feature\}/i.test(enFrame),
+    // 顺带锁死句子框架本身：{feature} 必须落在「使用X需要…」/「Using X requires…」这个
+    // 被名词化的主语位上。feature 那几支的值（running/compiling/debugging）就是按这个槽
+    // 选的形态；哪天帧改回「再使用 {feature}」/"before using {feature}"，插进去会得到
+    // 「再使用运行」和 "before using running" —— 两种语言都不成句，而 CI 全绿、没人看得见。
+    const slotShapeOk = /使用\{feature\}需要/.test(zhFrame) && /Using \{feature\} requires/.test(enFrame);
+    check('{feature} 落在被名词化的主语槽（值才是动名词的前提）', slotShapeOk,
         JSON.stringify({ zh: zhFrame, en: enFrame }));
     const mainRendererSrc = fs.readFileSync(path.join(root, 'src/renderer/js/main.js'), 'utf8');
     for (const key of ['message.featureRun', 'message.featureCompile', 'message.featureDebug', 'message.featureCompileAndRun']) {
@@ -294,6 +297,68 @@ const check = (name, condition, extra = '') => {
         const noEn = runCiBlock(block, {}, { locales: { 'zh-cn': loadLocales()['zh-cn'] } });
         check('缺 en 时直接报红（I11 要两份包：zh 定同句，en 看分叉）',
             noEn.fails.length === 1 && noEn.fails[0].includes('I11 跑不了'), JSON.stringify(noEn.fails));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. 插值槽不许塞内部标识符（[I11] 豁免所依赖的那两个调用点）
+// ---------------------------------------------------------------------------
+{
+    // sidebar.ts 曾把 'debug'/'samples'/'compare' 这类**内部 id** 当 {feature} 直接插进
+    // message.cloudFileLocalOnly —— 屏幕上出来的是「…，debug需要先下载到本地。」，
+    // 也就是语言键名而不是语言，而且两条守卫都看不见：I6 只查键存不存在，I7 只查有没有人引用。
+    // 现在两处都从 CLOUD_LOCKED_PANELS 取标签键，这张表同时还是「哪几个面板被锁」的唯一定义。
+    const sites = [];
+    for (const rel of ['src/renderer/js/sidebar.js', 'src/renderer/js/main.js']) {
+        const src = fs.readFileSync(path.join(root, rel), 'utf8');
+        // 只锚「键字面量 + 实参对象」这一段：调用点写成 window.i18n?.t?.(...)，
+        // 把 t 的可选链也写进正则只会多一处会碎的地方。
+        for (const m of src.matchAll(/'message\.cloudFileLocalOnly'\s*,\s*\{([^{}]*)\}/g)) {
+            sites.push({ rel, line: src.slice(0, m.index).split('\n').length, args: m[1] });
+        }
+    }
+    check('cloudFileLocalOnly 的调用点确实找得到（扫描口径不是空转）', sites.length >= 2,
+        JSON.stringify(sites.map((s) => `${s.rel}:${s.line}`)));
+    // 允许「值来自别处的译文」这一跳，但那一跳本身必须被核到（下面对 featureLabel 单独查）。
+    // 不设这层的话，主进程那个 t('message.cloudFileLocalOnly', { feature: featureLabel })
+    // 会一直假红；随便放行的话，'debug' 那种裸 id 也会一起被放过。
+    const LABEL_VARS = ['featureLabel'];
+    // 「这是不是一个 t() 调用」在本文件里只用一种写法：两条真形态各用一条交替分支。
+    // 不要把它写成「每个点都可有可无」的那种通用式 —— 改到第三次才发现：要求 t 后面那点
+    // 会把 i18n.t( 判死，把那点写成可选又会把 i18n?.t?.( 判死，两个方向轮流假红。
+    const translated = (s) => /(?:i18n\s*\.\s*t\s*\(|i18n\s*\?\s*\.\s*t\s*\?\s*\.\s*\()/.test(s);
+    for (const site of sites) {
+        const value = (/feature:\s*([\s\S]*)$/m.exec(site.args) || ['', ''])[1];
+        const direct = translated(value);
+        const indirect = LABEL_VARS.some((v) => new RegExp(`^\\s*${v}\\s*$`).test(value));
+        check(`${site.rel}:${site.line} 的 feature 是译文（或已单独核过的译文联动变量）`,
+            direct || indirect, value.trim());
+    }
+    {
+        // featureLabel 这一跳：默认值必须是译文，且**每个**传实参的调用点也必须传译文 ——
+        // 少核一条，内部 id 就能从调用点溜回屏幕。
+        const mainSrc = fs.readFileSync(path.join(root, 'src/renderer/js/main.js'), 'utf8');
+        const defLine = (/ensureLocalFileForFeature\(\s*featureLabel[^)]*/.exec(mainSrc) || [''])[0];
+        check('ensureLocalFileForFeature 的默认参数是译文', translated(defLine), defLine);
+        // 只认 `this.ensureLocalFileForFeature(...)` 这种调用点，函数定义那一行不带 this. ——
+        // 把定义也算成调用点，会拿它自己的默认参数当参数去判，永远判不过。
+        const callers = [...mainSrc.matchAll(/this\.ensureLocalFileForFeature\(((?:[^()]|\([^()]*\))*)\)/g)];
+        const bad = callers.filter((c) => c[1].trim() !== '' && !translated(c[1]));
+        check('每个带参调用点传的都不是裸标识符/裸字面量，而是 t() 的结果',
+            callers.length >= 4 && bad.length === 0,
+            JSON.stringify({ 调用点: callers.length, 不合格: bad.map((b) => b[1].trim()) }));
+    }
+    // 映射表本身：每个值都必须是真键，否则插进去又是一个键名
+    const locales = loadLocales();
+    const sidebarSrc = fs.readFileSync(path.join(root, 'src/renderer/js/sidebar.ts'), 'utf8');
+    const mapBody = /const CLOUD_LOCKED_PANELS: Record<string, string> = \{([\s\S]*?)\n\};/.exec(sidebarSrc);
+    check('CLOUD_LOCKED_PANELS 抽得出来（守卫不对着空串自证）', !!mapBody, String(!!mapBody));
+    if (mapBody) {
+        const entries = [...mapBody[1].matchAll(/(\w+)\s*:\s*'([\w.]+)'/g)];
+        check('表里三个面板都在，且每项都是两份包里存在的真键',
+            entries.map((e) => e[1]).sort().join() === 'compare,debug,samples'
+                && entries.every((e) => locales['zh-cn'][e[2]] !== undefined && locales.en[e[2]] !== undefined),
+            JSON.stringify(entries.map((e) => `${e[1]}→${e[2]}`)));
     }
 }
 

@@ -3,6 +3,15 @@ const sbQs = (selector) => {
     const el = document.querySelector(selector);
     return el instanceof HTMLElement ? el : null;
 };
+// 云文件下会被锁掉的三个面板 → 各自的名字键。这张表被三处共用：disabled 判定、
+// 图标 title、以及点开时那句「需要先下载到本地」。原先三处各写一遍，而且前两处是把
+// 'debug'/'samples'/'compare' 这种**内部 id 直接当 feature 插进句子** —— 界面上显示的是
+// 「…，debug需要先下载到本地。」，也就是语言键名而不是语言。
+const CLOUD_LOCKED_PANELS = {
+    debug: 'sidebar.debug',
+    samples: 'sidebar.sampleTester',
+    compare: 'sidebar.codeComparer',
+};
 class SidebarManager {
     currentPanel;
     panels;
@@ -394,9 +403,10 @@ class SidebarManager {
     async showPanel(panelName) {
         logInfo('showPanel called, panelName:', panelName, 'isCollapsed:', this.isCollapsed);
         this.updateCloudPanelLocks();
-        if (this.isCloudFileActive() && ['debug', 'samples', 'compare'].includes(panelName)) {
+        const lockedLabelKey = CLOUD_LOCKED_PANELS[panelName];
+        if (this.isCloudFileActive() && lockedLabelKey) {
             if (window.oicppApp?.showMessage) {
-                const msg = window.i18n.t('message.cloudFileLocalOnly', { feature: panelName });
+                const msg = window.i18n.t('message.cloudFileLocalOnly', { feature: window.i18n.t(lockedLabelKey) });
                 window.oicppApp.showMessage(msg, 'warning');
             }
             return;
@@ -481,23 +491,18 @@ class SidebarManager {
     }
     updateCloudPanelLocks() {
         const locked = this.isCloudFileActive();
-        const lockTargets = ['debug', 'samples', 'compare'];
-        lockTargets.forEach(panel => {
+        Object.keys(CLOUD_LOCKED_PANELS).forEach(panel => {
+            const labelKey = CLOUD_LOCKED_PANELS[panel];
             const icon = (document.querySelector(`.sidebar-icon[data-panel="${panel}"]`));
-            if (!icon)
+            if (!icon || !labelKey)
                 return;
             if (locked) {
                 icon.classList.add('disabled');
-                icon.setAttribute('title', window.i18n.t('message.cloudFileLocalOnly', { feature: panel }));
+                icon.setAttribute('title', window.i18n.t('message.cloudFileLocalOnly', { feature: window.i18n.t(labelKey) }));
             }
             else {
                 icon.classList.remove('disabled');
-                if (panel === 'debug')
-                    icon.setAttribute('title', window.i18n.t('sidebar.debug'));
-                if (panel === 'samples')
-                    icon.setAttribute('title', window.i18n.t('sidebar.sampleTester'));
-                if (panel === 'compare')
-                    icon.setAttribute('title', window.i18n.t('sidebar.codeComparer'));
+                icon.setAttribute('title', window.i18n.t(labelKey));
             }
         });
     }
