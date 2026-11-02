@@ -1525,13 +1525,13 @@ console.log(`\n${Y}[I10] Same-parent duplicate values${R}`);
   //
   // 豁免表在 scripts/i18n-duplicate.js 里（DUPLICATE_EXEMPTIONS），与
   // tests/i18n-duplicate-value.test.js 取的是同一份 —— 测试里再抄一张表就会和真语言包脱节。
-  const { DUPLICATE_EXEMPTIONS, sameParentDuplicates, partitionDuplicates } = require('./i18n-duplicate');
+  const { DUPLICATE_EXEMPTIONS, sameParentDuplicates, partitionGroups } = require('./i18n-duplicate');
   const i10Base = locales['zh-cn'];
   if (!i10Base) {
     fail('I10 跑不了：locales 里没有 zh-cn —— 这条判据只在源语言上成立，不许退回 localeCodes[0]');
   } else {
     const i10Dupes = sameParentDuplicates(i10Base);
-    const { violations, stale } = partitionDuplicates(i10Dupes, DUPLICATE_EXEMPTIONS);
+    const { violations, stale } = partitionGroups(i10Dupes, DUPLICATE_EXEMPTIONS);
     if (violations.length > 0) {
       fail(`${violations.length} group(s) of same-parent duplicate i18n text in zh-cn — 一句话一个键，复用已有的那个，别新建: ${summarize(violations.map((d) => `${d.parent}: ${d.bases.join(' / ')} = 「${[...d.value].length > 20 ? [...d.value].slice(0, 20).join('') + '…' : d.value}」`))}`);
     }
@@ -1551,6 +1551,35 @@ console.log(`\n${Y}[I10] Same-parent duplicate values${R}`);
     }
     const dupValues = [...crossSameValue.values()].filter((n) => n > 1).length;
     info(`${dupValues} 句 zh 文案挂在 2 个以上逻辑键上（跨命名空间，仅信息，需人判是否同一概念）`);
+  }
+}
+
+// I11: 同一句中文的两种英文 —— 译文分叉守卫
+console.log(`\n${Y}[I11] One source sentence, one translation${R}`);
+{
+  // 这是 I10 的另一半，也是台账 L10 真正的死法：同句话挂两个键本身不会立刻出问题，
+  // 出问题的是它们**各自演化**之后 —— 「编译失败」五支键里同时存在过 "Compilation failed"
+  // 与 "Compilation Failed"，「标准错误:」有 "Stderr:" 与 "Standard error:" 两种。
+  // 到那时「这句上屏走哪个键」就得靠 git 考古，而 L10 正是考古考出来的（5 次提交）。
+  //
+  // 比较忽略大小写：本仓 menu./keybinding./sidebar. 是控件标签走 Title Case，
+  // main.*Title 是对话框标题走句首大写，同一个「另存为」分别写成 "Save As" 与 "Save as"
+  // 是表面约定，不是漂移。判据细节与复数键为什么被排除，在 scripts/i18n-duplicate.js。
+  const { DRIFT_EXEMPTIONS, translationDriftGroups, partitionGroups } = require('./i18n-duplicate');
+  if (!locales['zh-cn'] || !locales['en']) {
+    fail('I11 跑不了：需要 zh-cn 与 en 两份包（zh 定「是不是同一句话」，en 看有没有分叉）');
+  } else {
+    const i11Drift = translationDriftGroups(locales['zh-cn'], locales['en']);
+    const { violations, stale } = partitionGroups(i11Drift, DRIFT_EXEMPTIONS);
+    if (violations.length > 0) {
+      fail(`${violations.length} group(s) share one zh sentence but disagree in en — 同一句话要么并键、要么把译文统一: ${summarize(violations.map((d) => `「${[...d.value].length > 16 ? [...d.value].slice(0, 16).join('') + '…' : d.value}」 ${d.bases.map((b, i) => `${b}=${JSON.stringify(d.translations[i])}`).join(' | ')}`))}`);
+    }
+    if (stale.length > 0) {
+      fail(`${stale.length} i18n drift exemption(s) no longer match any drifted group — 那条分叉已经不存在了，把登记划掉: ${summarize(stale.map((s) => `${s.keys.join(' / ')} (${s.reason})`))}`);
+    }
+    if (violations.length === 0 && stale.length === 0) {
+      ok(`${i11Drift.length} drifted group(s) in en, all ${DRIFT_EXEMPTIONS.length} registered with a reason`);
+    }
   }
 }
 

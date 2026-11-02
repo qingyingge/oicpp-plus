@@ -1,6 +1,7 @@
 'use strict';
 
-// 「同一个父对象里两个键写同一句话」的检测，唯一实现。
+// 「同一个父对象里两个键写同一句话」与「同一句话的两种译文」的检测，唯一实现。
+// 前者是 CI 项 [I10]（sameParentDuplicates），后者是 [I11]（translationDriftGroups）。
 //
 // 为什么要有这个文件：I1~I9 除了这一条之外的全都是**逐键自问自答** ——
 // 这个键两边都有吗（I2）、这个键能解析吗（I6）、en 侧有没有残留中文（I4）、
@@ -22,12 +23,13 @@
 // cloud.delete 分别是菜单项与列表按钮，将来也可能各自演化），而同一个对象里
 // 两个字段逐字相同，几乎只能是「给已经有的一句话又建了一个键」。
 //
-// **必须传源语言（zh-cn）的包进来**，别传 en：源语言里两个值不同就说明本来就是两个概念，
-// 译文书面撞车只是翻译粗略。反例（在 en 上跑会误报，在 zh-cn 上跑一条都不报）：
+// sameParentDuplicates **必须收源语言（zh-cn）的包**，别传 en：源语言里两个值不同就说明
+// 本来就是两个概念，译文书面撞车只是翻译粗略。反例（在 en 上跑会误报，在 zh-cn 上跑一条都不报）：
 //   settings.spaceBeforeParensAlways「始终」  vs settings.useTabAlways「始终使用 Tab」
 //   —— 两个下拉框各自的选项，en 都塌成 "Always"，合并才是错。调用点的注释记着这件事。
+//   （translationDriftGroups 反过来正好用这件事：它先要 zh 同句，才去看 en 是否分叉。）
 
-const { splitPlural } = require('./i18n-plural');
+const { splitPlural, indexPack } = require('./i18n-plural');
 
 // 已登记的「同句但确实是两回事」。放这里而不是放 ci-check，理由与 i18n-plural 一样：
 // 口径只有一份，CI 与 tests/i18n-duplicate-value.test.js 取的是同一个数组，
@@ -40,6 +42,34 @@ const DUPLICATE_EXEMPTIONS = [
     // 合并成一键会让标题与条目再也无法分别翻译 —— 那才是错的。正解是给条目换更具体的
     // 措辞（例如「运行代码」），那是产品决定而不是 i18n 决定，所以这里逐条登记而非顺手并键。
     { keys: ['menu.run', 'menu.runCode'], reason: 'submenu 标题与其内条目同词，语义不同' },
+];
+
+// [I11] 的豁免：同一句中文在英文里**合法地**长成两个样子。只剩两类，每条都写清为什么。
+//   · message.feature* 是被插进句子的，形态由它所在的语法槽决定，不属于自己的措辞选择；
+//   · settings.syntaxColorVariable 是一个配色项的名字，debug.variables 是一个面板的标题。
+// 注意匹配的是**整组键集**：往「运行」这一组里再加一支新键，这条豁免立刻失配并报红，
+// 逼着加键的人当场决定新键该跟哪一句一致。
+const DRIFT_EXEMPTIONS = [
+    {
+        keys: ['menu.run', 'menu.runCode', 'message.featureRun', 'tester.run'],
+        reason: 'message.featureRun 插进 cloudFileLocalOnly 的 {feature} 名词槽，需动名词 Running；其余三支是命令标签',
+    },
+    {
+        keys: ['menu.compile', 'message.featureCompile'],
+        reason: '同上：{feature} 名词槽要 Compiling，菜单是命令标签 Compile',
+    },
+    {
+        keys: ['menu.compileAndRun', 'keybinding.compileAndRun', 'message.featureCompileAndRun'],
+        reason: '同上：{feature} 名词槽要 Compiling and running，菜单与快捷键列表是命令标签',
+    },
+    {
+        keys: ['menu.debug', 'sidebar.debug', 'message.featureDebug'],
+        reason: '同上：{feature} 名词槽要 Debugging，菜单与侧栏是命令标签',
+    },
+    {
+        keys: ['debug.variables', 'settings.syntaxColorVariable'],
+        reason: '一个是面板标题（复数），一个是单个配色项的名字（单数）',
+    },
 ];
 
 // 扫一份扁平语言包，返回同父对象内的重复文案组。
@@ -80,23 +110,26 @@ function sameParentDuplicates(flat) {
 // 把重复组按豁免表拆成「必须报红的」与「已登记的」。
 //
 // 豁免表是**逐条消费**的：每条 exemption 必须恰好匹配上一个真实的重复组，否则它自己
-// 就报错返回。这样豁免不会随着代码演化变成一张无人核对的旧名单 —— 键被改名、被删、
-// 或者两句文案哪天不再相同了，登记条目立刻失效，逼着下一个人把它划掉而不是留着当噪声。
+// 就进 stale。这样豁免不会随着代码演化变成一张无人核对的旧名单 —— 键被改名、被删、
+// 两句文案哪天不再相同了、或者组里多进来一支新键，登记条目立刻失效，
+// 逼着下一个人重新核对而不是留着当噪声。
 //
-// 返回 { violations, stale }：violations 是未获豁免的重复组；stale 是没匹配上任何
-// 重复组的豁免条目。
-function partitionDuplicates(duplicates, exemptions) {
-    const remaining = exemptions.map((ex) => ({
+// 同一张表既能用于「同父对象重复」（sameParentDuplicates）也能用于「译文分叉」
+// （translationDriftGroups），因为两者的判据形状一样：一组键 + 一个整组键集匹配。
+//
+// 返回 { violations, stale }。
+function partitionGroups(items, exemptions) {
+    const remaining = (exemptions || []).map((ex) => ({
         keys: [...ex.keys].sort().join('\u0000'),
         reason: ex.reason,
         matched: false,
     }));
     const violations = [];
-    for (const dup of duplicates) {
-        const target = dup.bases.slice().sort().join('\u0000');
+    for (const item of items) {
+        const target = item.bases.slice().sort().join('\u0000');
         const hit = remaining.find((ex) => ex.keys === target && !ex.matched);
         if (hit) hit.matched = true;
-        else violations.push(dup);
+        else violations.push(item);
     }
     const stale = remaining.filter((ex) => !ex.matched).map((ex) => ({
         keys: ex.keys.split('\u0000'),
@@ -105,4 +138,62 @@ function partitionDuplicates(duplicates, exemptions) {
     return { violations, stale };
 }
 
-module.exports = { DUPLICATE_EXEMPTIONS, sameParentDuplicates, partitionDuplicates };
+// 第二件事：同一句话的**译文**不许各自演化。
+//
+// 这是 L10 的另一半。上面那条管「一个对象里两个键同一句话」；但真正让界面变得不可推理的是
+// 同句话在两处**长得不一样** —— 全仓 83 组同句键里，改判前 33 组的 en 已经分叉，
+// 其中「编译失败」五支键里同时存在 "Compilation failed" 与 "Compilation Failed"，
+// 「标准错误:」有 "Stderr:" 与 "Standard error:" 两种。到那时「这句上屏走哪个键」
+// 就得靠 git 考古，而考古正是 L10 花了 5 次提交的地方。
+//
+// 口径：**忽略大小写**比较。大小写在本仓是按表面约定走的 —— menu./keybinding./sidebar.
+// 是控件标签走 Title Case，main.*Title 是对话框标题走句首大写，同一个「另存为」两边
+// 分别写 "Save As" 与 "Save as" 是对的，不该被当成漂移。要比的是**用词**。
+//
+// 只比**没有被复数化**的逻辑键：复数形态本来就一支一句（en 的 x_one "1 item" 与
+// x_other "{count} items" 必须不同），形态级的一致性由 I2 与 pluralTokenIssues 负责。
+//
+// 返回 [{ value, bases, translations }]，bases 是 zh 侧同句的逻辑键，
+// translations 是它们各自在 en 里的值。
+function translationDriftGroups(zhFlat, enFlat) {
+    const zhIndex = indexPack(zhFlat || {});
+    const enIndex = indexPack(enFlat || {});
+    const text = (index, base) => {
+        if (index.values.has(base)) return String(index.values.get(base) ?? '').trim();
+        for (const suffix of ['_other', '_one']) {
+            if (index.values.has(base + suffix)) return String(index.values.get(base + suffix) ?? '').trim();
+        }
+        return '';
+    };
+    const groups = new Map();
+    for (const base of zhIndex.logical.keys()) {
+        // 复数化过的键整支跳过：形态之间的差异是设计，不是漂移
+        if ([...zhIndex.logical.get(base)].some((f) => f !== '')) continue;
+        if (!enIndex.logical.has(base)) continue;      // 缺键由 I2 报，这里不重复报
+        const zhText = text(zhIndex, base);
+        if (!zhText) continue;
+        if (!groups.has(zhText)) groups.set(zhText, []);
+        groups.get(zhText).push(base);
+    }
+    const out = [];
+    for (const [value, keys] of groups) {
+        if (keys.length < 2) continue;
+        const translations = keys.map((k) => text(enIndex, k));
+        // 空译文（缺形态）不参与分叉判定 —— 那是 I2 的缺键口径
+        const nonEmpty = translations.filter((v) => v !== '');
+        if (nonEmpty.length < 2) continue;
+        if (new Set(nonEmpty.map((v) => v.toLowerCase())).size < 2) continue;
+        out.push({ value, bases: keys.slice().sort(), translations });
+    }
+    out.sort((a, b) => a.bases.join().localeCompare(b.bases.join()));
+    return out;
+}
+
+
+module.exports = {
+    DUPLICATE_EXEMPTIONS,
+    DRIFT_EXEMPTIONS,
+    sameParentDuplicates,
+    translationDriftGroups,
+    partitionGroups,
+};

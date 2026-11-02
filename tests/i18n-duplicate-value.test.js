@@ -1,6 +1,6 @@
 'use strict';
 
-// scripts/i18n-duplicate.js 与 CI 项 [I10] 的守卫。
+// scripts/i18n-duplicate.js 与 CI 项 [I10]/[I11] 的守卫。
 //
 // 起因是台账 L10：包里挂着两个键，中文逐字相同（「暂无可解析的内容，先查看原始输出或等待下
 // 一次编译。」），而界面真正取用的只有 panel.noParseContent，compileOutput.analysisEmpty
@@ -9,14 +9,19 @@
 // 1be2b08 记 fix.commit）逐个查过，才看清「改的从来不是上屏的那句」。根因不是翻译，是同一句话两个键。
 //
 // I1~I9 全是逐键自问自答（两边都有吗、能解析吗、en 有没有残留中文、有没有人引用），
-// 一条都不会问「这两个键是不是同一句话」。I10 补的就是这个洞。
-// 判据细节与为什么不看 en、不跨命名空间，写在 scripts/i18n-duplicate.js 的头注释里。
+// 一条都不会问「这两个键是不是同一句话」。所以这里补两条：
+//   [I10] 同一个父对象内不许两句中文逐字相同（新建键前先复用）；
+//   [I11] 同一句中文的英文不许各自演化 —— 分叉之后「这句走哪个键」又得靠 git 考古，
+//         而那正是 L10 花掉 5 次提交的地方。
+// 判据细节与为什么不看 en、不跨命名空间、什么时候允许不同，写在 scripts/i18n-duplicate.js 的头注释里。
 
 const fs = require('fs');
 const path = require('path');
 const { blockByIndent } = require('./fixtures/source-extract');
 const { loadLocales, runCiBlock } = require('./fixtures/ci-block-runner');
-const { DUPLICATE_EXEMPTIONS, sameParentDuplicates, partitionDuplicates } = require('../scripts/i18n-duplicate');
+const {
+    DRIFT_EXEMPTIONS, DUPLICATE_EXEMPTIONS, partitionGroups, sameParentDuplicates, translationDriftGroups,
+} = require('../scripts/i18n-duplicate');
 
 const root = path.resolve(__dirname, '..');
 let failures = 0;
@@ -52,16 +57,16 @@ const check = (name, condition, extra = '') => {
         JSON.stringify({ orderA, orderB }));
 
     const pair = sameParentDuplicates({ 'g.a': '同', 'g.b': '同', 'g.c': '异' });
-    const hit = partitionDuplicates(pair, [{ keys: ['g.a', 'g.b'], reason: 'x' }]);
+    const hit = partitionGroups(pair, [{ keys: ['g.a', 'g.b'], reason: 'x' }]);
     check('豁免恰好消费一组时 violations 与 stale 都空',
         hit.violations.length === 0 && hit.stale.length === 0, JSON.stringify(hit));
-    const stale = partitionDuplicates(pair, [{ keys: ['g.a', 'g.zz'], reason: '已不成立' }]);
+    const stale = partitionGroups(pair, [{ keys: ['g.a', 'g.zz'], reason: '已不成立' }]);
     check('豁免不再对应真实重复 → 列进 stale，这张表不许烂成旧名单',
         stale.stale.length === 1 && stale.violations.length === 1, JSON.stringify(stale));
-    const none = partitionDuplicates(pair, []);
+    const none = partitionGroups(pair, []);
     check('表为空时全部报红（不会因为没登记就自动放行）',
         none.violations.length === 1, JSON.stringify(none));
-    const triple = partitionDuplicates(sameParentDuplicates({ 'g.a': '同', 'g.b': '同', 'g.c': '同' }),
+    const triple = partitionGroups(sameParentDuplicates({ 'g.a': '同', 'g.b': '同', 'g.c': '同' }),
         [{ keys: ['g.a', 'g.b'], reason: '只登记两支' }]);
     check('豁免按**整组键集**匹配，不是两两匹配（三支只登记两支不许放行）',
         triple.violations.length === 1 && triple.stale.length === 1, JSON.stringify(triple));
@@ -73,7 +78,7 @@ const check = (name, condition, extra = '') => {
 {
     const locales = loadLocales();
     const dupes = sameParentDuplicates(locales['zh-cn']);
-    const { violations, stale } = partitionDuplicates(dupes, DUPLICATE_EXEMPTIONS);
+    const { violations, stale } = partitionGroups(dupes, DUPLICATE_EXEMPTIONS);
     check('真包（zh-cn）没有未登记的同句键', violations.length === 0, JSON.stringify(violations));
     check('豁免表每条都仍然成立', stale.length === 0, JSON.stringify(stale));
     check('判据是真跑出来的（真包里确实有 N 组且 N==豁免条数，不许 0==0 假绿）',
@@ -183,6 +188,113 @@ const check = (name, condition, extra = '') => {
     const resetValues = resetKeys.map((k) => String(locales['zh-cn'][k]).trim());
     check('settings.reset* 五键的 zh 文案互不相同', new Set(resetValues).size === resetValues.length,
         JSON.stringify(resetValues));
+}
+
+// ---------------------------------------------------------------------------
+// 5. [I11] 的判据：同一句中文在英文里长得不一样
+// ---------------------------------------------------------------------------
+{
+    const zh = { 'a.x': '编译失败', 'b.y': '编译失败' };
+    const caseOnly = translationDriftGroups(zh, { 'a.x': 'Compilation failed', 'b.y': 'Compilation Failed' });
+    check('只差大小写 → 不算分叉（Title Case 与句首大写是表面约定）',
+        caseOnly.length === 0, JSON.stringify(caseOnly));
+    const lexical = translationDriftGroups(zh, { 'a.x': 'Compilation failed', 'b.y': 'Compile error' });
+    check('用词不同 → 报一组，并带上双方译文',
+        lexical.length === 1 && lexical[0].translations.join() === 'Compilation failed,Compile error',
+        JSON.stringify(lexical));
+    check('zh 不同句、en 撞车 → 不报（那是翻译粗略，不是同一句话）',
+        translationDriftGroups({ 'a.x': '始终', 'b.y': '始终使用 Tab' }, { 'a.x': 'Always', 'b.y': 'Always' }).length === 0);
+    check('复数形态本来就该两支不同句 → 整支跳过，不与 [I2] 抢口径',
+        translationDriftGroups({ 'a.x_other': '有 {count} 个' },
+            { 'a.x_one': '{count} item', 'a.x_other': '{count} items' }).length === 0);
+    check('en 缺键不在这里重复报',
+        translationDriftGroups(zh, { 'a.x': 'Compilation failed' }).length === 0);
+    check('只有一支键的句子不参与',
+        translationDriftGroups({ 'a.x': '独立的一句' }, { 'a.x': 'Alone' }).length === 0);
+}
+
+// ---------------------------------------------------------------------------
+// 6. [I11] 的真包
+// ---------------------------------------------------------------------------
+{
+    const locales = loadLocales();
+    const drift = translationDriftGroups(locales['zh-cn'], locales.en);
+    const { violations, stale } = partitionGroups(drift, DRIFT_EXEMPTIONS);
+    check('真包没有未登记的译文分叉', violations.length === 0, JSON.stringify(violations));
+    check('分叉豁免每条都仍然成立（哪天并了句就该划掉）', stale.length === 0, JSON.stringify(stale));
+    check('判据是真跑出来的（真包里有 N 组且 N==豁免条数，不许 0==0 假绿）',
+        drift.length > 0 && drift.length === DRIFT_EXEMPTIONS.length,
+        JSON.stringify({ drift: drift.length, exemptions: DRIFT_EXEMPTIONS.length }));
+
+    // 豁免的实质核对，不只是「表里有这条」：那几支 feature* 之所以可以和菜单标签不同句，
+    // 是因为它们被插进 message.cloudFileLocalOnly 的 {feature} 槽 —— 形态由那个句子决定。
+    // 哪天帧没了（键不再被插句），豁免理由当场不成立，必须并句而不是继续挂着。
+    const zhFrame = String(locales['zh-cn']['message.cloudFileLocalOnly'] || '');
+    const enFrame = String(locales.en['message.cloudFileLocalOnly'] || '');
+    check('豁免所依赖的 {feature} 插值槽仍在两份包里',
+        zhFrame.includes('{feature}') && enFrame.includes('{feature}'),
+        JSON.stringify({ zh: zhFrame, en: enFrame }));
+    // 顺带锁死本批修掉的语法错配：{feature} 不再被放在动词后面
+    check('{feature} 不落在「再使用 …」/「before using …」那种动词槽里',
+        !/再使用\s*\{feature\}/.test(zhFrame) && !/before using \{feature\}/i.test(enFrame),
+        JSON.stringify({ zh: zhFrame, en: enFrame }));
+    const mainRendererSrc = fs.readFileSync(path.join(root, 'src/renderer/js/main.js'), 'utf8');
+    for (const key of ['message.featureRun', 'message.featureCompile', 'message.featureDebug', 'message.featureCompileAndRun']) {
+        check(`豁免涉及的插值键仍被引用：${key}`, mainRendererSrc.includes(key));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 7. [I11] 整块真跑
+// ---------------------------------------------------------------------------
+{
+    const ciSrc = fs.readFileSync(path.join(root, 'scripts/ci-check.js'), 'utf8');
+    const block = blockByIndent(ciSrc, /\[I11\] One source sentence, one translation/);
+    check('I11 整块抽得出来，且用的就是 ci-check 里那份 require',
+        block.startsWith('{') && block.includes("require('./i18n-duplicate')"),
+        JSON.stringify(block.slice(0, 60)));
+    if (block.startsWith('{')) {
+        const real = runCiBlock(block, {});
+        check('真包真跑：一条不报，并给出一条 ok 汇总',
+            real.fails.length === 0 && real.oks.length === 1, JSON.stringify(real));
+
+        // 变异对象是**数据驱动**找出来的：真包里找一组「zh 同句且 en 也一致」的键，
+        // 把其中一支的译文改得更长。不写死键名 —— 键会换，而这个类永远存在（83 组同句键）。
+        const locales = loadLocales();
+        const zh = locales['zh-cn'];
+        const en = locales.en;
+        const byValue = new Map();
+        for (const [key, value] of Object.entries(zh)) {
+            if (!/_(one|other|zero|two|few|many)$/.test(key)) {
+                const text = String(value || '').trim();
+                if (text) byValue.set(text, (byValue.get(text) || []).concat(key));
+            }
+        }
+        const twin = [...byValue.entries()].find(([, ks]) => ks.length >= 2
+            && ks.every((k) => en[k])
+            && new Set(ks.map((k) => String(en[k]).toLowerCase())).size === 1);
+        check('真包里找得到一组「zh 同句且 en 也一致」的键做变异对象', !!twin, JSON.stringify(twin));
+        if (twin) {
+            const mutated = loadLocales();
+            const victim = twin[1][0];
+            mutated.en[victim] = mutated.en[victim] + ' (drifted)';
+            const driftRun = runCiBlock(block, {}, { locales: mutated });
+            check('变异真跑：把其中一支译文改得不同 → 报红且点出被改的键',
+                driftRun.fails.length === 1 && driftRun.fails[0].includes(victim),
+                JSON.stringify(driftRun.fails));
+        }
+
+        const reconciled = loadLocales();
+        reconciled.en['message.featureRun'] = 'Run';
+        const lostRun = runCiBlock(block, {}, { locales: reconciled });
+        check('变异真跑：把豁免那组的译文并成一致 → 反过来报「豁免已失效」',
+            lostRun.fails.length === 1 && lostRun.fails[0].includes('no longer match'),
+            JSON.stringify(lostRun.fails));
+
+        const noEn = runCiBlock(block, {}, { locales: { 'zh-cn': loadLocales()['zh-cn'] } });
+        check('缺 en 时直接报红（I11 要两份包：zh 定同句，en 看分叉）',
+            noEn.fails.length === 1 && noEn.fails[0].includes('I11 跑不了'), JSON.stringify(noEn.fails));
+    }
 }
 
 console.log(`i18n duplicate-value tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);

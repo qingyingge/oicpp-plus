@@ -418,7 +418,7 @@
     "tempFileUnavailable": "临时文件功能不可用",
     "tempFileCreated": "已新建临时文件（退出 IDE 后自动清理）",
     "tempFileCreateFailed": "新建临时文件失败：{error}",
-    "cloudFileLocalOnly": "云文件仅支持基础编辑与手动保存，请先下载到本地再使用 {feature}。",
+    "cloudFileLocalOnly": "云文件仅支持基础编辑与手动保存，{feature}需要先下载到本地。",
     "terminalUninitialized": "内置终端组件未初始化",
     "cloudSyncNotReady": "云同步面板未就绪",
     "cloudSaveSuccess": "云端保存成功",

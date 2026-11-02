@@ -113,7 +113,13 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   2. 同一句键可能同时喂 HTML 和 `textContent`（下载窗的 `main.downloadingCompiler`：h3 要转义、`updateProgress` 绝不能转义），所以别把它做成全局行为。
   3. 接主进程译文时一律做「与原硬编码 byte-equal」比对 —— 转义残渣、以及往 JSON 里写 `\n` 结果落成字面反斜杠+n，这两类都只有逐字比对抓得到。
   `tests/i18n-main-process.test.js` 锁住两处配置与四个 HTML 出口；`tests/i18n-renderer-runtime.test.js` 用真实 UMD 断言插值不再被转义。注意别用 `/\{[^}]*\}/` 去框 `interpolation` 配置对象 —— `suffix: '}'` 里那个花括号会让它提前截断（本条第一版就假红了）。
-- I7 拦孤儿键（baseline 1，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`；2026-11-02 一次退役 186 个从未接线/随功能一起停用的键，判定分「引用面 / git 来源 / I6 回归」三层，缺任何一层都不许清仓，理由写在那常量的注释里）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。
+- I7 拦孤儿键（baseline 0，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`；2026-11-02 一次退役 186 个从未接线/随功能一起停用的键，判定分「引用面 / git 来源 / I6 回归」三层，缺任何一层都不许清仓，理由写在那常量的注释里）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。最后 1 个（`compileOutput.analysisEmpty`）也在同日第二批清掉：它是台账 L10 的断言对象、曾被当作「不许删」的理由，查清它跟 `panel.noParseContent` 是同一句话而界面只用后者之后，断言改指活键、死键退役 —— **拿一条挂在死键上的守卫当保留理由，等于把守卫的失责固化成常量**。
+- 「一句话一个键」由 **[I10] 与 [I11]** 拦，唯一实现是 `scripts/i18n-duplicate.js`（豁免表 `DUPLICATE_EXEMPTIONS`/`DRIFT_EXEMPTIONS` 也在那儿，CI 与 `tests/i18n-duplicate-value.test.js` 取同一份，别在测试里重抄一张表）：
+  * I10 —— **同一个父对象内**不许两句中文逐字相同。新建键之前先搜值；跨命名空间的同句（`menu.delete` 与 `cloud.delete`）是常态，不报。
+  * I11 —— 同一句中文的英文不许各自演化。比较**忽略大小写**，因为 `menu.*`/`keybinding.*` 走 Title Case 而 `main.*Title` 走句首大写是表面约定；比的是用词。
+  * 两条的豁免都按**整组键集**逐条消费：登记的那组哪天不再分叉、或者新进来一支键，检查会反过来报红。所以豁免表不会随演化烂成没人核对的旧名单。
+  * **判据必须跑在 zh-cn 上**。en 里 `spaceBeforeParensAlways` 与 `useTabAlways` 同为 "Always"，zh 却分得开（「始终」/「始终使用 Tab」）—— 源语言不同就是两个概念，拿 en 跑会误报一片（I10 第一版拿 `localeCodes[0]` 跑，那是 en，当场红 5 组）。
+  * **插值参数的形态由宿主句子决定，不由键自己决定**。`message.featureRun` 在英文里是 "Running" 而不是菜单标签那句 "Run"，因为它落在 `message.cloudFileLocalOnly` 的主语位；换句子框架就得换形态，所以 I11 核对这条豁免时会真去查那个 `{feature}` 槽还在不在。反过来说：给两参 `t()` 传进插值槽的键，值不能只按「这个词怎么译」定，要按它被读进哪一句定。
 - **I8 与 I4 各有一档「看着像存量、其实是判据误报」的 baseline，已经查清并降到 0，别再往回抬**：
   * I8 的 `userVisibleRe` 里 `message:` / `label:` / `title:` / `detail:` 是**标签** sink，但
     `e instanceof Error ? e.message : String(e)` 里的三元冒号长得一模一样，于是 `src/utils/logger.js`
