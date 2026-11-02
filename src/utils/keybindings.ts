@@ -163,12 +163,92 @@
         return MENU_ACCELERATORS[actionId] ?? '';
     }
 
+    // ---- accelerator → 按平台显示的 label ----------------------------------------
+    //
+    // 修饰键的**显示顺序按 Apple HIG**：⌃ ⌥ ⇧ ⌘（Control、Option、Shift、Command），
+    // 符号之间不加连接符，所以 macOS 的 Cmd+Shift+S 写成 `⇧⌘S`（Command 在最后）。
+    // 注意 VS Code 用的不是这个顺序（它按 ctrl→shift→alt→meta，会拼出 `⌘⇧S`）——
+    // 这里有意选 HIG 而不是选上游，因为本项目显示的是系统菜单里的同一批键。
+    //
+    // 语义前提（本仓的事实，不是通用规则）：存的 `Ctrl` 是**主修饰键**，不是物理 Control ——
+    // 匹配走 monaco-editor-manager.ts 的 ctrlOrCmd（`event.ctrlKey || event.metaKey`），
+    // 等价于 Electron accelerator 的 `CmdOrCtrl`。所以 mac 上必须显示 ⌘，
+    // 显示 `Ctrl+` 就是谎话：按 ⌘ 有效、按 ⌃ 也有效，但屏幕上写的是「按 Control」。
+    // 物理 Control 目前**无法表达**（没有对应 token），因此 mac 侧的 ⌃ 槽实际永远不会出现，
+    // 等改键支持录进「物理 Control」时再补，顺序位已经留好了。
+    const MODIFIER_TOKENS: Record<string, 'primary' | 'command' | 'shift' | 'alt'> = {
+        ctrl: 'primary', control: 'primary',
+        cmdorctrl: 'primary', commandorcontrol: 'primary',
+        cmd: 'command', command: 'command', meta: 'command', super: 'command',
+        shift: 'shift',
+        alt: 'alt', option: 'alt'
+    };
+
+    // 显式四个槽，不用 Record 查表 —— 索引签名在 noUncheckedIndexedAccess 下会给出
+    // string | undefined，逼得这里到处 ?? ，反而看不出「槽一定是这四个」这个真事实。
+    interface ShortcutModifierLabels {
+        control: string;
+        alt: string;
+        shift: string;
+        command: string;
+    }
+
+    const MAC_LABELS: ShortcutModifierLabels = { control: '⌃', alt: '⌥', shift: '⇧', command: '⌘' };
+    // Windows 上 Super 是 Win 键，Linux 上是 Super；本机没有的这两个键位不参与本仓组合键。
+    const WINDOWS_LABELS: ShortcutModifierLabels = { control: 'Ctrl', alt: 'Alt', shift: 'Shift', command: 'Win' };
+    const LINUX_LABELS: ShortcutModifierLabels = { control: 'Ctrl', alt: 'Alt', shift: 'Shift', command: 'Super' };
+
+    // Apple 的展示顺序；非 mac 沿用同一条（Ctrl+Alt+Shift 也是 Windows 应用里少争议那条）
+    const MODIFIER_SLOTS: Array<keyof ShortcutModifierLabels> = ['control', 'alt', 'shift', 'command'];
+
+    // mac 上这几个键有公认符号；非 mac 保持原写法，免得把 `Ctrl+Shift+Up` 无缘无故改成 ↑
+    const MAC_KEY_SYMBOLS: Record<string, string> = {
+        up: '↑', down: '↓', left: '←', right: '→',
+        enter: '↩', return: '↩', escape: '⎋', esc: '⎋',
+        space: '␣', tab: '⇥', backspace: '⌫', delete: '⌦'
+    };
+
+    function formatShortcutLabel(combo: string, platform?: OicppPlatform): string {
+        const source = String(combo || '').trim();
+        if (!source) return '';
+        const os = platform ?? currentPlatform();
+        const onMac = os === 'mac';
+        const labels = onMac ? MAC_LABELS : (os === 'windows' ? WINDOWS_LABELS : LINUX_LABELS);
+
+        // 只有主键能含 '+' 以外的东西；分隔符就是 '+'，所以 'Plus' 这个键名要写全，
+        // 表里目前没有它 —— 真加的时候这里要特判，不然 'CmdOrCtrl++' 会被切成空 token。
+        const tokens = source.split('+').map((t) => t.trim()).filter((t) => t !== '');
+        if (tokens.length === 0) return '';
+
+        const taken: Record<string, boolean> = {};
+        let keyToken = '';
+        for (const token of tokens) {
+            const kind = MODIFIER_TOKENS[token.toLowerCase()];
+            if (kind === undefined) { keyToken = token; continue; }
+            const slot = kind === 'primary' ? (onMac ? 'command' : 'control') : kind;
+            taken[slot] = true;
+        }
+
+        const pieces: string[] = [];
+        for (const slot of MODIFIER_SLOTS) {
+            if (taken[slot]) pieces.push(labels[slot]);
+        }
+        if (keyToken) {
+            const key = onMac
+                ? (MAC_KEY_SYMBOLS[keyToken.toLowerCase()] ?? keyToken)
+                : keyToken;
+            pieces.push(key);
+        }
+        return pieces.join(onMac ? '' : '+');
+    }
+
     return {
         DEFS,
         MENU_ACCELERATORS,
         currentPlatform,
         defaultKeybindings,
         editableKeybindingKeys,
+        formatShortcutLabel,
         isMacPlatform,
         keybindingSchema,
         menuAccelerator,

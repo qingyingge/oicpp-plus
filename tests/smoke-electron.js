@@ -177,7 +177,10 @@ app.whenReady().then(async () => {
                 const want = kbKey
                     ? String((out.hasKeybindingsModule ? defaults[kbKey] : undefined) || '')
                         : (out.hasKeybindingsModule ? window.oicppKeybindings.menuAccelerator(accelId) : '');
-                return { action: el.getAttribute('data-action') || '', shown, want, kbKey, accelId };
+                // DOM 上是**格式化之后**的写法，所以比较也要走同一个格式化函数 ——
+                // 直接比原始 combo（CmdOrCtrl+N）会永远不符，这条第一版就踩了。
+                const display = out.hasKeybindingsModule ? window.oicppKeybindings.formatShortcutLabel(want) : want;
+                return { action: el.getAttribute('data-action') || '', shown, want: display, kbKey, accelId };
             });
         const els = Array.prototype.slice.call(document.querySelectorAll('[data-i18n]')).slice(0, 8);
         out.domSamples = els.map((e) => ({ key: e.getAttribute('data-i18n'), text: (e.textContent || '').trim().slice(0, 24) }));
@@ -226,6 +229,36 @@ app.whenReady().then(async () => {
     const noSource = (probe.menuShortcuts || []).filter((s) => !s.kbKey && !s.accelId);
     check('index.html: 没有 span 还停留在「没声明来源」的手抄字面量上',
         noSource.length === 0, noSource.map((s) => `${s.action}=${s.shown}`).join(', '));
+
+    // mac 分支的端到端证明：这台 CI 是 linux，靠 keybindings.ts 的注入点把平台临时改成 mac，
+    // 让 app 重算一遍提示再读 DOM —— 只测纯函数的话，「DOM 真被写成 ⌘N」这件事永远没验过。
+    const macProbe = await win.webContents.executeJavaScript(`(() => {
+      try {
+        if (!window.oicppKeybindings || !window.oicppApp) return { __skip: '缺 oicppKeybindings 或 oicppApp' };
+        const read = () => Array.prototype.slice.call(document.querySelectorAll('.menu-dropdown-item .menu-shortcut'))
+            .map((n) => (n.textContent || '').trim());
+        window.oicppKeybindings.setPlatformOverride('mac');
+        window.oicppApp.updateMenuShortcutHints();
+        const shown = read();
+        window.oicppKeybindings.setPlatformOverride(null);
+        window.oicppApp.updateMenuShortcutHints();
+        return { shown, restored: read() };
+      } catch (err) { return { __error: String(err && err.stack || err) }; }
+    })()`, true);
+    if (macProbe.__skip || macProbe.__error) {
+        check('index.html: mac 注入端到端探针跑起来了', false, String(macProbe.__skip || macProbe.__error));
+    } else {
+        check('index.html: 注入 mac 后菜单提示真的变成 ⌘ 写法（第一项 ⌘N）',
+            macProbe.shown[0] === '⌘N' && macProbe.shown.some((t) => t.includes('⌘')),
+            JSON.stringify(macProbe.shown));
+        check('index.html: mac 写法里一个 Ctrl 都没有',
+            macProbe.shown.filter((t) => /Ctrl/.test(t)).length === 0,
+            JSON.stringify(macProbe.shown.filter((t) => /Ctrl/.test(t))));
+        const baseline = (probe.menuShortcuts || []).map((s) => s.shown);
+        check('index.html: 撤掉注入后提示还原（探针不留残余状态）',
+            JSON.stringify(macProbe.restored) === JSON.stringify(baseline),
+            JSON.stringify({ restored: macProbe.restored, baseline }));
+    }
 
     check('无 CSP/资源加载阻断', blocked.length === 0, blocked.slice(0, 3).join(' | '));
 

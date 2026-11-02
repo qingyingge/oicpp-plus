@@ -65,7 +65,7 @@ const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback |
 
 主进程没有 `window`，走 `src/main.js:20` 的 `const { t } = require('./lang')`（i18next），`utils/` 下的模块用 `require('../lang')`。这条不受「统一 window.i18n.t」约束。
 
-**渲染层底层已是 i18next**（`src/renderer/js/i18n.js` 只是薄适配层）。`index.html` 用 `<script src="../../node_modules/i18next/dist/umd/i18next.min.js">` 引入 UMD 全局（沿用 monaco `loader.js` / xterm 的既有先例），资源经 IPC `get-language-file` 拉原始 JSON 后 `addResourceBundle(code,'translation',data)` 灌入 —— **语言包文件形状不要改**，它同时是 i18next 的 translation bundle。DOM 层（`_applyToDOM` / `enableAutoTranslate` / `onChange`）仍是手写，因为 `data-i18n-args`、`<html lang>` 这些是本项目特有契约，且 `i18next.on()` 返回值不能当 unsubscribe 用。
+**渲染层底层已是 i18next**（`src/renderer/js/i18n.js` 只是薄适配层）。`index.html` 用 `<script src="lib/i18next.min.js">` 引入 UMD 全局 —— 注意这个 UMD 是**手工 vendored 到 `src/renderer/lib/i18next.min.js` 的一份拷贝**（不是 node_modules；pdf-viewer.html / settings/backup.html / settings/compiler.html 等也各自加载它），沿用 monaco `loader.js` / xterm 的既有先例。vendored 换版的既定程序见 `fd30211`：重新拷贝一份，并与 npm tarball **字节核对一致**，提交信息里写清版本。资源经 IPC `get-language-file` 拉原始 JSON 后 `addResourceBundle(code,'translation',data)` 灌入 —— **语言包文件形状不要改**，它同时是 i18next 的 translation bundle。DOM 层（`_applyToDOM` / `enableAutoTranslate` / `onChange`）仍是手写，因为 `data-i18n-args`、`<html lang>` 这些是本项目特有契约，且 `i18next.on()` 返回值不能当 unsubscribe 用。
 
 改渲染层 i18n 后，`tests/i18n-renderer-runtime.test.js` 是运行时行为守卫（vm 里跑真实 i18next UMD + 真实语言包，断言界面实际看到什么），`tests/i18n.test.js` 是契约守卫。两者都要跑。
 
@@ -180,9 +180,22 @@ xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-san
 - 本仓组合键里的 **`Ctrl` 语义是「主修饰键」**，不是物理 Control —— 匹配走
   `monaco-editor-manager.ts` 的 `ctrlOrCmd` + `!!(event.ctrlKey || event.metaKey)`，等价于 Electron accelerator 的
   `CmdOrCtrl`。所以 mac 上「Ctrl+F11」实际是 ⌘F11，而物理 ⌃F11 同样触发（两者现在无法区分，要区分得先改存储层）。
-- **显示层还没平台化**（全历史 `git log -G'⌘'` 零命中）。`index.html` 里 13 个 `.menu-shortcut` 中仍有 6 个是静态字面量
-  （`Ctrl+N`、`Ctrl+Shift+N`、`Ctrl+K`、`Ctrl+S`、`Ctrl+Shift+S`、`Ctrl+Shift+I` —— 恰好全是主修饰键那几个，
-  因为它们对应的动作**不在可改键表里**，`updateMenuShortcutHints` 无从取值）。smoke 会打印这份冻结清单当分母。
+- **显示已平台化，但只有菜单**：`oicppKeybindings.formatShortcutLabel(combo, platform?)`（缺省走
+  `currentPlatform()`）把存储写法渲染成平台写法 —— mac `CmdOrCtrl+Shift+S` → `⇧⌘S`，非 mac → `Ctrl+Shift+S`。
+  **顺序按 Apple HIG（⌃⌥⇧⌘，Command 最后），不是按 VS Code（它按 ctrl→shift→alt→meta，会拼出 `⌘⇧S`）**，
+  这是有意选择，测试用整串断言钉住（`⇧⌘S` 而不是「包含 ⌘」），改成上游形状会红。
+  仍待办：设置页那个**可编辑输入框**显示的是规范写法（改成符号就得同时改解析回来，属于改键那一步）；
+  语言包里 5 处把键名焊进句子的问题，见下。
+- mac 分支怎么在 linux CI 上真跑：`oicppKeybindings.setPlatformOverride('mac')` 之后必须**再调用一次**
+  `oicppApp.updateMenuShortcutHints()` DOM 才会重算，用完置回 `null`。
+  `tests/smoke-electron.js` 里就是这么做的，并且断言还原之后的 13 项与基线**逐字相同** ——
+  注入点留下残余状态，比根本没测更糟。
+- **语言包里不许再往文案里焊组合键**。现存 5 处：`menu.searchFiles`「搜索文件 (Ctrl+P)」、
+  `panel.quickOpenPlaceholder`「快速打开 (Ctrl+P)」、`debug.stepOut`「步出(Shift+F8)」、
+  `error.debugContinueHint`（F6/F7/F8 一整句）、`browser.welcomeHint`「按 Ctrl+Shift+I…」。
+  它们既不能按平台、也不能随改键变 —— 正解是把键名挪成 `{keys}` 插值，值由调用点用
+  `formatShortcutLabel` 算。注意 `{keys}` 是**译文的一部分**，两种语言的位置不同（中文在括号里、
+  英文也在括号里，但德语等地要跟着语序走），挪的时候同时改两份包（I11 会盯着同句键一起改）。
 - 脚本顺序：`keybindings.js` 必须早于 `js/main.js` / `js/monaco-editor-manager.js` / `editor.js` 加载（测试有断言）。
   缺席时 `getDefaultKeybindings()` 退化成空表 → 菜单提示全部变空，而且 CI 不红，只有 smoke 抓得到。
 

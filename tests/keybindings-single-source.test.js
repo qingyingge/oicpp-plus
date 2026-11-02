@@ -243,21 +243,68 @@ const tsFiles = [];
     }
     check('每个 span 恰好声明一个来源，且该来源真的存在', orphans.length === 0, orphans.join(' | '));
 
-    // span 的静态文字只是 JS 起来前的默认值，但它必须等于当前来源的值 ——
-    // 否则「JS 没跑成」的时候用户看到的就是一条错的键（这条正是以前 6 个冻结 span 的处境）
+    // span 的静态文字只是 JS 起来前的默认值，但它必须等于「格式化之后的非 mac 显示」——
+    // 否则 JS 没跑成时用户看到的就是一条错的键（这正是以前 6 个冻结 span 的处境）。
+    // 一份静态 HTML 不认得自己的 OS，所以 mac 用户在 JS 跑起来前会短暂看到 Ctrl 写法：
+    // 这是有意接受的取舍，比 JS 挂掉时满屏假键好，而 JS 起来之后由上面那条 13/13 有来源兜住。
     const wrongDefault = [];
     for (const m of spans) {
         const attrs = m[1];
         const shown = m[2].trim();
         const kbKey = (/data-keybinding="([^"]+)"/.exec(attrs) || [])[1];
         const accel = (/data-accel="([^"]+)"/.exec(attrs) || [])[1];
-        const want = kbKey ? defaults[kbKey] : kb.menuAccelerator(accel);
-        // accelerator 表用的是 CmdOrCtrl 写法，HTML 里抄的是 Ctrl 写法，这两者在本仓等价
-        const normalized = String(want).replace(/^CmdOrCtrl\+/, 'Ctrl+');
-        if (shown !== normalized) wrongDefault.push(`${shown} ≠ ${normalized}`);
+        const raw = kbKey ? defaults[kbKey] : kb.menuAccelerator(accel);
+        const want = kb.formatShortcutLabel(String(raw), 'linux');
+        if (shown !== want) wrongDefault.push(`${shown} ≠ ${want}`);
     }
-    check('span 的静态默认值与其声明来源一致（JS 没跑时也不撒谎）',
+    check('span 的静态默认值等于格式化后的非 mac 显示（JS 没跑时也不撒谎）',
         wrongDefault.length === 0, wrongDefault.join(' | '));
+}
+
+// ---------------------------------------------------------------------------
+// 7. 平台化显示（Apple HIG 顺序 ⌃⌥⇧⌘，Command 在最后）
+// ---------------------------------------------------------------------------
+{
+    const f = kb.formatShortcutLabel;
+    // 这条顺序是**有意选 Apple 而不是选 VS Code**：上游按 ctrl→shift→alt→meta 会拼出 ⌘⇧S，
+    // HIG 是 ⌃⌥⇧⌘ 即 ⇧⌘S。断言写成整串而不是「包含」，哪天有人顺手改回上游形状就会红。
+    check('mac 按 HIG 顺序：CmdOrCtrl+Shift+S → ⇧⌘S（不是 VS Code 的 ⌘⇧S）',
+        f('CmdOrCtrl+Shift+S', 'mac') === '⇧⌘S', f('CmdOrCtrl+Shift+S', 'mac'));
+    check('mac 上 ⌥ 排在 ⇧ 前：Alt+Shift+S → ⌥⇧S', f('Alt+Shift+S', 'mac') === '⌥⇧S', f('Alt+Shift+S', 'mac'));
+    check('非 mac 保持原写法：CmdOrCtrl+Shift+S → Ctrl+Shift+S',
+        f('CmdOrCtrl+Shift+S', 'windows') === 'Ctrl+Shift+S' && f('CmdOrCtrl+Shift+S', 'linux') === 'Ctrl+Shift+S');
+    check('mac 的 label 里没有 \'+\' 连接符，非 mac 有',
+        !f('CmdOrCtrl+Shift+S', 'mac').includes('+') && f('CmdOrCtrl+Shift+S', 'windows').includes('+'));
+    check('主修饰键在 mac 落 ⌘：Ctrl+F11 → ⌘F11（本仓 Ctrl 的语义就是主修饰键）',
+        f('Ctrl+F11', 'mac') === '⌘F11', f('Ctrl+F11', 'mac'));
+    check('方向键只在 mac 用符号，非 mac 不许无故改文字：Ctrl+Shift+Up',
+        f('Ctrl+Shift+Up', 'mac') === '⇧⌘↑' && f('Ctrl+Shift+Up', 'windows') === 'Ctrl+Shift+Up',
+        `${f('Ctrl+Shift+Up', 'mac')} / ${f('Ctrl+Shift+Up', 'windows')}`);
+    check('裸功能键各平台原样：F11 / Shift+F8',
+        f('F11', 'mac') === 'F11' && f('Shift+F8', 'mac') === '⇧F8' && f('Shift+F8', 'windows') === 'Shift+F8');
+    check('未知键名透传，不猜：CmdOrCtrl+PrintScreen',
+        f('CmdOrCtrl+PrintScreen', 'mac') === '⌘PrintScreen', f('CmdOrCtrl+PrintScreen', 'mac'));
+    check('空串进空串出', f('', 'mac') === '' && f('   ', 'windows') === '');
+
+    // 通用不变量：表里每一个值，mac 显示里都不许出现 "Ctrl" ——
+    // 出现就说明那条被当成了物理 Control，而本仓的匹配层其实接受 ⌘，显示就是谎话。
+    const allCombos = Object.values(kb.MENU_ACCELERATORS)
+        .concat(Object.values(kb.defaultKeybindings('mac')))
+        .concat(Object.values(kb.defaultKeybindings('windows')));
+    const lyingMac = allCombos.filter((c) => /Ctrl/.test(f(c, 'mac')));
+    check(`${allCombos.length} 个组合键在 mac 显示里都不含 "Ctrl"`,
+        lyingMac.length === 0, lyingMac.join(' | '));
+    // 反向不变量：非 mac 都不该出现符号（Windows 用户看到 ⌘ 才是真出错）
+    const lyingOther = allCombos.filter((c) => /[⌘⌥⇧⌃]/.test(f(c, 'windows')));
+    check('非 mac 显示里不含任何 mac 符号', lyingOther.length === 0, lyingOther.join(' | '));
+
+    // 不传 platform 时走 currentPlatform（注入点让这条在 linux CI 上也能真跑）
+    const before = kb.currentPlatform();
+    kb.setPlatformOverride('mac');
+    check('缺省 platform 参数时用 currentPlatform()（注入 mac → ⌘N）',
+        f('CmdOrCtrl+N') === '⌘N', f('CmdOrCtrl+N'));
+    kb.setPlatformOverride(null);
+    check('还原注入后回到宿主平台显示', f('CmdOrCtrl+N') !== '⌘N' || before === 'mac', String(kb.currentPlatform()));
 }
 
 console.log(`keybindings-single-source tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);

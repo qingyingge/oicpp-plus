@@ -1086,17 +1086,22 @@ class OICPPApp {
     //   data-accel      → 不可改的动作，值走 MENU_ACCELERATORS（主进程菜单模板用的是同一份）。
     // 以前这里是一份手写 7 项映射表，13 个 span 只覆盖 7 个：剩下 6 个（恰好全是主修饰键那几个）
     // 永远是 HTML 里抄的字面量，于是 #235 那类「改了键、或换了平台，提示不动」只被修掉了一半。
+    // 屏幕上那行字 = 存的 combo 经**平台格式化**之后的结果；存的值本身不动（改键要用规范写法）。
+    // 语义要点（见 keybindings.ts 头部）：存的 `Ctrl` 是主修饰键，所以 mac 上必须显示 ⌘；
+    // 显示顺序按 Apple HIG（⌃⌥⇧⌘，Command 在最后），不是 VS Code 那条（⌃⇧⌥⌘）。
     resolveShortcutLabel(source: Element) {
         const keybindingKey = source.getAttribute('data-keybinding') || '';
+        let raw = '';
         if (keybindingKey) {
             const fromSettings = this.settings?.keybindings?.[keybindingKey];
-            if (typeof fromSettings === 'string' && fromSettings.trim()) {
-                return fromSettings.trim();
-            }
-            return this.getDefaultKeybindings()[keybindingKey] || '';
+            raw = (typeof fromSettings === 'string' && fromSettings.trim())
+                ? fromSettings.trim()
+                : (this.getDefaultKeybindings()[keybindingKey] || '');
+        } else {
+            const accelId = source.getAttribute('data-accel') || '';
+            raw = accelId ? (window.oicppKeybindings?.menuAccelerator(accelId) ?? '') : '';
         }
-        const accelId = source.getAttribute('data-accel') || '';
-        return accelId ? (window.oicppKeybindings?.menuAccelerator(accelId) ?? '') : '';
+        return window.oicppKeybindings?.formatShortcutLabel(raw) ?? raw;
     }
 
     updateMenuShortcutHints() {

@@ -67,6 +67,8 @@ interface OicppKeybindingsApi {
   currentPlatform(): OicppPlatform;
   defaultKeybindings(platform?: OicppPlatform): Record<string, string>;
   editableKeybindingKeys(): string[];
+  /** accelerator 写法（Ctrl+ / CmdOrCtrl+）→ 按平台的显示文本；mac 走 Apple 顺序 ⌃⌥⇧⌘。 */
+  formatShortcutLabel(combo: string, platform?: OicppPlatform): string;
   isMacPlatform(platform?: OicppPlatform): boolean;
   keybindingSchema(): Array<{ key: string; labelKey: string }>;
   menuAccelerator(actionId: string): string;
