@@ -26,6 +26,8 @@ const {
     normalizeClangFormatStyle,
     generateClangFormatText
 } = require('./utils/clang-format-options');
+// 默认组合键表与平台判定的单一来源（见 src/utils/keybindings.ts 的头部说明）。
+const { defaultKeybindings, resolvePlatform } = require('./utils/keybindings') as OicppKeybindingsApi;
 const {
     SETTINGS_KEYS,
     SETTINGS_MERGE_KEYS,
@@ -2432,7 +2434,6 @@ const ALLOWED_REMOTE_API_PATHS = new Set([
 function getDefaultSettings() {
     let compilerArgs = '-std=c++14 -O2 -Wall';
     let cppTemplate = '';
-    const compileAndRunShortcut = process.platform === 'darwin' ? 'Ctrl+F11' : 'F11';
 
     return {
         compilerPath: '',
@@ -2487,30 +2488,7 @@ function getDefaultSettings() {
         backgroundImage: '',
         cppTemplate,
         account: null as AccountInfo | null,
-        keybindings: {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: compileAndRunShortcut,
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: process.platform === 'darwin' ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        }
+        keybindings: defaultKeybindings(resolvePlatform(process.platform))
     };
 }
 

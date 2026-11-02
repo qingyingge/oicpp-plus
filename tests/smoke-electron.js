@@ -160,6 +160,27 @@ app.whenReady().then(async () => {
             out.tNested = window.i18n.t('settings.language');
         }
         out.htmlLang = document.documentElement.lang;
+        // 快捷键单一来源（src/utils/keybindings.ts）在真实页面里的接线：
+        // 它是 <script> 加载的全局，缺席会让菜单提示静默变空 —— 静态检查看不见，只能在这里核。
+        out.hasKeybindingsModule = !!(window.oicppKeybindings
+            && typeof window.oicppKeybindings.defaultKeybindings === 'function');
+        out.kbDefaultCount = out.hasKeybindingsModule
+            ? Object.keys(window.oicppKeybindings.defaultKeybindings()).length : -1;
+        const WIRED = {
+            'cloud-compile': 'cloudCompile', 'open-terminal': 'openTerminal',
+            'format-code': 'formatCode', 'compile': 'compileCode', 'run': 'runCode',
+            'compile-run': 'compileAndRun', 'debug': 'toggleDebug'
+        };
+        out.menuShortcuts = Array.prototype.slice.call(document.querySelectorAll('.menu-dropdown-item'))
+            .filter((el) => el.querySelector('.menu-shortcut'))
+            .map((el) => {
+                const action = el.getAttribute('data-action') || '';
+                const shown = (el.querySelector('.menu-shortcut').textContent || '').trim();
+                const key = WIRED[action];
+                const expected = key && out.hasKeybindingsModule
+                    ? window.oicppKeybindings.defaultKeybindings()[key] : null;
+                return { action, shown, expected: expected || '', fromModule: !!key };
+            });
         const els = Array.prototype.slice.call(document.querySelectorAll('[data-i18n]')).slice(0, 8);
         out.domSamples = els.map((e) => ({ key: e.getAttribute('data-i18n'), text: (e.textContent || '').trim().slice(0, 24) }));
         out.domTotal = document.querySelectorAll('[data-i18n]').length;
@@ -189,6 +210,23 @@ app.whenReady().then(async () => {
     const bareKey = probe.domSamples.filter((s) => s.text === s.key);
     check('index.html: DOM 元素无裸 key 残留', bareKey.length === 0, bareKey.map((b) => b.key).join(', '));
     check('index.html: <html lang> 已设置', !!probe.htmlLang, String(probe.htmlLang));
+
+    // 单一来源模块的接线（缺席 = 菜单提示静默变空，而 CI 全绿）
+    check('index.html: window.oicppKeybindings 已加载（<script> 顺序与 CSP 都对）',
+        probe.hasKeybindingsModule === true, String(probe.hasKeybindingsModule));
+    check('index.html: 默认键表 22 条（与 keybindings.ts 的 DEFS 同数）',
+        probe.kbDefaultCount === 22, String(probe.kbDefaultCount));
+    const blankHints = (probe.menuShortcuts || []).filter((s) => !s.shown);
+    check('index.html: 每个 .menu-shortcut 都有内容（没有一个被静默清空）',
+        (probe.menuShortcuts || []).length >= 13 && blankHints.length === 0,
+        `共 ${(probe.menuShortcuts || []).length} 个，空的 ${blankHints.length} 个`);
+    const hintMismatch = (probe.menuShortcuts || []).filter((s) => s.fromModule && s.expected && s.shown !== s.expected);
+    check('index.html: 由设置驱动的 7 项提示等于单一来源的默认值',
+        hintMismatch.length === 0, hintMismatch.map((m) => `${m.action}: ${m.shown} ≠ ${m.expected}`).join(' | '));
+    // 还没接进单一来源的那几个（HTML 里的静态字面量）—— 平台化那一步要处理的清单，只报数不判红
+    const frozen = (probe.menuShortcuts || []).filter((s) => !s.fromModule);
+    console.log(`  [INFO] index.html: ${frozen.length} 个菜单提示仍是 HTML 静态字面量（尚未由键表驱动）: `
+        + frozen.map((f) => `${f.action}=${f.shown}`).join(', '));
 
     check('无 CSP/资源加载阻断', blocked.length === 0, blocked.slice(0, 3).join(' | '));
 

@@ -54,85 +54,15 @@ class EditorSettings {
         this.keybindingSchema = this.getKeybindingSchema();
     }
     getDefaultKeybindings() {
-        const isMacPlatform = (() => {
-            try {
-                const platform = String(window.process?.platform || navigator?.platform || '').toLowerCase();
-                return platform.includes('darwin') || platform.includes('mac');
-            }
-            catch (_) {
-                return false;
-            }
-        })();
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: isMacPlatform ? 'Ctrl+F11' : 'F11',
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: isMacPlatform ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+        // 表 / 平台判定 / schema / 可改键清单都在 src/utils/keybindings.ts。
+        // 这里曾经是第三份抄写（8054ef5「新增自定义快捷键」），而平台判定是本文件独有的第四份嗅探。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
     getEditableKeybindingKeys() {
-        return [
-            'formatCode',
-            'showFunctionPicker',
-            'markdownPreview',
-            'renameSymbol',
-            'deleteLine',
-            'duplicateLine',
-            'moveLineUp',
-            'moveLineDown',
-            'compileCode',
-            'runCode',
-            'compileAndRun',
-            'toggleDebug',
-            'debugContinue',
-            'debugStepOver',
-            'debugStepInto',
-            'debugStepOut',
-            'cloudCompile',
-            'openTerminal',
-            'runAllSamples'
-        ];
+        return window.oicppKeybindings?.editableKeybindingKeys() || [];
     }
     getKeybindingSchema() {
-        return [
-            { key: 'formatCode', labelKey: 'keybinding.formatCode' },
-            { key: 'showFunctionPicker', labelKey: 'keybinding.showFunctionPicker' },
-            { key: 'markdownPreview', labelKey: 'keybinding.markdownPreview' },
-            { key: 'renameSymbol', labelKey: 'keybinding.renameSymbol' },
-            { key: 'deleteLine', labelKey: 'keybinding.deleteLine' },
-            { key: 'duplicateLine', labelKey: 'keybinding.duplicateLine' },
-            { key: 'moveLineUp', labelKey: 'keybinding.moveLineUp' },
-            { key: 'moveLineDown', labelKey: 'keybinding.moveLineDown' },
-            { key: 'compileCode', labelKey: 'keybinding.compileCode' },
-            { key: 'runCode', labelKey: 'keybinding.runCode' },
-            { key: 'compileAndRun', labelKey: 'keybinding.compileAndRun' },
-            { key: 'toggleDebug', labelKey: 'keybinding.toggleDebug' },
-            { key: 'debugContinue', labelKey: 'keybinding.debugContinue' },
-            { key: 'debugStepOver', labelKey: 'keybinding.debugStepOver' },
-            { key: 'debugStepInto', labelKey: 'keybinding.debugStepInto' },
-            { key: 'debugStepOut', labelKey: 'keybinding.debugStepOut' },
-            { key: 'cloudCompile', labelKey: 'keybinding.cloudCompile' },
-            { key: 'openTerminal', labelKey: 'keybinding.openTerminal' },
-            { key: 'runAllSamples', labelKey: 'keybinding.runAllSamples' }
-        ];
+        return window.oicppKeybindings?.keybindingSchema() || [];
     }
     getDefaultClangFormatStyle() {
         return window.clangFormatOptions?.getDefaultClangFormatStyle?.() || {

@@ -26,6 +26,8 @@ const MEMWATCH_SOURCE = require('./utils/memwatch-source');
 const IntegratedTerminalManager = require('./terminal-manager');
 const { formatCodeWithClangFormat } = require('./clang-format-service');
 const { normalizeClangFormatStyle, generateClangFormatText } = require('./utils/clang-format-options');
+// 默认组合键表与平台判定的单一来源（见 src/utils/keybindings.ts 的头部说明）。
+const { defaultKeybindings, resolvePlatform } = require('./utils/keybindings');
 const { SETTINGS_KEYS, SETTINGS_MERGE_KEYS, SETTINGS_WRITABLE_KEYS } = require('./utils/settings-schema');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
 const clangdCompileFlags = require('./utils/clangd-compile-flags');
@@ -2248,7 +2250,6 @@ const ALLOWED_REMOTE_API_PATHS = new Set([
 function getDefaultSettings() {
     let compilerArgs = '-std=c++14 -O2 -Wall';
     let cppTemplate = '';
-    const compileAndRunShortcut = process.platform === 'darwin' ? 'Ctrl+F11' : 'F11';
     return {
         compilerPath: '',
         pythonInterpreterPath: '',
@@ -2302,30 +2303,7 @@ function getDefaultSettings() {
         backgroundImage: '',
         cppTemplate,
         account: null,
-        keybindings: {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: compileAndRunShortcut,
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: process.platform === 'darwin' ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        }
+        keybindings: defaultKeybindings(resolvePlatform(process.platform))
     };
 }
 function normalizeSettingsRuntimeShape(nextSettings) {

@@ -30,7 +30,6 @@ class OICPPApp {
     autoSaveController;
     supportedDropTextExtensions;
     _isWindowsPlatform;
-    _isMacPlatform;
     _origUpdateStatusBar;
     constructor() {
         this.currentFile = null;
@@ -87,7 +86,6 @@ class OICPPApp {
         };
         this.supportedDropTextExtensions = new Set(['cpp', 'c', 'cc', 'cxx', 'h', 'hpp', 'hh', 'txt', 'in', 'out', 'ans', 'md', 'json']);
         this._isWindowsPlatform = undefined;
-        this._isMacPlatform = undefined;
     }
     async init() {
         try {
@@ -859,31 +857,9 @@ class OICPPApp {
         }
     }
     getDefaultKeybindings() {
-        const compileAndRunShortcut = this.isMacPlatform() ? 'Ctrl+F11' : 'F11';
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: compileAndRunShortcut,
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: this.isMacPlatform() ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+        // 表在 src/utils/keybindings.ts。这一份以前是第四遍抄写（0291982 修 #235 时加的），
+        // 缺它时按「没有默认键」处理：菜单提示会是空的，可见但不可致命，与旧 catch 同向。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
     resolveShortcutLabel(keybindingKey) {
         const defaults = this.getDefaultKeybindings();
@@ -1685,17 +1661,9 @@ class OICPPApp {
         return this._isWindowsPlatform;
     }
     isMacPlatform() {
-        if (this._isMacPlatform !== undefined) {
-            return this._isMacPlatform;
-        }
-        try {
-            const platform = (window.process?.platform || navigator?.platform || '').toLowerCase();
-            this._isMacPlatform = platform.includes('darwin') || platform.includes('mac');
-        }
-        catch (_) {
-            this._isMacPlatform = false;
-        }
-        return this._isMacPlatform;
+        // 平台判定的单一来源（这一份嗅探来自 48b2065「适配 macOS」，同期还长出了另外三份）。
+        // 拿不到模块时按「不是 mac」处理，与旧实现的 catch 分支同向。
+        return window.oicppKeybindings?.isMacPlatform() ?? false;
     }
     normalizeFilePathCandidate(candidate) {
         if (candidate == null) {

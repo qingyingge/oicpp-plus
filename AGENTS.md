@@ -28,6 +28,7 @@ pnpm@11.7.0
 - [打安装包](#workflows打安装包)
 - [改界面文案 / 加翻译](#workflows改界面文案--加翻译i18n)
 - [迁移 .js → .ts](#workflows迁移-js--ts)
+- [改快捷键默认值 / 加可改键](#workflows改快捷键默认值--加可改键)
 
 ### 打安装包（Build / Installer）
 本项目的安装包**不用** electron-builder 的 nsis target 出，而是用仓库根目录自带的 `installer.nsi` + 本机 NSIS。`package.json` 里 `build.win.target = "dir"`，electron-builder 只负责产出 `dist\win-unpacked`；`installer.nsi` 直接从该目录取文件，输出 `dist\OICPP-Plus-<version>-Setup.exe`（`installer.nsi:69`）。CI 同流程，见 `.github/workflows/build.yml:319`。
@@ -149,6 +150,41 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   - **数字不是以 `count` 传进来的键根本没法复数化**：`{n}` / `{total}` / `{bytes}` / `{uploaded}` / `{errors}` 都要先让调用点补上 `count: <同一个表达式>`，否则界面直接显示裸键名（比不复数化更糟）。en 里剩下的 `file(s)` / `error(s)` 这类规避写法就是这么来的。
     补的时候 `count` 必须**就是文案里那个数的表达式**（`{ n: diffMin, count: diffMin }`），只改一边会单复数和数字各说各话。这一条机器判不出可靠的样子（`dialog.importDetected` 那种 `{count}` 本身就在文案里、其它 token 是别的数，任何「count 要等于某个 token」的规则都会误报），所以靠 I9 兜住「有没有传」，「传得对不对」靠人 —— 改这类调用点时把两边一起看。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
+
+### 改快捷键默认值 / 加可改键
+适用场景：改某个动作的默认组合键、新增一个可改键的动作、或要在界面上显示快捷键。
+
+正确做法：**只改 `src/utils/keybindings.ts` 里的 `DEFS`**（每条 `{ key, labelKey, combo, macCombo? }`）。
+默认表、可改键清单、设置页 schema 全部由它派生；四处消费者（`src/main.ts`、
+`src/renderer/js/main.ts`、`src/renderer/js/monaco-editor-manager.ts`、`src/renderer/settings/editor.ts`）
+只写 `window.oicppKeybindings?.…`。加一个 `labelKey` 时记得两份语言包里都有对应的 `keybinding.*` 键。
+
+```bash
+npx tsc -p tsconfig.build.json     # 重新 emit（keybindings.js 是 <script> 加载的产物）
+node tests/keybindings-single-source.test.js
+xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-sandbox   # 看那行 [INFO] 冻结清单
+```
+
+反模式：
+
+- ❌ 在消费者里再写一遍 `formatCode: 'Alt+Shift+S',` 的表，或再列一遍 `'runAllSamples',` 的清单。
+  历史上这张表被抄过 **4 份**（`0291982` 修 #235 时又加了第三份），`tests/keybindings-single-source.test.js`
+  有按「形状」而非按文件名的 ratchet，两处都会红。要新键就改 `DEFS`。
+- ❌ 再写一份 `window.process?.platform` 嗅探（`48b2065`「适配 macOS」一次长出 4 份，渲染层现在还有 20+ 处散装读）。
+  平台判定用 `oicppKeybindings.currentPlatform()` / `isMacPlatform()`。
+- ❌ 给 `keybindings.ts` 加 `import`/`export`：它必须保持**双环境全局 script** 形态（同 `clang-format-options.ts`），
+  否则 `module: commonjs` 会编成带 `exports` 引用的模块，`<script>` 标签下直接炸。测试里靠 `module.exports` 那支 require 它。
+
+坑：
+
+- 本仓组合键里的 **`Ctrl` 语义是「主修饰键」**，不是物理 Control —— 匹配走
+  `monaco-editor-manager.ts` 的 `ctrlOrCmd` + `!!(event.ctrlKey || event.metaKey)`，等价于 Electron accelerator 的
+  `CmdOrCtrl`。所以 mac 上「Ctrl+F11」实际是 ⌘F11，而物理 ⌃F11 同样触发（两者现在无法区分，要区分得先改存储层）。
+- **显示层还没平台化**（全历史 `git log -G'⌘'` 零命中）。`index.html` 里 13 个 `.menu-shortcut` 中仍有 6 个是静态字面量
+  （`Ctrl+N`、`Ctrl+Shift+N`、`Ctrl+K`、`Ctrl+S`、`Ctrl+Shift+S`、`Ctrl+Shift+I` —— 恰好全是主修饰键那几个，
+  因为它们对应的动作**不在可改键表里**，`updateMenuShortcutHints` 无从取值）。smoke 会打印这份冻结清单当分母。
+- 脚本顺序：`keybindings.js` 必须早于 `js/main.js` / `js/monaco-editor-manager.js` / `editor.js` 加载（测试有断言）。
+  缺席时 `getDefaultKeybindings()` 退化成空表 → 菜单提示全部变空，而且 CI 不红，只有 smoke 抓得到。
 
 ### 迁移 .js → .ts（TypeScript 路线甲）
 **`.ts` 是唯一手写源，`.js` 由 `tsc -p tsconfig.build.json` 就地 emit 出来**（`rootDir`/`outDir` 同为 `src`），所以 `.js` 不许手改。`tsconfig.json` 负责全量 typecheck；`tsconfig.build.json` 带 `noCheck: true` 且 `include: ["src/**/*.ts", "src/**/*.d.ts"]` —— 全量 emit，**没有白名单要登记**，新增 `.ts` 直接会被编译。`.d.ts` 只进程序不出 JS。

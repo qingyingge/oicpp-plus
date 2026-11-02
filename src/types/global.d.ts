@@ -48,7 +48,32 @@ interface HTMLElement {
 
 
 
+// src/utils/keybindings.ts 的双环境全局（同 clangFormatOptions 的挂法）。
+// 默认组合键表、平台判定、可改键 schema 的单一来源，形状改动必须同时改那个文件。
+type OicppPlatform = 'mac' | 'windows' | 'linux' | 'other';
+
+interface OicppKeybindingDef {
+  key: string;
+  /** null = 这一条不在设置页出现（不可改键）。 */
+  labelKey: string | null;
+  combo: string;
+  macCombo?: string;
+}
+
+interface OicppKeybindingsApi {
+  DEFS: OicppKeybindingDef[];
+  currentPlatform(): OicppPlatform;
+  defaultKeybindings(platform?: OicppPlatform): Record<string, string>;
+  editableKeybindingKeys(): string[];
+  isMacPlatform(platform?: OicppPlatform): boolean;
+  keybindingSchema(): Array<{ key: string; labelKey: string }>;
+  rawPlatform(): string;
+  resolvePlatform(raw: unknown): OicppPlatform;
+  setPlatformOverride(platform: OicppPlatform | null): void;
+}
+
 interface Window {
+  oicppKeybindings?: OicppKeybindingsApi;
   logInfo: (...args: unknown[]) => void;
   logWarn: (...args: unknown[]) => void;
   logError: (...args: unknown[]) => void;
