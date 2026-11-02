@@ -1345,7 +1345,7 @@ class EditorSettings {
             const label = row.querySelector('.keybinding-label');
             const input = row.querySelector('.keybinding-input');
             const reset = row.querySelector('.keybinding-reset');
-            const resetText = window.i18n.t('settings.resetKeybinding');
+            const resetText = window.i18n.t('settings.reset');
 
             if (label) label.textContent = labelText;
             if (input) input.setAttribute('aria-label', labelText);

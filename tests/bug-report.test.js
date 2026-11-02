@@ -95,12 +95,27 @@ if (report) {
         check('L8 .message-toast.warning has no textarea styles', !leaked && body.includes('background-color: #ffc107'));
     }
 
-    // L10: en.json analysisEmpty 为英文
+    // L10: 「分析面板空态」这句在 en 侧必须是英文。
+    // 断言对象从 compileOutput.analysisEmpty 换到 panel.noParseContent —— 不是为了让孤儿键归零
+    // 而挪动测试，是因为查出来这两键的 zh 值**逐字相同**，而真正上屏的那句一直是后者
+    // （compile-manager 的空态 div 从 74f1397 起就渲染 panel.noParseContent）；
+    // L10 当年修的是冗余孪生键，界面症状并没有因此消失。孪生键已退役，这里改指活的那句。
     const l10 = report.find((i) => i.id === 'L10');
     if (l10) {
         const enPack = JSON.parse(enJson);
-        const value = enPack.compileOutput && enPack.compileOutput.analysisEmpty;
-        check('L10 en.json compileOutput.analysisEmpty is English', typeof value === 'string' && !/[\u4e00-\u9fff]/.test(value), value || '');
+        const zhPack = JSON.parse(read('src/lang/zh-cn.json'));
+        const value = enPack.panel && enPack.panel.noParseContent;
+        check('L10 en.json panel.noParseContent is English', typeof value === 'string' && !/[\u4e00-\u9fff]/.test(value), value || '');
+        check('L10 zh 侧同一键有中文（防止断言退化成一侧恒真）',
+            /[\u4e00-\u9fff]/.test(String(zhPack.panel && zhPack.panel.noParseContent || '')));
+        // 这条才是 L10 这次的真正落点：断言必须指着**代码实际取用**的键，
+        // 否则下次再有人加一个同句孪生键、把断言挂回死键，这条台账会重新变成空壳。
+        const compileManagerSrc = read('src/renderer/js/compile-manager.ts');
+        check('L10 断言对象确实是渲染中的那句（compile-manager 引用 panel.noParseContent）',
+            compileManagerSrc.includes('panel.noParseContent'));
+        check('L10 的冗余孪生键已退役（不许再往 compileOutput 里加同句键）',
+            enPack.compileOutput && enPack.compileOutput.analysisEmpty === undefined,
+            `实际=${JSON.stringify(enPack.compileOutput && enPack.compileOutput.analysisEmpty)}`);
     }
 
     // L25: editor.js 回退默认设置均含 fontLigaturesEnabled

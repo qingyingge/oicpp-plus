@@ -824,7 +824,7 @@ class DebugPanel {
         }
         if (data['isArray'] || data['isContainer']) {
             const cnt = data.elementCount != null ? data.elementCount : '?';
-            const typeLabel = data['isArray'] ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
+            const typeLabel = data['isArray'] ? window.i18n.t('debug.typeArray') : window.i18n.t('debug.typeContainer');
             display = `${typeLabel}[${cnt}] ${display}`;
         }
         if (display.length > 60) display = display.slice(0, 57) + '...';

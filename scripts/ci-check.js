@@ -1171,10 +1171,13 @@ const I18N_HARDCODED_EN_BASELINE = 0;
 //     那几个键是早期把判题代码当文案的残留。
 //   · 回归：CI 的 I6「被引用的键必须存在于包里」是硬安全网 —— 删错任何一条在用的键它会立刻红；
 //     80 项检查 / 58 个回归测试文件全绿。
-// 剩下的这 1 个是**故意留的**，不是没清干净：tests/bug-report.test.js 的 L10 拿
-// compileOutput.analysisEmpty 当契约（「en 侧必须是英文」）。为了让孤儿数归零去改那条台账断言，
-// 等于把「改测试迎合数字」这条路开个头，不值这一个键。
-const I18N_ORPHAN_KEY_BASELINE = 1;
+// 2026-11-02（同日第二批）：1 → 0。最后这 1 个是 compileOutput.analysisEmpty，
+// 曾为台账 L10 的断言对象而故意保留。查历史发现它跟 panel.noParseContent 是**同一句话**
+// （zh 侧逐字相同），而界面实际渲染的一直是后者 —— 也就是说 L10 当年修的是没在用的那个键，
+// 症状从没真正消失过。现在孪生键退役，台账断言改指活键，并锁一条「断言对象必须等于代码
+// 实际引用的键」，所以这不是为了让数字归零而挪测试，是把守卫对准了真正上屏的那句。
+// 同句不同键这一整类是这次的根因，改由 [I10] 负责拦，不再靠人眼。
+const I18N_ORPHAN_KEY_BASELINE = 0;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {
@@ -1506,6 +1509,50 @@ console.log(`\n${Y}[I9] Plural call sites pass count${R}`);
 // I8 那条挂了许久的 baseline 1 就是这么来的，不是存量。加 (?<![.\w]) 之后
 // `{ message: '中文' }` 照样命中，`x.message : y` 不再误判。
 const USER_VISIBLE_RE = /(?:showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|(?<![.\w])label\s*:|(?<![.\w])message\s*:|(?<![.\w])title\s*:|(?<![.\w])detail\s*:|new Error\(|throw Error)/;
+
+// I10: 同一个父对象里的重复文案 —— 台账 L10 那一类的机器守卫
+console.log(`\n${Y}[I10] Same-parent duplicate values${R}`);
+{
+  // 为什么必须有这一条、以及为什么范围只到「同一个父对象内」，写在 scripts/i18n-duplicate.js 的
+  // 头注释里（那里也记了 L10 的实际死法：一个从未接线的孪生键被当成在用的键去修）。
+  //
+  // 判定语言**必须是 zh-cn**，不能拿 localeCodes[0]（那是 en，I10 第一版就是这么跑红的）：
+  // 源语言里两个键的值不同，就说明它们本来就是两个概念，译文书面撞车只是翻译粗略。实测两类：
+  //   · settings.spaceBeforeParensAlways「始终」 vs settings.useTabAlways「始终使用 Tab」
+  //     —— zh 分得开，en 都塌成 "Always"。这是两个下拉框各自的选项，合并才是错。
+  //   · settings.language「界面语言」 vs settings.languageLabel「语言」，en 同为 "Language"，同理。
+  // 反过来在 zh-cn 上跑，整个包里只剩 1 组（已登记），没有一条是误报。
+  //
+  // 豁免表在 scripts/i18n-duplicate.js 里（DUPLICATE_EXEMPTIONS），与
+  // tests/i18n-duplicate-value.test.js 取的是同一份 —— 测试里再抄一张表就会和真语言包脱节。
+  const { DUPLICATE_EXEMPTIONS, sameParentDuplicates, partitionDuplicates } = require('./i18n-duplicate');
+  const i10Base = locales['zh-cn'];
+  if (!i10Base) {
+    fail('I10 跑不了：locales 里没有 zh-cn —— 这条判据只在源语言上成立，不许退回 localeCodes[0]');
+  } else {
+    const i10Dupes = sameParentDuplicates(i10Base);
+    const { violations, stale } = partitionDuplicates(i10Dupes, DUPLICATE_EXEMPTIONS);
+    if (violations.length > 0) {
+      fail(`${violations.length} group(s) of same-parent duplicate i18n text in zh-cn — 一句话一个键，复用已有的那个，别新建: ${summarize(violations.map((d) => `${d.parent}: ${d.bases.join(' / ')} = 「${[...d.value].length > 20 ? [...d.value].slice(0, 20).join('') + '…' : d.value}」`))}`);
+    }
+    if (stale.length > 0) {
+      fail(`${stale.length} i18n duplicate exemption(s) no longer match any duplicate — 那条重复已经不成立了，把登记划掉: ${summarize(stale.map((s) => `${s.keys.join(' / ')} (${s.reason})`))}`);
+    }
+    if (violations.length === 0 && stale.length === 0) {
+      ok(`${i10Dupes.length} same-parent duplicate group(s) in zh-cn, all ${DUPLICATE_EXEMPTIONS.length} registered and still accurate`);
+    }
+    // 跨父对象的同句只做信息输出：那是常态且合理（menu.delete 与 cloud.delete 各自合适），
+    // 但它同时是「译文各自漂移」的温床，报个数给后续批次当分母，不设门槛。
+    const crossSameValue = new Map();
+    for (const value of Object.values(i10Base)) {
+      const text = String(value === undefined || value === null ? '' : value).trim();
+      if (!text) continue;
+      crossSameValue.set(text, (crossSameValue.get(text) || 0) + 1);
+    }
+    const dupValues = [...crossSameValue.values()].filter((n) => n > 1).length;
+    info(`${dupValues} 句 zh 文案挂在 2 个以上逻辑键上（跨命名空间，仅信息，需人判是否同一概念）`);
+  }
+}
 
 // I8: Hardcoded CJK ratchet
 console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);

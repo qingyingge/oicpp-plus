@@ -963,12 +963,12 @@
     "severity": "LOW",
     "title": "英文翻译含中文",
     "status": "已修复",
-    "file": "src/lang/en.json:972",
-    "problem": "compileOutput.analysisEmpty 值是中文而非英文。",
-    "impact": "翻译错误。",
+    "file": "src/lang/en.json:1305",
+    "problem": "「暂无可解析的内容」这句在包里有两个键：compileOutput.analysisEmpty 与 panel.noParseContent，zh 侧逐字相同。en 侧的 compileOutput.analysisEmpty 值是中文而非英文。",
+    "impact": "翻译错误。但注意：真正上屏的一直是 panel.noParseContent（compile-manager 的空态 div 自 74f1397 起就取这个键），analysisEmpty 从未被引用 —— 所以这一条修完界面症状并未消失，因为改的是死的那个键。",
     "fix": {
-      "commit": "c3fa954",
-      "note": "en.json 的 compileOutput.analysisEmpty 已补齐为英文文案。"
+      "commit": "16c4bfd",
+      "note": "16c4bfd 把 en 侧补成英文；但孪生键本身是 6e28d60 引入的（提交标题与 i18n 无关，等于顺手多写了一个键），c3fa954 又按这个死键写了守卫。现退役 compileOutput.analysisEmpty，守卫改指 panel.noParseContent，并加一条「断言对象必须等于代码实际引用的键」防止再退回死键。"
     }
   },
   {

@@ -1070,7 +1070,7 @@ class CodeComparer {
 
         } catch (error) {
             logError('编译程序失败:', error);
-            this.showTaskCompileError(task, 'general', (window.i18n.t('compare.compileError')) + ': ' + (error as Error).message);
+            this.showTaskCompileError(task, 'general', (window.i18n.t('compare.compileFail')) + ': ' + (error as Error).message);
             await cleanupPartialCompiles();
             return null;
         }
@@ -1112,7 +1112,7 @@ class CodeComparer {
                     const generation = await this.generateTestData(generatorRunTarget || generatorExe!, 0);
                     markExecuted();
                     if (!generation || generation.success !== true) {
-                        const generatorMessage = generation?.message || (window.i18n.t('compare.genRunError'));
+                        const generatorMessage = generation?.message || (window.i18n.t('compare.generatorRunFailed'));
                         const generatedOutput = generation?.result?.output || '';
                         const generatorType = generation?.type || 'unknown';
                         try {
@@ -1727,7 +1727,7 @@ class CodeComparer {
                     const generatorType = errorResult.generatorErrorType || '';
                     let detailLabel = window.i18n.t('compare.errorRuntime');
                     if (generatorType === 'ole') {
-                        detailLabel = window.i18n.t('compare.errorOverLimit');
+                        detailLabel = window.i18n.t('compare.errorOutputLimit');
                     } else if (generatorType === 'tle') {
                         detailLabel = window.i18n.t('compare.errorTimeout');
                     } else if (generatorType === 're') {
