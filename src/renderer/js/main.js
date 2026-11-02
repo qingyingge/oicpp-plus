@@ -861,30 +861,26 @@ class OICPPApp {
         // 缺它时按「没有默认键」处理：菜单提示会是空的，可见但不可致命，与旧 catch 同向。
         return window.oicppKeybindings?.defaultKeybindings() || {};
     }
-    resolveShortcutLabel(keybindingKey) {
-        const defaults = this.getDefaultKeybindings();
-        const fromSettings = this.settings?.keybindings?.[keybindingKey];
-        if (typeof fromSettings === 'string' && fromSettings.trim()) {
-            return fromSettings.trim();
+    // 一个 .menu-shortcut 的文本从哪来，由 span 自己声明：
+    //   data-keybinding → 可在设置页改的动作，值走 settings.keybindings，缺省回默认表；
+    //   data-accel      → 不可改的动作，值走 MENU_ACCELERATORS（主进程菜单模板用的是同一份）。
+    // 以前这里是一份手写 7 项映射表，13 个 span 只覆盖 7 个：剩下 6 个（恰好全是主修饰键那几个）
+    // 永远是 HTML 里抄的字面量，于是 #235 那类「改了键、或换了平台，提示不动」只被修掉了一半。
+    resolveShortcutLabel(source) {
+        const keybindingKey = source.getAttribute('data-keybinding') || '';
+        if (keybindingKey) {
+            const fromSettings = this.settings?.keybindings?.[keybindingKey];
+            if (typeof fromSettings === 'string' && fromSettings.trim()) {
+                return fromSettings.trim();
+            }
+            return this.getDefaultKeybindings()[keybindingKey] || '';
         }
-        return defaults[keybindingKey] || '';
+        const accelId = source.getAttribute('data-accel') || '';
+        return accelId ? (window.oicppKeybindings?.menuAccelerator(accelId) ?? '') : '';
     }
     updateMenuShortcutHints() {
-        const mappings = [
-            { action: 'cloud-compile', key: 'cloudCompile' },
-            { action: 'open-terminal', key: 'openTerminal' },
-            { action: 'format-code', key: 'formatCode' },
-            { action: 'compile', key: 'compileCode' },
-            { action: 'run', key: 'runCode' },
-            { action: 'compile-run', key: 'compileAndRun' },
-            { action: 'debug', key: 'toggleDebug' }
-        ];
-        mappings.forEach((item) => {
-            const node = document.querySelector(`.menu-dropdown-item[data-action="${item.action}"] .menu-shortcut`);
-            if (!node) {
-                return;
-            }
-            node.textContent = this.resolveShortcutLabel(item.key);
+        document.querySelectorAll('.menu-dropdown-item .menu-shortcut').forEach((node) => {
+            node.textContent = this.resolveShortcutLabel(node);
         });
     }
     configureAutoSave() {

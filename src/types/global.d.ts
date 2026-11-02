@@ -62,11 +62,14 @@ interface OicppKeybindingDef {
 
 interface OicppKeybindingsApi {
   DEFS: OicppKeybindingDef[];
+  /** 不可改键动作的固定 accelerator，主进程菜单模板与自绘菜单共用（缺 id 返回空串）。 */
+  MENU_ACCELERATORS: Record<string, string>;
   currentPlatform(): OicppPlatform;
   defaultKeybindings(platform?: OicppPlatform): Record<string, string>;
   editableKeybindingKeys(): string[];
   isMacPlatform(platform?: OicppPlatform): boolean;
   keybindingSchema(): Array<{ key: string; labelKey: string }>;
+  menuAccelerator(actionId: string): string;
   rawPlatform(): string;
   resolvePlatform(raw: unknown): OicppPlatform;
   setPlatformOverride(platform: OicppPlatform | null): void;

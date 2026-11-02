@@ -27,7 +27,7 @@ const {
     generateClangFormatText
 } = require('./utils/clang-format-options');
 // 默认组合键表与平台判定的单一来源（见 src/utils/keybindings.ts 的头部说明）。
-const { defaultKeybindings, resolvePlatform } = require('./utils/keybindings') as OicppKeybindingsApi;
+const { defaultKeybindings, menuAccelerator, resolvePlatform } = require('./utils/keybindings') as OicppKeybindingsApi;
 const {
     SETTINGS_KEYS,
     SETTINGS_MERGE_KEYS,
@@ -3753,7 +3753,7 @@ function createMenuBar() {
     const activeKeybindings: Record<string, string> = (settings && settings.keybindings && typeof settings.keybindings === 'object')
         ? settings.keybindings
         : {};
-    const resolveRunMenuAccelerator = (key: string, fallback: string) => {
+    const resolveRunMenuAccelerator = (key: string, fallback = '') => {
         const candidate = activeKeybindings[key];
         if (typeof candidate === 'string' && candidate.trim()) {
             return candidate.trim();
@@ -3763,7 +3763,7 @@ function createMenuBar() {
         }
         return fallback;
     };
-    const normalizeAcceleratorForMenu = (value: unknown, fallback: string) => {
+    const normalizeAcceleratorForMenu = (value: unknown, fallback = '') => {
         const source = typeof value === 'string' && value.trim() ? value.trim() : fallback;
         if (!source) {
             return fallback;
@@ -3791,11 +3791,11 @@ function createMenuBar() {
         return false;
     };
 
-    const debugAccelerator = resolveRunMenuAccelerator('toggleDebug', 'F5');
-    const compileAccelerator = resolveRunMenuAccelerator('compileCode', 'F9');
-    const runAccelerator = resolveRunMenuAccelerator('runCode', 'F10');
-    const compileRunAccelerator = resolveRunMenuAccelerator('compileAndRun', defaultKeybindings['compileAndRun'] || 'F11');
-    const openTerminalAccelerator = normalizeAcceleratorForMenu(resolveRunMenuAccelerator('openTerminal', 'Ctrl+`'), 'CmdOrCtrl+`');
+    const debugAccelerator = resolveRunMenuAccelerator('toggleDebug');
+    const compileAccelerator = resolveRunMenuAccelerator('compileCode');
+    const runAccelerator = resolveRunMenuAccelerator('runCode');
+    const compileRunAccelerator = resolveRunMenuAccelerator('compileAndRun');
+    const openTerminalAccelerator = normalizeAcceleratorForMenu(resolveRunMenuAccelerator('openTerminal'));
 
     // 移除与带修饰符快捷键冲突的裸 Fn 菜单加速器，
     // 避免 Electron 同时触发两个动作（如 Ctrl+F11 触发 F11）
@@ -3806,28 +3806,28 @@ function createMenuBar() {
             submenu: [
                 {
                     label: t('menu.newFile'),
-                    accelerator: 'CmdOrCtrl+N',
+                    accelerator: menuAccelerator('new-file'),
                     click: () => {
                         (mainWindow as import('electron').BrowserWindow).webContents.send('menu-new-cpp-file');
                     }
                 },
                 {
                     label: t('menu.newTempFile'),
-                    accelerator: 'CmdOrCtrl+Shift+N',
+                    accelerator: menuAccelerator('new-temp-file'),
                     click: () => {
                         (mainWindow as import('electron').BrowserWindow).webContents.send('menu-new-temp-file');
                     }
                 },
                 {
                     label: t('menu.openFile'),
-                    accelerator: 'CmdOrCtrl+O',
+                    accelerator: menuAccelerator('open-file'),
                     click: () => {
                         openFile();
                     }
                 },
                 {
                     label: t('menu.openFolder'),
-                    accelerator: 'CmdOrCtrl+K',
+                    accelerator: menuAccelerator('open-folder'),
                     click: () => {
                         openFolder();
                     }
@@ -3835,14 +3835,14 @@ function createMenuBar() {
                 { type: 'separator' },
                 {
                     label: t('menu.save'),
-                    accelerator: 'CmdOrCtrl+S',
+                    accelerator: menuAccelerator('save-file'),
                     click: () => {
                         (mainWindow as import('electron').BrowserWindow).webContents.send('menu-save-file');
                     }
                 },
                 {
                     label: t('menu.saveAs'),
-                    accelerator: 'CmdOrCtrl+Shift+S',
+                    accelerator: menuAccelerator('save-as'),
                     click: () => {
                         saveAsFile();
                     }
@@ -3857,14 +3857,14 @@ function createMenuBar() {
                 { type: 'separator' },
                 {
                     label: t('menu.options'),
-                    accelerator: 'CmdOrCtrl+,',
+                    accelerator: menuAccelerator('options'),
                     click: () => {
                         (mainWindow as import('electron').BrowserWindow).webContents.send('menu-open-settings');
                     }
                 },
                 {
                     label: t('menu.templateSettings'),
-                    accelerator: 'CmdOrCtrl+T',
+                    accelerator: menuAccelerator('template-settings'),
                     click: () => {
                         openCodeTemplates();
                     }
@@ -3874,14 +3874,14 @@ function createMenuBar() {
         {
             label: t('menu.edit'),
             submenu: [
-                { label: t('menu.undo'), accelerator: 'CmdOrCtrl+Z', role: 'undo' },
-                { label: t('menu.redo'), accelerator: 'CmdOrCtrl+Shift+Z', role: 'redo' },
+                { label: t('menu.undo'), accelerator: menuAccelerator('undo'), role: 'undo' },
+                { label: t('menu.redo'), accelerator: menuAccelerator('redo'), role: 'redo' },
                 { type: 'separator' },
-                { label: t('menu.cut'), accelerator: 'CmdOrCtrl+X', role: 'cut' },
-                { label: t('menu.copy'), accelerator: 'CmdOrCtrl+C', role: 'copy' },
-                { label: t('menu.paste'), accelerator: 'CmdOrCtrl+V', role: 'paste' },
+                { label: t('menu.cut'), accelerator: menuAccelerator('cut'), role: 'cut' },
+                { label: t('menu.copy'), accelerator: menuAccelerator('copy'), role: 'copy' },
+                { label: t('menu.paste'), accelerator: menuAccelerator('paste'), role: 'paste' },
                 { type: 'separator' },
-                { label: t('menu.selectAll'), accelerator: 'CmdOrCtrl+A', role: 'selectAll' }
+                { label: t('menu.selectAll'), accelerator: menuAccelerator('select-all'), role: 'selectAll' }
             ]
         },
         {
@@ -3933,7 +3933,7 @@ function createMenuBar() {
                 },
                 {
                     label: t('menu.openBuiltinBrowser'),
-                    accelerator: 'CmdOrCtrl+Shift+I',
+                    accelerator: menuAccelerator('open-browser'),
                     click: () => {
                         if (mainWindow && !mainWindow.isDestroyed()) {
                             mainWindow.webContents.send('menu-open-browser');
@@ -3942,7 +3942,7 @@ function createMenuBar() {
                 },
                 {
                     label: t('menu.newBrowserTab'),
-                    accelerator: 'CmdOrCtrl+Shift+B',
+                    accelerator: menuAccelerator('new-browser-tab'),
                     click: () => {
                         if (mainWindow && !mainWindow.isDestroyed()) {
                             mainWindow.webContents.send('menu-new-browser-tab');

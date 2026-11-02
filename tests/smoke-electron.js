@@ -166,20 +166,18 @@ app.whenReady().then(async () => {
             && typeof window.oicppKeybindings.defaultKeybindings === 'function');
         out.kbDefaultCount = out.hasKeybindingsModule
             ? Object.keys(window.oicppKeybindings.defaultKeybindings()).length : -1;
-        const WIRED = {
-            'cloud-compile': 'cloudCompile', 'open-terminal': 'openTerminal',
-            'format-code': 'formatCode', 'compile': 'compileCode', 'run': 'runCode',
-            'compile-run': 'compileAndRun', 'debug': 'toggleDebug'
-        };
+        const defaults = out.hasKeybindingsModule ? window.oicppKeybindings.defaultKeybindings() : {};
         out.menuShortcuts = Array.prototype.slice.call(document.querySelectorAll('.menu-dropdown-item'))
             .filter((el) => el.querySelector('.menu-shortcut'))
             .map((el) => {
-                const action = el.getAttribute('data-action') || '';
-                const shown = (el.querySelector('.menu-shortcut').textContent || '').trim();
-                const key = WIRED[action];
-                const expected = key && out.hasKeybindingsModule
-                    ? window.oicppKeybindings.defaultKeybindings()[key] : null;
-                return { action, shown, expected: expected || '', fromModule: !!key };
+                const node = el.querySelector('.menu-shortcut');
+                const shown = (node.textContent || '').trim();
+                const kbKey = node.getAttribute('data-keybinding') || '';
+                const accelId = node.getAttribute('data-accel') || '';
+                const want = kbKey
+                    ? String((out.hasKeybindingsModule ? defaults[kbKey] : undefined) || '')
+                        : (out.hasKeybindingsModule ? window.oicppKeybindings.menuAccelerator(accelId) : '');
+                return { action: el.getAttribute('data-action') || '', shown, want, kbKey, accelId };
             });
         const els = Array.prototype.slice.call(document.querySelectorAll('[data-i18n]')).slice(0, 8);
         out.domSamples = els.map((e) => ({ key: e.getAttribute('data-i18n'), text: (e.textContent || '').trim().slice(0, 24) }));
@@ -220,13 +218,14 @@ app.whenReady().then(async () => {
     check('index.html: 每个 .menu-shortcut 都有内容（没有一个被静默清空）',
         (probe.menuShortcuts || []).length >= 13 && blankHints.length === 0,
         `共 ${(probe.menuShortcuts || []).length} 个，空的 ${blankHints.length} 个`);
-    const hintMismatch = (probe.menuShortcuts || []).filter((s) => s.fromModule && s.expected && s.shown !== s.expected);
-    check('index.html: 由设置驱动的 7 项提示等于单一来源的默认值',
-        hintMismatch.length === 0, hintMismatch.map((m) => `${m.action}: ${m.shown} ≠ ${m.expected}`).join(' | '));
-    // 还没接进单一来源的那几个（HTML 里的静态字面量）—— 平台化那一步要处理的清单，只报数不判红
-    const frozen = (probe.menuShortcuts || []).filter((s) => !s.fromModule);
-    console.log(`  [INFO] index.html: ${frozen.length} 个菜单提示仍是 HTML 静态字面量（尚未由键表驱动）: `
-        + frozen.map((f) => `${f.action}=${f.shown}`).join(', '));
+    const hintMismatch = (probe.menuShortcuts || [])
+        .filter((s) => s.want && s.shown !== s.want);
+    check('index.html: 13 项菜单提示全部等于自己声明的那个来源（默认表 / accelerator 表）',
+        hintMismatch.length === 0 && (probe.menuShortcuts || []).length === 13,
+        `共 ${(probe.menuShortcuts || []).length} 项，不符: ${hintMismatch.map((m) => `${m.action}=${m.shown}≠${m.want}`).join(' | ')}`);
+    const noSource = (probe.menuShortcuts || []).filter((s) => !s.kbKey && !s.accelId);
+    check('index.html: 没有 span 还停留在「没声明来源」的手抄字面量上',
+        noSource.length === 0, noSource.map((s) => `${s.action}=${s.shown}`).join(', '));
 
     check('无 CSP/资源加载阻断', blocked.length === 0, blocked.slice(0, 3).join(' | '));
 

@@ -199,5 +199,66 @@ const tsFiles = [];
             && editorHtml.indexOf('utils/keybindings.js') < editorHtml.indexOf('<script src="editor.js">'));
 }
 
+// ---------------------------------------------------------------------------
+// 6. 固定 accelerator（不可改键那批）也是单一来源
+// ---------------------------------------------------------------------------
+{
+    check('menuAccelerator 取到值，未知 id 返回空串而不是 undefined',
+        kb.menuAccelerator('new-file') === 'CmdOrCtrl+N' && kb.menuAccelerator('no-such-action') === '',
+        kb.menuAccelerator('new-file'));
+
+    const mainSrc = read(path.join('src', 'main.ts'));
+    const inlineAccel = mainSrc.match(/accelerator:\s*'/g) || [];
+    check('src/main.ts 的菜单模板里不再有内联 accelerator 字面量',
+        inlineAccel.length === 0, `${inlineAccel.length} 处残留`);
+
+    const usedIds = [...mainSrc.matchAll(/menuAccelerator\('([^']+)'\)/g)].map((m) => m[1]);
+    const mapIds = Object.keys(kb.MENU_ACCELERATORS);
+    const unknown = usedIds.filter((id) => !mapIds.includes(id));
+    check(`主进程用到的 ${usedIds.length} 个 accelerator id 全在表里`,
+        usedIds.length >= 16 && unknown.length === 0, `未知: ${unknown.join(',')}`);
+    // 表里也不许有没人读的条目 —— 否则哪天它和主进程各自演化，又是一处隐性双写
+    const dead = mapIds.filter((id) => !usedIds.includes(id));
+    check('MENU_ACCELERATORS 没有没人读的条目', dead.length === 0, `死条目: ${dead.join(',')}`);
+
+    // 自证：把内联字面量加回主进程，上面那条正则必须抓得住
+    check('自证：残留 accelerator 字面量的正则确实抓得到',
+        /accelerator:\s*'/.test("                    accelerator: 'CmdOrCtrl+N',"));
+
+    // HTML 侧：每个 span 必须**自己声明**值的来源，且声明的东西存在
+    const indexHtml = read(path.join('src', 'renderer', 'index.html'));
+    const spans = [...indexHtml.matchAll(/<span class="menu-shortcut"([^>]*)>([^<]*)<\/span>/g)];
+    check('13 个菜单提示 span 全都在（数量对得上才继续谈来源）',
+        spans.length === 13, String(spans.length));
+    const defaults = kb.defaultKeybindings('windows');
+    const orphans = [];
+    for (const m of spans) {
+        const attrs = m[1];
+        const kbKey = (/data-keybinding="([^"]+)"/.exec(attrs) || [])[1];
+        const accel = (/data-accel="([^"]+)"/.exec(attrs) || [])[1];
+        if (kbKey && accel) { orphans.push(`两个来源都声明: ${kbKey}/${accel}`); continue; }
+        if (!kbKey && !accel) { orphans.push(`没声明来源（回到手抄字面量）: ${m[2]}`); continue; }
+        if (kbKey && !(kbKey in defaults)) orphans.push(`data-keybinding 不在默认表里: ${kbKey}`);
+        if (accel && !mapIds.includes(accel)) orphans.push(`data-accel 不在 accelerator 表里: ${accel}`);
+    }
+    check('每个 span 恰好声明一个来源，且该来源真的存在', orphans.length === 0, orphans.join(' | '));
+
+    // span 的静态文字只是 JS 起来前的默认值，但它必须等于当前来源的值 ——
+    // 否则「JS 没跑成」的时候用户看到的就是一条错的键（这条正是以前 6 个冻结 span 的处境）
+    const wrongDefault = [];
+    for (const m of spans) {
+        const attrs = m[1];
+        const shown = m[2].trim();
+        const kbKey = (/data-keybinding="([^"]+)"/.exec(attrs) || [])[1];
+        const accel = (/data-accel="([^"]+)"/.exec(attrs) || [])[1];
+        const want = kbKey ? defaults[kbKey] : kb.menuAccelerator(accel);
+        // accelerator 表用的是 CmdOrCtrl 写法，HTML 里抄的是 Ctrl 写法，这两者在本仓等价
+        const normalized = String(want).replace(/^CmdOrCtrl\+/, 'Ctrl+');
+        if (shown !== normalized) wrongDefault.push(`${shown} ≠ ${normalized}`);
+    }
+    check('span 的静态默认值与其声明来源一致（JS 没跑时也不撒谎）',
+        wrongDefault.length === 0, wrongDefault.join(' | '));
+}
+
 console.log(`keybindings-single-source tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

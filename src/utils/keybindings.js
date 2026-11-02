@@ -118,13 +118,42 @@
     function isMacPlatform(platform) {
         return (platform === undefined ? currentPlatform() : platform) === 'mac';
     }
+    // 固定快捷键：这些动作**不在设置页里**（不可改键），所以它们不属于 DEFS。
+    // 但它们的组合键以前只写在主进程的菜单模板里（accelerator: 'CmdOrCtrl+N' 这类内联字面量），
+    // 于是自绘菜单无处取值 —— 只能在 index.html 里手抄成
+    // <span class="menu-shortcut">Ctrl+N</span>，那 6 个永远不跟平台也不跟设置走的 span 就是这么来的。
+    // id 用 data-action 那套 kebab 命名，让 HTML 与主进程共用一个词表（两套 id 词汇本身就是漂移点）。
+    const MENU_ACCELERATORS = {
+        'new-file': 'CmdOrCtrl+N',
+        'new-temp-file': 'CmdOrCtrl+Shift+N',
+        'open-file': 'CmdOrCtrl+O',
+        'open-folder': 'CmdOrCtrl+K',
+        'save-file': 'CmdOrCtrl+S',
+        'save-as': 'CmdOrCtrl+Shift+S',
+        'options': 'CmdOrCtrl+,',
+        'template-settings': 'CmdOrCtrl+T',
+        // 下面 6 条挂的是 role，Electron 本来也会给默认键；写出来是为了「一处说清」而不是留着各抄一遍。
+        'undo': 'CmdOrCtrl+Z',
+        'redo': 'CmdOrCtrl+Shift+Z',
+        'cut': 'CmdOrCtrl+X',
+        'copy': 'CmdOrCtrl+C',
+        'paste': 'CmdOrCtrl+V',
+        'select-all': 'CmdOrCtrl+A',
+        'open-browser': 'CmdOrCtrl+Shift+I',
+        'new-browser-tab': 'CmdOrCtrl+Shift+B'
+    };
+    function menuAccelerator(actionId) {
+        return MENU_ACCELERATORS[actionId] ?? '';
+    }
     return {
         DEFS,
+        MENU_ACCELERATORS,
         currentPlatform,
         defaultKeybindings,
         editableKeybindingKeys,
         isMacPlatform,
         keybindingSchema,
+        menuAccelerator,
         rawPlatform,
         resolvePlatform,
         setPlatformOverride
