@@ -21,9 +21,13 @@
 
 ## 实现文件
 
-- `src/main-process/compare-engine-v2.js` — 引擎入口（生产已接入，`main.js` 第 5960 行引用）
-- `src/main-process/compare-worker-v6.js` — V6/V10 worker（原生 + JS 回退双路径）
+- `src/main-process/compare-engine.ts` — 引擎入口（生产已接入，`src/main.ts` 的 `start-comparison` handler 引用）
+- `src/main-process/compare-worker.ts` — worker（原生 + JS 回退双路径）
 - `fastspawn.cc` — 原生 addon 源码（编译产物 `fastspawn.node` 需自行构建）
+
+> 2026-11-03 文件名去版本号：`compare-engine-v2` → `compare-engine`、`compare-worker-v6` →
+> `compare-worker`、导出类 `CompareEngineV2` → `CompareEngine`。本文与 `BENCHMARK_REPORT.md` /
+> `BUG_REPORT.json` / `ts-migration-baseline.*` 各轮记录里出现的旧名是当时的路径与读数，不改写。
 
 ## 复现
 
@@ -47,7 +51,7 @@ node benchmark/bench-logged.js --threads 8
 
 第一轮数据全部来自 POSIX fastspawn 路径；Windows 没有原生模块，100% 走 worker 的
 JS 回退分支，而该分支当时仍是 `gen → std → test` 三阶段串行 + 每组两侧各一轮全量
-字符串规范化。本轮只动回退路径（`compare-worker-v6.ts`），fastspawn 路径不变。
+字符串规范化。本轮只动回退路径（`compare-worker.ts`，当时名为 `compare-worker-v6.ts`），fastspawn 路径不变。
 
 ## 改动
 

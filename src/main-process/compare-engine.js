@@ -33,9 +33,9 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CompareEngineV2 = void 0;
+exports.CompareEngine = void 0;
 /**
- * CompareEngineV2 — Worker Thread 多线程对拍引擎
+ * CompareEngine — Worker Thread 多线程对拍引擎
  * 每个 Worker Thread 有独立事件循环 + 独立 spawn
  * 消除单事件循环瓶颈，实现真并行
  */
@@ -50,8 +50,8 @@ const UNLIMITED_TEST_BUDGET_MS = 60 * 1000;
 const WATCHDOG_SLACK_MS = 30 * 1000;
 // 不限时且测试点很多时预算会线性膨胀，用硬上限兜住，避免看门狗形同虚设
 const WATCHDOG_HARD_CAP_MS = 6 * 60 * 60 * 1000;
-class CompareEngineV2 extends events_1.EventEmitter {
-    // 轮次序号：start() 用 ++CompareEngineV2._runCounter 分配本轮 _runId，
+class CompareEngine extends events_1.EventEmitter {
+    // 轮次序号：start() 用 ++CompareEngine._runCounter 分配本轮 _runId，
     // 配合 isCurrentRun() 把上一轮 worker 的迟到消息挡在门外。
     // 必须初始化 —— 未初始化时 ++undefined === NaN，而 NaN !== NaN，
     // isCurrentRun() 恒为 false，会把本轮每条 worker 消息都当成上一轮的
@@ -80,7 +80,7 @@ class CompareEngineV2 extends events_1.EventEmitter {
         // 本次运行的标识。stop() 是 fire-and-forget：旧 worker 的消息可能在
         // terminate 生效前抵达，若不加归属校验，这些迟到的 progress/error 会被
         // 算到下一次运行头上（完成数虚高、错误张冠李戴）。
-        this._runId = ++CompareEngineV2._runCounter;
+        this._runId = ++CompareEngine._runCounter;
         const runId = this._runId;
         const isCurrentRun = () => this._runId === runId;
         let watchdog = null;
@@ -98,7 +98,7 @@ class CompareEngineV2 extends events_1.EventEmitter {
             const threadCount = Math.min(Math.max(1, requestedThreads), totalTests, 32);
             this._total = totalTests;
             const perThread = Math.ceil(totalTests / threadCount);
-            const workerPath = path.join(__dirname, 'compare-worker-v6.js');
+            const workerPath = path.join(__dirname, 'compare-worker.js');
             const resolvePath = (exe) => {
                 if (!exe)
                     return '';
@@ -286,7 +286,7 @@ class CompareEngineV2 extends events_1.EventEmitter {
         }, 2000).unref();
     }
 }
-exports.CompareEngineV2 = CompareEngineV2;
+exports.CompareEngine = CompareEngine;
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { CompareEngineV2 };
+    module.exports = { CompareEngine };
 }

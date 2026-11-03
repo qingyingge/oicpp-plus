@@ -7928,8 +7928,8 @@ function setupIPC() {
             catch (_) { }
             activeEngine = null;
         }
-        const { CompareEngineV2 } = require('./main-process/compare-engine-v2');
-        const engine = new CompareEngineV2();
+        const { CompareEngine } = require('./main-process/compare-engine');
+        const engine = new CompareEngine();
         activeEngine = engine;
         engine.on('progress', (data) => {
             try {

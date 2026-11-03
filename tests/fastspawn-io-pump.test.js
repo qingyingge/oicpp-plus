@@ -186,7 +186,7 @@ const cleanup = () => { try { fs.rmSync(TMP, { recursive: true, force: true }); 
     // 参照物直接从生产 worker 源码里抽出来跑，不在测试里重抄一份 ——
     // 重抄的那份会跟着源码漂移，然后两边都「对」。
     const { funcDecl, toFn } = require('./fixtures/source-extract');
-    const workerSrc = fs.readFileSync(path.join(ROOT, 'src', 'main-process', 'compare-worker-v6.js'), 'utf8');
+    const workerSrc = fs.readFileSync(path.join(ROOT, 'src', 'main-process', 'compare-worker.js'), 'utf8');
     const normalizeOutput = toFn(funcDecl(workerSrc, 'normalizeOutput'));
     check('能从 worker 源码抽出真实 normalizeOutput 作为参照物',
         typeof normalizeOutput === 'function',

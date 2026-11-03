@@ -671,7 +671,7 @@ class CodeComparer {
             if (!compiledPrograms) {
                 return;
             }
-            // 新引擎（compare-engine-v2/compare-worker-v6）不实现 useTestlib(SPJ) 与 freopen 文件IO，
+            // 新引擎（compare-engine/compare-worker）不实现 useTestlib(SPJ) 与 freopen 文件IO，
             // 检测到这些配置时回退到旧引擎 runComparison（完整支持 prepareFreopenContext/judgeWithSpj/首错即停/错误带 input）
             if (task.config.useTestlib || task.config.freopenInputFile || task.config.freopenOutputFile) {
                 logInfo('[对拍器] 检测到 useTestlib/freopen 配置，回退到旧引擎 runComparison');

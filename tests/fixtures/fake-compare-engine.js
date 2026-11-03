@@ -2,7 +2,7 @@
 
 // 在 vm 沙箱里跑「真引擎 + 假 Worker」。
 //
-// CompareEngineV2 只依赖 events / worker_threads / path / os，不碰 electron，
+// CompareEngine 只依赖 events / worker_threads / path / os，不碰 electron，
 // 所以把 Worker 换成假件就能直接观察它对 worker 消息的真实处理：
 // 事件载荷、计数归属、超时归一化下发值 —— 这些都能变成断言，
 // 不用再正则比 `/emit\('complete', \{ total: this\._total .../` 这种一改版就误报的长相。
@@ -22,7 +22,7 @@ const repoRoot = path.resolve(__dirname, '..', '..');
 
 const makeEngineWithFakeWorker = (progressCount, opts = {}) => {
     const engineSrc = fs.readFileSync(
-        path.join(repoRoot, 'src', 'main-process', 'compare-engine-v2.js'), 'utf8');
+        path.join(repoRoot, 'src', 'main-process', 'compare-engine.js'), 'utf8');
     const sandbox = {
         // 编译产物用这个对象挂模块标记，真实环境里由模块包装器提供，沙箱必须补上这个绑定
         require, module: { exports: {} }, exports: {}, console,
@@ -60,8 +60,8 @@ const makeEngineWithFakeWorker = (progressCount, opts = {}) => {
         .replace(/^const \{ Worker \} = require\('worker_threads'\);$/m, '')
         .replace(/^const events_1 = require\("events"\);$/m, 'const events_1 = { EventEmitter };')
         .replace(/^const worker_threads_1 = require\("worker_threads"\);$/m, 'const worker_threads_1 = { Worker };'),
-    sandbox, { filename: 'compare-engine-v2.js' });
-    return sandbox.module.exports.CompareEngineV2;
+    sandbox, { filename: 'compare-engine.js' });
+    return sandbox.module.exports.CompareEngine;
 };
 
 // 跑完整一轮真引擎：建 worker → 注入 messages → 可选 stop → 收 done。

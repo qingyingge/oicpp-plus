@@ -10,7 +10,7 @@
  * 用法：
  *   node benchmark/ab.js --cpus 0-3 --threads 4 \
  *        --scenario Sort,Graph,Range --tests 24 --reps 3 \
- *        --worker V11=src/main-process/compare-worker-v6.js \
+ *        --worker V11=src/main-process/compare-worker.js \
  *        --worker V12=benchmark/variants/worker-v12.js
  *
  * 日志写到 benchmark/logs/ab-<stamp>/，并打印：

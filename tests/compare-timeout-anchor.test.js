@@ -68,11 +68,11 @@ const TEST_DIFF = script('wrong.sh', 'cat >/dev/null; echo ans=43');
 
 const cleanup = () => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (_) { /* 尽力 */ } };
 
-const { CompareEngineV2 } = require(path.join(ROOT, 'src', 'main-process', 'compare-engine-v2.js'));
+const { CompareEngine } = require(path.join(ROOT, 'src', 'main-process', 'compare-engine.js'));
 
 function runEngine(cfg) {
     return new Promise((resolve) => {
-        const e = new CompareEngineV2();
+        const e = new CompareEngine();
         const ev = { progress: 0, errors: [], warnings: [] };
         e.on('progress', () => { ev.progress++; });
         e.on('error', d => ev.errors.push({ type: d.type, code: d.code, message: String(d.message || '').slice(0, 60) }));

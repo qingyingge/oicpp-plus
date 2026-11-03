@@ -6,8 +6,8 @@
  *   - 成功/失败、失败类型 (generator/std_re/std_tle/test_re/test_tle/mismatch/exception)
  *   - gen/std/test 各阶段耗时 (ms)、gen 输出大小 (bytes)
  *
- * 用法: node benchmark/bench-logged.js [--quick] [--engine v6|v3] [--log bench.jsonl] [--stagger OFFSET]
- * 默认: 3 场景 x 8 线程 x 50 测试, V6 原生引擎
+ * 用法: node benchmark/bench-logged.js [--quick] [--engine v6] [--worker <path>] [--log bench.jsonl] [--stagger OFFSET]
+ * 默认: 3 场景 x 8 线程 x 50 测试, 原生 fastspawn worker
  */
 const path = require('path');
 const fs = require('fs');
@@ -46,13 +46,19 @@ const WORKER_ARG = (() => {
     return i >= 0 ? args[i + 1] : null;
 })();
 const ENGINE_WORKERS = {
-    v6: 'compare-worker-v6.js',
-    aff: 'compare-worker-v6-aff.js',
-    v3: 'compare-worker.js',
+    v6: 'compare-worker.js',
 };
+// --engine 只认这张表；表里没有就退出，不回落默认 worker。
+// 回落会让一次「其实什么都没对比」的运行在日志里留下 engine: <拼错的名字>，
+// 而数字看起来完全正常 —— 基准数据的造假不需要人故意。
+const ENGINE_WORKER = ENGINE_WORKERS[ENGINE];
+if (!ENGINE_WORKER) {
+    console.error(`未知 --engine ${ENGINE}；可选 ${Object.keys(ENGINE_WORKERS).join('|')}，或用 --worker <path> 指定任意 worker`);
+    process.exit(1);
+}
 const WORKER = WORKER_ARG
     ? path.resolve(WORKER_ARG)
-    : path.join(__dirname, '..', 'src', 'main-process', ENGINE_WORKERS[ENGINE] || ENGINE_WORKERS.v6);
+    : path.join(__dirname, '..', 'src', 'main-process', ENGINE_WORKER);
 const ALL_SCENARIOS = QUICK
     ? [['Sort', 'gen_sort', 'sort_std', 'sort_mergesort', 10000, 10]]
     : [

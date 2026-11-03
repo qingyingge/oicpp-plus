@@ -1763,7 +1763,7 @@ console.log(`\n${Y}[I8b] Hardcoded English prose ratchet${R}`);
   const payloadRe = /(writeJson\(|res\.end\(|res\.writeHead\(|\bcode\s*:|invalidField\s*:|\btype\s*:\s*['"][a-z_]+['"])/;
   // 判别字段与 message 经常分行书写（对象字面量换行），只看本行会漏。
   // 命中散文后向上回看 6 行，落在同一对象字面量里的判别字段即视为协议载荷。
-  // 例：compare-engine-v2 的 { type, code, message } 三行，UI 侧 codeComparer.js
+  // 例：compare-engine 的 { type, code, message } 三行，UI 侧 codeComparer.js
   // 按 type 查表翻译、根本不读 message —— 这里的英文 message 是诊断细节。
   const DISCRIMINATOR_LOOKBACK = 6;
   const discriminatorRe = /(^\s*|[{,]\s*)(type|code|errType|errorType|invalidField|testNumber|testMs)\s*[:=]/;

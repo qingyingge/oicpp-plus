@@ -1,6 +1,6 @@
 'use strict';
 
-// 对拍引擎（compare-engine-v2）的加固点：超时归一化、分片、run id 隔离、
+// 对拍引擎（compare-engine）的加固点：超时归一化、分片、run id 隔离、
 // 截断标记转发、完成数不足告警、停止语义。
 //
 // 这一批原先有两条致命结构问题：
@@ -26,8 +26,8 @@ const check = (name, condition, extra = '') => {
 
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
-const engineSrc = read('src', 'main-process', 'compare-engine-v2.js');
-const workerSrc = read('src', 'main-process', 'compare-worker-v6.js');
+const engineSrc = read('src', 'main-process', 'compare-engine.js');
+const workerSrc = read('src', 'main-process', 'compare-worker.js');
 const comparerSrc = read('src', 'renderer', 'js', 'sidebar', 'codeComparer.js');
 const i18nSrc = read('src', 'renderer', 'js', 'i18n.js');
 const fastspawnSrc = read('fastspawn.cc');
@@ -95,7 +95,7 @@ function loadEngine(throwOnCreate = 0) {
     };
     const exportsObj = {};
     const factory = new Function('module', 'exports', '__dirname', '__require__', 'setTimeout', 'clearTimeout',
-        engineSrc.replace(/require\(/g, '__require__(') + '\nreturn CompareEngineV2;');
+        engineSrc.replace(/require\(/g, '__require__(') + '\nreturn CompareEngine;');
     // clearTimeout 要真摘除记账：整轮看门狗在 stop()/done 时被清，
     // 之后的「stop() 只剩一个收尸定时器」断言才数的是活着的句柄。
     const fakeClearTimeout = (handle) => {
@@ -168,8 +168,8 @@ setTimeout(() => {
         check('引擎类加载成功', typeof ctx.engine === 'object' && typeof ctx.engine.start === 'function');
         const running = ctx.start({ totalTests: 5, threadCount: 2 });
         check('start() 在首个 await 前就同步建好 worker', ctx.workers.length === 2, `workers=${ctx.workers.length}`);
-        check('worker 路径按 __dirname 解析到 compare-worker-v6.js',
-            ctx.workers[0].path === path.join(ENGINE_DIR, 'compare-worker-v6.js'), ctx.workers[0].path);
+        check('worker 路径按 __dirname 解析到 compare-worker.js',
+            ctx.workers[0].path === path.join(ENGINE_DIR, 'compare-worker.js'), ctx.workers[0].path);
         check('start() 期间状态是 running', ctx.engine.state === 'running', ctx.engine.state);
         check('派发给 worker 的消息是 worker 侧真的在分发的那种',
             ctx.workers[0].posted[0].type === 'run-tests'

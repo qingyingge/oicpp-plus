@@ -1,7 +1,7 @@
 'use strict';
 
 // 2026-10-01 理论走查发现的问题的回归测试。
-// 背景：60 个提交走查时发现 CompareEngineV2._runCounter 从未初始化，
+// 背景：60 个提交走查时发现 CompareEngine._runCounter 从未初始化，
 // 导致 ++undefined === NaN、NaN !== NaN，isCurrentRun() 恒为 false，
 // 新引擎对拍会在每条 worker 消息上走「上一轮迟到消息」分支并 settle，
 // 表现为秒结束且完成数恒为 0。这里锁住三个不变量。
@@ -69,18 +69,18 @@ const runEngineOnce = async (Ctor, progressCount) => {
 };
 
 {
-    const { CompareEngineV2 } = require(path.join(root, 'src/main-process/compare-engine-v2.js'));
-    const engine = new CompareEngineV2();
+    const { CompareEngine } = require(path.join(root, 'src/main-process/compare-engine.js'));
+    const engine = new CompareEngine();
 
-    check('CompareEngineV2._runCounter 已初始化（非 undefined）', () => {
-        assert.notStrictEqual(CompareEngineV2._runCounter, undefined,
+    check('CompareEngine._runCounter 已初始化（非 undefined）', () => {
+        assert.notStrictEqual(CompareEngine._runCounter, undefined,
             '_runCounter 是 undefined，++undefined === NaN');
-        assert.strictEqual(typeof CompareEngineV2._runCounter, 'number');
+        assert.strictEqual(typeof CompareEngine._runCounter, 'number');
     });
 
     check('连续 start() 得到严格递增且可比较的 runId', () => {
         // 只走 start() 的开头：轮次分配在第一个 await 之前
-        const before = CompareEngineV2._runCounter;
+        const before = CompareEngine._runCounter;
         engine._state = 'idle';
         engine.start({ totalTests: 0 }).catch(() => { });
         const first = engine._runId;
@@ -109,10 +109,10 @@ const runEngineOnce = async (Ctor, progressCount) => {
     });
 
     check('_runCounter 递增不会被并发 start 复用', () => {
-        const before = CompareEngineV2._runCounter;
+        const before = CompareEngine._runCounter;
         engine._state = 'idle';
         engine.start({ totalTests: 0 }).catch(() => { });
-        assert.strictEqual(CompareEngineV2._runCounter, before + 1);
+        assert.strictEqual(CompareEngine._runCounter, before + 1);
     });
 }
 

@@ -25,7 +25,7 @@ const check = (name, condition, extra = '') => {
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
 const comparerSource = read('src', 'renderer', 'js', 'sidebar', 'codeComparer.js');
-const workerSource = read('src', 'main-process', 'compare-worker-v6.js');
+const workerSource = read('src', 'main-process', 'compare-worker.js');
 const mainSource = read('src', 'main.js');
 const preloadSource = read('src', 'preload.js');
 const htmlSource = read('src', 'renderer', 'index.html');
@@ -300,7 +300,7 @@ const called = (calls, name) => calls.some((c) => c.name === name);
 // 把 completedTests 写成 totalTests、或者只累加内部计数不回写任务，那行字照样匹配。
 
 // 引擎事件载荷（complete / stopped / incomplete_run）改成真跑：
-// fixtures/fake-compare-engine.js 用 vm 注入假 Worker，跑 compare-engine-v2.js 的本体，
+// fixtures/fake-compare-engine.js 用 vm 注入假 Worker，跑 compare-engine.js 的本体，
 // 按 worker 真实上报的 progress/error 消息收事件。原先锁的是
 // `/emit\('complete', \{ total: this\._total, completed: this\._completed/` 这类字面量 ——
 // 载荷少一个字段、或者把英文告警串拼回 message 里，正则都照样绿；
@@ -1143,8 +1143,8 @@ check('只出 MB 的旧尺寸助手确实不在这张表里', !declaredNames.has
 
 // ---- 引擎事件载荷：跑真引擎 + 假 Worker ----
 //
-// 断言对象是 CompareEngineV2 处理 worker 消息后**实际发出的事件**，
-// 不是 compare-engine-v2.js 里的字面量。放在末尾异步段里跑。
+// 断言对象是 CompareEngine 处理 worker 消息后**实际发出的事件**，
+// 不是 compare-engine.js 里的字面量。放在末尾异步段里跑。
 
 const engineBehaviour = async () => {
     const run = await runEngine({
@@ -1272,7 +1272,7 @@ const workerBehaviour = async () => {
         'const fail = ' + failSrc,
         'this.__fail = fail;',
         'this.__caps = { input: MAX_CAPTURED_INPUT_BYTES, output: MAX_CAPTURED_OUTPUT_BYTES };'
-    ].join('\n'), ctx, { filename: 'compare-worker-v6.js' });
+    ].join('\n'), ctx, { filename: 'compare-worker.js' });
     const caps = ctx.__caps;
     const fail = (...args) => { ctx.posts.length = 0; ctx.__fail(...args); return ctx.posts[0] || {}; };
 
