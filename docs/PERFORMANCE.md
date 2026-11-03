@@ -188,10 +188,11 @@ DETACHED 把 stdin 语义统一成「读重定向、EOF 即止」——与 OJ �
 
 ## 复测命令
 
-`/benchmark/` 与 `/compare-benchmark/` 已整体进 `.gitignore`（跑分日志、基准程序与
-编译产物都是本地内容，不入库）。基准程序的口径：**纯 stdio 实现（scanf/printf，
-不带 fastio）**——真实用户程序不保证有自定义快读，用 fastio 会低估 spawn/管道占比。
-场景规格：Sort = 20 万随机数（gen → std::sort vs 归并）；Graph = 1e3 点 5e4 边最短路
+`benchmark/` 下的**脚本**（`bench-logged.js`、`ab.js`、`equiv-check.js`）入库，忽略的只是内容目录
+（`benchmark/logs/`、`compare-benchmark/`）—— 之前把 `benchmark/` 整个目录排除，git 无法在被排除的
+目录里重新纳入文件，结果就是基准脚本只能靠 `-f` 硬加、文档里的数字没人能重跑。基准程序的口径：
+**纯 stdio 实现（scanf/printf，不带 fastio）**——真实用户程序不保证有自定义快读，用 fastio 会低估
+spawn/管道占比。场景规格：Sort = 20 万随机数（gen → std::sort vs 归并）；Graph = 1e3 点 5e4 边最短路
 （Dijkstra vs SPFA）；Range = 2e5 元素 2e5 操作区间和（BIT vs 线段树）；另有 _empty
 （空程序，测固定开销）、_drain（scanf 干 stdin，隔离读取成本）、_tiny/_tinygen（小数据
 测地板）与 wrong_dijkstra（造 WA 用）。按上表规格现写 .cpp 后：
@@ -199,5 +200,35 @@ DETACHED 把 stdin 语义统一成「读重定向、EOF 即止」——与 OJ �
 ```bash
 g++ -O2 -o compare-benchmark/progs/<name>.exe compare-benchmark/progs/<name>.cpp   # 9 个场景程序
 node benchmark/bench-logged.js --threads 12 --log benchmark/logs/run.jsonl
+node benchmark/bench-logged.js --scenario Range --tests 30   # 只跑一段，对照用
 OICPP_COMPARE_PREFETCH=0 node benchmark/bench-logged.js --threads 12   # 预取 A/B 开关
 ```
+
+跑之前必须 `pnpm run prebuild:native`（改过 `fastspawn.cc` 更要——旧的 `.node` 会静默忽略新参数），
+并且**钉核**：本机 `Cpus_allowed_list` 会在一次会话里从 3 变到 8，而 `os.cpus().length` 恒报 8，
+不钉核的两次跑不是同一台机器。`ab.js` 就是为这件事写的：钉 CPU 集 + 交错跑 + 报 CPU 口径。
+
+### 一条会反复骗人的教训：`poll()` 超时返回 0 且**不改动 errno**
+
+写 stdin 的循环里 `write` 返回 -1/EAGAIN 后 `poll(&fd,1,50)` 等可写；超时那次 `poll` 返回 0
+并且**保留上一步 `write` 留下的 EAGAIN**，于是老代码 `if (wr <= 0 && errno != EINTR) kill(-pid, SIGKILL)`
+把「子进程还没来得及读」判成错误，杀掉之后收割状态折算成 `128+9 = 137`，对拍里报成
+`std_re: standard program exit 137`。触发门槛只是输入大于管道缓冲（64KB），也就是任何真实
+规模的生成数据。
+
+规则：**任何 `poll`/`select` 之后的错误判定，只能用刚保存下来的 `errno`**（`int saved = errno;`
+紧跟在系统调用后面），超时分支一律 `continue` 而不是当错误。同一文件里收输出的 `drainBoth`
+早就按这个写法处理 `pr == 0`，写循环是漏改的那一处——所以「同一段逻辑的两半各自演化」本身
+就是要提防的形状。
+
+实测（本机 4 核可用、Range 场景 gen 输出 3.5MB，`--scenario Range --tests 20`）：
+
+| fastspawn.cc | 结果 |
+|---|---|
+| 修复前（main 的旧版） | `Range 0/20  fail={"std_re":20}` —— 20 组全部误杀成 137 |
+| 修复后（pump + saved errno） | `Range 20/20  fail=0`，genLen=3,499,880B |
+
+行为守卫在 `tests/fastspawn-io-pump.test.js`（cat 回读 2MB 逐字节相同、截止时间落在写 stdin
+期间判 `-3` 而不是 137、C 层归一化与 JS `normalizeOutput` 22 条边界 + 4000 条定种子 fuzz 全等、
+非 ASCII 分歧交回 JS 终裁）。反证也做过：把 main 的旧 `fastspawn.cc` 重编译回去，同一台机器
+立刻复现 0/20。
