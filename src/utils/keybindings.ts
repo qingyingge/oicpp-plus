@@ -16,9 +16,12 @@
  *     `ctrlOrCmd`（monaco-editor-manager.ts:4302 `!!(event.ctrlKey || event.metaKey)`），
  *     存的 `Ctrl` 语义是「主修饰键」，等价于 Electron accelerator 的 `CmdOrCtrl`。
  *
- * 本模块只放**事实**（平台、默认值、schema），不放显示格式化 —— accelerator→label 的
- * 跨平台写法是规范知识（mac 的修饰键顺序 ⌃⌥⇧⌘、符号间不加 `+`），该复用上游实现而不是
- * 在这里另立一套，那一步单独做。
+ * 本模块放**事实**（平台、默认值、schema、固定 accelerator）加上把它们**渲染成人看的写法**
+ * 的那一层（formatShortcutLabel / formattedComboFor）。顺序按 Apple HIG（⌃⌥⇧⌘）而不是
+ * VS Code（它按 ctrl→shift→alt→meta，会拼出 ⌘⇧S）—— 这条选择由测试用整串断言钉住，
+ * 别把它当成随手写错。为什么不 vendor 上游实现：那个文件 184 行里含 4 个 provider
+ * 与 3 个依赖（Modifiers / OperatingSystem / nls），而它的输入是「已解析的 modifiers」，
+ * 我们的存储是 accelerator 字符串，仍要自己写一层适配。
  *
  * ⚠️ 本文件必须保持「双环境全局 script」形态（同 src/utils/clang-format-options.ts）：
  * 不能出现 import/export，否则 module: commonjs 会编成带 exports 引用的模块，
@@ -163,6 +166,47 @@
         return MENU_ACCELERATORS[actionId] ?? '';
     }
 
+    // 既不在菜单里、也不可改键的内置绑定。以前它只存在于 quick-open.ts 那句
+    // `(e.ctrlKey || e.metaKey) && e.key === 'p'` 里，于是「搜索文件 (Ctrl+P)」这句文案
+    // 是手抄的 —— 抄的代价正是这次要修的：mac 上它是 ⌘P，而文案永远写 Ctrl+P。
+    // 现在显示与行为都从这一条走（quick-open.ts 的监听处有注释指回来）。
+    const BUILTIN_ACCELERATORS: Record<string, string> = {
+        quickOpen: 'Ctrl+P'
+    };
+
+    function builtinAccelerator(actionId: string): string {
+        return BUILTIN_ACCELERATORS[actionId] ?? '';
+    }
+
+    // 用户在设置页改过的键，这个模块自己不知道 —— 由宿主（renderer/js/main.ts）注入一个取值函数。
+    // 这样依赖方向是单向的：keybindings 不认得 settings 的形状，也不反向依赖 app 实例。
+    let userComboSource: ((key: string) => string) | null = null;
+    function setUserComboSource(resolver: ((key: string) => string) | null): void {
+        userComboSource = resolver;
+    }
+
+    // 「这个 label 该显示哪个组合键」的来源描述，写在 HTML 的 data-i18n-args 里，
+    // 形如 "keybinding:compileAndRun" / "accel:save-file" / "builtin:quickOpen"。
+    // 用字符串而不是对象，是因为它要能原样待在 HTML 属性里；解析失败一律返回空串（宁可少显示）。
+    function rawComboFor(source: string): string {
+        const hit = /^([a-z]+):(.+)$/.exec(String(source || '').trim());
+        if (!hit) return '';
+        const kind = hit[1] as string;
+        const id = hit[2] as string;
+        if (kind === 'keybinding') {
+            const fromUser = userComboSource ? String(userComboSource(id) || '').trim() : '';
+            if (fromUser) return fromUser;
+            return defaultKeybindings()[id] || '';
+        }
+        if (kind === 'accel') return menuAccelerator(id);
+        if (kind === 'builtin') return builtinAccelerator(id);
+        return '';
+    }
+
+    function formattedComboFor(source: string, platform?: OicppPlatform): string {
+        return formatShortcutLabel(rawComboFor(source), platform);
+    }
+
     // ---- accelerator → 按平台显示的 label ----------------------------------------
     //
     // 修饰键的**显示顺序按 Apple HIG**：⌃ ⌥ ⇧ ⌘（Control、Option、Shift、Command），
@@ -245,15 +289,20 @@
     return {
         DEFS,
         MENU_ACCELERATORS,
+        BUILTIN_ACCELERATORS,
+        builtinAccelerator,
         currentPlatform,
         defaultKeybindings,
         editableKeybindingKeys,
         formatShortcutLabel,
+        formattedComboFor,
         isMacPlatform,
         keybindingSchema,
         menuAccelerator,
+        rawComboFor,
         rawPlatform,
         resolvePlatform,
-        setPlatformOverride
+        setPlatformOverride,
+        setUserComboSource
     };
 });

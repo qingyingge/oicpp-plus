@@ -307,5 +307,63 @@ const tsFiles = [];
     check('还原注入后回到宿主平台显示', f('CmdOrCtrl+N') !== '⌘N' || before === 'mac', String(kb.currentPlatform()));
 }
 
+// ---------------------------------------------------------------------------
+// 8. 键名的来源引用，以及「语言包里不许再焊组合键」
+// ---------------------------------------------------------------------------
+{
+    check('builtin:quickOpen 取到值并格式化',
+        kb.rawComboFor('builtin:quickOpen') === 'Ctrl+P'
+            && kb.formattedComboFor('builtin:quickOpen', 'mac') === '⌘P'
+            && kb.formattedComboFor('builtin:quickOpen', 'windows') === 'Ctrl+P',
+        kb.formattedComboFor('builtin:quickOpen', 'mac'));
+    check('来源写法非法时返回空串，不把猜测值印上界面',
+        kb.rawComboFor('nope:x') === '' && kb.rawComboFor('') === '' && kb.rawComboFor('builtin:不存在') === '',
+        JSON.stringify([kb.rawComboFor('nope:x'), kb.rawComboFor('')]));
+    // accel / keybinding 两种来源也要能过同一个入口（HTML 的 @shortcut: 靠它）
+    check('accel: 与 keybinding: 来源都解析得到',
+        kb.rawComboFor('accel:save-file') === 'CmdOrCtrl+S' && kb.rawComboFor('keybinding:openTerminal') === 'Ctrl+`',
+        `${kb.rawComboFor('accel:save-file')} / ${kb.rawComboFor('keybinding:openTerminal')}`);
+
+    // quick-open.ts 的监听就是 Ctrl+P 的事实本体，表必须和它说同一件事
+    {
+        const qo = read(path.join('src', 'renderer', 'js', 'quick-open.ts'));
+        const listener = /\(e\.ctrlKey \|\| e\.metaKey\)\s*&&\s*\(e\.key === 'p' \|\| e\.key === 'P'\)/.test(qo);
+        check('quick-open.ts 的主修饰键 + P 监听仍在，与 BUILTIN_ACCELERATORS.quickOpen 一致',
+            listener && kb.BUILTIN_ACCELERATORS.quickOpen === 'Ctrl+P', String(listener));
+    }
+
+    // 用户改过键之后显示必须跟着变（宿主注入的取值函数），且清空后回落到默认表
+    {
+        const before = kb.rawComboFor('keybinding:compileAndRun');
+        kb.setUserComboSource((key) => (key === 'compileAndRun' ? 'Ctrl+Shift+F12' : ''));
+        const injected = kb.rawComboFor('keybinding:compileAndRun');
+        kb.setUserComboSource(null);
+        const after = kb.rawComboFor('keybinding:compileAndRun');
+        check('注入的用户改键优先，撤掉后回落到默认表',
+            injected === 'Ctrl+Shift+F12' && after === before, `${injected} → ${after}`);
+    }
+
+    // 语言包 ratchet：文案里不许再出现焊死的组合键 —— 显示要随平台/改键变，就只能走 {keys}。
+    // 这条一上线就抓到 10 处（5 处在我原本的清单里，另外 5 处是调试工具条那批没人数的）。
+    const MODIFIER_RE = /(?:Ctrl|Cmd|Command|Alt|Option|Shift|Super)\s*\+/;
+    const BARE_F_RE = /\(\s*(?:[A-Za-z]+\+)?F(?:[1-9]|1[0-2])\s*\)/;
+    for (const code of ['zh-cn', 'en']) {
+        const pack = JSON.parse(read(path.join('src', 'lang', `${code}.json`)));
+        const flat = {};
+        (function walk(obj, prefix) {
+            for (const [k, v] of Object.entries(obj)) {
+                const key = prefix ? `${prefix}.${k}` : k;
+                if (v && typeof v === 'object' && !Array.isArray(v)) walk(v, key); else flat[key] = String(v);
+            }
+        })(pack, '');
+        const welded = Object.entries(flat).filter(([, v]) => MODIFIER_RE.test(v) || BARE_F_RE.test(v));
+        check(`${code}.json 里没有焊死的组合键（要显示键名就走 {keys} + @shortcut: 引用）`,
+            welded.length === 0, welded.map(([k, v]) => `${k}=${v.slice(0, 40)}`).join(' | '));
+    }
+    // 自证：上面那条不是恒真 —— 把 F6 焊回文案必须被抓出来
+    check('自证：焊死键名的正则抓得住「继续执行 (F6)」和「按 Ctrl+Shift+I」',
+        BARE_F_RE.test('继续执行 (F6)') && MODIFIER_RE.test('按 Ctrl+Shift+I 打开开发者工具'));
+}
+
 console.log(`keybindings-single-source tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

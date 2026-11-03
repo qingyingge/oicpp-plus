@@ -64,17 +64,26 @@ interface OicppKeybindingsApi {
   DEFS: OicppKeybindingDef[];
   /** 不可改键动作的固定 accelerator，主进程菜单模板与自绘菜单共用（缺 id 返回空串）。 */
   MENU_ACCELERATORS: Record<string, string>;
+  /** 不在菜单里、也不可改键的内置绑定（quickOpen 等），文案要显示它就走这里取。 */
+  BUILTIN_ACCELERATORS: Record<string, string>;
+  builtinAccelerator(actionId: string): string;
   currentPlatform(): OicppPlatform;
   defaultKeybindings(platform?: OicppPlatform): Record<string, string>;
   editableKeybindingKeys(): string[];
   /** accelerator 写法（Ctrl+ / CmdOrCtrl+）→ 按平台的显示文本；mac 走 Apple 顺序 ⌃⌥⇧⌘。 */
   formatShortcutLabel(combo: string, platform?: OicppPlatform): string;
+  /** "keybinding:compileAndRun" / "accel:save-file" / "builtin:quickOpen" → 按平台显示文本。 */
+  formattedComboFor(source: string, platform?: OicppPlatform): string;
   isMacPlatform(platform?: OicppPlatform): boolean;
   keybindingSchema(): Array<{ key: string; labelKey: string }>;
   menuAccelerator(actionId: string): string;
+  /** 同上但不格式化，返回存储的规范写法。 */
+  rawComboFor(source: string): string;
   rawPlatform(): string;
   resolvePlatform(raw: unknown): OicppPlatform;
   setPlatformOverride(platform: OicppPlatform | null): void;
+  /** 宿主注入「用户改过的键怎么取」，本模块因此不认得 settings 的形状也不反向依赖 app 实例。 */
+  setUserComboSource(resolver: ((key: string) => string) | null): void;
 }
 
 interface Window {

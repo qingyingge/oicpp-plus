@@ -190,12 +190,18 @@ xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-san
   `oicppApp.updateMenuShortcutHints()` DOM 才会重算，用完置回 `null`。
   `tests/smoke-electron.js` 里就是这么做的，并且断言还原之后的 13 项与基线**逐字相同** ——
   注入点留下残余状态，比根本没测更糟。
-- **语言包里不许再往文案里焊组合键**。现存 5 处：`menu.searchFiles`「搜索文件 (Ctrl+P)」、
-  `panel.quickOpenPlaceholder`「快速打开 (Ctrl+P)」、`debug.stepOut`「步出(Shift+F8)」、
-  `error.debugContinueHint`（F6/F7/F8 一整句）、`browser.welcomeHint`「按 Ctrl+Shift+I…」。
-  它们既不能按平台、也不能随改键变 —— 正解是把键名挪成 `{keys}` 插值，值由调用点用
-  `formatShortcutLabel` 算。注意 `{keys}` 是**译文的一部分**，两种语言的位置不同（中文在括号里、
-  英文也在括号里，但德语等地要跟着语序走），挪的时候同时改两份包（I11 会盯着同句键一起改）。
+- **语言包文案里不许焊组合键**（`tests/keybindings-single-source.test.js` 第 8 段有 ratchet，两份包都要 0 命中）。
+  正解形状：包里留 `{keys}`，来源写在元素上 —— `data-i18n-args='{"keys":"@shortcut:keybinding:debugStepOut"}'`
+  （前缀三种：`keybinding:` 用户可改键 / `accel:` 菜单固定键 / `builtin:` 不可改键的内置绑定，如 `quickOpen`）。
+  值是**每次重绘时现场解析**的，所以换平台、用户改键，都不需要再加监听：`_applyToDOM()` 一跑就跟着变。
+  这条以前做不到是因为只有 `[data-i18n]` 那条路径读 `data-i18n-args`，而 `title` / `placeholder` /
+  `aria-label` 三处是裸 `t(key)` —— 带 `{keys}` 的键挂在 `data-i18n-title` 上会把占位符原样印出来；
+  现在四处都读（`i18n.ts` 的 `_paramsFor`）。JS 调用点则用 `this.shortcutText('keybinding:debugContinue')`。
+  挪的时候两份包一起改（I11 会盯着同句键一起变），ratchet 上线当天就从「我以为的 5 处」抓到 **10 处**
+  —— 另外 5 处是调试工具条的 `debug.continue/continueTitle/clickToStartRun/stepOver/stepInto`，没人数过。
+  顺带一个真错：`browser.welcomeHint` 写「按 Ctrl+Shift+I 打开开发者工具」，但 DevTools 只在 `--dev` 下开
+  （`main.ts` 的 `devTools: process.argv.includes('--dev')`），而这串键在本应用是**打开内置浏览器** ——
+  这是假指令，删掉而不是挪成 `{keys}`。
 - 脚本顺序：`keybindings.js` 必须早于 `js/main.js` / `js/monaco-editor-manager.js` / `editor.js` 加载（测试有断言）。
   缺席时 `getDefaultKeybindings()` 退化成空表 → 菜单提示全部变空，而且 CI 不红，只有 smoke 抓得到。
 

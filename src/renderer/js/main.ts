@@ -262,6 +262,13 @@ class OICPPApp {
     async init() {
         try {
             logInfo('开始初始化 OICPP-Plus App...');
+            // 让「@shortcut:keybinding:*」这类引用能解析到**用户改过的**组合键：keybindings 模块
+            // 不认得 settings 的形状，也不该反向依赖 app 实例，所以在这里注入一个取值函数。
+            // 注入是惰性的（绘制时才调），所以 settings 还没加载完也没关系。
+            window.oicppKeybindings?.setUserComboSource((key: string) => {
+                const value = this.settings?.keybindings?.[key];
+                return typeof value === 'string' ? value : '';
+            });
             if (typeof MonacoEditorManager !== 'undefined') {
                 this.editorManager = new MonacoEditorManager();
                 window.editorManager = this.editorManager;
@@ -351,9 +358,17 @@ class OICPPApp {
     refreshDebugButtonTranslations() {
         const continueBtn = document.getElementById('debug-continue');
         if (!continueBtn) return;
+        // 标题里的键名以前焊在文案里（「继续执行 (F6)」），现在走 {keys}：
+        // 于是它跟着用户的改键和当前平台显示，而不是永远印着 F6。
+        const keys = { keys: this.shortcutText('keybinding:debugContinue') };
         continueBtn.title = continueBtn.style.animation
-            ? window.i18n.t('debug.clickToStartRun')
-            : window.i18n.t('debug.continueTitle');
+            ? window.i18n.t('debug.clickToStartRun', keys)
+            : window.i18n.t('debug.continueTitle', keys);
+    }
+
+    /** 界面上要显示某个动作的键名时走这里（来源写法与 HTML 里的 @shortcut: 引用同一套）。 */
+    shortcutText(source: string) {
+        return window.oicppKeybindings?.formattedComboFor(source) ?? '';
     }
 
     setupEventListeners() {
@@ -1089,19 +1104,15 @@ class OICPPApp {
     // 屏幕上那行字 = 存的 combo 经**平台格式化**之后的结果；存的值本身不动（改键要用规范写法）。
     // 语义要点（见 keybindings.ts 头部）：存的 `Ctrl` 是主修饰键，所以 mac 上必须显示 ⌘；
     // 显示顺序按 Apple HIG（⌃⌥⇧⌘，Command 在最后），不是 VS Code 那条（⌃⇧⌥⌘）。
+    // 「用户改过的键优先、否则回默认表」这条规则现在只在 rawComboFor 里有一份 ——
+    // 这里以前自己写了一遍，那是同一件事的第五处表述。
     resolveShortcutLabel(source: Element) {
         const keybindingKey = source.getAttribute('data-keybinding') || '';
-        let raw = '';
-        if (keybindingKey) {
-            const fromSettings = this.settings?.keybindings?.[keybindingKey];
-            raw = (typeof fromSettings === 'string' && fromSettings.trim())
-                ? fromSettings.trim()
-                : (this.getDefaultKeybindings()[keybindingKey] || '');
-        } else {
-            const accelId = source.getAttribute('data-accel') || '';
-            raw = accelId ? (window.oicppKeybindings?.menuAccelerator(accelId) ?? '') : '';
-        }
-        return window.oicppKeybindings?.formatShortcutLabel(raw) ?? raw;
+        const accelId = source.getAttribute('data-accel') || '';
+        const spec = keybindingKey ? `keybinding:${keybindingKey}`
+            : (accelId ? `accel:${accelId}` : '');
+        if (!spec) return '';
+        return window.oicppKeybindings?.formattedComboFor(spec) ?? '';
     }
 
     updateMenuShortcutHints() {
@@ -3125,7 +3136,14 @@ class OICPPApp {
                              : window.i18n.t('debug.pausedGeneric');
 
         this.updateDebugStatus(`${prettyReason}${where}`);
-        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint')}`);
+        // 那四个键名以前焊在 debugContinueHint 的文案里，现在走插值：值来自 keybinding:* ，
+        // 于是它跟着用户的改键和当前平台变（mac 上 ⇧⌘F8，而不是永远印着 Shift+F8）。
+        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint', {
+            continue: this.shortcutText('keybinding:debugContinue'),
+            over: this.shortcutText('keybinding:debugStepOver'),
+            into: this.shortcutText('keybinding:debugStepInto'),
+            out: this.shortcutText('keybinding:debugStepOut')
+        })}`);
 
         if (file && line) {
             try { this.highlightCurrentLine(file, line); } catch (_) {}

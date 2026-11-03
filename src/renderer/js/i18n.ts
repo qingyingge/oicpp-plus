@@ -249,6 +249,33 @@ class I18nManager {
     }
 
     /**
+     * 读出元素的插值参数。三条规则都有过代价，别简化：
+     *   · data-i18n-args 是 JSON，解析失败就当没有 —— 一个坏属性不该把整页文案搞挂。
+     *   · 值写成 "@shortcut:keybinding:debugStepOut" 这种引用时，**每次重绘现场**向
+     *     oicppKeybindings 取值，于是「用户改了键」「换了平台」都不需要额外监听；
+     *     取不出来留空串，宁可少一个键名也别把 "@shortcut:..." 印在界面上。
+     *   · 以前只有 [data-i18n] 这条路径读 args，title / placeholder / aria-label 三处是裸
+     *     t(key) —— 带 {keys} 的键挂在那三种属性上会把占位符原样印出来（本次就是这种：
+     *     标题栏的「快速打开 ({keys})」是 data-i18n-title）。
+     */
+    private _paramsFor(el: Element): Record<string, unknown> | undefined {
+        const raw = el.getAttribute('data-i18n-args');
+        if (!raw) return undefined;
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch (_) { return undefined; }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+        const out: Record<string, unknown> = {};
+        for (const [name, value] of Object.entries(parsed as Record<string, unknown>)) {
+            if (typeof value === 'string' && value.startsWith('@shortcut:')) {
+                out[name] = window.oicppKeybindings?.formattedComboFor(value.slice('@shortcut:'.length)) ?? '';
+                continue;
+            }
+            out[name] = value;
+        }
+        return out;
+    }
+
+    /**
      * Apply translation to DOM elements with data-i18n attributes.
      * Kept hand-written (not an i18next DOM binding) because data-i18n-args and the
      * html lang attribute are project specific. Called externally by settings-init.js.
@@ -259,11 +286,7 @@ class I18nManager {
             document.querySelectorAll('[data-i18n]').forEach((el) => {
                 const key = el.getAttribute('data-i18n');
                 if (!key) return;
-                let params: Record<string, unknown> | undefined;
-                const argsAttr = el.getAttribute('data-i18n-args');
-                if (argsAttr) {
-                    try { params = JSON.parse(argsAttr); } catch (_) { params = undefined; }
-                }
+                const params = this._paramsFor(el);
                 const text = this.t(key, params);
                 // 元素里嵌着子节点（复选框、svg、快捷键 kbd 等）时覆盖 textContent 会把它们
                 // 一起删掉，而且删完就再也恢复不回来（模板只渲染一次）。只替换文本节点。
@@ -285,7 +308,7 @@ class I18nManager {
             document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
                 const key = el.getAttribute('data-i18n-placeholder');
                 if (key) {
-                    (el as HTMLInputElement).placeholder = this.t(key);
+                    (el as HTMLInputElement).placeholder = this.t(key, this._paramsFor(el));
                 }
             });
 
@@ -293,7 +316,7 @@ class I18nManager {
             document.querySelectorAll('[data-i18n-title]').forEach((el) => {
                 const key = el.getAttribute('data-i18n-title');
                 if (key) {
-                    (el as HTMLElement).title = this.t(key);
+                    (el as HTMLElement).title = this.t(key, this._paramsFor(el));
                 }
             });
 
@@ -301,7 +324,7 @@ class I18nManager {
             document.querySelectorAll('[data-i18n-aria-label]').forEach((el) => {
                 const key = el.getAttribute('data-i18n-aria-label');
                 if (key) {
-                    el.setAttribute('aria-label', this.t(key));
+                    el.setAttribute('aria-label', this.t(key, this._paramsFor(el)));
                 }
             });
 

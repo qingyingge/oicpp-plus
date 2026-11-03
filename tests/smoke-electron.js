@@ -230,6 +230,20 @@ app.whenReady().then(async () => {
     check('index.html: 没有 span 还停留在「没声明来源」的手抄字面量上',
         noSource.length === 0, noSource.map((s) => `${s.action}=${s.shown}`).join(', '));
 
+    // {keys} 插值 + @shortcut 引用在真实页面里的效果：标题栏的「快速打开 (Ctrl+P)」
+    // 以前是焊在文案里的，现在由 keybindings.ts 的 BUILTIN_ACCELERATORS 供值。
+    // 写成「未被调用的箭头函数源码」，好让下面 macProbe 里能当函数体插进去复用。
+    const READ_SINKS_SRC = `() => {
+        const t = document.getElementById('titlebar-quickopen');
+        const ph = document.querySelector('.qo-placeholder');
+        return { title: t ? (t.getAttribute('title') || '') : null,
+                 placeholder: ph ? (ph.textContent || '').trim() : null };
+    }`;
+    const linuxShortcuts = await win.webContents.executeJavaScript(`(${READ_SINKS_SRC})()`, true);
+    check('index.html: 标题栏快速打开显示的是来源值而不是 {keys} 占位符',
+        linuxShortcuts.title === '快速打开 (Ctrl+P)' && linuxShortcuts.placeholder === '搜索文件 (Ctrl+P)',
+        JSON.stringify(linuxShortcuts));
+
     // mac 分支的端到端证明：这台 CI 是 linux，靠 keybindings.ts 的注入点把平台临时改成 mac，
     // 让 app 重算一遍提示再读 DOM —— 只测纯函数的话，「DOM 真被写成 ⌘N」这件事永远没验过。
     const macProbe = await win.webContents.executeJavaScript(`(() => {
@@ -237,12 +251,16 @@ app.whenReady().then(async () => {
         if (!window.oicppKeybindings || !window.oicppApp) return { __skip: '缺 oicppKeybindings 或 oicppApp' };
         const read = () => Array.prototype.slice.call(document.querySelectorAll('.menu-dropdown-item .menu-shortcut'))
             .map((n) => (n.textContent || '').trim());
+        const readSinks = ${READ_SINKS_SRC};
         window.oicppKeybindings.setPlatformOverride('mac');
         window.oicppApp.updateMenuShortcutHints();
+        window.i18n._applyToDOM();
         const shown = read();
+        const shortcuts = readSinks();
         window.oicppKeybindings.setPlatformOverride(null);
         window.oicppApp.updateMenuShortcutHints();
-        return { shown, restored: read() };
+        window.i18n._applyToDOM();
+        return { shown, restored: read(), shortcuts, restoredShortcuts: readSinks() };
       } catch (err) { return { __error: String(err && err.stack || err) }; }
     })()`, true);
     if (macProbe.__skip || macProbe.__error) {
@@ -254,10 +272,15 @@ app.whenReady().then(async () => {
         check('index.html: mac 写法里一个 Ctrl 都没有',
             macProbe.shown.filter((t) => /Ctrl/.test(t)).length === 0,
             JSON.stringify(macProbe.shown.filter((t) => /Ctrl/.test(t))));
+        check('index.html: 注入 mac 后 {keys} 也跟着变成 ⌘P（标题栏两处）',
+            macProbe.shortcuts.title === '快速打开 (⌘P)'
+                && macProbe.shortcuts.placeholder === '搜索文件 (⌘P)',
+            JSON.stringify(macProbe.shortcuts));
         const baseline = (probe.menuShortcuts || []).map((s) => s.shown);
         check('index.html: 撤掉注入后提示还原（探针不留残余状态）',
-            JSON.stringify(macProbe.restored) === JSON.stringify(baseline),
-            JSON.stringify({ restored: macProbe.restored, baseline }));
+            JSON.stringify(macProbe.restored) === JSON.stringify(baseline)
+                && JSON.stringify(macProbe.restoredShortcuts) === JSON.stringify(linuxShortcuts),
+            JSON.stringify({ restored: macProbe.restoredShortcuts, baseline: linuxShortcuts }));
     }
 
     check('无 CSP/资源加载阻断', blocked.length === 0, blocked.slice(0, 3).join(' | '));
