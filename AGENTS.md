@@ -18,7 +18,7 @@ pnpm@11.7.0
 | `ci` | `node scripts/ci-check.js` |
 | `ci:tests` | `node scripts/ci-check.js --only tests`（只跑回归测试） |
 | `ci:fast` | `node scripts/ci-check.js --skip tests`（只跑静态检查） |
-| `ci:strict` | `node scripts/ci-check.js --strict`（WARN 也判 FAIL，当前 18 WARN 会红） |
+| `ci:strict` | `node scripts/ci-check.js --strict`（WARN 也判 FAIL；2026-11-03 实测 26 WARN，且大半是**设计上的告知项**，见 CI 一节 —— 现状是不能用，不是「再修 26 条就会绿」）|
 | `ci:verbose` | `node scripts/ci-check.js --verbose`（详细输出） |
 | `package:portable` | `node scripts/make-portable.js`（把 dir 产物打成免安装 zip，见「打安装包」） |
 
@@ -272,7 +272,15 @@ npx tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
 - 字段声明（`settings: T;`）在 es2022 目标下会 emit 成真实 class field（`settings;`），构造赋值之前先置 `undefined`；字段**只声明不初始化**，赋值全留在构造函数里，否则顺序会覆盖。
 
 ## CI / Verification
-No lint/typecheck scripts. Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.) plus a `[T1]` regression-test step: auto-discovers `tests/*.test.js` via `tests/run-tests.js` (add a new `*.test.js` file to extend the suite; failing test → CI FAIL). CI modes via runtime args: `pnpm run ci:tests` (T1 only), `ci:fast` (skip T1), `ci:strict` (WARN counts as FAIL), `ci:verbose`. No Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes).
+No lint/typecheck scripts. Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.) plus a `[T1]` regression-test step: auto-discovers `tests/*.test.js` via `tests/run-tests.js` (add a new `*.test.js` file to extend the suite; failing test → CI FAIL). CI modes via runtime args: `pnpm run ci:tests` (T1 only), `ci:fast` (skip T1), `ci:strict` (WARN counts as FAIL), `ci:verbose`. No automated Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes) —— 但 `tests/smoke-electron.js` 是**存在且必须手动跑**的真机冒烟，跑法见 i18n 一节。
+
+**`ci:strict` 为什么现在不能用**：26 条 WARN 里没有一条是「待修的缺陷」，它们是三类设计上的告知项 ——
+①体量/写法统计（`main.js 12543 行`、`tabs.js 5460 行`、`file://` 计数、`spawn/execSync` 计数、
+CSP `unsafe-eval`、`sandbox:false`、shell exec review）；②需要人工核对的匹配表（`electronAPI` 里
+无精确对应 handler 的方法、main 里从未被渲染层引用的 handler）；③结构性缺失（没有
+`build.electronFuses`、没有 `event.senderFrame.origin` 校验）。前两类只会随重构漂移数字、
+永远不会归零，把它们判成失败等于让 strict 恒红 —— 而恒红的 strict 和没有 strict 一样没人用。
+要开 strict，先给这些检查各自加 baseline（同 `TS_ERROR_BASELINE` 只减不增的口径），不要直接切。
 
 ## Structure
 ```

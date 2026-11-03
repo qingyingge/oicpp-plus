@@ -228,8 +228,8 @@ git diff --stat -- src
 | 2 | `git diff --stat -- src` | 输出应为空（无产物漂移） |
 | 3 | `pnpm run ci:fast` | 静态检查：JS 语法、CSS 花括号、HTML DOCTYPE、文件引用、IPC 通道、DOM 选择器、CSP、secrets/eval 扫描、依赖审计 |
 | 4 | `pnpm run ci:tests` | 回归测试，`tests/*.test.js` 全部通过 |
-| 5 | `pnpm run ci:strict` | WARN 也判 FAIL，当前 18 WARN 基线，合并后不得新增 WARN |
-| 6 | i18n 守卫 | I1/I2 键集一致、I3 占位符对应、I4 en.json 无中文/中文标点、I7 孤儿键不超 baseline 202 |
+| 5 | `pnpm run ci:strict` | WARN 也判 FAIL。**现状是不能用**：2026-11-03 实测 26 WARN，其中大半是设计上的告知项（文件行数、`file://`/`spawn` 计数、CSP `unsafe-eval`、`electronFuses` 缺失…），永远不会归零 —— 分类与理由见 `AGENTS.md` 的「CI / Verification」。合并后的口径是**别让 26 这个数字增长**，不是「修到 0」 |
+| 6 | i18n 守卫 | I1/I2 键集一致、I3 占位符对应、I4 en.json 无中文/中文标点、I7 孤儿键 baseline **0**（2026-11-02 退役 186 个键后清零，只许保持）、I8/I8b 硬编码中文与英文散文 baseline 0、I9 复数键必须传 `count`、I10/I11 同父重复键与中英值漂移、I12 变量里存中文文案 |
 | 7 | Electron 实测（若涉及 index.html 脚本顺序或 i18n） | `xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-sandbox` |
 
 ---
