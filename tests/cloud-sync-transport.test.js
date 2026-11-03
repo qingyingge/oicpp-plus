@@ -15,6 +15,8 @@ const path = require('path');
 const vm = require('vm');
 const crypto = require('crypto');
 const { funcDecl } = require('./fixtures/source-extract');
+const { loadLocales } = require('./fixtures/ci-block-runner');
+const zhPack = loadLocales()['zh-cn'];
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -57,6 +59,10 @@ const makeCtx = (axiosStub, options = {}) => {
         generateEncodedToken: () => 'ENC-TOKEN',
         buildCloudSyncSignature: () => 'SIG',
         CLOUD_SYNC_BASE: 'https://sync.example.test',
+        // 函数体里有一处 t('cloud.notLoggedIn')（主进程 i18n 接线那批带进来的）。
+        // 桩给的是**真语言包的取值**而不是随便一个字符串：下面 401 那组会去比对文案内容，
+        // 抄一份假文案就等于把「缺键时屏幕上印裸 key」这件事放过去。
+        t: (key) => String(zhPack[key] === undefined ? key : zhPack[key]),
         logWarn: () => { },
         logInfo: () => { }
     });
@@ -75,6 +81,10 @@ async function main() {
         const result = await ctx.api({ path: '/cloudSync/list' });
         check('未登录返回 401 且不发请求',
             result.ok === false && result.status === 401 && axiosStub.requests.length === 0);
+        check('401 的文案是真译文而不是裸键（主进程接线改这个函数时最容易漏）',
+            typeof result.error === 'string' && result.error.length > 0
+                && result.error === zhPack['cloud.notLoggedIn'] && result.error !== 'cloud.notLoggedIn',
+            JSON.stringify(result.error));
     }
 
     // 2) 200 + JSON
