@@ -29,6 +29,7 @@ pnpm@11.7.0
 - [打安装包](#workflows打安装包)
 - [改界面文案 / 加翻译](#workflows改界面文案--加翻译i18n)
 - [迁移 .js → .ts](#workflows迁移-js--ts)
+- [改快捷键默认值 / 加可改键](#workflows改快捷键默认值--加可改键)
 
 ### 打安装包（Build / Installer）
 本项目的安装包**不用** electron-builder 的 nsis target 出，而是用仓库根目录自带的 `installer.nsi` + 本机 NSIS。`package.json` 里 `build.win.target = "dir"`，electron-builder 只负责产出 `dist\win-unpacked`；`installer.nsi` 直接从该目录取文件，输出 `dist\OICPP-Plus-<version>-Setup.exe`（`installer.nsi:69`）。CI 同流程，见 `.github/workflows/build.yml:319`。
@@ -88,7 +89,7 @@ const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback |
 
 主进程没有 `window`，走 `src/main.js:20` 的 `const { t } = require('./lang')`（i18next），`utils/` 下的模块用 `require('../lang')`。这条不受「统一 window.i18n.t」约束。
 
-**渲染层底层已是 i18next**（`src/renderer/js/i18n.js` 只是薄适配层）。`index.html` 用 `<script src="../../node_modules/i18next/dist/umd/i18next.min.js">` 引入 UMD 全局（沿用 monaco `loader.js` / xterm 的既有先例），资源经 IPC `get-language-file` 拉原始 JSON 后 `addResourceBundle(code,'translation',data)` 灌入 —— **语言包文件形状不要改**，它同时是 i18next 的 translation bundle。DOM 层（`_applyToDOM` / `enableAutoTranslate` / `onChange`）仍是手写，因为 `data-i18n-args`、`<html lang>` 这些是本项目特有契约，且 `i18next.on()` 返回值不能当 unsubscribe 用。
+**渲染层底层已是 i18next**（`src/renderer/js/i18n.js` 只是薄适配层）。`index.html` 用 `<script src="lib/i18next.min.js">` 引入 UMD 全局 —— 注意这个 UMD 是**手工 vendored 到 `src/renderer/lib/i18next.min.js` 的一份拷贝**（不是 node_modules；pdf-viewer.html / settings/backup.html / settings/compiler.html 等也各自加载它），沿用 monaco `loader.js` / xterm 的既有先例。vendored 换版的既定程序见 `fd30211`：重新拷贝一份，并与 npm tarball **字节核对一致**，提交信息里写清版本。资源经 IPC `get-language-file` 拉原始 JSON 后 `addResourceBundle(code,'translation',data)` 灌入 —— **语言包文件形状不要改**，它同时是 i18next 的 translation bundle。DOM 层（`_applyToDOM` / `enableAutoTranslate` / `onChange`）仍是手写，因为 `data-i18n-args`、`<html lang>` 这些是本项目特有契约，且 `i18next.on()` 返回值不能当 unsubscribe 用。
 
 改渲染层 i18n 后，`tests/i18n-renderer-runtime.test.js` 是运行时行为守卫（vm 里跑真实 i18next UMD + 真实语言包，断言界面实际看到什么），`tests/i18n.test.js` 是契约守卫。两者都要跑。
 
@@ -173,6 +174,71 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   - **数字不是以 `count` 传进来的键根本没法复数化**：`{n}` / `{total}` / `{bytes}` / `{uploaded}` / `{errors}` 都要先让调用点补上 `count: <同一个表达式>`，否则界面直接显示裸键名（比不复数化更糟）。en 里剩下的 `file(s)` / `error(s)` 这类规避写法就是这么来的。
     补的时候 `count` 必须**就是文案里那个数的表达式**（`{ n: diffMin, count: diffMin }`），只改一边会单复数和数字各说各话。这一条机器判不出可靠的样子（`dialog.importDetected` 那种 `{count}` 本身就在文案里、其它 token 是别的数，任何「count 要等于某个 token」的规则都会误报），所以靠 I9 兜住「有没有传」，「传得对不对」靠人 —— 改这类调用点时把两边一起看。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
+- 写「形状 ratchet」时别用零宽否定当过滤器。`src.match(/input\.value\s*=\s*(?!this\.shortcutDisplay)/g)` 看着像
+  「找出所有没走 shortcutDisplay 的赋值」，实际**只匹配到赋值号本身**（后面那个断言不消耗字符），
+  于是拿匹配结果再去做二次判断时手上只有一个前缀片段，条件永远不成立 —— 这条守卫在 #14 的
+  第一版里就是这么静默空转的，是拿「故意改坏一处再跑一遍」的变异试出来才现形。
+  正确写法是逐行 `split('\n').filter(line => /input\.value\s*=/.test(line) && !/this\.shortcutDisplay\(/.test(line))`。
+  通用规则：**每个新守卫都要当场证伪一次**，只跑「绿」不构成证据。
+
+### 改快捷键默认值 / 加可改键
+适用场景：改某个动作的默认组合键、新增一个可改键的动作、或要在界面上显示快捷键。
+
+正确做法：**只改 `src/utils/keybindings.ts` 里的 `DEFS`**（每条 `{ key, labelKey, combo, macCombo? }`）。
+默认表、可改键清单、设置页 schema 全部由它派生；四处消费者（`src/main.ts`、
+`src/renderer/js/main.ts`、`src/renderer/js/monaco-editor-manager.ts`、`src/renderer/settings/editor.ts`）
+只写 `window.oicppKeybindings?.…`。加一个 `labelKey` 时记得两份语言包里都有对应的 `keybinding.*` 键。
+
+```bash
+npx tsc -p tsconfig.build.json     # 重新 emit（keybindings.js 是 <script> 加载的产物）
+node tests/keybindings-single-source.test.js
+xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-sandbox   # 看那行 [INFO] 冻结清单
+```
+
+反模式：
+
+- ❌ 在消费者里再写一遍 `formatCode: 'Alt+Shift+S',` 的表，或再列一遍 `'runAllSamples',` 的清单。
+  历史上这张表被抄过 **4 份**（`0291982` 修 #235 时又加了第三份），`tests/keybindings-single-source.test.js`
+  有按「形状」而非按文件名的 ratchet，两处都会红。要新键就改 `DEFS`。
+- ❌ 再写一份 `window.process?.platform` 嗅探（`48b2065`「适配 macOS」一次长出 4 份，渲染层现在还有 20+ 处散装读）。
+  平台判定用 `oicppKeybindings.currentPlatform()` / `isMacPlatform()`。
+- ❌ 给 `keybindings.ts` 加 `import`/`export`：它必须保持**双环境全局 script** 形态（同 `clang-format-options.ts`），
+  否则 `module: commonjs` 会编成带 `exports` 引用的模块，`<script>` 标签下直接炸。测试里靠 `module.exports` 那支 require 它。
+
+坑：
+
+- 本仓组合键里的 **`Ctrl` 语义是「主修饰键」**，不是物理 Control —— 匹配走
+  `monaco-editor-manager.ts` 的 `ctrlOrCmd` + `!!(event.ctrlKey || event.metaKey)`，等价于 Electron accelerator 的
+  `CmdOrCtrl`。所以 mac 上「Ctrl+F11」实际是 ⌘F11，而物理 ⌃F11 同样触发（两者现在无法区分，要区分得先改存储层）。
+- **显示已平台化，但只有菜单**：`oicppKeybindings.formatShortcutLabel(combo, platform?)`（缺省走
+  `currentPlatform()`）把存储写法渲染成平台写法 —— mac `CmdOrCtrl+Shift+S` → `⇧⌘S`，非 mac → `Ctrl+Shift+S`。
+  **顺序按 Apple HIG（⌃⌥⇧⌘，Command 最后），不是按 VS Code（它按 ctrl→shift→alt→meta，会拼出 `⌘⇧S`）**，
+  这是有意选择，测试用整串断言钉住（`⇧⌘S` 而不是「包含 ⌘」），改成上游形状会红。
+  仍待办：设置页那个**可编辑输入框**显示的是规范写法（改成符号就得同时改解析回来，属于改键那一步）；
+  语言包里 5 处把键名焊进句子的问题，见下。
+- mac 分支怎么在 linux CI 上真跑：`oicppKeybindings.setPlatformOverride('mac')` 之后必须**再调用一次**
+  `oicppApp.updateMenuShortcutHints()` DOM 才会重算，用完置回 `null`。
+  `tests/smoke-electron.js` 里就是这么做的，并且断言还原之后的 13 项与基线**逐字相同** ——
+  注入点留下残余状态，比根本没测更糟。
+- **语言包文案里不许焊组合键**（`tests/keybindings-single-source.test.js` 第 8 段有 ratchet，两份包都要 0 命中）。
+  正解形状：包里留 `{keys}`，来源写在元素上 —— `data-i18n-args='{"keys":"@shortcut:keybinding:debugStepOut"}'`
+  （前缀三种：`keybinding:` 用户可改键 / `accel:` 菜单固定键 / `builtin:` 不可改键的内置绑定，如 `quickOpen`）。
+  值是**每次重绘时现场解析**的，所以换平台、用户改键，都不需要再加监听：`_applyToDOM()` 一跑就跟着变。
+  这条以前做不到是因为只有 `[data-i18n]` 那条路径读 `data-i18n-args`，而 `title` / `placeholder` /
+  `aria-label` 三处是裸 `t(key)` —— 带 `{keys}` 的键挂在 `data-i18n-title` 上会把占位符原样印出来；
+  现在四处都读（`i18n.ts` 的 `_paramsFor`）。JS 调用点则用 `this.shortcutText('keybinding:debugContinue')`。
+  挪的时候两份包一起改（I11 会盯着同句键一起变），ratchet 上线当天就从「我以为的 5 处」抓到 **10 处**
+  —— 另外 5 处是调试工具条的 `debug.continue/continueTitle/clickToStartRun/stepOver/stepInto`，没人数过。
+  顺带一个真错：`browser.welcomeHint` 写「按 Ctrl+Shift+I 打开开发者工具」，但 DevTools 只在 `--dev` 下开
+  （`main.ts` 的 `devTools: process.argv.includes('--dev')`），而这串键在本应用是**打开内置浏览器** ——
+  这是假指令，删掉而不是挪成 `{keys}`。
+- 冲突检测的唯一实现是 `oicppKeybindings.findComboConflicts(effective)`：先把 `CmdOrCtrl+` 与 `Ctrl+`
+  归一成同一个串（`canonicalCombo`），否则两种写法永远比不出相等；**出厂默认表必须零冲突**（测试按三个平台锁死），
+  所以加新键位如果撞上了固定 accelerator，CI 直接红，而不是等用户发现某个键没反应。
+  设置页的提示写在**它独占的 `.keybinding-warning` 元素**上（label/title 归翻译层，input.value 归 shortcutDisplay），
+  一个属性一个所有者 —— 同一元素同一属性被两套机制写就是 #9 那个 bug。
+- 脚本顺序：`keybindings.js` 必须早于 `js/main.js` / `js/monaco-editor-manager.js` / `editor.js` 加载（测试有断言）。
+  缺席时 `getDefaultKeybindings()` 退化成空表 → 菜单提示全部变空，而且 CI 不红，只有 smoke 抓得到。
 
 ### 迁移 .js → .ts（TypeScript 路线甲）
 **`.ts` 是唯一手写源，`.js` 由 `tsc -p tsconfig.build.json` 就地 emit 出来**（`rootDir`/`outDir` 同为 `src`），所以 `.js` 不许手改。`tsconfig.json` 负责全量 typecheck；`tsconfig.build.json` 带 `noCheck: true` 且 `include: ["src/**/*.ts", "src/**/*.d.ts"]` —— 全量 emit，**没有白名单要登记**，新增 `.ts` 直接会被编译。`.d.ts` 只进程序不出 JS。

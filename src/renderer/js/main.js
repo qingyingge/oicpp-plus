@@ -30,7 +30,6 @@ class OICPPApp {
     autoSaveController;
     supportedDropTextExtensions;
     _isWindowsPlatform;
-    _isMacPlatform;
     _origUpdateStatusBar;
     constructor() {
         this.currentFile = null;
@@ -87,11 +86,17 @@ class OICPPApp {
         };
         this.supportedDropTextExtensions = new Set(['cpp', 'c', 'cc', 'cxx', 'h', 'hpp', 'hh', 'txt', 'in', 'out', 'ans', 'md', 'json']);
         this._isWindowsPlatform = undefined;
-        this._isMacPlatform = undefined;
     }
     async init() {
         try {
             logInfo('开始初始化 OICPP-Plus App...');
+            // 让「@shortcut:keybinding:*」这类引用能解析到**用户改过的**组合键：keybindings 模块
+            // 不认得 settings 的形状，也不该反向依赖 app 实例，所以在这里注入一个取值函数。
+            // 注入是惰性的（绘制时才调），所以 settings 还没加载完也没关系。
+            window.oicppKeybindings?.setUserComboSource((key) => {
+                const value = this.settings?.keybindings?.[key];
+                return typeof value === 'string' ? value : '';
+            });
             if (typeof MonacoEditorManager !== 'undefined') {
                 this.editorManager = new MonacoEditorManager();
                 window.editorManager = this.editorManager;
@@ -176,9 +181,16 @@ class OICPPApp {
         const continueBtn = document.getElementById('debug-continue');
         if (!continueBtn)
             return;
+        // 标题里的键名以前焊在文案里（「继续执行 (F6)」），现在走 {keys}：
+        // 于是它跟着用户的改键和当前平台显示，而不是永远印着 F6。
+        const keys = { keys: this.shortcutText('keybinding:debugContinue') };
         continueBtn.title = continueBtn.style.animation
-            ? window.i18n.t('debug.clickToStartRun')
-            : window.i18n.t('debug.continueTitle');
+            ? window.i18n.t('debug.clickToStartRun', keys)
+            : window.i18n.t('debug.continueTitle', keys);
+    }
+    /** 界面上要显示某个动作的键名时走这里（来源写法与 HTML 里的 @shortcut: 引用同一套）。 */
+    shortcutText(source) {
+        return window.oicppKeybindings?.formattedComboFor(source) ?? '';
     }
     setupEventListeners() {
         window.addEventListener('resize', () => {
@@ -859,56 +871,32 @@ class OICPPApp {
         }
     }
     getDefaultKeybindings() {
-        const compileAndRunShortcut = this.isMacPlatform() ? 'Ctrl+F11' : 'F11';
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: compileAndRunShortcut,
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: this.isMacPlatform() ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+        // 表在 src/utils/keybindings.ts。这一份以前是第四遍抄写（0291982 修 #235 时加的），
+        // 缺它时按「没有默认键」处理：菜单提示会是空的，可见但不可致命，与旧 catch 同向。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
-    resolveShortcutLabel(keybindingKey) {
-        const defaults = this.getDefaultKeybindings();
-        const fromSettings = this.settings?.keybindings?.[keybindingKey];
-        if (typeof fromSettings === 'string' && fromSettings.trim()) {
-            return fromSettings.trim();
-        }
-        return defaults[keybindingKey] || '';
+    // 一个 .menu-shortcut 的文本从哪来，由 span 自己声明：
+    //   data-keybinding → 可在设置页改的动作，值走 settings.keybindings，缺省回默认表；
+    //   data-accel      → 不可改的动作，值走 MENU_ACCELERATORS（主进程菜单模板用的是同一份）。
+    // 以前这里是一份手写 7 项映射表，13 个 span 只覆盖 7 个：剩下 6 个（恰好全是主修饰键那几个）
+    // 永远是 HTML 里抄的字面量，于是 #235 那类「改了键、或换了平台，提示不动」只被修掉了一半。
+    // 屏幕上那行字 = 存的 combo 经**平台格式化**之后的结果；存的值本身不动（改键要用规范写法）。
+    // 语义要点（见 keybindings.ts 头部）：存的 `Ctrl` 是主修饰键，所以 mac 上必须显示 ⌘；
+    // 显示顺序按 Apple HIG（⌃⌥⇧⌘，Command 在最后），不是 VS Code 那条（⌃⇧⌥⌘）。
+    // 「用户改过的键优先、否则回默认表」这条规则现在只在 rawComboFor 里有一份 ——
+    // 这里以前自己写了一遍，那是同一件事的第五处表述。
+    resolveShortcutLabel(source) {
+        const keybindingKey = source.getAttribute('data-keybinding') || '';
+        const accelId = source.getAttribute('data-accel') || '';
+        const spec = keybindingKey ? `keybinding:${keybindingKey}`
+            : (accelId ? `accel:${accelId}` : '');
+        if (!spec)
+            return '';
+        return window.oicppKeybindings?.formattedComboFor(spec) ?? '';
     }
     updateMenuShortcutHints() {
-        const mappings = [
-            { action: 'cloud-compile', key: 'cloudCompile' },
-            { action: 'open-terminal', key: 'openTerminal' },
-            { action: 'format-code', key: 'formatCode' },
-            { action: 'compile', key: 'compileCode' },
-            { action: 'run', key: 'runCode' },
-            { action: 'compile-run', key: 'compileAndRun' },
-            { action: 'debug', key: 'toggleDebug' }
-        ];
-        mappings.forEach((item) => {
-            const node = document.querySelector(`.menu-dropdown-item[data-action="${item.action}"] .menu-shortcut`);
-            if (!node) {
-                return;
-            }
-            node.textContent = this.resolveShortcutLabel(item.key);
+        document.querySelectorAll('.menu-dropdown-item .menu-shortcut').forEach((node) => {
+            node.textContent = this.resolveShortcutLabel(node);
         });
     }
     configureAutoSave() {
@@ -1685,17 +1673,9 @@ class OICPPApp {
         return this._isWindowsPlatform;
     }
     isMacPlatform() {
-        if (this._isMacPlatform !== undefined) {
-            return this._isMacPlatform;
-        }
-        try {
-            const platform = (window.process?.platform || navigator?.platform || '').toLowerCase();
-            this._isMacPlatform = platform.includes('darwin') || platform.includes('mac');
-        }
-        catch (_) {
-            this._isMacPlatform = false;
-        }
-        return this._isMacPlatform;
+        // 平台判定的单一来源（这一份嗅探来自 48b2065「适配 macOS」，同期还长出了另外三份）。
+        // 拿不到模块时按「不是 mac」处理，与旧实现的 catch 分支同向。
+        return window.oicppKeybindings?.isMacPlatform() ?? false;
     }
     normalizeFilePathCandidate(candidate) {
         if (candidate == null) {
@@ -2842,7 +2822,14 @@ class OICPPApp {
                 : reason.includes('signal') ? window.i18n.t('debug.pausedAtSignal')
                     : window.i18n.t('debug.pausedGeneric');
         this.updateDebugStatus(`${prettyReason}${where}`);
-        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint')}`);
+        // 那四个键名以前焊在 debugContinueHint 的文案里，现在走插值：值来自 keybinding:* ，
+        // 于是它跟着用户的改键和当前平台变（mac 上 ⇧⌘F8，而不是永远印着 Shift+F8）。
+        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint', {
+            continue: this.shortcutText('keybinding:debugContinue'),
+            over: this.shortcutText('keybinding:debugStepOver'),
+            into: this.shortcutText('keybinding:debugStepInto'),
+            out: this.shortcutText('keybinding:debugStepOut')
+        })}`);
         if (file && line) {
             try {
                 this.highlightCurrentLine(file, line);

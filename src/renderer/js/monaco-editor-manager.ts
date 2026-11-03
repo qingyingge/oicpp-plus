@@ -4097,63 +4097,14 @@ class MonacoEditorManager {
     }
 
     getDefaultKeybindings() {
-        const isMacPlatform = (() => {
-            try {
-                const platform = String(window.process?.platform || navigator?.platform || '').toLowerCase();
-                return platform.includes('darwin') || platform.includes('mac');
-            } catch (_) {
-                return false;
-            }
-        })();
-
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: isMacPlatform ? 'Ctrl+F11' : 'F11',
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: isMacPlatform ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+        // 表与平台判定都在 src/utils/keybindings.ts；这里曾经是第二份抄写（8054ef5「新增自定义快捷键」）。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
 
     getEditableKeybindingKeys() {
-        return [
-            'formatCode',
-            'showFunctionPicker',
-            'markdownPreview',
-            'renameSymbol',
-            'deleteLine',
-            'duplicateLine',
-            'moveLineUp',
-            'moveLineDown',
-            'compileCode',
-            'runCode',
-            'compileAndRun',
-            'toggleDebug',
-            'debugContinue',
-            'debugStepOver',
-            'debugStepInto',
-            'debugStepOut',
-            'cloudCompile',
-            'openTerminal',
-            'runAllSamples'
-        ];
+        // 由 schema 的 labelKey 派生，见 keybindings.ts —— 以前这里是 19 项手抄清单，
+        // 与 settings/editor.ts 里那份一模一样，加一个键要记得改两处。
+        return window.oicppKeybindings?.editableKeybindingKeys() || [];
     }
 
     normalizeKeybindings(raw: Record<string, unknown> | null | undefined) {

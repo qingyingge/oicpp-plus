@@ -46,25 +46,25 @@
                     <div class="menu-dropdown">
                         <div class="menu-dropdown-item" data-action="new-file">
                             <span data-i18n="menu.newFile">新建文件</span>
-                            <span class="menu-shortcut">Ctrl+N</span>
+                            <span class="menu-shortcut" data-accel="new-file">Ctrl+N</span>
                         </div>
                         <div class="menu-dropdown-item" data-action="new-temp-file">
                             <span data-i18n="menu.newTempFile">新建临时文件</span>
-                            <span class="menu-shortcut">Ctrl+Shift+N</span>
+                            <span class="menu-shortcut" data-accel="new-temp-file">Ctrl+Shift+N</span>
                         </div>
                         <div class="menu-separator"></div>
                         <div class="menu-dropdown-item" data-action="open-folder">
                             <span data-i18n="menu.openFolder">打开文件夹</span>
-                            <span class="menu-shortcut">Ctrl+K</span>
+                            <span class="menu-shortcut" data-accel="open-folder">Ctrl+K</span>
                         </div>
                         <div class="menu-separator"></div>
                         <div class="menu-dropdown-item" data-action="save-file">
                             <span data-i18n="menu.save">保存</span>
-                            <span class="menu-shortcut">Ctrl+S</span>
+                            <span class="menu-shortcut" data-accel="save-file">Ctrl+S</span>
                         </div>
                         <div class="menu-dropdown-item" data-action="save-as">
                             <span data-i18n="menu.saveAs">另存为</span>
-                            <span class="menu-shortcut">Ctrl+Shift+S</span>
+                            <span class="menu-shortcut" data-accel="save-as">Ctrl+Shift+S</span>
                         </div>
                         <div class="menu-separator"></div>
                         <div class="menu-dropdown-item" data-action="open-file-history">
@@ -77,21 +77,21 @@
                     <div class="menu-dropdown">
                         <div class="menu-dropdown-item disabled" data-action="cloud-compile">
                             <span data-i18n="menu.cloudCompile">代码云编译</span>
-                            <span class="menu-shortcut">F12</span>
+                            <span class="menu-shortcut" data-keybinding="cloudCompile">F12</span>
                         </div>
                         <div class="menu-separator"></div>
                         <div class="menu-dropdown-item" data-action="format-code">
                             <span data-i18n="menu.formatCode">格式化代码</span>
-                            <span class="menu-shortcut">Alt+Shift+S</span>
+                            <span class="menu-shortcut" data-keybinding="formatCode">Alt+Shift+S</span>
                         </div>
                         <div class="menu-dropdown-item" data-action="open-terminal">
                             <span data-i18n="menu.openTerminal">打开内置终端</span>
-                            <span class="menu-shortcut">Ctrl+`</span>
+                            <span class="menu-shortcut" data-keybinding="openTerminal">Ctrl+`</span>
                         </div>
                         <div class="menu-separator"></div>
                         <div class="menu-dropdown-item" data-action="open-browser">
                             <span data-i18n="browser.openBrowser">打开内置浏览器</span>
-                            <span class="menu-shortcut">Ctrl+Shift+I</span>
+                            <span class="menu-shortcut" data-accel="open-browser">Ctrl+Shift+I</span>
                         </div>
                     </div>
                 </div>
@@ -117,20 +117,20 @@
                     <div class="menu-dropdown">
                         <div class="menu-dropdown-item" data-action="compile">
                             <span data-i18n="menu.compile">编译</span>
-                            <span class="menu-shortcut">F9</span>
+                            <span class="menu-shortcut" data-keybinding="compileCode">F9</span>
                         </div>
                         <div class="menu-dropdown-item" data-action="run">
                             <span data-i18n="menu.runCode">运行</span>
-                            <span class="menu-shortcut">F10</span>
+                            <span class="menu-shortcut" data-keybinding="runCode">F10</span>
                         </div>
                         <div class="menu-dropdown-item" data-action="compile-run">
                             <span data-i18n="menu.compileAndRun">编译并运行</span>
-                            <span class="menu-shortcut">F11</span>
+                            <span class="menu-shortcut" data-keybinding="compileAndRun">F11</span>
                         </div>
                         <div class="menu-separator"></div>
                         <div class="menu-dropdown-item" data-action="debug">
                             <span data-i18n="menu.debug">调试</span>
-                            <span class="menu-shortcut">F5</span>
+                            <span class="menu-shortcut" data-keybinding="toggleDebug">F5</span>
                         </div>
                     </div>
                 </div>
@@ -170,11 +170,11 @@
                 </div>
             </div>
             <div class="titlebar-quickopen-wrap">
-                <div class="titlebar-quickopen" id="titlebar-quickopen" data-i18n-title="panel.quickOpenPlaceholder" title="快速打开 (Ctrl+P)">
+                <div class="titlebar-quickopen" id="titlebar-quickopen" data-i18n-title="panel.quickOpenPlaceholder" data-i18n-args='{"keys":"@shortcut:builtin:quickOpen"}' title="快速打开 (Ctrl+P)">
                     <svg class="qo-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
                         <path d="M15.5 14h-.79l-.28-.27a6.471 6.471 0 001.48-4.23C15.91 6.01 13.4 3.5 10.45 3.5S5 6.01 5 9.5 7.51 15.5 10.45 15.5c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l4.25 4.25c.41.41 1.08.41 1.49 0 .41-.41.41-1.08 0-1.49L15.5 14zm-5.05 0C8.01 14 6 11.99 6 9.5S8.01 5 10.45 5s4.45 2.01 4.45 4.5-2.01 4.5-4.45 4.5z" fill="currentColor"/>
                     </svg>
-                    <span class="qo-placeholder" data-i18n="menu.searchFiles">搜索文件 (Ctrl+P)</span>
+                    <span class="qo-placeholder" data-i18n="menu.searchFiles" data-i18n-args='{"keys":"@shortcut:builtin:quickOpen"}'>搜索文件 (Ctrl+P)</span>
                 </div>
             </div>
         </div>
@@ -706,6 +706,7 @@
     <script src="js/ui/icons.js"></script>
     <script src="../utils/font-detector.js"></script>
     <script src="../utils/clang-format-options.js"></script>
+    <script src="../utils/keybindings.js"></script>
     <script src="js/settings-init.js"></script>
     <script src="js/dialog.js"></script>
     <script src="js/folder-picker.js"></script>

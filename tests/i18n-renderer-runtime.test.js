@@ -374,6 +374,24 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                 '[data-i18n-aria-label]': [ariaTarget],
             }[sel] || []);
 
+            // @shortcut: 引用要向 keybindings 模块取值 —— 注入**真模块**，不在测试里抄一份表。
+            // linux CI 上格式化结果是 Ctrl+… 写法；mac 分支用注入点真跑，见下面 6b。
+            s2.window.oicppKeybindings = require('../src/utils/keybindings.js');
+            const SHORTCUT_TITLE_KEY = 'panel.quickOpenPlaceholder';
+            const SHORTCUT_ARIA_KEY = 'debug.stepOut';
+            const shortcutTitle = createElement();
+            shortcutTitle.setAttribute('data-i18n-title', SHORTCUT_TITLE_KEY);
+            shortcutTitle.setAttribute('data-i18n-args', JSON.stringify({ keys: '@shortcut:builtin:quickOpen' }));
+            const shortcutAria = createElement();
+            shortcutAria.setAttribute('data-i18n-aria-label', SHORTCUT_ARIA_KEY);
+            shortcutAria.setAttribute('data-i18n-args', JSON.stringify({ keys: '@shortcut:keybinding:debugStepOut' }));
+            d2.querySelectorAll = (sel) => ({
+                '[data-i18n]': [target, containerEl],
+                '[data-i18n-placeholder]': [phTarget],
+                '[data-i18n-title]': [titleTarget, shortcutTitle],
+                '[data-i18n-aria-label]': [ariaTarget, shortcutAria],
+            }[sel] || []);
+
             return s2.window.i18n.init().then(() => {
                 s2.window.i18n._applyToDOM();
                 check('data-i18n-args params reach the translation',
@@ -406,6 +424,49 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                             && bare.childNodes[0] === kid
                             && bare.childNodes[1].nodeValue === flatZh[KEY_TITLE];
                     })(), '');
+                // --- 6b. {keys} 插值 + @shortcut 引用：args 现在 title/aria 也吃，且绘制时才取值 ---
+                check('6b 探针键在两份包里都带 {keys}（否则这组断言是空转）',
+                    String(flatZh[SHORTCUT_TITLE_KEY]).includes('{keys}')
+                        && String(flatZh[SHORTCUT_ARIA_KEY]).includes('{keys}'),
+                    `${flatZh[SHORTCUT_TITLE_KEY]} / ${flatZh[SHORTCUT_ARIA_KEY]}`);
+                check('data-i18n-title 也吃 args（以前只有 [data-i18n] 读，title 上是裸 t(key)）',
+                    shortcutTitle.title === '快速打开 (Ctrl+P)', shortcutTitle.title);
+                check('data-i18n-aria-label 也吃 args',
+                    shortcutAria.getAttribute('aria-label') === '步出(Shift+F8)',
+                    String(shortcutAria.getAttribute('aria-label')));
+                check('界面上不留裸 {keys} 占位符',
+                    !shortcutTitle.title.includes('{keys}')
+                        && !String(shortcutAria.getAttribute('aria-label')).includes('{keys}'));
+
+                const kbMod = s2.window.oicppKeybindings;
+                // 上面那个「空容器补文本节点」的探针把 querySelectorAll 换成了只认 [data-i18n] 的版本，
+                // 不换回来这里就是「没重绘」而不是「重绘成旧值」—— 断言会假绿。
+                const useLists = () => {
+                    d2.querySelectorAll = (sel) => ({
+                        '[data-i18n]': [target, containerEl],
+                        '[data-i18n-placeholder]': [phTarget],
+                        '[data-i18n-title]': [titleTarget, shortcutTitle],
+                        '[data-i18n-aria-label]': [ariaTarget, shortcutAria],
+                    }[sel] || []);
+                };
+                kbMod.setPlatformOverride('mac');
+                kbMod.setUserComboSource((key) => (key === 'debugStepOut' ? 'Ctrl+Alt+F8' : ''));
+                useLists();
+                s2.window.i18n._applyToDOM();
+                check('换平台后重绘就跟着变：⌘P 而不是 Ctrl+P',
+                    shortcutTitle.title === '快速打开 (⌘P)', shortcutTitle.title);
+                // Apple 顺序 ⌃⌥⇧⌘：Ctrl 在这里是主修饰键落 ⌘ 槽，⌥ 排在 ⌘ 前
+                check('用户改过的键优先于默认表（宿主注入的取值函数生效）',
+                    shortcutAria.getAttribute('aria-label') === '步出(⌥⌘F8)',
+                    String(shortcutAria.getAttribute('aria-label')));
+                kbMod.setPlatformOverride(null);
+                kbMod.setUserComboSource(null);
+                s2.window.i18n._applyToDOM();
+                check('注入点用完必须还原（探针不许留残余状态）',
+                    shortcutTitle.title === '快速打开 (Ctrl+P)'
+                        && shortcutAria.getAttribute('aria-label') === '步出(Shift+F8)',
+                    `${shortcutTitle.title} / ${shortcutAria.getAttribute('aria-label')}`);
+
                 d2.querySelectorAll = (sel) => ({
                     '[data-i18n]': [target, containerEl],
                     '[data-i18n-placeholder]': [phTarget],

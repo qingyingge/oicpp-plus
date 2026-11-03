@@ -54,85 +54,15 @@ class EditorSettings {
         this.keybindingSchema = this.getKeybindingSchema();
     }
     getDefaultKeybindings() {
-        const isMacPlatform = (() => {
-            try {
-                const platform = String(window.process?.platform || navigator?.platform || '').toLowerCase();
-                return platform.includes('darwin') || platform.includes('mac');
-            }
-            catch (_) {
-                return false;
-            }
-        })();
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: isMacPlatform ? 'Ctrl+F11' : 'F11',
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: isMacPlatform ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+        // 表 / 平台判定 / schema / 可改键清单都在 src/utils/keybindings.ts。
+        // 这里曾经是第三份抄写（8054ef5「新增自定义快捷键」），而平台判定是本文件独有的第四份嗅探。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
     getEditableKeybindingKeys() {
-        return [
-            'formatCode',
-            'showFunctionPicker',
-            'markdownPreview',
-            'renameSymbol',
-            'deleteLine',
-            'duplicateLine',
-            'moveLineUp',
-            'moveLineDown',
-            'compileCode',
-            'runCode',
-            'compileAndRun',
-            'toggleDebug',
-            'debugContinue',
-            'debugStepOver',
-            'debugStepInto',
-            'debugStepOut',
-            'cloudCompile',
-            'openTerminal',
-            'runAllSamples'
-        ];
+        return window.oicppKeybindings?.editableKeybindingKeys() || [];
     }
     getKeybindingSchema() {
-        return [
-            { key: 'formatCode', labelKey: 'keybinding.formatCode' },
-            { key: 'showFunctionPicker', labelKey: 'keybinding.showFunctionPicker' },
-            { key: 'markdownPreview', labelKey: 'keybinding.markdownPreview' },
-            { key: 'renameSymbol', labelKey: 'keybinding.renameSymbol' },
-            { key: 'deleteLine', labelKey: 'keybinding.deleteLine' },
-            { key: 'duplicateLine', labelKey: 'keybinding.duplicateLine' },
-            { key: 'moveLineUp', labelKey: 'keybinding.moveLineUp' },
-            { key: 'moveLineDown', labelKey: 'keybinding.moveLineDown' },
-            { key: 'compileCode', labelKey: 'keybinding.compileCode' },
-            { key: 'runCode', labelKey: 'keybinding.runCode' },
-            { key: 'compileAndRun', labelKey: 'keybinding.compileAndRun' },
-            { key: 'toggleDebug', labelKey: 'keybinding.toggleDebug' },
-            { key: 'debugContinue', labelKey: 'keybinding.debugContinue' },
-            { key: 'debugStepOver', labelKey: 'keybinding.debugStepOver' },
-            { key: 'debugStepInto', labelKey: 'keybinding.debugStepInto' },
-            { key: 'debugStepOut', labelKey: 'keybinding.debugStepOut' },
-            { key: 'cloudCompile', labelKey: 'keybinding.cloudCompile' },
-            { key: 'openTerminal', labelKey: 'keybinding.openTerminal' },
-            { key: 'runAllSamples', labelKey: 'keybinding.runAllSamples' }
-        ];
+        return window.oicppKeybindings?.keybindingSchema() || [];
     }
     getDefaultClangFormatStyle() {
         return window.clangFormatOptions?.getDefaultClangFormatStyle?.() || {
@@ -1081,6 +1011,20 @@ class EditorSettings {
             });
         }
     }
+    /** 屏幕上显示的写法（跟随平台与改键）；存回去的永远是规范写法，见 collectSettings 里的 shortcutStore。 */
+    shortcutDisplay(combo) {
+        const raw = String(combo || '');
+        return window.oicppKeybindings?.formatShortcutLabel(raw) ?? raw;
+    }
+    /**
+     * 文本框里的内容 → 存储用的规范写法。
+     * 这一步是「显示与存储分离」的另一半：显示一旦平台化（mac 上是 ⇧⌘G），
+     * 把屏幕上那串原样存回去就会得到一个永远不触发的死键（匹配层比的是 Ctrl/Alt/Shift token）。
+     * 解析不出来返回空串，调用方回落默认值并把输入框刷回默认 —— 存进去的必须和看见的一致。
+     */
+    shortcutStore(display) {
+        return window.oicppKeybindings?.parseCombo(display) ?? '';
+    }
     normalizeKeybindings(raw) {
         const defaults = this.getDefaultKeybindings();
         const normalized = { ...defaults };
@@ -1114,20 +1058,98 @@ class EditorSettings {
             const input = document.createElement('input');
             input.type = 'text';
             input.className = 'keybinding-input';
-            input.value = current[item.key] || defaults[item.key];
+            // 显示跟随平台（mac 上 ⇧⌘G），存储仍是规范写法；两者靠 parseCombo/formatShortcutLabel 成对往返。
+            input.value = this.shortcutDisplay(current[item.key] || defaults[item.key]);
             input.dataset['keybindingKey'] = item.key;
-            input.placeholder = defaults[item.key];
+            input.placeholder = this.shortcutDisplay(defaults[item.key]);
             const reset = document.createElement('button');
             reset.className = 'btn btn-secondary keybinding-reset';
             reset.addEventListener('click', () => {
-                input.value = defaults[item.key];
+                input.value = this.shortcutDisplay(defaults[item.key]);
+                this.refreshKeybindingConflicts();
             });
+            // 冲突提示有自己独占的元素：警告只由 refreshKeybindingConflicts 写，
+            // 标签只由 updateKeybindingTranslations 写 —— 同一个属性两套机制各写一遍
+            // 就是 #9 那个 bug 的形状（切语言会把 JS 覆写的文案冲回静态值）。
+            const warning = document.createElement('span');
+            warning.className = 'keybinding-warning';
             row.appendChild(label);
             row.appendChild(input);
             row.appendChild(reset);
+            row.appendChild(warning);
             container.appendChild(row);
         });
         this.updateKeybindingTranslations();
+        this.refreshKeybindingConflicts();
+        // 边打字边查，不点保存也能立刻看到撞车。监听挂在容器上（重渲染只清 innerHTML，
+        // 容器节点不变），所以必须防重复绑定。
+        if (!container.dataset['conflictBound']) {
+            container.dataset['conflictBound'] = '1';
+            container.addEventListener('input', () => { this.refreshKeybindingConflicts(); });
+        }
+    }
+    /**
+     * 标出撞车的键位，两类一起查：
+     *   · 用户可改的键互相重复；
+     *   · 与**不可改**的固定键（菜单 accelerator、内置 quickOpen）重复 —— 这类最该提示，
+     *     因为主进程有个 hasConflictingModifiedKey 会把撞上的裸 Fn 菜单加速器静默摘掉，
+     *     用户看到的只是「这个键忽然没反应」，从来没人生过告诉他原因。
+     * 输入框里的值是**现读现解析**的（parseCombo），所以不打断输入、也不要求先点保存。
+     */
+    refreshKeybindingConflicts() {
+        const container = elById('keybindings-list');
+        if (!container)
+            return;
+        const kb = window.oicppKeybindings;
+        const defaults = this.getDefaultKeybindings();
+        const stored = this.normalizeKeybindings(this.settings.keybindings);
+        const rows = Array.prototype.slice.call(container.querySelectorAll('.keybinding-row'));
+        const effective = {};
+        for (const row of rows) {
+            const key = row.dataset['keybindingKey'] || '';
+            if (!key)
+                continue;
+            const input = row.querySelector('.keybinding-input');
+            const typed = (input instanceof HTMLInputElement && kb) ? kb.parseCombo(input.value) : '';
+            effective[key] = typed || stored[key] || defaults[key] || '';
+        }
+        const byKey = new Map();
+        if (kb) {
+            for (const group of kb.findComboConflicts(effective)) {
+                for (const key of group.keys) {
+                    if (key.startsWith('fixed:'))
+                        continue;
+                    const hit = byKey.get(key) || { combo: group.combo, others: [], withFixed: false };
+                    hit.combo = group.combo;
+                    hit.withFixed = hit.withFixed || group.keys.some((k) => k.startsWith('fixed:'));
+                    hit.others.push(...group.keys.filter((k) => k !== key && !k.startsWith('fixed:')));
+                    byKey.set(key, hit);
+                }
+            }
+        }
+        const labelOf = (key) => {
+            const item = this.keybindingSchema.find((entry) => entry.key === key);
+            return item ? window.i18n.t(item.labelKey) : key;
+        };
+        for (const row of rows) {
+            const key = row.dataset['keybindingKey'] || '';
+            const warning = row.querySelector('.keybinding-warning');
+            if (!(warning instanceof HTMLElement))
+                continue;
+            const hit = byKey.get(key);
+            const messages = [];
+            if (hit) {
+                if (hit.others.length > 0) {
+                    // 分隔符用 ASCII：'、' 会在这条带 textContent 的行上被 I8 当成硬编码中文
+                    messages.push(window.i18n.t('keybinding.conflictWith', { others: hit.others.map(labelOf).join(' / ') }));
+                }
+                if (hit.withFixed && kb) {
+                    messages.push(window.i18n.t('keybinding.conflictFixed', { combo: kb.formatShortcutLabel(hit.combo) }));
+                }
+            }
+            warning.textContent = messages.join('; ');
+            row.classList.toggle('keybinding-conflict', messages.length > 0);
+        }
     }
     updateKeybindingTranslations() {
         const container = elById('keybindings-list');
@@ -1153,6 +1175,8 @@ class EditorSettings {
                 reset.setAttribute('aria-label', `${resetText}: ${labelText}`);
             }
         });
+        // 冲突提示里引用了其它动作的名字，语言一变这些文案就得重算
+        this.refreshKeybindingConflicts();
     }
     resetKeybindingsToDefault() {
         this.settings.keybindings = this.getDefaultKeybindings();
@@ -1576,8 +1600,18 @@ class EditorSettings {
                 return;
             if (!editableKeys.has(key))
                 return;
-            const val = (input.value || '').trim();
-            keybindings[key] = val || defaultKeybindings[key];
+            // 框里是**显示写法**，先解析回规范串。解析不出来（"hello"、"super+K"、只按了修饰键）
+            // 就回落默认值，并把框里的文本刷成默认值的显示写法 —— 存进去的必须和看见的一致，
+            // 否则界面显示一个能用的键、实际存进去一个永不触发的死键。
+            const stored = this.shortcutStore((input.value || '').trim());
+            if (stored) {
+                keybindings[key] = stored;
+            }
+            else {
+                const fallback = defaultKeybindings[key];
+                keybindings[key] = fallback;
+                input.value = this.shortcutDisplay(fallback);
+            }
         });
         newSettings.keybindings = keybindings;
         logInfo('收集到的设置:', newSettings);
@@ -1847,7 +1881,7 @@ class EditorSettings {
             const key = input.dataset['keybindingKey'];
             if (!key)
                 return;
-            input.value = normalizedKeybindings[key] || defaultKeybindings[key] || '';
+            input.value = this.shortcutDisplay(normalizedKeybindings[key] || defaultKeybindings[key] || '');
         });
     }
     async populateLanguageSelector() {
@@ -1945,4 +1979,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     const editorSettings = new EditorSettings();
     await editorSettings.init();
+    // 挂到 window 只为冒烟测试：它要在真实页面里换平台后驱动一次重渲染
+    // （沿用 window.oicppApp / window.compilerManager 那个惯例，测试才有地方调）。
+    window.editorSettings = editorSettings;
 });

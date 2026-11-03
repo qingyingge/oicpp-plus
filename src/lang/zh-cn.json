@@ -187,7 +187,7 @@
     "updateAutoChecking": "自动检查更新中...",
     "updateDownloading": "下载更新中 {progress}%",
     "openSourceLicenses": "开源软件使用声明",
-    "searchFiles": "搜索文件 (Ctrl+P)",
+    "searchFiles": "搜索文件 ({keys})",
     "addSample": "添加样例组",
     "importSamples": "从压缩包导入样例",
     "globalSettings": "全局设置",
@@ -389,7 +389,9 @@
     "debugStepOut": "单步跳出",
     "cloudCompile": "云端编译",
     "openTerminal": "打开内置终端",
-    "runAllSamples": "运行所有样例"
+    "runAllSamples": "运行所有样例",
+    "conflictWith": "与「{others}」用了同一个快捷键",
+    "conflictFixed": "与固定快捷键 {combo} 重复"
   },
   "message": {
     "updatePendingInstall": "已有更新等待安装，请先退出 OICPP-Plus 完成安装",
@@ -869,12 +871,12 @@
     "unsupportedPlatform": "调试功能暂未在 {platform} 上提供支持。",
     "pausedInputRejected": "[调试] 当前处于暂停态，请点击继续运行后再输入",
     "start": "开始调试",
-    "continue": "继续(F6)",
-    "continueTitle": "继续执行 (F6)",
-    "clickToStartRun": "点击开始运行程序 (F6)",
-    "stepOver": "步过(F7)",
-    "stepInto": "步入(F8)",
-    "stepOut": "步出(Shift+F8)",
+    "continue": "继续({keys})",
+    "continueTitle": "继续执行 ({keys})",
+    "clickToStartRun": "点击开始运行程序 ({keys})",
+    "stepOver": "步过({keys})",
+    "stepInto": "步入({keys})",
+    "stepOut": "步出({keys})",
     "stop": "停止",
     "variables": "变量",
     "localVariables": "局部变量",
@@ -937,7 +939,7 @@
     "pausedAtSignal": "收到信号已暂停",
     "pausedGeneric": "程序已暂停",
     "pausedWhere": " 在 {file}:{line}",
-    "debugContinueHint": "\n\n您可以继续执行(F6)或步过(F7)/步入(F8)/步出(Shift+F8)。",
+    "debugContinueHint": "\n\n您可以继续执行({continue})或步过({over})/步入({into})/步出({out})。",
     "readyWaiting": "调试器已就绪，等待启动程序",
     "readyWaitingInfo": "调试器已成功启动并准备就绪！\n\n{detail}\n\n操作提示:\n- 点击 \"继续执行\" 按钮 (▶️) 或按 F6 开始运行程序\n- 如果设置了断点，程序会在断点处停止\n- 如果没有断点，程序会正常运行到结束\n\n当前状态: {status}",
     "hasBreakpoints": "已设置断点",
@@ -1272,7 +1274,7 @@
     "autoSwitchInfo": "遇到警告/错误时自动切换至解析视图",
     "noParseContent": "暂无可解析的内容，先查看原始输出或等待下一次编译。",
     "dragResize": "拖拽调整高度",
-    "quickOpenPlaceholder": "快速打开 (Ctrl+P)",
+    "quickOpenPlaceholder": "快速打开 ({keys})",
     "quickOpenInputPlaceholder": "输入文件名以在工作区搜索…（Esc 关闭）",
     "quickOpenInputAria": "快速打开：输入文件名",
     "quickOpenResultsAria": "搜索结果"
@@ -1355,7 +1357,7 @@
     "splitHint": "支持标签页分屏 · 拖动标签到空白处即可",
     "reload": "刷新",
     "stop": "停止",
-    "welcomeHint": "在地址栏输入 URL 开始浏览<br>按 Ctrl+Shift+I 打开开发者工具"
+    "welcomeHint": "在地址栏输入 URL 开始浏览"
   },
   "tabs": {
     "readFileUnavailable": "读文件接口不可用",

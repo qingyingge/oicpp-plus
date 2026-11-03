@@ -210,6 +210,10 @@ else {
     document.addEventListener('keydown', async (e) => {
         const target = e.target;
         const isInEditor = target?.closest?.('.monaco-editor') ?? null;
+        // 这一条就是「搜索文件 (Ctrl+P)」「快速打开 (Ctrl+P)」两处文案声称的那个键。
+        // 它不可在设置页改，所以规范值记在 keybindings.ts 的 BUILTIN_ACCELERATORS.quickOpen；
+        // 文案那边现在是 {keys} 插值 + @shortcut:builtin:quickOpen 引用，改这里必须同时改那张表，
+        // 否则界面会说谎（mac 上按 ⌘P 有效，因为这里判的是 ctrlKey||metaKey）。
         if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
             e.preventDefault();
             const ok = await ensureIndex();
