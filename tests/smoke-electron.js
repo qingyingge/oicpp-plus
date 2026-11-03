@@ -317,6 +317,60 @@ app.whenReady().then(async () => {
         w2.destroy();
     }
 
+    // ---- 改键设置页：显示跟随平台，存储仍是规范写法 ------------------------------------
+    // 往返不变量（format⇄parse 180 次全等）在 tests/keybindings-single-source.test.js 里测，
+    // 这一段验的是另一件事：真实渲染路径确实把格式化后的值放进了输入框。
+    // 注意 read() 每次都要重新查 DOM —— renderKeybindingsUI() 会清空容器重建行，
+    // 缓存下来的节点会变成游离片，读到的还是旧值（那样这条断言就是假绿）。
+    {
+        const w4 = new BrowserWindow({
+            width: 1000, height: 700, show: false,
+            webPreferences: {
+                preload: path.join(__dirname, 'smoke-preload.js'),
+                contextIsolation: true, nodeIntegration: false, sandbox: false,
+            },
+        });
+        attach(w4, 'settings-editor-shortcut');
+        try {
+            await w4.loadFile(path.join(RENDERER, 'settings', 'editor.html'));
+            await new Promise((r) => setTimeout(r, 2500));
+            const kbProbe = await w4.webContents.executeJavaScript(`(() => {
+                const read = () => Array.prototype.slice.call(document.querySelectorAll('.keybinding-row'))
+                    .map((row) => ({
+                        key: row.getAttribute('data-keybinding-key') || '',
+                        value: (row.querySelector('.keybinding-input') || {}).value || ''
+                    }));
+                if (!window.editorSettings || !window.oicppKeybindings) {
+                    return { __skip: '缺 window.editorSettings 或 window.oicppKeybindings', rows: read() };
+                }
+                const linux = read();
+                window.oicppKeybindings.setPlatformOverride('mac');
+                window.editorSettings.renderKeybindingsUI();
+                const mac = read();
+                window.oicppKeybindings.setPlatformOverride(null);
+                window.editorSettings.renderKeybindingsUI();
+                return { linux, mac, restored: read() };
+            })()`, true);
+            if (kbProbe.__skip) {
+                check('settings/editor.html: 快捷键显示探针跑起来了', false, kbProbe.__skip);
+            } else {
+                check('settings/editor.html: 非 mac 下输入框是规范写法（Alt+Shift+S 在场）',
+                    kbProbe.linux.some((r) => r.value === 'Alt+Shift+S'),
+                    JSON.stringify(kbProbe.linux.slice(0, 2)));
+                check('settings/editor.html: 注入 mac 后同一行显示 ⌥⇧S（显示跟随平台）',
+                    kbProbe.mac.some((r) => r.value === '⌥⇧S'),
+                    JSON.stringify(kbProbe.mac.slice(0, 2)));
+                check('settings/editor.html: 撤掉注入后逐行还原，且没有一行变空',
+                    JSON.stringify(kbProbe.restored) === JSON.stringify(kbProbe.linux)
+                        && kbProbe.restored.every((r) => r.value.length > 0),
+                    JSON.stringify(kbProbe.restored.slice(0, 2)));
+            }
+        } catch (e) {
+            check('settings/editor.html: 快捷键显示探针未抛错', false, e && e.message);
+        }
+        w4.destroy();
+    }
+
     // ---- #9：切一次语言后，JS 按平台覆写的文案还在不在 ------------------------------------
     // tests/i18n-dom-owner-conflict.test.js 能静态扫出「同一元素同一属性被两套机制写不同键」，
     // 但「谁后跑」是运行期时序：i18n 先 _notifyListeners() 再同步跑 _applyToDOM()，补偿方要

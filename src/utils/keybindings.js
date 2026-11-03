@@ -188,6 +188,97 @@
     function formattedComboFor(source, platform) {
         return formatShortcutLabel(rawComboFor(source), platform);
     }
+    // ---- 显示写法 → 存储写法（formatShortcutLabel 的反向） --------------------------
+    //
+    // 为什么必须有它：设置页的组合键是一个**可编辑文本框**。显示层一旦平台化
+    // （mac 上显示 ⇧⌘G），存回去的就不能是屏幕上那串 —— 否则存进去 "⇧⌘G"，
+    // 匹配层按 Ctrl/Alt/Shift 的 token 去比，这个键当场失效，而且是静默失效。
+    // 有了这一对往返函数，「屏幕上的样子」和「存的样子」才真的解耦。
+    //
+    // 规范形式就是本仓现有的写法：`Ctrl` = 主修饰键、`Alt`、`Shift`，'+' 连接，键名原样保留
+    // （Up / Down / F1…F12 / 单字母大写 / 反引号）。解析不出来时返回 **空串**，
+    // 由调用方回落到默认值 —— 猜一个「看起来像」的组合键比退回默认危险得多。
+    const PARSE_MODIFIERS = {
+        ctrl: 'Ctrl', control: 'Ctrl', cmdorctrl: 'Ctrl', commandorcontrol: 'Ctrl',
+        // mac 上 ⌘ 和 ⌃ 都算主修饰键：匹配层是 ctrlKey||metaKey，两个键都能触发，
+        // 存 Ctrl 是如实的。Super/Win 键**不支持**（返回空串），别把它悄悄当成主修饰键存下去。
+        cmd: 'Ctrl', command: 'Ctrl', meta: 'Ctrl', '\u2318': 'Ctrl', '\u2303': 'Ctrl',
+        alt: 'Alt', option: 'Alt', '\u2325': 'Alt',
+        shift: 'Shift', '\u21e7': 'Shift'
+    };
+    const PARSE_KEY_NAMES = {
+        '\u2191': 'Up', '\u2193': 'Down', '\u2190': 'Left', '\u2192': 'Right',
+        '\u21a9': 'Enter', '\u21b5': 'Enter', '\u238b': 'Tab', '\u2423': 'Space',
+        '\u232b': 'Backspace', '\u2326': 'Delete',
+        esc: 'Escape', escape: 'Escape', return: 'Enter', space: 'Space'
+    };
+    function parseCombo(display) {
+        const source = String(display || '').trim();
+        if (!source)
+            return '';
+        // mac 的写法没有连接符（⇧⌘G），所以要先按符号逐个吃掉修饰键，剩下的是键名；
+        // 文字写法（Ctrl+Shift+G）按 '+' 切。两条路都归到「修饰键集合 + 一个键名」。
+        const mods = [];
+        let keyName = '';
+        const symbolRun = /^[\u2303\u2325\u21e7\u2318]+/;
+        const leading = symbolRun.exec(source);
+        if (leading) {
+            for (const ch of leading[0]) {
+                const mod = PARSE_MODIFIERS[ch];
+                if (mod)
+                    mods.push(mod);
+            }
+            keyName = source.slice(leading[0].length).trim();
+        }
+        else {
+            const parts = source.split('+').map((t) => t.trim()).filter((t) => t !== '');
+            if (parts.length === 0)
+                return '';
+            for (const token of parts) {
+                const mod = PARSE_MODIFIERS[token.toLowerCase()];
+                if (mod) {
+                    mods.push(mod);
+                    continue;
+                }
+                // 出现第二个「不是修饰键」的片段就是两个键名（例如 super+K），
+                // 说明有个修饰键本模块不认 —— 丢掉它再返回一个能触发的键是错的，整串判非法。
+                if (keyName)
+                    return '';
+                keyName = token;
+            }
+        }
+        if (!keyName)
+            return '';
+        // 键名归一：符号 → 规范名；单字母统一大写；其余原样（F11、` 等）
+        const mappedKey = PARSE_KEY_NAMES[keyName.toLowerCase()]
+            ?? PARSE_KEY_NAMES[keyName]
+            ?? (keyName.length === 1 ? keyName.toUpperCase() : keyName);
+        if (!isKnownKeyName(mappedKey))
+            return '';
+        // 修饰键按规范顺序去重，保证同一个组合键只有一种存储串 ——
+        // 否则 "Shift+Ctrl+G" 和 "Ctrl+Shift+G" 会被当成两个不同的值，冲突检测查不出来。
+        const order = ['Ctrl', 'Alt', 'Shift'];
+        const unique = order.filter((m) => mods.includes(m));
+        return [...unique, mappedKey].join('+');
+    }
+    // 存进去的键名必须是**匹配层认得**的东西。不收的情况：
+    //   · "hello" 这种不是键名的串 —— 存下去会得到一个永远不触发的死键，而且界面还显示 "hello"；
+    //   · "super+K"/"win+K" —— 匹配层只认 ctrlKey||metaKey||alt||shift，把 Super 悄悄丢掉
+    //     会存成 "K"（比死键更糟：它会在按 K 时触发）。这类一律返回空串，由调用方回落默认值。
+    const ALLOWED_KEY_NAMES = new Set([
+        'Up', 'Down', 'Left', 'Right', 'Enter', 'Escape', 'Tab', 'Space',
+        'Backspace', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'Insert',
+        'Plus', 'Minus', 'Equal', 'Comma', 'Period', 'Slash'
+    ]);
+    function isKnownKeyName(name) {
+        if (ALLOWED_KEY_NAMES.has(name))
+            return true;
+        if (/^F([1-9]|1[0-9]|2[0-4])$/.test(name))
+            return true;
+        if (/^[A-Za-z0-9]$/.test(name))
+            return true;
+        return name.length === 1 && !/[+⌃⌥⇧⌘]/.test(name);
+    }
     // ---- accelerator → 按平台显示的 label ----------------------------------------
     //
     // 修饰键的**显示顺序按 Apple HIG**：⌃ ⌥ ⇧ ⌘（Control、Option、Shift、Command），
@@ -269,6 +360,7 @@
         isMacPlatform,
         keybindingSchema,
         menuAccelerator,
+        parseCombo,
         rawComboFor,
         rawPlatform,
         resolvePlatform,

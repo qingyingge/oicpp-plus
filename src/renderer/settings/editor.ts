@@ -1207,6 +1207,22 @@ class EditorSettings {
 
     }
 
+    /** 屏幕上显示的写法（跟随平台与改键）；存回去的永远是规范写法，见 collectSettings 里的 shortcutStore。 */
+    shortcutDisplay(combo: string | undefined): string {
+        const raw = String(combo || '');
+        return window.oicppKeybindings?.formatShortcutLabel(raw) ?? raw;
+    }
+
+    /**
+     * 文本框里的内容 → 存储用的规范写法。
+     * 这一步是「显示与存储分离」的另一半：显示一旦平台化（mac 上是 ⇧⌘G），
+     * 把屏幕上那串原样存回去就会得到一个永远不触发的死键（匹配层比的是 Ctrl/Alt/Shift token）。
+     * 解析不出来返回空串，调用方回落默认值并把输入框刷回默认 —— 存进去的必须和看见的一致。
+     */
+    shortcutStore(display: string): string {
+        return window.oicppKeybindings?.parseCombo(display) ?? '';
+    }
+
     normalizeKeybindings(raw: Keybindings | null | undefined) {
         const defaults = this.getDefaultKeybindings();
         const normalized: Keybindings = { ...defaults };
@@ -1243,14 +1259,15 @@ class EditorSettings {
             const input = document.createElement('input');
             input.type = 'text';
             input.className = 'keybinding-input';
-            input.value = current[item.key] || defaults[item.key] as string;
+            // 显示跟随平台（mac 上 ⇧⌘G），存储仍是规范写法；两者靠 parseCombo/formatShortcutLabel 成对往返。
+            input.value = this.shortcutDisplay(current[item.key] || defaults[item.key]);
             input.dataset['keybindingKey'] = item.key;
-            input.placeholder = defaults[item.key] as string;
+            input.placeholder = this.shortcutDisplay(defaults[item.key]);
 
             const reset = document.createElement('button');
             reset.className = 'btn btn-secondary keybinding-reset';
             reset.addEventListener('click', () => {
-                input.value = defaults[item.key] as string;
+                input.value = this.shortcutDisplay(defaults[item.key]);
             });
 
             row.appendChild(label);
@@ -1719,8 +1736,17 @@ class EditorSettings {
             const key = input.dataset['keybindingKey'];
             if (!key) return;
             if (!editableKeys.has(key)) return;
-            const val = (input.value || '').trim();
-            keybindings[key] = val || defaultKeybindings[key] as string;
+            // 框里是**显示写法**，先解析回规范串。解析不出来（"hello"、"super+K"、只按了修饰键）
+            // 就回落默认值，并把框里的文本刷成默认值的显示写法 —— 存进去的必须和看见的一致，
+            // 否则界面显示一个能用的键、实际存进去一个永不触发的死键。
+            const stored = this.shortcutStore((input.value || '').trim());
+            if (stored) {
+                keybindings[key] = stored;
+            } else {
+                const fallback = defaultKeybindings[key] as string;
+                keybindings[key] = fallback;
+                input.value = this.shortcutDisplay(fallback);
+            }
         });
         newSettings.keybindings = keybindings;
 
@@ -2003,7 +2029,7 @@ class EditorSettings {
             if (!(input instanceof HTMLInputElement)) return;
             const key = input.dataset['keybindingKey'];
             if (!key) return;
-            input.value = normalizedKeybindings[key] || defaultKeybindings[key] || '';
+            input.value = this.shortcutDisplay(normalizedKeybindings[key] || defaultKeybindings[key] || '');
         });
     }
 
@@ -2110,4 +2136,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
     const editorSettings = new EditorSettings();
     await editorSettings.init();
+    // 挂到 window 只为冒烟测试：它要在真实页面里换平台后驱动一次重渲染
+    // （沿用 window.oicppApp / window.compilerManager 那个惯例，测试才有地方调）。
+    (window as unknown as { editorSettings: EditorSettings }).editorSettings = editorSettings;
 });

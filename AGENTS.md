@@ -150,6 +150,12 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   - **数字不是以 `count` 传进来的键根本没法复数化**：`{n}` / `{total}` / `{bytes}` / `{uploaded}` / `{errors}` 都要先让调用点补上 `count: <同一个表达式>`，否则界面直接显示裸键名（比不复数化更糟）。en 里剩下的 `file(s)` / `error(s)` 这类规避写法就是这么来的。
     补的时候 `count` 必须**就是文案里那个数的表达式**（`{ n: diffMin, count: diffMin }`），只改一边会单复数和数字各说各话。这一条机器判不出可靠的样子（`dialog.importDetected` 那种 `{count}` 本身就在文案里、其它 token 是别的数，任何「count 要等于某个 token」的规则都会误报），所以靠 I9 兜住「有没有传」，「传得对不对」靠人 —— 改这类调用点时把两边一起看。
 - 批量正则替换 `window.i18n ? window.i18n.t('k') : 'x'` 这类表达式**极易退化成 `= ('k')`**（I5 专门拦这个）。
+- 写「形状 ratchet」时别用零宽否定当过滤器。`src.match(/input\.value\s*=\s*(?!this\.shortcutDisplay)/g)` 看着像
+  「找出所有没走 shortcutDisplay 的赋值」，实际**只匹配到赋值号本身**（后面那个断言不消耗字符），
+  于是拿匹配结果再去做二次判断时手上只有一个前缀片段，条件永远不成立 —— 这条守卫在 #14 的
+  第一版里就是这么静默空转的，是拿「故意改坏一处再跑一遍」的变异试出来才现形。
+  正确写法是逐行 `split('\n').filter(line => /input\.value\s*=/.test(line) && !/this\.shortcutDisplay\(/.test(line))`。
+  通用规则：**每个新守卫都要当场证伪一次**，只跑「绿」不构成证据。
 
 ### 改快捷键默认值 / 加可改键
 适用场景：改某个动作的默认组合键、新增一个可改键的动作、或要在界面上显示快捷键。

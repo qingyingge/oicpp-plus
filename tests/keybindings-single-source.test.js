@@ -365,5 +365,77 @@ const tsFiles = [];
         BARE_F_RE.test('继续执行 (F6)') && MODIFIER_RE.test('按 Ctrl+Shift+I 打开开发者工具'));
 }
 
+// ---------------------------------------------------------------------------
+// 9. parseCombo：显示与存储成对往返（设置页那个可编辑文本框的前提）
+// ---------------------------------------------------------------------------
+{
+    // 内部规范写法有两种书写习惯：DEFS 用匹配层的 `Ctrl+`，菜单表用 Electron 的 `CmdOrCtrl+`。
+    // 两者都指主修饰键，所以比较前先塌成同一种。
+    const canon = (s) => s.replace(/^CmdOrCtrl\+/, 'Ctrl+').replace(/^CommandOrControl\+/, 'Ctrl+');
+    const combos = Object.values(kb.MENU_ACCELERATORS)
+        .concat(Object.values(kb.defaultKeybindings('mac')))
+        .concat(Object.values(kb.defaultKeybindings('windows')));
+    const bad = [];
+    let cases = 0;
+    for (const combo of combos) {
+        for (const platform of ['mac', 'windows', 'linux']) {
+            cases++;
+            const display = kb.formatShortcutLabel(combo, platform);
+            const back = kb.parseCombo(display);
+            if (back !== canon(combo)) bad.push(`${platform}: ${combo} → ${display} → ${back}`);
+            // 显示必须只取决于「哪个键」，不取决于它原先怎么写（CmdOrCtrl+ 与 Ctrl+ 同一个键）
+            if (kb.formatShortcutLabel(kb.parseCombo(combo), platform) !== display) {
+                bad.push(`${platform}: 显示不幂等 ${combo}`);
+            }
+        }
+    }
+    check(`${cases} 次 format⇄parse 往返全部回到同一个规范串`, bad.length === 0, bad.slice(0, 4).join(' | '));
+
+    // 不收的情形 —— 存进去得到一个「永远不触发」或「按错键才触发」的绑定，比回退默认值危险得多
+    const rejects = [
+        ['hello', '不是键名的串'],
+        ['super+K', 'Super 键不支持，丢掉修饰符会存成 K（按 K 就触发）'],
+        ['win+K', '同上'],
+        ['Ctrl+Shift', '只按了修饰键，没有主键'],
+        ['⇧⌘', '同上，符号写法'],
+        ['Ctrl+F99', '不存在的功能键'],
+        ['foobar+F1', '两个键名'],
+        ['', '空串']
+    ];
+    for (const [input, why] of rejects) {
+        check(`parseCombo 拒绝 ${JSON.stringify(input)}（${why}）`, kb.parseCombo(input) === '', kb.parseCombo(input));
+    }
+
+    // 同一个组合键只能有一种存储串，否则冲突检测（字符串比较）查不出重复
+    check('修饰键顺序被归一：Shift+Ctrl+G 与 Ctrl+Shift+G 存成同一个串',
+        kb.parseCombo('Shift+Ctrl+G') === 'Ctrl+Shift+G'
+            && kb.parseCombo('⇧⌘G') === kb.parseCombo('Ctrl+Shift+G'),
+        `${kb.parseCombo('Shift+Ctrl+G')} / ${kb.parseCombo('⇧⌘G')}`);
+    check('用户手打的符号写法也认：⌥⇧S → Alt+Shift+S', kb.parseCombo('⌥⇧S') === 'Alt+Shift+S', kb.parseCombo('⌥⇧S'));
+    check('自证：parseCombo 不是恒返回空串（正例也在同一批断言里）',
+        kb.parseCombo('Ctrl+Shift+G') === 'Ctrl+Shift+G');
+
+    // 设置页必须经过这一对函数，不许再把存储串直接塞进输入框、也不许把框里的文本原样存回去。
+    // 写法是「逐行」的，不要用 `match(/input\.value\s*=\s*(?!…)/)` 那种前缀正则：
+    // 零宽否定只匹配到赋值号，捕获不到右边写了什么，于是**永远为 0**（本条第一版就是这么空转的，
+    // 拿变异试了一遍才抓到 —— 变异成 input.value = current[...] 它照样 PASS）。
+    {
+        const editorSrc = read(path.join('src', 'renderer', 'settings', 'editor.ts'));
+        const rawWrites = editorSrc.split('\n')
+            .filter((line) => /input\.value\s*=/.test(line) && !/this\.shortcutDisplay\(/.test(line))
+            .map((line) => line.trim());
+        check('设置页每一处 input.value 赋值都走 shortcutDisplay（变异可证伪）',
+            rawWrites.length === 0, rawWrites.join(' | '));
+        // 反方向同理：写回 settings.keybindings 的值必须是 shortcutStore 出来的规范串，
+        // 或者回落成默认值（这两条路径分别写 stored / fallback，见 editor.ts 的 collectSettings）。
+        const rawStores = editorSrc.split('\n')
+            .filter((line) => /keybindings\[key\]\s*=/.test(line) && !/stored|fallback/.test(line))
+            .map((line) => line.trim());
+        check('写回 settings.keybindings 的只有 shortcutStore 的结果或默认值回落',
+            rawStores.length === 0 && /keybindings\[key\] = stored;/.test(editorSrc),
+            rawStores.join(' | '));
+    }
+}
+
 console.log(`keybindings-single-source tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

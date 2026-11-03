@@ -74,6 +74,8 @@ interface OicppKeybindingsApi {
   formatShortcutLabel(combo: string, platform?: OicppPlatform): string;
   /** "keybinding:compileAndRun" / "accel:save-file" / "builtin:quickOpen" → 按平台显示文本。 */
   formattedComboFor(source: string, platform?: OicppPlatform): string;
+  /** 屏幕上的写法（含 mac 符号串）→ 存储的规范写法；解析不出来返回空串，由调用方回落默认值。 */
+  parseCombo(display: string): string;
   isMacPlatform(platform?: OicppPlatform): boolean;
   keybindingSchema(): Array<{ key: string; labelKey: string }>;
   menuAccelerator(actionId: string): string;
