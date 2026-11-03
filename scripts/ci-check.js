@@ -1819,18 +1819,28 @@ console.log(`\n${Y}[I8b] Hardcoded English prose ratchet${R}`);
 }
 
 // T1: Regression tests (tests/*.test.js, auto-discovered by tests/run-tests.js)
+// 预算按当前套件实测总耗时放大到 3 倍留余量。90s 是套件还小得多时定的，加了真起子进程的
+// 原生层守卫之后就贴着上限跑（perf/compare-engine-v20 实测 91.9s）—— 每跑必被杀，
+// 而被截断的输出与「某个测试失败」长得一模一样，只会把人引去查根本通过了的测试。
+const REGRESSION_TEST_BUDGET_MS = 300000;
 function runRegressionTests() {
   console.log(`\n${Y}[T1] Regression tests${R}`);
   const testRunnerPath = path.join(root, 'tests', 'run-tests.js');
   if (fileExists(testRunnerPath)) {
     try {
-      const testOut = execSync(`node "${testRunnerPath}"`, { encoding: 'utf8', timeout: 90000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+      const testOut = execSync(`node "${testRunnerPath}"`, { encoding: 'utf8', timeout: REGRESSION_TEST_BUDGET_MS, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
       testOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${GR}  ${line}${R}`));
       ok('all regression tests passed');
     } catch (err) {
       const testErrOut = `${err.stdout || ''}${err.stderr || ''}`;
       testErrOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${RD}  ${line}${R}`));
-      fail('regression tests failed');
+      // 超时与断言失败分开报：前者说明预算或机器负载有问题，后者才是要去修的测试。
+      // 混成一句话会让一次预算过紧看起来像一批真实缺陷。
+      if (err.killed || err.signal === 'SIGTERM' || /ETIMEDOUT/.test(String(err.code))) {
+        fail(`regression tests did not finish within ${REGRESSION_TEST_BUDGET_MS / 1000}s (killed by budget — 不是断言失败；先确认套件总耗时与机器负载)`);
+      } else {
+        fail('regression tests failed');
+      }
     }
   } else {
     fail('tests/run-tests.js not found');

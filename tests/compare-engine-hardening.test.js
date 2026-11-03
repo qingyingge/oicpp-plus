@@ -801,24 +801,49 @@ setTimeout(() => {
     }
 
     {
+        // —— 以下形状随 perf/compare-engine-v20 的 fastspawn 重写一起迁过一遍 ——
+        // 语义一条没放宽：每条都还是原来那个缺陷的锁，只是改成认新的写法。
+        // 「poll 超时不杀人」这条原本是隐含在旧代码里的（旧写法根本没有超时分支），
+        // 现在它是本轮修掉的 137 误杀 bug 的正身，所以显式加了断言。
         check('H1 native 侧把 timeoutMs<=0 映射为无截止时间',
-            /const int64_t NO_DEADLINE = INT64_MAX;/.test(fastspawnSrc) &&
+            /#define NO_DEADLINE INT64_MAX/.test(fastspawnSrc) &&
             /int64_t deadlineMs = \(timeoutMs > 0\) \? \(nowMs\(\) \+ timeoutMs\) : NO_DEADLINE;/.test(fastspawnSrc));
         check('H1 使用 INT64_MAX 需要 stdint.h', /#include <stdint\.h>/.test(fastspawnSrc));
         check('H1 超时判断只比 deadline', /if \(nowMs\(\) >= deadlineMs\)/.test(fastspawnSrc));
-        check('写入循环在不限时下无限期等 POLLOUT', /poll\(&writeFd, 1, -1\)/.test(fastspawnSrc));
-        check('drainBoth 的 poll 仍按 500ms 分段', /int to = \(remain > 500\) \? 500 : \(int\)remain;/.test(fastspawnSrc));
-        check('M4 drainBoth 回传 drop 标志', /if \(truncatedOut\) \*truncatedOut = ob\.drop;/.test(fastspawnSrc));
+
+        const pumpBody = /static int pump\([\s\S]*?\n\}/.exec(fastspawnSrc);
+        const pumpText = pumpBody ? pumpBody[0] : '';
+        const killCount = (pumpText.match(/kill\(-pid, SIGKILL\)/g) || []).length;
+        check('pump 里唯一的 kill 只在超时分支持行（poll 超时不许杀人）',
+            killCount === 1
+                && /if \(deadlineMs != NO_DEADLINE && nowMs\(\) >= deadlineMs\) \{\s*\n\s*kill\(-pid, SIGKILL\);/.test(pumpText),
+            `kill 出现 ${killCount} 次，超时分支紧邻=${/\{\s*\n\s*kill\(-pid, SIGKILL\);/.test(pumpText)}`);
+        check('pump 把 poll 超时(pr==0)当空转继续，不当错误', /if \(pr == 0\) continue;/.test(pumpText));
+        check('不限时时 poll 不给自己设上限（-1 走 slice 分支）',
+            /int64_t remain = \(deadlineMs == NO_DEADLINE\) \? -1 : \(deadlineMs - nowMs\(\)\);/.test(pumpText)
+                && /int slice = \(remain < 0 \|\| remain > 200\) \? 200 : \(int\)remain;/.test(pumpText));
+        // 负向那半只查 pump 本体：文件里还留着一行注释原文引用旧错法（说明根因），
+        // 拿全文做否定判断会把那段说明当成复发。
+        check('write 之后立刻保存 errno（poll 超时不改动 errno，混用就是 137 误杀的根因）',
+            /int saved = errno;/.test(pumpText) && !/wr <= 0 && errno/.test(pumpText));
+        check('写不进去不悄悄截断 stdin：EAGAIN 等下一轮、EPIPE 交给收割、真异常置 writeErr',
+            /if \(saved == EAGAIN \|\| saved == EWOULDBLOCK\) break;/.test(pumpText)
+                && /writeErr = 1;/.test(pumpText) && /return writeErr \? -2 : 0;/.test(pumpText));
+
+        check('M4 回传 drop 标志：truncated 只取 stdout（大 stderr 不再误报 output_limit）',
+            /if \(truncated\) \*truncated = ob\.drop \? 1 : 0;/.test(fastspawnSrc)
+                && /if \(errTruncated\) \*errTruncated = eb\.drop \? 1 : 0;/.test(fastspawnSrc));
         check('M4 runOne 出参带 truncated',
-            /int64_t timeoutMs, char\*\* out, size_t\* outLen, int\* truncated\)/.test(fastspawnSrc) &&
-            /if \(truncated\) \*truncated = \(truncatedOut \|\| truncatedErr\) \? 1 : 0;/.test(fastspawnSrc));
+            /int64_t timeoutMs, char\*\* out, size_t\* outLen, int\* truncated,/.test(fastspawnSrc));
         check('M4 napi 返回值暴露 truncated', /napi_set_named_property\(env, result, "truncated", rTrunc\);/.test(fastspawnSrc));
-        const runOneDecl = /static int runOne\([^;]*int\* truncated\)/.test(fastspawnSrc);
+        const runOneDecl = /static int runOne\([^;]*int\* truncated[,\)]/.test(fastspawnSrc);
         const callSites = [...fastspawnSrc.matchAll(/runOne\(([^;]*?)\);/g)].map((m) => m[1]);
         const allPass = callSites.every((args) => /truncated/.test(args));
         check('M4 runOne 定义与所有调用点都带 truncated',
             runOneDecl && callSites.length >= 4 && allPass,
             `${callSites.length} 个调用点, 全部传参=${allPass}`);
+        check('stderr 独立上限（只留前缀，不让 worker 最坏多占 64MB）',
+            /eb\.max = [A-Z_0-9]+/.test(fastspawnSrc) || /MAX_(STD)?ERR[A-Z_]*\s+/.test(fastspawnSrc));
         check('花括号平衡（无法编译时至少做静态检查）',
             (fastspawnSrc.match(/\{/g) || []).length === (fastspawnSrc.match(/\}/g) || []).length,
             `${(fastspawnSrc.match(/\{/g) || []).length} vs ${(fastspawnSrc.match(/\}/g) || []).length}`);
