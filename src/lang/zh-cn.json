@@ -389,7 +389,9 @@
     "debugStepOut": "单步跳出",
     "cloudCompile": "云端编译",
     "openTerminal": "打开内置终端",
-    "runAllSamples": "运行所有样例"
+    "runAllSamples": "运行所有样例",
+    "conflictWith": "与「{others}」用了同一个快捷键",
+    "conflictFixed": "与固定快捷键 {combo} 重复"
   },
   "message": {
     "updatePendingInstall": "已有更新等待安装，请先退出 OICPP-Plus 完成安装",

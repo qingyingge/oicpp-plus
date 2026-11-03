@@ -364,6 +364,42 @@ app.whenReady().then(async () => {
                     JSON.stringify(kbProbe.restored) === JSON.stringify(kbProbe.linux)
                         && kbProbe.restored.every((r) => r.value.length > 0),
                     JSON.stringify(kbProbe.restored.slice(0, 2)));
+
+                // 冲突提示的行为证明：把 runCode 改成与 compileCode 同键，两行都要立刻出声，
+                // 改回去之后提示要消失 —— 只测纯函数的话，「输入即提示」这条链没人验过。
+                const conflict = await w4.webContents.executeJavaScript(`(() => {
+                    const rowOf = (key) => document.querySelector('.keybinding-row[data-keybinding-key="' + key + '"]');
+                    const a = rowOf('compileCode'), b = rowOf('runCode');
+                    if (!a || !b) return { __skip: '找不到 compileCode / runCode 行' };
+                    const warn = (row) => {
+                        const w = row.querySelector('.keybinding-warning');
+                        return { text: w ? (w.textContent || '') : null, flagged: row.classList.contains('keybinding-conflict') };
+                    };
+                    const bInput = b.querySelector('.keybinding-input');
+                    const original = bInput.value;
+                    const before = { a: warn(a), b: warn(b) };
+                    bInput.value = a.querySelector('.keybinding-input').value;
+                    bInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    const during = { a: warn(a), b: warn(b) };
+                    bInput.value = original;
+                    bInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    const after = { a: warn(a), b: warn(b) };
+                    return { before, during, after };
+                })()`, true);
+                if (conflict.__skip) {
+                    check('settings/editor.html: 冲突探针找到目标行', false, conflict.__skip);
+                } else {
+                    check('settings/editor.html: 初始没有任何行被标成冲突（默认表是干净的）',
+                        conflict.before.a.text === '' && conflict.before.b.text === '' && !conflict.before.b.flagged,
+                        JSON.stringify(conflict.before));
+                    check('settings/editor.html: 改成同一个键后两行都出提示并带上对方名字',
+                        conflict.during.a.text.includes('运行') && conflict.during.b.text.includes('编译')
+                            && conflict.during.b.flagged === true,
+                        JSON.stringify(conflict.during));
+                    check('settings/editor.html: 改回去提示消失（不留陈旧警告）',
+                        conflict.after.a.text === '' && conflict.after.b.text === '' && !conflict.after.b.flagged,
+                        JSON.stringify(conflict.after));
+                }
             }
         } catch (e) {
             check('settings/editor.html: 快捷键显示探针未抛错', false, e && e.message);

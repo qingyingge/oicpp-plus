@@ -279,6 +279,53 @@
             return true;
         return name.length === 1 && !/[+⌃⌥⇧⌘]/.test(name);
     }
+    /**
+     * 规范串：用来比较两个键位是不是同一个键。
+     * 比较之前必须过这一步，否则 CmdOrCtrl+Shift+I（菜单写法）与 Ctrl+Shift+I（用户设置写法）
+     * 会被当成两个不同的键，冲突就查不出来。解析不出来时原样返回，让它在比较里孤着，
+     * 不假装相等也不假装不等。
+     */
+    function canonicalCombo(combo) {
+        return parseCombo(String(combo || '')) || String(combo || '').trim();
+    }
+    /**
+     * 找出撞车的键位。两个来源一起看：
+     *   · 用户可改的那批（effective = 用户设置与默认值合并后的表）内部互相重复；
+     *   · 与不可改的固定键（菜单 accelerator + 内置绑定）重复 —— 这类更阴，因为固定键不会让位，
+     *     而主进程那边有个 hasConflictingModifiedKey 会**静默**把裸 Fn 的菜单加速器摘掉，
+     *     用户看到的是「这个键忽然没反应」，从头到尾没有任何地方告诉过他为什么。
+     * 返回 [{combo, keys}]，keys 是撞在一起的动作键名（单个固定键冲突时是 ['fixed:<id>']）。
+     */
+    function findComboConflicts(effective) {
+        const buckets = new Map();
+        const push = (combo, key) => {
+            if (!combo)
+                return;
+            const list = buckets.get(combo) || [];
+            list.push(key);
+            buckets.set(combo, list);
+        };
+        for (const [key, combo] of Object.entries(effective || {})) {
+            push(canonicalCombo(combo), key);
+        }
+        for (const [id, combo] of Object.entries(MENU_ACCELERATORS)) {
+            push(canonicalCombo(combo), `fixed:${id}`);
+        }
+        for (const [id, combo] of Object.entries(BUILTIN_ACCELERATORS)) {
+            push(canonicalCombo(combo), `fixed:${id}`);
+        }
+        const out = [];
+        for (const [combo, keys] of buckets) {
+            // 只有同时牵涉两个**能触发**的动作才算冲突：两个 fixed 条目互相重复是主进程的事
+            if (keys.length < 2)
+                continue;
+            if (keys.every((k) => k.startsWith('fixed:')))
+                continue;
+            out.push({ combo, keys: keys.slice().sort() });
+        }
+        out.sort((a, b) => a.combo.localeCompare(b.combo));
+        return out;
+    }
     // ---- accelerator → 按平台显示的 label ----------------------------------------
     //
     // 修饰键的**显示顺序按 Apple HIG**：⌃ ⌥ ⇧ ⌘（Control、Option、Shift、Command），
@@ -352,9 +399,11 @@
         MENU_ACCELERATORS,
         BUILTIN_ACCELERATORS,
         builtinAccelerator,
+        canonicalCombo,
         currentPlatform,
         defaultKeybindings,
         editableKeybindingKeys,
+        findComboConflicts,
         formatShortcutLabel,
         formattedComboFor,
         isMacPlatform,

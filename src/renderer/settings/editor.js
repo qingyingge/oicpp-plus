@@ -1066,13 +1066,90 @@ class EditorSettings {
             reset.className = 'btn btn-secondary keybinding-reset';
             reset.addEventListener('click', () => {
                 input.value = this.shortcutDisplay(defaults[item.key]);
+                this.refreshKeybindingConflicts();
             });
+            // 冲突提示有自己独占的元素：警告只由 refreshKeybindingConflicts 写，
+            // 标签只由 updateKeybindingTranslations 写 —— 同一个属性两套机制各写一遍
+            // 就是 #9 那个 bug 的形状（切语言会把 JS 覆写的文案冲回静态值）。
+            const warning = document.createElement('span');
+            warning.className = 'keybinding-warning';
             row.appendChild(label);
             row.appendChild(input);
             row.appendChild(reset);
+            row.appendChild(warning);
             container.appendChild(row);
         });
         this.updateKeybindingTranslations();
+        this.refreshKeybindingConflicts();
+        // 边打字边查，不点保存也能立刻看到撞车。监听挂在容器上（重渲染只清 innerHTML，
+        // 容器节点不变），所以必须防重复绑定。
+        if (!container.dataset['conflictBound']) {
+            container.dataset['conflictBound'] = '1';
+            container.addEventListener('input', () => { this.refreshKeybindingConflicts(); });
+        }
+    }
+    /**
+     * 标出撞车的键位，两类一起查：
+     *   · 用户可改的键互相重复；
+     *   · 与**不可改**的固定键（菜单 accelerator、内置 quickOpen）重复 —— 这类最该提示，
+     *     因为主进程有个 hasConflictingModifiedKey 会把撞上的裸 Fn 菜单加速器静默摘掉，
+     *     用户看到的只是「这个键忽然没反应」，从来没人生过告诉他原因。
+     * 输入框里的值是**现读现解析**的（parseCombo），所以不打断输入、也不要求先点保存。
+     */
+    refreshKeybindingConflicts() {
+        const container = elById('keybindings-list');
+        if (!container)
+            return;
+        const kb = window.oicppKeybindings;
+        const defaults = this.getDefaultKeybindings();
+        const stored = this.normalizeKeybindings(this.settings.keybindings);
+        const rows = Array.prototype.slice.call(container.querySelectorAll('.keybinding-row'));
+        const effective = {};
+        for (const row of rows) {
+            const key = row.dataset['keybindingKey'] || '';
+            if (!key)
+                continue;
+            const input = row.querySelector('.keybinding-input');
+            const typed = (input instanceof HTMLInputElement && kb) ? kb.parseCombo(input.value) : '';
+            effective[key] = typed || stored[key] || defaults[key] || '';
+        }
+        const byKey = new Map();
+        if (kb) {
+            for (const group of kb.findComboConflicts(effective)) {
+                for (const key of group.keys) {
+                    if (key.startsWith('fixed:'))
+                        continue;
+                    const hit = byKey.get(key) || { combo: group.combo, others: [], withFixed: false };
+                    hit.combo = group.combo;
+                    hit.withFixed = hit.withFixed || group.keys.some((k) => k.startsWith('fixed:'));
+                    hit.others.push(...group.keys.filter((k) => k !== key && !k.startsWith('fixed:')));
+                    byKey.set(key, hit);
+                }
+            }
+        }
+        const labelOf = (key) => {
+            const item = this.keybindingSchema.find((entry) => entry.key === key);
+            return item ? window.i18n.t(item.labelKey) : key;
+        };
+        for (const row of rows) {
+            const key = row.dataset['keybindingKey'] || '';
+            const warning = row.querySelector('.keybinding-warning');
+            if (!(warning instanceof HTMLElement))
+                continue;
+            const hit = byKey.get(key);
+            const messages = [];
+            if (hit) {
+                if (hit.others.length > 0) {
+                    // 分隔符用 ASCII：'、' 会在这条带 textContent 的行上被 I8 当成硬编码中文
+                    messages.push(window.i18n.t('keybinding.conflictWith', { others: hit.others.map(labelOf).join(' / ') }));
+                }
+                if (hit.withFixed && kb) {
+                    messages.push(window.i18n.t('keybinding.conflictFixed', { combo: kb.formatShortcutLabel(hit.combo) }));
+                }
+            }
+            warning.textContent = messages.join('; ');
+            row.classList.toggle('keybinding-conflict', messages.length > 0);
+        }
     }
     updateKeybindingTranslations() {
         const container = elById('keybindings-list');
@@ -1098,6 +1175,8 @@ class EditorSettings {
                 reset.setAttribute('aria-label', `${resetText}: ${labelText}`);
             }
         });
+        // 冲突提示里引用了其它动作的名字，语言一变这些文案就得重算
+        this.refreshKeybindingConflicts();
     }
     resetKeybindingsToDefault() {
         this.settings.keybindings = this.getDefaultKeybindings();

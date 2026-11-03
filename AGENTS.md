@@ -208,6 +208,11 @@ xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-san
   顺带一个真错：`browser.welcomeHint` 写「按 Ctrl+Shift+I 打开开发者工具」，但 DevTools 只在 `--dev` 下开
   （`main.ts` 的 `devTools: process.argv.includes('--dev')`），而这串键在本应用是**打开内置浏览器** ——
   这是假指令，删掉而不是挪成 `{keys}`。
+- 冲突检测的唯一实现是 `oicppKeybindings.findComboConflicts(effective)`：先把 `CmdOrCtrl+` 与 `Ctrl+`
+  归一成同一个串（`canonicalCombo`），否则两种写法永远比不出相等；**出厂默认表必须零冲突**（测试按三个平台锁死），
+  所以加新键位如果撞上了固定 accelerator，CI 直接红，而不是等用户发现某个键没反应。
+  设置页的提示写在**它独占的 `.keybinding-warning` 元素**上（label/title 归翻译层，input.value 归 shortcutDisplay），
+  一个属性一个所有者 —— 同一元素同一属性被两套机制写就是 #9 那个 bug。
 - 脚本顺序：`keybindings.js` 必须早于 `js/main.js` / `js/monaco-editor-manager.js` / `editor.js` 加载（测试有断言）。
   缺席时 `getDefaultKeybindings()` 退化成空表 → 菜单提示全部变空，而且 CI 不红，只有 smoke 抓得到。
 

@@ -408,7 +408,9 @@
     "debugStepOut": "Step Out",
     "cloudCompile": "Cloud Compile",
     "openTerminal": "Open Integrated Terminal",
-    "runAllSamples": "Run All Samples"
+    "runAllSamples": "Run All Samples",
+    "conflictWith": "Same shortcut as “{others}”",
+    "conflictFixed": "Duplicates the fixed shortcut {combo}"
   },
   "message": {
     "updatePendingInstall": "An update is pending install.",

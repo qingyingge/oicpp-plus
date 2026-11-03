@@ -437,5 +437,52 @@ const tsFiles = [];
     }
 }
 
+// ---------------------------------------------------------------------------
+// 10. 冲突检测：默认配置必须是干净的，撞车必须查得出来
+// ---------------------------------------------------------------------------
+{
+    const editableOf = (platform) => {
+        const def = kb.defaultKeybindings(platform);
+        const out = {};
+        for (const key of kb.editableKeybindingKeys()) out[key] = def[key];
+        return out;
+    };
+    for (const platform of ['mac', 'windows', 'linux']) {
+        const found = kb.findComboConflicts(editableOf(platform));
+        check(`出厂默认表在 ${platform} 上没有任何撞车（有就是配置错，不是检测错）`,
+            found.length === 0, JSON.stringify(found));
+    }
+    const dup = Object.assign(editableOf('windows'), { markdownPreview: editableOf('windows').compileCode });
+    const dupHit = kb.findComboConflicts(dup).find((g) => g.keys.includes('markdownPreview'));
+    check('两个动作配成同一个键 → 成对讲出来，两边都点名',
+        !!dupHit && dupHit.keys.join() === 'compileCode,markdownPreview', JSON.stringify(dupHit));
+    const vsFixed = Object.assign(editableOf('windows'), { openTerminal: 'CmdOrCtrl+Shift+I' });
+    const fixedHit = kb.findComboConflicts(vsFixed).find((g) => g.keys.includes('openTerminal'));
+    check('与不可改的固定键撞车也查得出（就是主进程会静默摘加速器那一类）',
+        !!fixedHit && fixedHit.keys.some((k) => k === 'fixed:open-browser'), JSON.stringify(fixedHit));
+    check('CmdOrCtrl+ 与 Ctrl+ 两种写法判定为同一个键（否则冲突永远查不出）',
+        kb.canonicalCombo('CmdOrCtrl+Shift+I') === kb.canonicalCombo('Ctrl+Shift+I')
+            && kb.canonicalCombo('CmdOrCtrl+Shift+I') === 'Ctrl+Shift+I', kb.canonicalCombo('CmdOrCtrl+Shift+I'));
+    // 两个固定键之间重复不算用户能修的错，别拿它去标设置页的行
+    check('只有固定键互相重复时不算冲突（设置页里没有它们的行）',
+        kb.findComboConflicts({}).length === 0);
+
+    // 提示文案必须走语言包（本仓 I8 零容忍硬编码中文）
+    const zh = JSON.parse(read(path.join('src', 'lang', 'zh-cn.json')));
+    const en = JSON.parse(read(path.join('src', 'lang', 'en.json')));
+    for (const key of ['conflictWith', 'conflictFixed']) {
+        check(`keybinding.${key} 两份包都有且都带插值参数`,
+            typeof zh.keybinding?.[key] === 'string' && typeof en.keybinding?.[key] === 'string'
+                && /\{[a-z]+\}/i.test(String(zh.keybinding[key])) && /\{[a-z]+\}/i.test(String(en.keybinding[key])),
+            `${zh.keybinding?.[key]} / ${en.keybinding?.[key]}`);
+    }
+    const editorSrc = read(path.join('src', 'renderer', 'settings', 'editor.ts'));
+    check('冲突提示只写自己独占的 .keybinding-warning（不去碰 label/title，避免 #9 那类双写）',
+        /warning\.textContent = messages\.join/.test(editorSrc)
+            && !/\.keybinding-label[^]*textContent = .*conflict/i.test(editorSrc));
+    check('容器上的 input 监听有防重复绑定（重渲染只清 innerHTML，容器节点不变）',
+        /container\.dataset\['conflictBound'\]/.test(editorSrc));
+}
+
 console.log(`keybindings-single-source tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);
 process.exitCode = failures ? 1 : 0;

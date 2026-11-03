@@ -1175,7 +1175,11 @@ body[data-editor-theme="light"] .setting-group textarea:hover {
 .snippets-list .snippet-row:last-child { border-bottom:none; }
 
 .keybindings-grid { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-.keybinding-row { display: flex; align-items: center; gap: 10px; background: var(--settings-card-bg); border: 1px solid var(--settings-border); border-radius: 6px; padding: 8px 10px; }
+.keybinding-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; background: var(--settings-card-bg); border: 1px solid var(--settings-border); border-radius: 6px; padding: 8px 10px; }
 .keybinding-label { width: 180px; color: var(--settings-text); }
 .keybinding-input { flex: 1; padding: 8px; border: 1px solid var(--settings-input-border); border-radius: 4px; background: var(--settings-input-bg); color: var(--settings-text); }
 .keybinding-reset { white-space: nowrap; }
+/* 键位撞车提示：颜色沿用本文件的 .error-message 那条红，不再引入新 token */
+.keybinding-warning { width: 100%; color: #f44336; font-size: 12px; }
+.keybinding-warning:empty { display: none; }
+.keybinding-row.keybinding-conflict { border-color: rgba(244, 67, 54, 0.5); }

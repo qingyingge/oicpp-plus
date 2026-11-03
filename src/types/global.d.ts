@@ -68,8 +68,12 @@ interface OicppKeybindingsApi {
   BUILTIN_ACCELERATORS: Record<string, string>;
   builtinAccelerator(actionId: string): string;
   currentPlatform(): OicppPlatform;
+  /** 比较用：把两种写法（CmdOrCtrl+ 与 Ctrl+）归到同一个串。 */
+  canonicalCombo(combo: string): string;
   defaultKeybindings(platform?: OicppPlatform): Record<string, string>;
   editableKeybindingKeys(): string[];
+  /** 撞车的键位：用户可改键之间、以及与不可改的固定键之间。 */
+  findComboConflicts(effective: Record<string, string>): Array<{ combo: string; keys: string[] }>;
   /** accelerator 写法（Ctrl+ / CmdOrCtrl+）→ 按平台的显示文本；mac 走 Apple 顺序 ⌃⌥⇧⌘。 */
   formatShortcutLabel(combo: string, platform?: OicppPlatform): string;
   /** "keybinding:compileAndRun" / "accel:save-file" / "builtin:quickOpen" → 按平台显示文本。 */
