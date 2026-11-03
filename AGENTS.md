@@ -32,7 +32,7 @@ pnpm@11.7.0
 - [改快捷键默认值 / 加可改键](#workflows改快捷键默认值--加可改键)
 
 ### 打安装包（Build / Installer）
-本项目的安装包**不用** electron-builder 的 nsis target 出，而是用仓库根目录自带的 `installer.nsi` + 本机 NSIS。`package.json` 里 `build.win.target = "dir"`，electron-builder 只负责产出 `dist\win-unpacked`；`installer.nsi` 直接从该目录取文件，输出 `dist\OICPP-Plus-<version>-Setup.exe`（`installer.nsi:69`）。CI 同流程，见 `.github/workflows/build.yml:319`。
+本项目的安装包**不用** electron-builder 的 nsis target 出，而是用仓库根目录自带的 `installer.nsi` + 本机 NSIS。`package.json` 里 `build.win.target = "dir"`，electron-builder 只负责产出 `dist\win-unpacked`；`installer.nsi` 直接从该目录取文件，输出 `dist\OICPP-Plus-<version>-Setup.exe`（`installer.nsi:69`）。CI 同流程，见 `.github/workflows/build.yml:336`（`makensis "/DPRODUCT_VERSION=$version" installer.nsi`），便携包产物并入 `windows-artifacts` 在同文件 `:349`。
 
 **不要**执行 `electron-builder --win nsis`：它会尝试联网下载 NSIS 工具链（缓存在 `%LOCALAPPDATA%\electron-builder\Cache`），网络不稳时会以 `fetch failed` / `TypeError: terminated` 失败，且该失败与代码无关。
 
@@ -313,4 +313,8 @@ tests/
 - Regression tests = plain Node scripts in `tests/` (`pnpm run ci:tests`), no external test framework.
 - CI check = `pnpm run ci` only.
 - CSP allows `unsafe-eval` (Monaco needs it).
-- No GitHub Actions / GitLab CI / Docker.
+- 有 GitHub Actions，但**没有一条 push/PR 触发的流水线**：`build.yml` 只在 tag `v*-plus.<后缀>` 或
+  `workflow_dispatch` 时跑，`build-deb-test` / `build-dmg-test` / `build-windows-test` 全是纯手动。
+  也就是说推上去没人替你验，`pnpm run ci` 必须本地跑完。（这条原来写成「No GitHub Actions」，
+  与本文「打安装包」一节自己引用的那个 workflow 行号自相矛盾 —— 行号也顺手核过并更正了。）
+  没有 GitLab CI / Docker。
