@@ -1550,5 +1550,17 @@
       "commit": "d0f126b",
       "note": "warning 回调把 {completed,total,missing} 记进 task.state.incompleteRun（Number(..) || 0 收窄）；新增 getCompletionWarningMessage(task, failed) 供 complete 与 stopped 两条收尾共用，有缺口就走 compare.incompleteRun 并复用 getEngineErrorMessage 的码表现算译文，缺口与生成失败同时存在时以缺口为准；startComparison 与 resetComparison 各加一处复位。preload.d.ts 的 onCompareWarning 载荷补上三个计数字段。守卫：compare-progress-accuracy 490→504、compare-cache-cleanup 77→78（改抽真身而非桩）。变异检验 13 例：击杀 9 / 等价存活 3 / 已声明边界 1（startComparison 那处复位无行为守卫，整条开跑流程含编译与 IPC，未接进沙箱）/ 错位 0。"
     }
+  },
+  {
+    "id": "M59",
+    "severity": "MEDIUM",
+    "title": "pnpm run ci:tests 恒红：runRegressionTests() 早于 REGRESSION_TEST_BUDGET_MS 声明被调用，TDZ 异常被 try/catch 吞成「测试失败」",
+    "status": "待修复",
+    "file": "scripts/ci-check.js:101-104; scripts/ci-check.js:1835; scripts/ci-check.js:1840-1853",
+    "problem": "d073dd9 新增「运行时参数区分的 CI 模式」时，把 --only tests 的分支放在了文件顶部：:101-104 直接调用 runRegressionTests() 再 finish()。该函数体在 :1841 用 execSync 的 timeout 选项读取 REGRESSION_TEST_BUDGET_MS，而这个 const 声明在 :1835 —— 模块级 const 不提升，在 :102 那次调用时尚处 TDZ，取值抛 ReferenceError。抛点正好落在 :1840 的 try 内，catch 只能读 err.stdout / err.stderr（两者都是 undefined），于是一行测试输出都没打，直接走 :1852 的 fail('regression tests failed')。同一函数在全量路径（:2038）是在声明之后调用的，所以 pnpm run ci 正常、pnpm run ci:tests 无条件失败 —— 差别只有调用时机。",
+    "impact": "AGENTS.md 把 ci:tests 登记为「只跑回归测试」的可用模式，实际它永远 FAIL 且摘要显示 Passed: 0 / Warnings: 0 / Failed: 1，不报任何测试文件名。用它快速验证的人会误判自己的改动弄坏了测试，去查一批根本没跑的用例；或直接放弃该模式改跑慢一个数量级的全量 ci。更关键的是这条「失败」与真实断言失败逐字相同，无法区分「测试挂了」和「守卫自己炸了」—— 正是本项目反复强调的「守卫在但不干活」。",
+    "evidence": "实测：node scripts/ci-check.js --only tests 的 [T1] 段落除 [FAIL] regression tests failed 外没有任何逐文件行，摘要 Passed: 0 / Failed: 1；同一工作区同一时刻 node tests/run-tests.js 为 66/66 通过，node scripts/ci-check.js 全量为 82 项检查通过、66/66 测试通过。机制由行号可直读：:102 调用 → :1841 读 REGRESSION_TEST_BUDGET_MS → 声明在 :1835（文件末尾附近）→ :1840 的 try 覆盖该读取。（本条仅登记未修，未对「上提常量后 ci:tests 转绿」做实测验证。）",
+    "introduced_by": "d073dd9",
+    "fix_plan": "把 REGRESSION_TEST_BUDGET_MS 上提到文件顶部常量区（:20 附近），或将 :101-104 的早期分支移到该声明之后。同时应把「守卫自身异常」与「测试断言失败」分开报：catch 里以 err.stdout === undefined（子进程根本没跑起来）为信号单列一条 fail 文案，否则同类 bug 下次仍会伪装成测试挂了。改完必须做变异检验：故意让一个用例失败，确认 ci:tests 报出的是那个文件名而不是 Passed: 0。"
   }
 ]
