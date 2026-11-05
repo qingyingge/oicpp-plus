@@ -76,6 +76,7 @@ catch (e) {
 }
 const child_process_1 = require("child_process");
 const process_supervisor_1 = require("../utils/process-supervisor");
+const memory_limit_1 = require("../utils/memory-limit");
 /**
  * 对拍工作进程的句柄：在标准 ChildProcess 上扩展了对拍自定义属性。
  * @typedef {{
@@ -119,8 +120,16 @@ function outputsEqual(left, right) {
     }
     return normalizeOutput(left) === normalizeOutput(right);
 }
-function spawnProcess(exePath, args, cwd) {
+function spawnProcess(exePath, args, cwd, memoryLimitMb) {
     return new Promise((resolve) => {
+        // 内存上限用 prlimit 包一层（Linux 的 RLIMIT_AS 硬 cap）。它带命令时是 exec
+        // 而非 fork，所以 spawn 返回的 pid 就是目标本身 —— /proc 峰值采样量的正是它。
+        // 由主进程的 utils/memory-limit 与这里共用同一个实现，判据不会分叉。
+        const limited = (memoryLimitMb && memoryLimitMb > 0)
+            ? (0, process_supervisor_1.getResourceLimitedSpawn)(exePath, args || [], memoryLimitMb)
+            : null;
+        const launchPath = limited ? limited.command : exePath;
+        const launchArgs = limited ? limited.args : (args || []);
         // 全平台 detached（win32 = DETACHED_PROCESS，不分配控制台）——这是权衡后的
         // 最终选择，两种模式对 console 依赖程序的行为差异实测于 docs/PERFORMANCE.md：
         //   隐藏控制台（旧）：getch/kbhit 绕过重定向的 stdin 读 CONIN$ → 永挂；
@@ -130,7 +139,7 @@ function spawnProcess(exePath, args, cwd) {
         // 与 OJ 评测环境同构；隐藏控制台则同时存在「读不到的一把键」和「永挂」两种
         // 幽灵路径。另外 DETACHED 每进程快 23ms（省 conhost 分配）。
         // POSIX detached 同时给出独立进程组供 kill(-pid)。win32 杀树走 taskkill /T。
-        const proc = (0, child_process_1.spawn)(exePath, args || [], {
+        const proc = (0, child_process_1.spawn)(launchPath, launchArgs, {
             stdio: ['pipe', 'pipe', 'pipe'],
             windowsHide: true,
             detached: true,
@@ -513,12 +522,77 @@ function stripBom(value) {
     }
     return value.charCodeAt(0) === 0xFEFF ? value.slice(1) : value;
 }
-async function judgeCase(c, o, msg, tag) {
+// 有上限时 500ms 采一次（与主进程 run-program 同一档），没上限就不采
+const MEMORY_SAMPLE_MS = 500;
+/**
+ * cases 模式跑一个程序，附带内存峰值与超限判定。
+ *
+ * 不能走 native：posix_spawn 没有 setrlimit 这条路，RLIMIT_AS 只能靠 prlimit 包一层。
+ * prlimit 带命令时 exec 而非 fork，所以峰值采样量到的仍是目标本身。
+ *
+ * 已知盲区（与主进程 run-program 完全一致，不是这次引入的）：Linux 上峰值靠 500ms
+ * 轮询，跑完得比一个采样周期还快的程序会报 0 内存；而 prlimit 是硬 cap，超限的程序
+ * 往往是自己 malloc 失败退出（报成 RE）而不是被轮询抓到（报 MLE）。win32 由 memwatch
+ * 读内核维护的高水位避开前半段，后半段两边一样。
+ */
+async function runCaseProgram(msg, input) {
+    const t0 = Date.now();
+    const limitMb = Number(msg.memoryLimitMb) || 0;
+    const limitBytes = limitMb > 0 ? limitMb * 1024 * 1024 : 0;
+    const proc = await spawnProcess(msg.exePath, undefined, undefined, limitMb);
+    await writeInput(proc, input);
+    // win32 由 memwatch 读内核维护的峰值（轮询采不到短命进程的高点，那正是
+    // mywwzh/oicpp#368「内存显示 0.0MB」的成因）；其它平台它返回 null，退回轮询。
+    const memWatch = (0, memory_limit_1.startMemWatch)(proc.pid, limitBytes, msg.memWatchPath || '');
+    let peakBytes = 0;
+    let exceeded = false;
+    let inflight = null;
+    const sample = () => {
+        if (inflight)
+            return inflight;
+        inflight = (0, memory_limit_1.readProcessMemoryBytes)(proc.pid)
+            .then((bytes) => {
+            if (bytes > peakBytes)
+                peakBytes = bytes;
+            if (limitBytes > 0 && bytes > limitBytes && !exceeded) {
+                exceeded = true;
+                killProc(proc);
+            }
+        })
+            .catch(() => { })
+            .then(() => { inflight = null; });
+        return inflight;
+    };
+    const timer = limitBytes > 0 ? setInterval(sample, MEMORY_SAMPLE_MS) : null;
+    if (timer && typeof timer.unref === 'function')
+        timer.unref();
+    const r = await waitForResult(proc, msg.timeout);
+    if (timer)
+        clearInterval(timer);
+    const output = (r.exitCode === -1 || r.exitCode === -3) ? null : proc._collect();
+    const watchReport = await (0, memory_limit_1.resolveMemWatchReport)(memWatch);
+    if (watchReport) {
+        if (watchReport.peakBytes > peakBytes)
+            peakBytes = watchReport.peakBytes;
+        if (watchReport.exceeded)
+            exceeded = true;
+    }
+    return {
+        code: r.exitCode, output,
+        outputTruncated: !!r.outputTruncated || !!proc._outputTruncated?.(),
+        timeout: !!r.timeout, error: r.error, signal: r.signal || null,
+        ms: Date.now() - t0, stderr: proc._stderr(),
+        memoryBytes: peakBytes, memoryLimitExceeded: exceeded
+    };
+}
+async function judgeCase(c, o, memory, msg, tag) {
     const f = factsOfProgram(o, 'program');
-    // 顺序沿用样例测试器今天的判据（OLE → TLE → RE → 判定），与对拍的优先级不同是
-    // 有意的：样例里「输出爆掉」比「顺手也超时了」更能解释用户看到的现象。
+    // 顺序沿用样例测试器今天的判据（OLE → MLE → TLE → RE → 判定），与对拍的优先级不同是
+    // 有意的：超限被杀之后一定伴随「非零退出/signal」，把 MLE 排在它们之后就永远报不出来。
     if (f.ole)
         return { status: 'OLE', spjOutput: '' };
+    if (memory.exceeded)
+        return { status: 'MLE', spjOutput: '' };
     if (f.timedOut)
         return { status: 'TLE', spjOutput: '' };
     if (f.crashed || f.exitNonZero)
@@ -544,18 +618,24 @@ worker_threads_1.parentPort.on('message', async (msg) => {
         const started = Date.now();
         let o;
         let stderr = '';
+        let memoryBytes = 0;
+        let memoryExceeded = false;
         try {
-            if (fast) {
+            const limitMb = Number(msg.memoryLimitMb) || 0;
+            if (fast && limitMb <= 0) {
                 const r = fast.run(msg.exePath, c.input, effectiveRunTimeout(msg.timeout));
                 o = outcomeFromFast(r.code, r.output, !!r.truncated, r.signal, Date.now() - started);
                 stderr = r.stderr ? Buffer.from(r.stderr).toString('utf8') : '';
             }
             else {
-                const r = await runJs(msg.exePath, c.input, msg.timeout, undefined, undefined, true);
+                // 有内存上限时只能走 child_process（prlimit 包一层），native 没有 setrlimit 这条路
+                const r = await runCaseProgram(msg, c.input);
                 o = outcomeFromJs(r);
                 stderr = r.stderr || '';
+                memoryBytes = r.memoryBytes;
+                memoryExceeded = r.memoryLimitExceeded;
             }
-            const verdict = await judgeCase(c, o, msg, String(i));
+            const verdict = await judgeCase(c, o, { exceeded: memoryExceeded }, msg, String(i));
             const shown = captureText(o.output, MAX_CAPTURED_OUTPUT_BYTES);
             worker_threads_1.parentPort.postMessage({
                 type: 'case-result',
@@ -567,7 +647,9 @@ worker_threads_1.parentPort.on('message', async (msg) => {
                 stdoutTruncated: shown.truncated,
                 stderr: stderr,
                 expected: c.expected,
-                spjOutput: verdict.spjOutput
+                spjOutput: verdict.spjOutput,
+                memoryBytes: memoryBytes,
+                memoryLimitExceeded: memoryExceeded
             });
         }
         catch (e) {
@@ -581,7 +663,9 @@ worker_threads_1.parentPort.on('message', async (msg) => {
                 stdoutTruncated: false,
                 stderr: e.message || String(e),
                 expected: c.expected,
-                spjOutput: ''
+                spjOutput: '',
+                memoryBytes: memoryBytes,
+                memoryLimitExceeded: false
             });
         }
     }

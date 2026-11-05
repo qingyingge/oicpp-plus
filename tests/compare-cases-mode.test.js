@@ -224,6 +224,33 @@ function runCases(msg) {
         console.log('[SKIP] native 入参守卫 | 没有 fastspawn.node（Windows 走 child_process，本来就没这个坑）');
     }
 
+    // ---- 8. 内存：设了上限就必须走能采样的那条路 ----
+    // native 的 posix_spawn 没有 setrlimit 这条路，上限只能靠 prlimit 包一层。
+    // 一旦哪天有人把「有内存上限就走 child_process」这个条件删掉，内存限制会
+    // 静默失效 —— 而结论照样 AC，谁也看不出来。所以这里断言的不是 MLE 状态，
+    // 而是 memoryBytes 必须大于 0：它是「确实走了采样路径」的证据。
+    // 程序要「停在峰值上待一会儿」：采样间隔是 500ms（与主进程同一档），跑得太快
+    // 一次都采不到 —— 这不是测试的取巧，而是 Linux 轮询对短命程序的固有盲区
+    // （win32 靠 memwatch 读内核高水位才躲得开）。
+    const HOG = script('hog.sh', `exec ${JSON.stringify(process.execPath)} -e 'const x=new Uint8Array(48*1024*1024); x[7]=1; const t=Date.now(); while(Date.now()-t<1300){} console.log(x[7])'\n`);
+    const memRun = await runCases({
+        exePath: HOG, memoryLimitMb: 4096,
+        cases: [{ input: '', expected: '1\n' }]
+    });
+    check('设了内存上限时走带 prlimit 与峰值采样的路径（memoryBytes > 0 是证据）',
+        memRun.results[0].memoryBytes > 8 * 1024 * 1024 && memRun.results[0].status === 'AC',
+        JSON.stringify({ status: memRun.results[0].status, mb: Math.round(memRun.results[0].memoryBytes / 1048576) }));
+
+    const noMem = await runCases({ exePath: SUM, cases: [{ input: '3 4\n', expected: '7\n' }] });
+    check('没设上限时不白白多一个轮询定时器（走 native，memoryBytes 恒为 0）',
+        noMem.results[0].memoryBytes === 0 && noMem.results[0].status === 'AC',
+        JSON.stringify({ mb: noMem.results[0].memoryBytes }));
+
+    check('MLE 排在 TLE/RE 之前（超限被杀必然伴随非零退出，排在之后就永远报不出来）',
+        judgeBody.indexOf("memory.exceeded") > -1
+        && judgeBody.indexOf("memory.exceeded") < judgeBody.indexOf("f.timedOut")
+        && judgeBody.indexOf("f.timedOut") < judgeBody.indexOf("f.crashed"), '');
+
     cleanup();
     if (ran === 0) { console.log('[FAIL] 一条断言都没跑'); failures++; }
     console.log(`\n${ran} 条断言，${failures} 失败`);
