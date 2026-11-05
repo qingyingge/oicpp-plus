@@ -102,8 +102,11 @@ function runEngine(cfg) {
         bad.progress === 0 && bad.errors.length === 1 && bad.errors[0].type === 'mismatch',
         JSON.stringify(bad));
 
-    // 真超时的样子：子进程自己不读完输入前不会结束，给一个必定超时的时限
-    const spinner = script('spinner.sh', 'i=0; while [ $i -lt 200000 ]; do i=$((i+1)); done; echo x');
+    // 真超时的样子：时限 800ms，子进程睡 5s，超出 6 倍，怎么都该判 TLE。
+    // 原先用「数到 20 万次的空循环」当慢程序 —— 它的耗时随机器速度漂移：本机实测
+    // 790-820ms 正好压在 800ms 时限上，同一条断言在未改动的 HEAD 上连跑四次红三次，
+    // 而且 std 与 test 谁先被判定也会翻（时限判定本身没错，是量纲选了个不稳定的基准）。
+    const spinner = script('spinner.sh', 'sleep 5; echo x');
     const tle = await runEngine({ generator: GEN_SLOW, stdExe: spinner, testExe: spinner });
     check('子进程真超时仍然报 std_tle/std_timeout（守卫不是把时限关掉）',
         tle.errors.length === 1 && tle.errors[0].type === 'std_tle' && tle.errors[0].code === 'std_timeout',
