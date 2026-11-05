@@ -30,6 +30,7 @@ const { normalizeClangFormatStyle, generateClangFormatText } = require('./utils/
 const { defaultKeybindings, menuAccelerator, resolvePlatform } = require('./utils/keybindings');
 const { SETTINGS_KEYS, SETTINGS_MERGE_KEYS, SETTINGS_WRITABLE_KEYS } = require('./utils/settings-schema');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
+const { readProcessMemoryBytes, parseMemWatchReport } = require('./utils/memory-limit');
 const clangdCompileFlags = require('./utils/clangd-compile-flags');
 const { filterGccPrivateIncludes } = require('./utils/compiler-paths');
 const GDBDebugger = require('./gdb-debugger');
@@ -2883,27 +2884,6 @@ function warmUpMemWatch() {
         return null;
     });
     return memWatchBuildPromise;
-}
-function parseMemWatchReport(text) {
-    const raw = String(text || '').trim();
-    if (!raw || raw.startsWith('attach-failed')) {
-        return null;
-    }
-    const parts = raw.split(/\s+/);
-    if (parts.length < 4) {
-        return null;
-    }
-    const peakBytes = Number(parts[0]);
-    const privateBytes = Number(parts[1]);
-    const ok = Number(parts[3]) === 1;
-    if (!ok || !Number.isFinite(peakBytes) || !Number.isFinite(privateBytes)) {
-        return null;
-    }
-    return {
-        peakBytes,
-        privateBytes,
-        exceeded: Number(parts[2]) === 1
-    };
 }
 function startMemWatch(pid, limitBytes = 0) {
     if (process.platform !== 'win32' || !pid) {
@@ -6154,36 +6134,8 @@ function setupIPC() {
             // memwatch 附着后由它给出内核维护的峰值，并在超限时终止目标；
             // 它在位时不再启动 tasklist 轮询（那套采样既慢又会漏掉短命进程的峰值）。
             const memWatchHandle = startMemWatch(childProcess.pid, memoryLimitBytes);
-            const readMemoryBytes = () => new Promise((resolve) => {
-                const pid = childProcess?.pid;
-                if (!pid)
-                    return resolve(0);
-                if (process.platform === 'linux') {
-                    fs.readFile(`/proc/${pid}/status`, 'utf8', (error, content) => {
-                        if (error)
-                            return resolve(0);
-                        const match = content.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-                        resolve(match ? Number(match[1]) * 1024 : 0);
-                    });
-                    return;
-                }
-                if (process.platform === 'win32') {
-                    const tasklist = spawn('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true });
-                    let output = '';
-                    tasklist.stdout.on('data', (chunk) => { output += chunk.toString(); });
-                    tasklist.on('close', () => {
-                        const match = output.match(/"([\d,.]+)\s*K"/i);
-                        resolve(match ? Number(match[1].replace(/[^\d]/g, '')) * 1024 : 0);
-                    });
-                    tasklist.on('error', () => resolve(0));
-                    return;
-                }
-                const ps = spawn('ps', ['-o', 'rss=', '-p', String(pid)]);
-                let output = '';
-                ps.stdout.on('data', (chunk) => { output += chunk.toString(); });
-                ps.on('close', () => resolve((Number(output.trim()) || 0) * 1024));
-                ps.on('error', () => resolve(0));
-            });
+            // 读数本身在 utils/memory-limit 里，worker 端的 cases 模式用的是同一份
+            const readMemoryBytes = () => readProcessMemoryBytes(childProcess?.pid);
             const sampleMemory = () => {
                 if (memorySamplePromise) {
                     return memorySamplePromise;
@@ -6607,35 +6559,10 @@ function setupIPC() {
                 timeoutTimer = null;
                 killTimer = null;
             };
-            const readPidMemory = (pid) => new Promise((done) => {
-                if (!pid)
-                    return done(0);
-                if (process.platform === 'linux') {
-                    fs.readFile('/proc/' + pid + '/status', 'utf8', (error, content) => {
-                        if (error)
-                            return done(0);
-                        const match = content.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-                        done(match ? Number(match[1]) * 1024 : 0);
-                    });
-                    return;
-                }
-                if (process.platform === 'win32') {
-                    const tasklist = spawn('tasklist', ['/FI', 'PID eq ' + pid, '/FO', 'CSV', '/NH'], { windowsHide: true });
-                    let output = '';
-                    tasklist.stdout.on('data', (chunk) => { output += chunk.toString(); });
-                    tasklist.on('close', () => {
-                        const match = output.match(/([\d,.]+)\s*K/i);
-                        done(match ? Number(match[1].replace(/[^\d]/g, '')) * 1024 : 0);
-                    });
-                    tasklist.on('error', () => done(0));
-                    return;
-                }
-                const ps = spawn('ps', ['-o', 'rss=', '-p', String(pid)]);
-                let output = '';
-                ps.stdout.on('data', (chunk) => { output += chunk.toString(); });
-                ps.on('close', () => done((Number(output.trim()) || 0) * 1024));
-                ps.on('error', () => done(0));
-            });
+            // 与 run-program 共用 utils/memory-limit 的同一份读数：这里以前是它的
+            // 第二份拷贝，连 tasklist 的正都和另一处不一样（一个要求引号、一个不要求），
+            // 同一个程序在两个面板上可能报出不同的内存数。
+            const readPidMemory = (pid) => readProcessMemoryBytes(pid);
             const readMemory = async () => {
                 const [contestantMemory, graderMemory] = await Promise.all([
                     readPidMemory(contestant?.pid),

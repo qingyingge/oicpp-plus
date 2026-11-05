@@ -17,6 +17,7 @@
  */
 
 const path = require('path');
+const fs = require('fs');
 const cp = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -37,6 +38,17 @@ const prlimitPath = ['/usr/bin/prlimit', '/bin/prlimit'].find(p => { try { retur
 
 check('函数存在且导出（main.ts 与 worker 共用这一个实现）',
     typeof getResourceLimitedSpawn === 'function', typeof getResourceLimitedSpawn);
+
+// 抽这个模块的动机就是「读数只有一份」。main.js 里曾经有两份内联实现
+// （run-program 与 run-interactive 各一份，连 tasklist 的正都写得不一样），
+// 这条把「不能再回到两份」钉住：VmRSS 只应出现在 utils/memory-limit.js 里。
+const mainSrc = fs.readFileSync(path.join(ROOT, 'src', 'main.js'), 'utf8');
+const readerSrc = fs.readFileSync(path.join(ROOT, 'src', 'utils', 'memory-limit.js'), 'utf8');
+check('内存读数只有一份实现（main.js 里已经没有内联的 VmRSS 解析）',
+    (mainSrc.match(/VmRSS/g) || []).length === 0 && (readerSrc.match(/VmRSS/g) || []).length >= 1,
+    JSON.stringify({ main: (mainSrc.match(/VmRSS/g) || []).length, util: (readerSrc.match(/VmRSS/g) || []).length }));
+check('main.js 通过共享模块读内存（两个调用点都在）',
+    mainSrc.includes('readProcessMemoryBytes(childProcess?.pid)') && /readPidMemory = \(pid\) => readProcessMemoryBytes\(pid\)/.test(mainSrc), '');
 
 // 不该上限制的组合一律返回 null，调用方据此走普通 spawn
 check('没设上限 / 非法上限时返回 null（不能凭空包一层壳）',
