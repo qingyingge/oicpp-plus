@@ -321,6 +321,22 @@ async function runGenerator(gen, timeout) {
     }
     if (!exe)
         return { code: -2, error: 'missing generator executable', output: null, ms: 0 };
+    // 生成器优先走 native 异步：实测这一腿 child_process 32.4ms vs native 10.9ms，
+    // 而三个程序都 <1ms 的轻量对拍里，一轮 51.8ms 有 29.1ms 就是它 —— 几乎全是
+    // Node spawn 的固定开销，不是用户程序在算。异步保证 'stop' 仍能中途杀。
+    if (fast && typeof fast.runAsync === 'function') {
+        const t0 = Date.now();
+        const r = await fast.runAsync(exe, null, effectiveRunTimeout(timeout), cwd, args);
+        return {
+            code: r.code,
+            output: r.output,
+            outputTruncated: !!r.truncated,
+            timeout: r.code === -3,
+            error: null,
+            signal: (typeof r.signal === 'number' && r.signal > 0) ? String(r.signal) : null,
+            ms: Date.now() - t0
+        };
+    }
     return await runJs(exe, null, timeout, args, cwd);
 }
 // ---------------------------------------------------------------------------
@@ -411,35 +427,53 @@ function asBuffer(value) {
         return Buffer.alloc(0);
     return Buffer.isBuffer(value) ? value : Buffer.from(value);
 }
-// checker 只吃文件，且 testlib 恒要求三个位置参数都存在（打不开会直接 testlib FAIL），
-// 所以这是整条对拍里唯一需要把内存数据落盘的环节。
-// answer 是正解的输出；没配正解（SPJ 下合法）时传一个存在的空文件 —— 只验性质的
-// checker 不读它，而最优化题那类要基准的 checker 就得让用户把正解填上。
-// 文件名带 startIdx —— 每个 worker 的分片起点互不相同，同一 worker 内逐轮串行，
-// 因此固定三个名字反复覆盖即可，既不会跨 worker 撞车，也不堆积 per-test 临时文件。
-async function judgeWithChecker(spjPath, scratchDir, tag, input, answer, actual, timeout) {
-    const inFile = path.join(scratchDir, `oicpp_spj_${tag}_in.txt`);
-    const outFile = path.join(scratchDir, `oicpp_spj_${tag}_out.txt`);
-    const ansFile = path.join(scratchDir, `oicpp_spj_${tag}_ans.txt`);
+function prepareCheckerSlots(scratchDir, tag) {
+    return {
+        dir: scratchDir,
+        inFile: path.join(scratchDir, `oicpp_spj_${tag}_in.txt`),
+        outFile: path.join(scratchDir, `oicpp_spj_${tag}_out.txt`),
+        ansFile: path.join(scratchDir, `oicpp_spj_${tag}_ans.txt`)
+    };
+}
+// taskkill 返回后句柄可能还没释放（见 waitForResult 里同样的处理），
+// 删不掉就留给下一次覆盖，不能让它盖掉判定结论。
+function removeCheckerSlots(slots) {
+    for (const file of [slots.inFile, slots.outFile, slots.ansFile]) {
+        try {
+            fs.unlinkSync(file);
+        }
+        catch (_) { }
+    }
+}
+// checker 是整轮第四个进程，且串行卡在判定前 —— 它走 child_process 时实测一次 25ms,
+// 而同样的进程 native 起只要 8ms。SPJ 轮因此比非 SPJ 轮贵 41ms，纯属进程创建的固定开销。
+async function runChecker(spjPath, slots, timeout) {
+    const args = [slots.inFile, slots.outFile, slots.ansFile];
+    if (fast && typeof fast.runAsync === 'function') {
+        const t0 = Date.now();
+        const r = await fast.runAsync(spjPath, null, effectiveRunTimeout(timeout), slots.dir, args);
+        return {
+            code: r.code,
+            output: r.output,
+            outputTruncated: !!r.truncated,
+            timeout: r.code === -3,
+            error: null,
+            signal: (typeof r.signal === 'number' && r.signal > 0) ? String(r.signal) : null,
+            ms: Date.now() - t0,
+            stderr: r.stderr == null ? '' : String(r.stderr)
+        };
+    }
+    return await runJs(spjPath, null, timeout, args, slots.dir, true);
+}
+async function judgeWithChecker(spjPath, slots, input, answer, actual, timeout) {
     try {
-        fs.writeFileSync(inFile, asBuffer(input));
-        fs.writeFileSync(outFile, asBuffer(actual));
-        fs.writeFileSync(ansFile, asBuffer(answer));
-        const run = await runJs(spjPath, null, timeout, [inFile, outFile, ansFile], scratchDir, true);
-        return verdictFromChecker(run);
+        fs.writeFileSync(slots.inFile, asBuffer(input));
+        fs.writeFileSync(slots.outFile, asBuffer(actual));
+        fs.writeFileSync(slots.ansFile, asBuffer(answer));
+        return verdictFromChecker(await runChecker(spjPath, slots, timeout));
     }
     catch (e) {
         return { kind: 'spj_error', code: 'spj_error', detail: e.message || String(e) };
-    }
-    finally {
-        // taskkill 返回后句柄可能还没释放（见 waitForResult 里同样的处理），
-        // 删不掉就留给下一轮覆盖，不能让它盖掉判定结论。
-        for (const file of [inFile, outFile, ansFile]) {
-            try {
-                fs.unlinkSync(file);
-            }
-            catch (_) { }
-        }
     }
 }
 function prepareFreopenSlots(scratchDir, startIdx, inputFile, outputFile) {
@@ -598,9 +632,16 @@ async function judgeCase(c, o, memory, msg, tag) {
     if (f.crashed || f.exitNonZero)
         return { status: 'RE', spjOutput: '' };
     if (msg.spjPath) {
-        // 样例的 expected 就是 checker 的 answer —— 这正是「有基准」那一侧的用法
-        const desc = await judgeWithChecker(msg.spjPath, msg.scratchDir, tag, c.input, c.expected, o.output, msg.timeout);
-        return { status: caseStatusFromChecker(desc), spjOutput: desc ? desc.detail : '' };
+        // 样例的 expected 就是 checker 的 answer —— 这正是「有基准」那一侧的用法。
+        // 用后即删：一次跑完的用例彼此无关，留文件就是留残骸。
+        const slots = prepareCheckerSlots(msg.scratchDir, tag);
+        try {
+            const desc = await judgeWithChecker(msg.spjPath, slots, c.input, c.expected, o.output, msg.timeout);
+            return { status: caseStatusFromChecker(desc), spjOutput: desc ? desc.detail : '' };
+        }
+        finally {
+            removeCheckerSlots(slots);
+        }
     }
     // BOM 只在这条文本比对分支剥：样例测试器今天的 SPJ 路径传的是 trimEnd 后的原文，
     // 照搬才是「行为不变」，顺手也给 checker 剥 BOM 反而是改动旧行为。
@@ -635,7 +676,7 @@ worker_threads_1.parentPort.on('message', async (msg) => {
                 memoryBytes = r.memoryBytes;
                 memoryExceeded = r.memoryLimitExceeded;
             }
-            const verdict = await judgeCase(c, o, { exceeded: memoryExceeded }, msg, String(i));
+            const verdict = await judgeCase(c, o, { exceeded: memoryExceeded }, msg, 'c' + i);
             const shown = captureText(o.output, MAX_CAPTURED_OUTPUT_BYTES);
             worker_threads_1.parentPort.postMessage({
                 type: 'case-result',
@@ -691,6 +732,9 @@ worker_threads_1.parentPort.on('message', async (msg) => {
         const slots = freopenOn
             ? prepareFreopenSlots(scratchDir, startIdx, freopenInput, freopenOutput)
             : null;
+        // checker 的三个临时文件按分片固定，逐轮覆盖。名字里的 tag 用 w<startIdx>，
+        // 与样例模式的 c<i> 形状不同，两条路径同时跑也删不到对方的文件。
+        const chkSlots = spjPath ? prepareCheckerSlots(scratchDir, 'w' + startIdx) : null;
         const genTimeout = (Number.isFinite(generatorTimeout) && generatorTimeout > 0) ? generatorTimeout : 0;
         let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;
         // 回退路径的生成器预取：std/test 并发期间事件循环是空的，提前把下一组
@@ -810,8 +854,11 @@ worker_threads_1.parentPort.on('message', async (msg) => {
                 // SPJ 下判等权整个交给 checker；无 checker 时仍是规范化文本判等
                 // （那条分支里 std 必然存在，只有它才可能给出「两边文本相同」这个结论）。
                 let judged = null;
-                if (spjPath) {
-                    judged = await judgeWithChecker(spjPath, scratchDir, String(startIdx), rawInput(), std ? std.output : null, cur.output, timeout);
+                if (chkSlots) {
+                    judged = await judgeWithChecker(spjPath, chkSlots, rawInput(), std ? std.output : null, cur.output, timeout);
+                    // 按停止时 checker 是被 cancelAll 杀掉的，不先看 running 就会把它报成「checker 挂了」
+                    if (!running)
+                        break;
                 }
                 else if (std) {
                     judged = outputsEqual(std.output, cur.output) ? null : { kind: 'mismatch', code: 'mismatch', detail: 'outputs differ' };
@@ -826,10 +873,22 @@ worker_threads_1.parentPort.on('message', async (msg) => {
                 fail(i, 'exception', 'exception', e && e.message ? e.message : String(e), { rawInput: rawInput() });
             }
         }
+        // 分片收尾才删：逐轮 unlink 三次是纯开销，checker 每轮都要重新读这三个名字。
+        // 走到这里既覆盖正常跑完，也覆盖 'stop'（循环条件里 running 变假后 break 出来）。
+        if (chkSlots)
+            removeCheckerSlots(chkSlots);
         worker_threads_1.parentPort.postMessage({ type: 'done' });
     }
     else if (msg.type === 'stop') {
         running = false;
+        // native 异步起的子进程不在 activeProcesses 里（它们在 C 侧由线程池等），
+        // 所以除了杀 child_process 那批，还得让 addon 把它登记过的进程组一起收掉。
+        if (fast && typeof fast.cancelAll === 'function') {
+            try {
+                fast.cancelAll();
+            }
+            catch (_) { }
+        }
         for (const proc of activeProcesses)
             killProc(proc);
         activeProcesses.clear();

@@ -507,8 +507,8 @@ const workerRows = (() => {
             // SPJ 与 freopen 分别由 tests/compare-spj-checker.test.js、
             // tests/compare-freopen-engine.test.js 用真引擎覆盖；judgeWithChecker 在这里
             // 是哨兵（被叫到就说明未启用的东西被偷偷启用了），slots=null 让
-            // readSlotOutput 走早退分支。
-            "const spjPath = '', scratchDir = '', freopenInput = '', slots = null;",
+            // readSlotOutput 走早退分支，chkSlots=null 让 checker 分支根本不进。
+            "const spjPath = '', scratchDir = '', freopenInput = '', slots = null, chkSlots = null;",
             'const judgeWithChecker = () => { trace.spj++; return Promise.resolve(null); };',
             `const useFast = ${useFast};`,
             'const okRun = { code: 0, ms: 5, output: Buffer.from(\'same\') };',
@@ -653,19 +653,26 @@ const workerRows = (() => {
             slowDiff.fails.length === 3 && slowDiff.fails.every((f) => f[1] === 'mismatch')
             && slowDiff.posts.length === 0, JSON.stringify(slowDiff.fails[0]));
 
+        // native 异步起的子进程不在 activeProcesses 里（由 libuv 线程池等），
+        // 所以 stop 必须另外调 cancelAll —— 少了它，异步版就把「停止能中途杀掉」
+        // 这件事从 child_process 那套搬进了一个没人管的死角。
         const stopCtx = vm.createContext({ Set, String, JSON });
         vm.runInContext([
             'let running = true;',
             "const activeProcesses = new Set([{ tag: 'a' }, { tag: 'b' }]);",
             'const killed = [];',
             'const killProc = (p) => { killed.push(p.tag); };',
+            'const cancelled = [];',
+            'const fast = { cancelAll: () => { cancelled.push(1); } };',
             "const msg = { type: 'stop' };",
             stopSrc,
-            'this.__out = { running, killed: killed.join(","), size: activeProcesses.size };'
+            'this.__out = { running, killed: killed.join(","), size: activeProcesses.size, cancelled: cancelled.length };'
         ].join('\n'), stopCtx);
         push('stop 消息把每个在点子进程都杀掉并清空登记表（漏 clear 就永远赖着不放）',
             stopCtx.__out.running === false && stopCtx.__out.killed === 'a,b' && stopCtx.__out.size === 0,
             JSON.stringify(stopCtx.__out));
+        push('stop 同时叫 addon 收掉 native 异步起的进程组（那批不在 activeProcesses 里）',
+            stopCtx.__out.cancelled === 1, JSON.stringify(stopCtx.__out));
         return rows;
     })().catch((e) => [{ name: 'worker 守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
 })();

@@ -28,11 +28,15 @@
  *   6. 反向边界：勾了 testlib 却不带 checker（只用 testlib 生成器）是合法组合，必须照常
  *      走文本判等并跑正解；「未勾 testlib 时即便发来 spjExe 也不许启用 checker」是同一条
  *      边界的另一半。
+ *   7. checker 那一腿走哪条 spawn 路：它是整条管线里唯一落盘的环节，也是最容易悄悄变贵的一环
+ *      （曾经走 child_process + 每轮三次删除，一轮多花 41ms）。时间比值只能粗筛，精确锁是
+ *      结构锁 —— 见第 8、9 节里那条证伪记录。
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const vm = require('vm');
 
 setTimeout(() => {
     console.log('[FAIL] 主流程没有跑到结尾：引擎没有发出 complete');
@@ -299,6 +303,129 @@ const probe = async (cfg) => {
     check('占位结果的空输出正是 checker 的 answer（空文件，不是缺文件）',
         typeof placeholder.output === 'string' && placeholder.output.length === 0,
         JSON.stringify(placeholder.output));
+
+    // ---- 8. checker 走哪条 spawn 路（结构锁）----
+    // 为什么必须有这条：时间比值锁不住它。同一套桩实测 native 1.29× / child_process 1.70×，
+    // 两个读数落在任何安全毫秒阈值的同一侧 —— sh 自身的启动比「spawn 方式之差」还大，
+    // 而真机（静态小程序）是 1.546× vs 约 2.5×，同样只能说明「贵了」不能指出贵在哪。
+    // 所以精确的锁只能是结构性的：有 native runAsync 就必须用它，且参数还得是 testlib 那三条。
+    const workerSrc = fs.readFileSync(path.join(ROOT, 'src', 'main-process', 'compare-worker.js'), 'utf8');
+    // 按花括号配平抽出整个函数体（产物源码里这两个函数体内没有字符串/注释花括号，
+    // 所以逐字符计数就够；换文件复用前要先确认这一点）
+    const fnOf = (header) => {
+        const at = workerSrc.indexOf(header);
+        if (at < 0) return null;
+        let depth = 0;
+        for (let i = workerSrc.indexOf('{', at); i < workerSrc.length; i++) {
+            if (workerSrc[i] === '{') depth++;
+            else if (workerSrc[i] === '}') { depth--; if (depth === 0) return workerSrc.slice(at, i + 1); }
+        }
+        return null;
+    };
+    const rcSrc = fnOf('async function runChecker(');
+    const effSrc = fnOf('function effectiveRunTimeout(');
+    // effectiveRunTimeout 引用的那个常量也要从源文里原样灌进 vm —— 在测试里抄一份数字，
+    // 常量改了守卫不会红，正是 AGENTS.md 记过的那类假绿。
+    const budgetDecl = /const UNLIMITED_RUN_FALLBACK_MS = [^;]+;/.exec(workerSrc);
+    check('runChecker、effectiveRunTimeout 与那个兜底预算常量都从 worker 产物里抽到了（抽不到下面的断言会全空转）',
+        !!rcSrc && !!effSrc && !!budgetDecl,
+        JSON.stringify({ rc: !!rcSrc, eff: !!effSrc, budget: !!budgetDecl }));
+    const SLOTS = { dir: '/tmp/d', inFile: '/tmp/d/in.txt', outFile: '/tmp/d/out.txt', ansFile: '/tmp/d/ans.txt' };
+    const callRunChecker = (withNative) => {
+        const trace = { native: null, js: null };
+        const ctx = vm.createContext({ Buffer, Date, Promise, String, Number, Math, JSON, trace });
+        vm.runInContext([
+            'const runJs = (exe, input, timeout, args, cwd, wantStderr) => {',
+            '    trace.js = { exe, input, timeout, args, cwd, wantStderr };',
+            "    return Promise.resolve({ code: 0, output: Buffer.from('x'), ms: 1 });",
+            '};',
+            'const fast = ' + (withNative
+                ? '{ runAsync: (exe, input, timeout, cwd, args) => {'
+                    + ' trace.native = { exe, input, timeout, cwd, args };'
+                    + " return Promise.resolve({ code: 1, output: Buffer.from('wa'), truncated: false, stderr: Buffer.from('bad token'), signal: 0 }); } }"
+                : 'null') + ';',
+            budgetDecl[0], effSrc, rcSrc,
+            'this.__run = (p, s, t) => runChecker(p, s, t);'
+        ].join('\n'), ctx);
+        return ctx.__run('/tmp/chk', SLOTS, 0).then(r => ({ trace, r }));
+    };
+    const viaNative = await callRunChecker(true);
+    check('有 native runAsync 时 checker 就走 native，一次 child_process 都不叫（这一条就是上一段比值测不出来的东西）',
+        !!viaNative.trace.native && viaNative.trace.js === null,
+        JSON.stringify({ native: !!viaNative.trace.native, js: viaNative.trace.js }));
+    check('native 的 argv 仍是 testlib 那三条且顺序为 input/out/answer，cwd 是 scratch 目录，stdin 为空',
+        !!viaNative.trace.native
+        && JSON.stringify(viaNative.trace.native.args) === JSON.stringify([SLOTS.inFile, SLOTS.outFile, SLOTS.ansFile])
+        && viaNative.trace.native.cwd === SLOTS.dir && viaNative.trace.native.input === null,
+        JSON.stringify(viaNative.trace.native));
+    check('不限时传给 native 的是兜底预算而不是 0（0 在 fastspawn 里是「无截止」，死循环会把 worker 线程占死）',
+        !!viaNative.trace.native && viaNative.trace.native.timeout >= 10000,
+        JSON.stringify({ timeout: viaNative.trace.native && viaNative.trace.native.timeout }));
+    check('native 的 stderr 被收成字符串交回判定（判词按写法可能只落在 stderr，testlib 的 fail 常见如此）',
+        typeof viaNative.r.stderr === 'string' && viaNative.r.stderr.indexOf('bad token') === 0,
+        JSON.stringify(viaNative.r.stderr));
+    check('native 的退出码与 timeout 分类如实透传（code 1 = WA，不是超时也不是崩溃）',
+        viaNative.r.code === 1 && viaNative.r.timeout === false && viaNative.r.signal === null,
+        JSON.stringify({ code: viaNative.r.code, timeout: viaNative.r.timeout, signal: viaNative.r.signal }));
+    const viaJs = await callRunChecker(false);
+    check('没有 runAsync（win32 / addon 加载失败）时仍回退 child_process，参数与 cwd 一致',
+        !!viaJs.trace.js && viaJs.trace.js.args[0] === SLOTS.inFile && viaJs.trace.js.cwd === SLOTS.dir && viaJs.trace.js.wantStderr === true,
+        JSON.stringify(viaJs.trace.js));
+
+    // ---- 9. checker 那一腿只该值「多起一个进程 + 三次写盘」的钱 ----
+    // 判据是**比值**而不是绝对毫秒：本机（proot + ptrace）一次 spawn 就要 7~45ms，换台机器差一个
+    // 数量级，任何毫秒阈值都是假的。分母取「非 SPJ 轮」—— 它就是一轮里 gen + 被测对的实测成本，
+    // 同机、同路径、同 worker 启动开销，比值因此把机器速度约掉。
+    // 这条只是**粗筛**（挡住「checker 跑了两遍」「每轮又多加一批磁盘操作」这类整段变贵），
+    // 不是精确锁：证伪过 —— 把 checker 强行退回 child_process，本机读数只从 1.29× 变到 1.70×，
+    // 与阈值同在安全区里。精确的那把锁是上一节的结构锁。
+    // 参考读数：静态小程序那套 benchmark/instant-scenario.js 是 1.546×（checker 那一腿 = 一次
+    // spawn 的 1.46×）。分母拿不到有效值（两轮没跑满）就判失败，不许静默退化成「除以 0.01」——
+    // 上一版在这里就是靠一个恒为 0 的 genMs 把比值算成了天文数字却看不出来。
+    const TIMED = 40;
+    // 计时专用的安静桩：不记日志、不读 stdin，免得那些副作用混进读数里。
+    const TGEN = script('t-gen.sh', 'echo 1 2');
+    const TSTD = script('t-std.sh', 'echo 3');
+    const TCUR = script('t-cur.sh', 'echo 3');
+    const CHK_OK = script('chk-timing.sh', 'echo ok; exit 0');
+    const timedBase = { generator: TGEN, stdExe: TSTD, testExe: TCUR, totalTests: TIMED, threadCount: 1 };
+    const wall = async (cfg) => {
+        const t0 = Date.now();
+        const ev = await runEngine(cfg);
+        return { perRound: (Date.now() - t0) / Math.max(1, ev.progress), ev };
+    };
+    const plainTimed = await wall(timedBase);
+    const spjTimed = await wall(Object.assign({}, timedBase, { spjExe: CHK_OK, useTestlib: true }));
+    const bothRan = plainTimed.ev.progress === TIMED && spjTimed.ev.progress === TIMED;
+    const ratio = bothRan ? spjTimed.perRound / plainTimed.perRound : Infinity;
+    const timingRead = JSON.stringify({
+        ratio: Number(ratio.toFixed(3)),
+        spjRound: Number(spjTimed.perRound.toFixed(2)), plainRound: Number(plainTimed.perRound.toFixed(2)),
+        plainProgress: plainTimed.ev.progress, spjProgress: spjTimed.ev.progress
+    });
+    check(`计时两轮都跑满 ${TIMED} 组（跑不满说明有轮被判错，比值无从谈起）`, bothRan, timingRead);
+    check('SPJ 轮 ≤ 非 SPJ 轮的 1.9×（粗筛：挡住整段变贵，如 checker 被跑两遍或每轮多加一批磁盘操作）',
+        ratio <= 1.9, timingRead);
+
+    // ---- 10. 按停止时正在跑的那一轮：checker 被 cancelAll 杀掉，不能算成「checker 挂了」----
+    // 这条只在 native 异步路径上有意义（回退路径靠 activeProcesses 杀，退出码本来就不是信号）。
+    const sleepChk = script('chk-sleep.sh', 'sleep 2; exit 0');
+    const stopped = await new Promise((resolve) => {
+        const e = new CompareEngine();
+        const ev = { progress: 0, errors: [], finished: '' };
+        e.on('progress', () => { ev.progress++; });
+        e.on('error', d => ev.errors.push({ type: d.type, code: d.code, message: String(d.message || '') }));
+        e.on('complete', () => { ev.finished = 'complete'; resolve(ev); });
+        e.on('stopped', () => { ev.finished = 'stopped'; resolve(ev); });
+        e.start(spj(sleepChk, { totalTests: 20, threadCount: 1, timeLimit: 30000 }));
+        setTimeout(() => { e.stop(); }, 500);
+    });
+    const blameChecker = stopped.errors.filter(x => String(x.code || '').indexOf('spj_') === 0);
+    check('按停止时那一轮不报任何 spj_* 错误（被 cancelAll 杀掉的 checker 不是评测器故障）',
+        blameChecker.length === 0, JSON.stringify(stopped.errors.slice(0, 3)));
+    check('停止仍如实结束（stopped 而非 complete，且没有跑满 20 组）',
+        stopped.finished === 'stopped' && stopped.progress < 20,
+        JSON.stringify({ finished: stopped.finished, progress: stopped.progress }));
 
     if (ran === 0) { console.log('[FAIL] 一条断言都没跑'); failures++; }
     cleanup();
