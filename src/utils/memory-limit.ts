@@ -76,9 +76,88 @@ export function parseMemWatchReport(text: string): MemWatchReport | null {
     return { peakBytes, privateBytes, exceeded: Number(parts[2]) === 1 };
 }
 
+/**
+ * 附着到已在运行的进程上读内核维护的峰值。不接管 stdio、不参与进程生命周期，
+ * 所以目标的启动路径完全不变，只是多一个兄弟进程负责读。
+ *
+ * memwatch 可执行文件的路径解析依赖 electron（数据根 + 现场编译产物），所以由调用方
+ * 把路径传进来 —— 这个模块必须能在 worker 线程里用，那里没有 app 对象。
+ * 传入空串（没找到/没编出来）时返回 null，调用方退回轮询。
+ */
+export interface MemWatchHandle {
+    child: import('child_process').ChildProcess;
+    report: Promise<string>;
+}
+
+const MEMWATCH_REPORT_TIMEOUT_MS = 3000;
+const activeMemWatchProcesses = new Set<import('child_process').ChildProcess>();
+
+export function startMemWatch(pid: number | undefined, limitBytes: number, memWatchPath: string): MemWatchHandle | null {
+    if (process.platform !== 'win32' || !pid || !memWatchPath) {
+        return null;
+    }
+
+    const limit = Math.max(0, Math.floor(Number(limitBytes) || 0));
+
+    let child: import('child_process').ChildProcess;
+    try {
+        child = spawn(memWatchPath, [String(pid), String(limit)], {
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+            shell: false
+        });
+    } catch (_) {
+        return null;
+    }
+
+    const chunks: Buffer[] = [];
+    child.stdout?.on('data', (data: Buffer) => {
+        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+    });
+
+    // 报告必须限时：memwatch 卡住时不能让一次运行永远收不了尾。
+    const report = new Promise<string>((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            resolve(Buffer.concat(chunks).toString('utf8'));
+        };
+        const timer = setTimeout(finish, MEMWATCH_REPORT_TIMEOUT_MS);
+        if (typeof timer.unref === 'function') timer.unref();
+        child.on('close', () => { clearTimeout(timer); finish(); });
+        child.on('error', () => { clearTimeout(timer); finish(); });
+    });
+
+    activeMemWatchProcesses.add(child);
+    const forget = () => activeMemWatchProcesses.delete(child);
+    child.on('close', forget);
+    child.on('error', forget);
+
+    return { child, report };
+}
+
+export function resolveMemWatchReport(handle: MemWatchHandle | null): Promise<MemWatchReport | null> {
+    if (!handle) return Promise.resolve(null);
+    return handle.report
+        .then((text) => parseMemWatchReport(text))
+        .catch(() => null);
+}
+
+/** 退出前清掉所有还在读峰值的 memwatch 兄弟进程（否则它们会活过主进程）。 */
+export function killAllMemWatch(): void {
+    for (const child of activeMemWatchProcesses) {
+        try { child.kill(); } catch (_) { }
+    }
+    activeMemWatchProcesses.clear();
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         readProcessMemoryBytes,
-        parseMemWatchReport
+        parseMemWatchReport,
+        startMemWatch,
+        resolveMemWatchReport,
+        killAllMemWatch
     };
 }

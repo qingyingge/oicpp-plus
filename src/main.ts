@@ -34,7 +34,7 @@ const {
     SETTINGS_WRITABLE_KEYS
 } = require('./utils/settings-schema');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
-const { readProcessMemoryBytes, parseMemWatchReport } = require('./utils/memory-limit');
+const { readProcessMemoryBytes, parseMemWatchReport, startMemWatch: startMemWatchAt, resolveMemWatchReport, killAllMemWatch } = require('./utils/memory-limit');
 const clangdCompileFlags = require('./utils/clangd-compile-flags');
 const { filterGccPrivateIncludes } = require('./utils/compiler-paths');
 
@@ -262,9 +262,6 @@ const LSP_DIAGNOSTICS_THROTTLE_MS = 60;
 // 产生几十次进程创建，8 worker 并行时更甚。
 const MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT = 500;
 const MEMORY_SAMPLE_INTERVAL_MS_PLAIN = 2000;
-// memwatch 上报结果的最长等待：目标进程退出后 watcher 最多再轮询一个周期，
-// 但目标卡在不可终止状态时需要兜底，避免 close 事件被拖死。
-const MEMWATCH_REPORT_TIMEOUT_MS = 3000;
 // 环境里是否存在 objdump：不存在时后续调试启动可完全跳过调试信息检查
 let objdumpAvailable = true;
 // 语言包在进程生命周期内只读盘解析一次：切换语言时主进程与渲染层会各请求一次，
@@ -3108,14 +3105,13 @@ async function ensureMemWatchExecutable(compilerPath: string) {
 }
 
 // ---------------------------------------------------------------- memwatch
-// memwatch 附着到已在运行的进程上，不接管 stdio、不参与进程生命周期，
-// 因此目标的启动路径完全不变；这里只多一个兄弟进程负责读峰值。
+// 附着读峰值、限时收报告、退出时清场，这些都在 utils/memory-limit 里 —— worker 端
+// 的样例判定要用同一套，留在这里就还得再抄一份。本文件只负责把 electron 特有的
+// 「memwatch.exe 在哪」解析出来注给共享模块。
 type MemWatchChild = import('child_process').ChildProcess;
 interface MemWatchHandle { child: MemWatchChild; report: Promise<string> }
-interface MemWatchReport { peakBytes: number; privateBytes: number; exceeded: boolean }
 
 let memWatchBuildPromise: Promise<string | null> | null = null;
-const activeMemWatchProcesses = new Set<MemWatchChild>();
 
 function findMemWatch() {
     const memWatchPath = getMemWatchTargetPath();
@@ -3147,78 +3143,7 @@ function warmUpMemWatch() {
 }
 
 function startMemWatch(pid: number | undefined, limitBytes = 0): MemWatchHandle | null {
-    if (process.platform !== 'win32' || !pid) {
-        return null;
-    }
-    const memWatchPath = findMemWatch();
-    if (!memWatchPath) {
-        return null;
-    }
-
-    const { spawn } = require('child_process');
-    const limit = Math.max(0, Math.floor(Number(limitBytes) || 0));
-
-    let child: MemWatchChild;
-    try {
-        child = spawn(memWatchPath, [String(pid), String(limit)], {
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'ignore'],
-            shell: false
-        });
-    } catch (_) {
-        return null;
-    }
-
-    const chunks: Buffer[] = [];
-    child.stdout?.on('data', (data: Buffer) => {
-        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
-    });
-
-    const report = new Promise<string>((resolve) => {
-        let settled = false;
-        const finish = () => {
-            if (settled) return;
-            settled = true;
-            resolve(Buffer.concat(chunks).toString('utf8'));
-        };
-        const timer = setTimeout(finish, MEMWATCH_REPORT_TIMEOUT_MS);
-        if (typeof timer.unref === 'function') timer.unref();
-        child.on('close', () => {
-            clearTimeout(timer);
-            finish();
-        });
-        child.on('error', () => {
-            clearTimeout(timer);
-            finish();
-        });
-    });
-
-    activeMemWatchProcesses.add(child);
-    const forget = () => activeMemWatchProcesses.delete(child);
-    child.on('close', forget);
-    child.on('error', forget);
-
-    return { child, report };
-}
-
-async function resolveMemWatchReport(handle: MemWatchHandle | null): Promise<MemWatchReport | null> {
-    if (!handle) {
-        return null;
-    }
-    try {
-        return parseMemWatchReport(await handle.report);
-    } catch (_) {
-        return null;
-    }
-}
-
-function killAllMemWatch() {
-    for (const child of activeMemWatchProcesses) {
-        try {
-            child.kill();
-        } catch (_) { }
-    }
-    activeMemWatchProcesses.clear();
+    return startMemWatchAt(pid, limitBytes, findMemWatch() || '');
 }
 
 function findCompilerExecutable(baseDir: string) {

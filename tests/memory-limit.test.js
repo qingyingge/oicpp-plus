@@ -49,6 +49,10 @@ check('内存读数只有一份实现（main.js 里已经没有内联的 VmRSS �
     JSON.stringify({ main: (mainSrc.match(/VmRSS/g) || []).length, util: (readerSrc.match(/VmRSS/g) || []).length }));
 check('main.js 通过共享模块读内存（两个调用点都在）',
     mainSrc.includes('readProcessMemoryBytes(childProcess?.pid)') && /readPidMemory = \(pid\) => readProcessMemoryBytes\(pid\)/.test(mainSrc), '');
+check('memwatch 的附着与收报告也只有一份实现（进程表、限时都在模块里）',
+    mainSrc.includes('startMemWatchAt') && (mainSrc.match(/activeMemWatchProcesses/g) || []).length === 0
+    && mainSrc.includes('resolveMemWatchReport') && mainSrc.includes('killAllMemWatch'),
+    JSON.stringify({ set: (mainSrc.match(/activeMemWatchProcesses/g) || []).length }));
 
 // 不该上限制的组合一律返回 null，调用方据此走普通 spawn
 check('没设上限 / 非法上限时返回 null（不能凭空包一层壳）',

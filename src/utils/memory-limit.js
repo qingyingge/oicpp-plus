@@ -35,6 +35,9 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.readProcessMemoryBytes = readProcessMemoryBytes;
 exports.parseMemWatchReport = parseMemWatchReport;
+exports.startMemWatch = startMemWatch;
+exports.resolveMemWatchReport = resolveMemWatchReport;
+exports.killAllMemWatch = killAllMemWatch;
 /**
  * 子进程的内存观测与上限（跨平台）。
  *
@@ -113,9 +116,72 @@ function parseMemWatchReport(text) {
         return null;
     return { peakBytes, privateBytes, exceeded: Number(parts[2]) === 1 };
 }
+const MEMWATCH_REPORT_TIMEOUT_MS = 3000;
+const activeMemWatchProcesses = new Set();
+function startMemWatch(pid, limitBytes, memWatchPath) {
+    if (process.platform !== 'win32' || !pid || !memWatchPath) {
+        return null;
+    }
+    const limit = Math.max(0, Math.floor(Number(limitBytes) || 0));
+    let child;
+    try {
+        child = (0, child_process_1.spawn)(memWatchPath, [String(pid), String(limit)], {
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+            shell: false
+        });
+    }
+    catch (_) {
+        return null;
+    }
+    const chunks = [];
+    child.stdout?.on('data', (data) => {
+        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
+    });
+    // 报告必须限时：memwatch 卡住时不能让一次运行永远收不了尾。
+    const report = new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (settled)
+                return;
+            settled = true;
+            resolve(Buffer.concat(chunks).toString('utf8'));
+        };
+        const timer = setTimeout(finish, MEMWATCH_REPORT_TIMEOUT_MS);
+        if (typeof timer.unref === 'function')
+            timer.unref();
+        child.on('close', () => { clearTimeout(timer); finish(); });
+        child.on('error', () => { clearTimeout(timer); finish(); });
+    });
+    activeMemWatchProcesses.add(child);
+    const forget = () => activeMemWatchProcesses.delete(child);
+    child.on('close', forget);
+    child.on('error', forget);
+    return { child, report };
+}
+function resolveMemWatchReport(handle) {
+    if (!handle)
+        return Promise.resolve(null);
+    return handle.report
+        .then((text) => parseMemWatchReport(text))
+        .catch(() => null);
+}
+/** 退出前清掉所有还在读峰值的 memwatch 兄弟进程（否则它们会活过主进程）。 */
+function killAllMemWatch() {
+    for (const child of activeMemWatchProcesses) {
+        try {
+            child.kill();
+        }
+        catch (_) { }
+    }
+    activeMemWatchProcesses.clear();
+}
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         readProcessMemoryBytes,
-        parseMemWatchReport
+        parseMemWatchReport,
+        startMemWatch,
+        resolveMemWatchReport,
+        killAllMemWatch
     };
 }

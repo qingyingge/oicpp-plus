@@ -137,8 +137,13 @@ check('tasklist sampling is retained as the fallback when memwatch is missing',
 check('the fallback polling interval constants are still defined',
     mainSource.includes('MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT') &&
     mainSource.includes('MEMORY_SAMPLE_INTERVAL_MS_PLAIN'));
+// 限时收报告的实现已经搬进 utils/memory-limit.js。锁的是「有兜底、且被 unref」，
+// 不是「这段代码在 main.js 里」。
 check('the memwatch report wait is bounded so close cannot hang',
-    mainSource.includes('MEMWATCH_REPORT_TIMEOUT_MS'));
+    memoryLimitSource.includes('MEMWATCH_REPORT_TIMEOUT_MS')
+    && /setTimeout\(finish, MEMWATCH_REPORT_TIMEOUT_MS\)/.test(memoryLimitSource)
+    && memoryLimitSource.includes("timer.unref"),
+    `bounded=${memoryLimitSource.includes('MEMWATCH_REPORT_TIMEOUT_MS')}`);
 check('i18n keys exist for both memwatch build failures',
     read('src', 'lang', 'zh-cn.json').includes('memWatchBuildFailed') &&
     read('src', 'lang', 'en.json').includes('memWatchBuildFailed') &&
