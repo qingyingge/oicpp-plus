@@ -790,7 +790,14 @@ setTimeout(() => {
         check('M4 runFast 采用 native 回传的 truncated', /outputTruncated: !!r\.truncated/.test(runFast));
         const runFastPair = funcDecl(workerSrc, 'runFastPair');
         check('函数体抽取成功: runFastPair', runFastPair.length > 0);
-        check('M4 runFastPair 采用 native 回传的 truncated', /truncated1: !!r\.truncated/.test(runFastPair));
+        // 判定阶梯统一后，截断标志不再是 runFastPair 自己的 truncated1/truncated2 字段，
+        // 而是作为 outcomeFromFast 的第 3 个实参进 ProgramOutcome。语义一条没放宽：
+        // 值只能来自 native 回传的 r.truncated，且两个子进程各取一次（少一次就意味着
+        // 有一路退回按长度猜，那正是 M4 的原始缺陷）。
+        const nativeTruncWiring = runFastPair.match(/outcomeFromFast\([^)]*!!r\.truncated/g) || [];
+        check('M4 runFastPair 采用 native 回传的 truncated（std 与 test 各一次）',
+            nativeTruncWiring.length === 2,
+            `命中 ${nativeTruncWiring.length} 次，期望 2 次`);
         // 注释里保留了「原先靠 output.length >= ... 猜」的说明，判残留要看去掉整行注释后的代码
         const workerCode = workerSrc.split('\n').filter((line) => !line.trim().startsWith('//')).join('\n');
         check('M4 两条路径都不再用长度猜截断',
