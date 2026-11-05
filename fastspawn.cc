@@ -22,6 +22,21 @@
 // 判等模式下回传给 UI 的 diff 摘录上限，与 JS 侧 MAX_CAPTURED_OUTPUT_BYTES 对齐。
 #define MAX_EXCERPT (64 * 1024)
 
+// freopen 类程序按相对路径自己 fopen，父进程重定向 stdin/stdout 管不到它 —— 并发跑
+// 这种程序唯一的隔离手段是给每个子进程一个自己的工作目录，所以 native 侧也得会
+// 指定 cwd。addchdir_np 需要 glibc >= 2.24；macOS 自 10.15 起有同名扩展，而本项目
+// 的 Electron 支持的 macOS 版本远高于它，按存在处理。
+// 编不出这个符号的平台把能力关死：JS 侧看到 cwdSupported=false 就整轮走 child_process
+// （它的 cwd 选项全平台都有），绝不允许「没换目录照样跑」—— 那会把两个程序的
+// data.out 写到同一个文件里，判等结论看起来完全正常，实际是互相覆盖后的垃圾。
+#if defined(__APPLE__)
+#define OICPP_HAS_ADDCHDIR 1
+#elif defined(__GLIBC__) && ((__GLIBC__ > 2) || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 24))
+#define OICPP_HAS_ADDCHDIR 1
+#else
+#define OICPP_HAS_ADDCHDIR 0
+#endif
+
 // pipe2 只在 Linux 上有（glibc 扩展），macOS/BSD 编译到这里就是 undeclared。
 // 两个平台的差别只是 close-on-exec / 非阻塞的设置方式，所以用 pipe()+fcntl()
 // 补一个语义等价的实现： flags 里出现的每一位都照做，不能静默忽略。
@@ -149,7 +164,7 @@ static void drainReadable(int fd, DrainBuf* b, int* open) {
 }
 
 // 交错地「喂 stdin」与「收 stdout/stderr」，直到输入写完且两条输出流都结束。
-//   0 = 正常结束，-3 = 截止时间到（已 kill），-2 = 硬错误
+//   0 = 正常结束，-3 = 截止时间到（已 kill），-2 = 硬错误，-4 = cwd 设不上（程序没跑）
 //
 // 原先分成两段（把 input 全写完，再 drain 输出），那是个死锁：cat 这类边读边写
 // 的程序把输出管道写满后就停住不再读输入，而我们还堵在写输入上、没有开始收它
@@ -235,7 +250,8 @@ static int pump(int inFd, const char* input, size_t inputLen,
 
 static int runOne(const char* path, const char* input, size_t inputLen,
                    int64_t timeoutMs, char** out, size_t* outLen, int* truncated,
-                   char** errOut, size_t* errLen, int* errTruncated, int* signalOut) {
+                   char** errOut, size_t* errLen, int* errTruncated, int* signalOut,
+                   const char* cwd) {
     *out = NULL; *outLen = 0;
     if (errOut) { *errOut = NULL; *errLen = 0; }
     if (truncated) *truncated = 0;
@@ -256,6 +272,26 @@ static int runOne(const char* path, const char* input, size_t inputLen,
     posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO);
     posix_spawn_file_actions_adddup2(&actions, outPipe[1], STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, errPipe[1], STDERR_FILENO);
+
+    // cwd 为 NULL 或空串 = 用父进程当前目录（原有行为，一个 syscall 都不多花）。
+    // 设不上 cwd 时只会返回非 0 的「根本没跑成」：addchdir 自身失败是 -4，目录不存在
+    // 由 posix_spawn 报出来是 -2（实测）。关键是任何一种都不可能退化成
+    // 「没换目录照样跑完」—— 那会让两个程序的 data.out 写进同一个文件。
+#if OICPP_HAS_ADDCHDIR
+    if (cwd != NULL && cwd[0] != '\0' && posix_spawn_file_actions_addchdir_np(&actions, cwd) != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        posix_spawnattr_destroy(&attributes);
+        closePair(inPipe); closePair(outPipe); closePair(errPipe);
+        return -4;
+    }
+#else
+    if (cwd != NULL && cwd[0] != '\0') {
+        posix_spawn_file_actions_destroy(&actions);
+        posix_spawnattr_destroy(&attributes);
+        closePair(inPipe); closePair(outPipe); closePair(errPipe);
+        return -4;
+    }
+#endif
 
     pid_t pid = -1;
     char* argvChild[] = { (char*)path, NULL };
@@ -342,6 +378,7 @@ struct RunPairArg {
     const char* input;
     size_t inputLen;
     int64_t timeoutMs;
+    const char* cwd;
     int code;
     char* out;
     size_t outLen;
@@ -356,7 +393,7 @@ static void* runPairThread(void* arg) {
     RunPairArg* a = (RunPairArg*)arg;
     a->code = runOne(a->path, a->input, a->inputLen, a->timeoutMs,
                      &a->out, &a->outLen, &a->truncated,
-                     &a->err, &a->errLen, &a->errTruncated, &a->signal);
+                     &a->err, &a->errLen, &a->errTruncated, &a->signal, a->cwd);
     return NULL;
 }
 
@@ -424,9 +461,24 @@ static void setBufferProp(napi_env env, napi_value obj, const char* name, char* 
     if (data) free(data);
 }
 
+// 可选的字符串参数：没传 / 传了非字符串 / 空串都归一成 NULL（= 不改 cwd）。
+// 返回 malloc 的副本，调用方 free；napi 的值在回调返回后就不再可靠。
+static char* readOptionalString(napi_env env, napi_value value) {
+    if (value == NULL) return NULL;
+    napi_valuetype t = napi_undefined;
+    if (napi_typeof(env, value, &t) != napi_ok || t != napi_string) return NULL;
+    size_t len = 0;
+    if (napi_get_value_string_utf8(env, value, NULL, 0, &len) != napi_ok || len == 0) return NULL;
+    char* buf = (char*)malloc(len + 1);
+    if (buf == NULL) return NULL;
+    if (napi_get_value_string_utf8(env, value, buf, len + 1, &len) != napi_ok) { free(buf); return NULL; }
+    buf[len] = '\0';
+    return buf;
+}
+
 static napi_value Run(napi_env env, napi_callback_info info) {
-    size_t argc = 3;
-    napi_value argv[3];
+    size_t argc = 4;
+    napi_value argv[4];
     if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok) { napi_throw_error(env, NULL, "cb_info"); return NULL; }
 
     size_t pathLen = 0;
@@ -437,10 +489,25 @@ static napi_value Run(napi_env env, napi_callback_info info) {
 
     char* input = NULL;
     size_t inputLen = 0;
+    // 字符串入参必须自己拷一份 utf8：原先这里 string 和 object 走同一支
+    // napi_get_buffer_info，而它对 JS string 是失败的 —— 于是 input 保持 NULL，
+    // 一个「明明传了输入」的调用静默变成空 stdin，程序读到 EOF、算出垃圾答案，
+    // 退出码还是 0。对拍一直传 Buffer 所以从没踩到，样例那边传字符串一脚就中。
+    char* inputCopy = NULL;
     if (argc > 1) {
         napi_valuetype t;
         napi_typeof(env, argv[1], &t);
-        if (t == napi_string || t == napi_object) {
+        if (t == napi_string) {
+            size_t n = 0;
+            if (napi_get_value_string_utf8(env, argv[1], NULL, 0, &n) == napi_ok && n > 0) {
+                inputCopy = (char*)malloc(n + 1);
+                if (inputCopy != NULL) {
+                    if (napi_get_value_string_utf8(env, argv[1], inputCopy, n + 1, &n) == napi_ok) {
+                        input = inputCopy; inputLen = n;
+                    } else { free(inputCopy); inputCopy = NULL; }
+                }
+            }
+        } else if (t == napi_object) {
             void* data = NULL;
             if (napi_get_buffer_info(env, argv[1], &data, &inputLen) == napi_ok && data && inputLen > 0) input = (char*)data;
         }
@@ -449,12 +516,17 @@ static napi_value Run(napi_env env, napi_callback_info info) {
     int64_t timeoutMs = 10000;
     if (argc > 2) { int64_t v; if (napi_get_value_int64(env, argv[2], &v) == napi_ok) timeoutMs = v; }
 
+    char* cwd = readOptionalString(env, argc > 3 ? argv[3] : NULL);
+
     char* outBuf = NULL; size_t outLen = 0;
     char* errBuf = NULL; size_t errLen = 0;
     int truncated = 0, errTruncated = 0, sig = 0;
     int code = runOne(pathBuf, input, inputLen, timeoutMs, &outBuf, &outLen, &truncated,
-                      &errBuf, &errLen, &errTruncated, &sig);
+                      &errBuf, &errLen, &errTruncated, &sig, cwd);
     free(pathBuf);
+    if (cwd) free(cwd);
+    // runOne 是同步的，返回时 input 已经被消费完，这里释放才安全
+    if (inputCopy) free(inputCopy);
 
     napi_value result, rCode, rTrunc, rErrTrunc, rSig;
     napi_create_object(env, &result);
@@ -474,8 +546,8 @@ static napi_value Run(napi_env env, napi_callback_info info) {
 }
 
 static napi_value RunPair(napi_env env, napi_callback_info info) {
-    size_t argc = 5;
-    napi_value argv[5];
+    size_t argc = 7;
+    napi_value argv[7];
     if (napi_get_cb_info(env, info, &argc, argv, NULL, NULL) != napi_ok) { napi_throw_error(env, NULL, "cb_info"); return NULL; }
 
     size_t pathLen1 = 0;
@@ -509,8 +581,13 @@ static napi_value RunPair(napi_env env, napi_callback_info info) {
     int compare = 0;
     if (argc > 4) { bool b = false; if (napi_get_value_bool(env, argv[4], &b) == napi_ok) compare = b ? 1 : 0; }
 
-    RunPairArg arg1 = { path1, input, inputLen, timeoutMs, 0, NULL, 0, 0, NULL, 0, 0, 0 };
-    RunPairArg arg2 = { path2, input, inputLen, timeoutMs, 0, NULL, 0, 0, NULL, 0, 0, 0 };
+    // argv[5]/argv[6] = 两个子进程各自的工作目录（freopen 隔离用）。两个程序各占一个
+    // 目录而不是共用一个：它们都往相对路径上的同一个名字写 data.out，共用就会互相覆盖。
+    char* cwd1 = readOptionalString(env, argc > 5 ? argv[5] : NULL);
+    char* cwd2 = readOptionalString(env, argc > 6 ? argv[6] : NULL);
+
+    RunPairArg arg1 = { path1, input, inputLen, timeoutMs, cwd1, 0, NULL, 0, 0, NULL, 0, 0, 0 };
+    RunPairArg arg2 = { path2, input, inputLen, timeoutMs, cwd2, 0, NULL, 0, 0, NULL, 0, 0, 0 };
 
     pthread_t t1, t2;
     int p1 = pthread_create(&t1, NULL, runPairThread, &arg1);
@@ -523,11 +600,11 @@ static napi_value RunPair(napi_env env, napi_callback_info info) {
         // 就会让 stderr/signal 停在未初始化状态。
         if (p1 != 0) {
             arg1.code = runOne(path1, input, inputLen, timeoutMs, &arg1.out, &arg1.outLen,
-                               &arg1.truncated, &arg1.err, &arg1.errLen, &arg1.errTruncated, &arg1.signal);
+                               &arg1.truncated, &arg1.err, &arg1.errLen, &arg1.errTruncated, &arg1.signal, cwd1);
         }
         if (p2 != 0) {
             arg2.code = runOne(path2, input, inputLen, timeoutMs, &arg2.out, &arg2.outLen,
-                               &arg2.truncated, &arg2.err, &arg2.errLen, &arg2.errTruncated, &arg2.signal);
+                               &arg2.truncated, &arg2.err, &arg2.errLen, &arg2.errTruncated, &arg2.signal, cwd2);
         }
     } else {
         // join 之后才能读两个线程写的缓冲，这是本函数唯一的同步点。
@@ -537,6 +614,8 @@ static napi_value RunPair(napi_env env, napi_callback_info info) {
     }
 
     free(path1); free(path2);
+    if (cwd1) free(cwd1);
+    if (cwd2) free(cwd2);
 
     // 输出超限优先于判等：残缺的输出比出「相等」是假的 AC，比出「不等」是假的 WA，
     // 两种都不能信，交回 JS 报 output_limit。此时也不做归一化。
@@ -717,7 +796,7 @@ static napi_value NormalizeCompare(napi_env env, napi_callback_info info) {
 
 static napi_value Init(napi_env env, napi_value exports) {
     signal(SIGPIPE, SIG_IGN);
-    napi_property_descriptor descs[6] = {
+    napi_property_descriptor descs[7] = {
         { "run", NULL, Run, NULL, NULL, NULL, napi_default, NULL },
         { "runPair", NULL, RunPair, NULL, NULL, NULL, napi_default, NULL },
         { "spawn", NULL, Spawn, NULL, NULL, NULL, napi_default, NULL },
@@ -726,6 +805,12 @@ static napi_value Init(napi_env env, napi_value exports) {
         { "normalizeCompare", NULL, NormalizeCompare, NULL, NULL, NULL, napi_default, NULL }
     };
     napi_define_properties(env, exports, 6, descs);
+    // JS 侧据此决定 freopen 那一轮走不走 native：能力关着的时候必须整轮退回
+    // child_process，而不是带上一个被忽略的 cwd 继续跑（那会把两个程序的
+    // data.out 写进同一个文件，判等结论照样「正常」）。
+    napi_value cwdSupported;
+    napi_get_boolean(env, OICPP_HAS_ADDCHDIR ? true : false, &cwdSupported);
+    napi_set_named_property(env, exports, "cwdSupported", cwdSupported);
     return exports;
 }
 
