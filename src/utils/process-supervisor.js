@@ -75,7 +75,12 @@ function getResourceLimitedSpawn(executablePath, args = [], memoryLimitMb = 0) {
     const limitBytes = Math.max(1, Math.floor(limitMb * 1024 * 1024));
     return {
         command: prlimitPath,
-        args: ['--as', String(limitBytes), '--', executablePath, ...args],
+        // 必须写成 --as=<bytes>：util-linux 的 prlimit 把这些资源选项定义成
+        // 「参数可选」，`--as 4294967296` 里的数字不会被当成限制值，而是被当成
+        // 要执行的命令 —— prlimit 直接报「执行 4294967296 失败: 没有那个文件或目录」
+        // 并以非零退出。后果是 Linux 上一设内存上限就跑不出结果（程序根本没启动，
+        // 上层看到的是一条 RE），内存限制从来没有真正生效过。
+        args: ['--as=' + String(limitBytes), '--', executablePath, ...args],
         hardMemoryLimit: true,
         limitBytes
     };
