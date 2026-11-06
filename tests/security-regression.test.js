@@ -420,6 +420,12 @@ const workerRows = (() => {
     const spawnSrc = funcDecl(workerSource, 'spawnProcess');
     const normSrc = funcDecl(workerSource, 'normalizeOutput');
     const equalSrc = funcDecl(workerSource, 'outputsEqual');
+    // outputsEqual 多了一个字节级快路（equalNormalizedBytes）。它必须一起抽进来跑：
+    // 少注入一个就是 ReferenceError，而这三条断言会集体变成 [0,"exception","exception"]
+    // —— 那种红是对的，但别以为判等本身坏了。
+    // 反过来，把它注进来了才真正加了一档覆盖：快路与字符串终裁必须在同一批数据上
+    // 给同一个结论，否则「只差行尾空白不算差异」这条会在 MB 级输出上悄悄翻掉。
+    const normEqSrc = funcDecl(workerSource, 'equalNormalizedBytes');
     // 判定阶梯合并成一套后，「native 的 -3 折算成 timeout」「截断标志取自 native 回传」
     // 这两件事搬进了 outcomeFromFast / runFastPair。桩必须退到 native 边界上（喂原生
     // 形状的数据、跑真函数），否则 -3 那条断言就变成在测测试自己写的映射。
@@ -437,7 +443,7 @@ const workerRows = (() => {
     const slotReadSrc = funcDecl(workerSource, 'readSlotOutput');
     const loopSrc = forStatement(workerSource, /^\s*for \(let i = startIdx; i < startIdx \+ count && running;/m);
     const stopSrc = ifStatement(workerSource, /^\s*else if \(msg\.type === 'stop'\)/m).replace(/^else\s+/, '');
-    const parts = { budgetSrc, activeSrc, spawnSrc, normSrc, equalSrc, fastOutcomeSrc, jsOutcomeSrc, factsSrc, verdictSrc, runFastPairSrc, effTimeoutSrc, unlimitedSrc, slotReadSrc, loopSrc, stopSrc };
+    const parts = { budgetSrc, activeSrc, spawnSrc, normSrc, equalSrc, normEqSrc, fastOutcomeSrc, jsOutcomeSrc, factsSrc, verdictSrc, runFastPairSrc, effTimeoutSrc, unlimitedSrc, slotReadSrc, loopSrc, stopSrc };
     push('worker 关键片段抽取成功', Object.values(parts).every((s) => s.length > 0),
         JSON.stringify(Object.entries(parts).map(([k, s]) => [k, s.slice(0, 14)])));
     if (!Object.values(parts).every((s) => s.length > 0)) return Promise.resolve(rows);
@@ -465,14 +471,14 @@ const workerRows = (() => {
         });
         vm.runInContext([
             budgetSrc.replace(/^const\s/, 'let '),
-            activeSrc, normSrc, equalSrc, spawnSrc,
+            activeSrc, normSrc, equalSrc, normEqSrc, spawnSrc,
             'this.__setBudget = (n) => { MAX_WORKER_OUTPUT_BYTES = n; };',
             'this.__peek = () => ({ budget: MAX_WORKER_OUTPUT_BYTES, size: activeProcesses.size });'
         ].join('\n'), ctx);
         return { ctx, seen };
     };
     const eqCtx = vm.createContext({ Buffer, String, Number });
-    vm.runInContext(`${normSrc}\n${equalSrc};`, eqCtx);
+    vm.runInContext(`${normSrc}\n${normEqSrc}\n${equalSrc};`, eqCtx);
     const eq = (a, b) => vm.runInContext(`outputsEqual(${JSON.stringify(a)}, ${JSON.stringify(b)})`, eqCtx);
 
     // 把真循环体整条搬进 vm 跑：stop 从哪个 await 后面生效，只看 trace 里各计数器停在哪。
@@ -496,7 +502,7 @@ const workerRows = (() => {
                 ? "(trace.js % 2 ? okRun : { code: 0, ms: 5, output: Buffer.from('same\\r\\n') })"
                 : 'okRun';
         vm.runInContext([
-            normSrc, equalSrc,
+            normSrc, normEqSrc, equalSrc,
             // 判定阶梯的真实实现：从 worker 源码里抽出来跑，不在测试里重抄一遍
             unlimitedSrc, effTimeoutSrc, fastOutcomeSrc, jsOutcomeSrc, factsSrc, verdictSrc, runFastPairSrc, slotReadSrc,
             `const fast = { runPair: () => { trace.pair++; return ${PAIR}; } };`,

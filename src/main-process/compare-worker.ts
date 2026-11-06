@@ -203,6 +203,59 @@ function normalizeOutput(value: Buffer | string | null | undefined): string {
         .replace(/\n+$/, '');
 }
 
+/**
+ * 字节级的「规范化后判等」，一次扫描出结论。返回 null 表示**这里定不了论**，调用方必须回落。
+ *
+ * 为什么要多这一档：normalizeOutput 是「utf8 解码 + 4 趟 replace/split/join」，在 MB 级
+ * 输出上是裸 .equals 短路的几百倍。而「答案相同、只差行尾空白或结尾换行」在对拍里是常态
+ * 而不是意外，于是**一个 AC 结论**也要付这笔钱：实测 1MB 输出每轮 66ms → 162ms
+ * （equal 一档 0.18ms → 109ms，占整轮 67%）。
+ *
+ * 判据仍然只有一份，就是 normalizeOutput。这里做的是它的字节等价形：两侧规范化后写进
+ * 同一块缓冲的两段，再 memcmp。纯 ASCII 时两个视角逐字等价（可剥的行尾空白只有空格/Tab，
+ * 行分隔只有 \n，它们都是单字节且不会出现在多字节序列内部），所以能直接定「不等」。
+ *
+ * 唯一的分叉点是非法 UTF-8：解码会把不同的坏字节并成同一个 U+FFFD，字节视角可能判成不等
+ * 而字符串视角判成相等。所以**带高位字节且这里判出不等时不下结论**，交回 normalizeOutput
+ * 终裁 —— 与 fastspawn.cc 的 normalizeInPlace 用 anyHigh 拒绝定论是同一个手法。
+ */
+function equalNormalizedBytes(left: Buffer, right: Buffer): boolean | null {
+    const buf = Buffer.allocUnsafe(left.length + right.length + 1);
+    let sawHighByte = false;
+    // 写侧：把 src 规范化进 dst 的 off 段，返回有效长度。行尾空白「不写出去」而不是
+    // 写出去再擦掉，所以 contentEnd 记的是本行最后一个非空白字节的右边界。
+    const write = (src: Buffer, off: number): number => {
+        let w = off, contentEnd = off;
+        const n = src.length;
+        for (let i = 0; i < n; i++) {
+            // i < n = src.length，越界读不到；noUncheckedIndexedAccess 不看这个，
+            // 所以在这里收一次形。写成 `if (c === undefined) continue` 是给不可能发生的
+            // 情况加一条永远不执行的分支，运行时和读者两头都是噪声。
+            const c = src[i] as number;
+            if (c >= 0x80) sawHighByte = true;
+            if (c === 13) {
+                // \r 只在紧跟 \n 时丢；孤立 \r 是内容（normalizeOutput 也只替换 \r\n）
+                if (i + 1 < n && src[i + 1] === 10) continue;
+                buf[w++] = c; contentEnd = w; continue;
+            }
+            if (c === 10) {
+                w = contentEnd; buf[w++] = c; contentEnd = w; continue;
+            }
+            buf[w++] = c;
+            if (c !== 32 && c !== 9) contentEnd = w;
+        }
+        w = contentEnd;                              // 末行可能没有换行
+        while (w > off && buf[w - 1] === 10) w--;    // 剥结尾连续换行
+        return w - off;
+    };
+    const n1 = write(left, 0);
+    const base = left.length + 1;
+    const n2 = write(right, base);
+    if (n1 !== n2) return sawHighByte ? null : false;
+    if (buf.compare(buf, 0, n1, base, base + n2) !== 0) return sawHighByte ? null : false;
+    return true;
+}
+
 function outputsEqual(left: Buffer | string | null | undefined, right: Buffer | string | null | undefined): boolean {
     // 逐字节相同是对拍里的高频主情形；先裸比较短路，MB 级输出免掉两侧各一轮
     // Buffer.from 复制 + utf8 解码 + 4 趟 replace/split/join。判等口径没变：
@@ -210,6 +263,12 @@ function outputsEqual(left: Buffer | string | null | undefined, right: Buffer | 
     if (Buffer.isBuffer(left) && Buffer.isBuffer(right)
         && (left === right || (left.length === right.length && left.equals(right)))) {
         return true;
+    }
+    // 两侧都是 Buffer 时先走单遍字节判等；只有它「定不了论」才落到下面的字符串终裁，
+    // 所以 MB 级差异从「两趟解码 + 8 趟字符串流水线」降到一次扫描 + 一次 memcmp。
+    if (Buffer.isBuffer(left) && Buffer.isBuffer(right)) {
+        const fast = equalNormalizedBytes(left, right);
+        if (fast !== null) return fast;
     }
     return normalizeOutput(left) === normalizeOutput(right);
 }
