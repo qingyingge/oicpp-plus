@@ -40,7 +40,11 @@ class I18nManager {
     // i18next.init is async but resolves synchronously for an inline resource set,
     // so the first translation request is only made after init() has been awaited.
     private _initI18next(): Promise<unknown> {
-        return i18next.init({
+        // i18next v27 默认 strictInterpolationChecks: true，缺少 params 时 {token} 会原样渲染为 {{token}}。
+        // 保持 v26 行为，避免渲染层 ~2121 处 t() 调用点出现裸占位符。
+        // UMD 全局没有 TypeScript 类型定义，使用 Record<string, unknown> 绕过类型检查；
+        // 运行时 i18next 会从顶层读取 strictInterpolationChecks。
+        const i18nInitOptions: Record<string, unknown> = {
             lng: 'zh-cn',
             fallbackLng: 'zh-cn',
             resources: {},
@@ -56,10 +60,14 @@ class I18nManager {
             // 带引号的错误原文会原样显示成 &#x2F; &#39;。HTML 出口自己负责转义
             // （escapeDebugHtml / escapeHtml），不再依赖这里兜底。
             interpolation: { prefix: '{', suffix: '}', escape: (value: unknown) => String(value) },
+            // v27 默认 strictInterpolationChecks: true，缺少 params 时 {token} 会原样渲染为 {{token}}。
+            // 保持 v26 行为，避免渲染层 ~2121 处 t() 调用点出现裸占位符。
+            strictInterpolationChecks: false,
             returnNull: false,
             returnEmptyString: false,
-            parseMissingKeyHandler: (key: string) => key,
-        });
+            parseMissingKeyHandler: (key: string) => key
+        };
+        return i18next.init(i18nInitOptions);
     }
 
     /**
