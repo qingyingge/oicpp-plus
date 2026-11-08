@@ -4,10 +4,10 @@
 Electron desktop app (JS), for competitive programming.
 
 ## Entry
-`src/main.js`
+`src/main.ts`
 
 ## Package manager
-pnpm@11.7.0
+pnpm@12.5.1
 
 ## Key scripts
 | Script | Command |
@@ -18,7 +18,7 @@ pnpm@11.7.0
 | `ci` | `node scripts/ci-check.js` |
 | `ci:tests` | `node scripts/ci-check.js --only tests`（只跑回归测试） |
 | `ci:fast` | `node scripts/ci-check.js --skip tests`（只跑静态检查） |
-| `ci:strict` | `node scripts/ci-check.js --strict`（WARN 也判 FAIL；2026-11-03 实测 26 WARN，且大半是**设计上的告知项**，见 CI 一节 —— 现状是不能用，不是「再修 26 条就会绿」）|
+| `ci:strict` | `node scripts/ci-check.js --strict`（WARN 也判 FAIL；现状不能直接用，见 CI 一节——需先给各告知项加 baseline，否则恒红）|
 | `ci:verbose` | `node scripts/ci-check.js --verbose`（详细输出） |
 | `package:portable` | `node scripts/make-portable.js`（把 dir 产物打成免安装 zip，见「打安装包」） |
 
@@ -32,7 +32,7 @@ pnpm@11.7.0
 - [改快捷键默认值 / 加可改键](#workflows改快捷键默认值--加可改键)
 
 ### 打安装包（Build / Installer）
-本项目的安装包**不用** electron-builder 的 nsis target 出，而是用仓库根目录自带的 `installer.nsi` + 本机 NSIS。`package.json` 里 `build.win.target = "dir"`，electron-builder 只负责产出 `dist\win-unpacked`；`installer.nsi` 直接从该目录取文件，输出 `dist\OICPP-Plus-<version>-Setup.exe`（`installer.nsi:69`）。CI 同流程，见 `.github/workflows/build.yml:336`（`makensis "/DPRODUCT_VERSION=$version" installer.nsi`），便携包产物并入 `windows-artifacts` 在同文件 `:349`。
+本项目的安装包**不用** electron-builder 的 nsis target 出，而是用仓库根目录自带的 `installer.nsi` + 本机 NSIS。`package.json` 里 `build.win.target = "dir"`，electron-builder 只负责产出 `dist\win-unpacked`；`installer.nsi` 直接从该目录取文件，输出 `dist\OICPP-Plus-<version>-Setup.exe`（`installer.nsi:68`）。
 
 **不要**执行 `electron-builder --win nsis`：它会尝试联网下载 NSIS 工具链（缓存在 `%LOCALAPPDATA%\electron-builder\Cache`），网络不稳时会以 `fetch failed` / `TypeError: terminated` 失败，且该失败与代码无关。
 
@@ -54,24 +54,8 @@ pnpm exec electron-builder --win dir     # 产出 dist\win-unpacked
 - 产物会覆盖同名旧包，必要时先备份。
 - 压缩是 solid LZMA + 64MB 字典，打包耗时数分钟到十几分钟属正常，耐心等，不要中途打断重试。
 
-#### 便携版（免安装 zip）
-适用场景：学校机房 / 家里机没有管理员权限，或用户就想从 U 盘直接跑。
-
-正确命令序列（Windows，接在上面 `electron-builder --win dir` 之后）：
-```powershell
-pnpm run package:portable          # 默认吃 dist\win-unpacked，产出 dist\OICPP-Plus-<version>-Portable-<label>.zip
-```
-
-要点：
-- **便携版不是另一套构建**：就是同一份 `win-unpacked` 目录 + 一个 `portable.txt` 标记 + zip。运行时 `src/utils/data-root.ts` 看见 exe 同级有 `portable.txt` 就把数据根挪到 exe 旁边，其下仍然叫 `.oicpp-plus`，布局与安装版逐字相同，因此没有迁移代码，`installer.nsi` 也不参与（NSIS 那一条只服务安装版）。
-- **标记文件名是跨文件契约**：`scripts/make-portable.js` 从 `require('../src/utils/data-root')` 里取 `PORTABLE_MARKER_FILE`，不要在别处再写字面量。改名字要同步改已分发的旧包说明。
-- 数据根也可以被环境变量 `OICPP_DATA_ROOT`（必须是**绝对路径**）覆盖，用于「程序在 U 盘、状态留本地盘」；优先级高于标记。
-- CI 的 `build-windows` job 已接：`Build portable package` 步骤 + 产物并入 `windows-artifacts`，release job 的 `files: artifacts/*` 会一并发到 Release。**`UPLOAD_API` 那条远端上传只挑 `*-Setup.exe`，便携包不会进用户的下载服务器** —— 要分发得单独决定。
-- 归档根目录名是有意义的产物名（`OICPP-Plus-<version>-Portable-<arch>/`），脚本用 dist 下的临时暂存目录实现；**不要**原地改名 `dist\win-unpacked`，那是 `installer.nsi` 的输入。
-
 反模式：
-- ❌ 拿 `electron-builder` 的 `portable` target。本项目的 Windows 交付不走 electron-builder 的打包器（同 `nsis` 的理由：它要联网取工具链）。
-- ❌ 在渲染层用 `getUserHome()` + `pathJoin(home, '.oicpp-plus', …)` 自己拼数据目录。便携模式下那会指回系统盘，且不会有任何报错。要目录就问 `getUserDataPath([...segments])`。
+- ❌ 在渲染层用 `getUserHome()` + `pathJoin(home, '.oicpp-plus', …)` 自己拼数据目录。数据根应由 `getUserDataPath([...segments])` 决定，绝不能自己拼。
 
 坑：
 - 数据根解析里任何候选是**盘根**（`/` 或 `C:\`）都会被拒绝。这是刻意的：退出清理对 `<数据根>\codeTemp` 执行 `rmSync(recursive, force)`，标记误判一次就抹掉整张 U 盘。新增递归删除必须过 `assertDeletableUnderDataRoot()`。
@@ -87,13 +71,13 @@ const t = (key, params) => window.i18n?.t?.(key, params) || key;
 const t = (key, params, fallback) => window.i18n?.t?.(key, params) || fallback || key;
 ```
 
-主进程没有 `window`，走 `src/main.js:20` 的 `const { t } = require('./lang')`（i18next），`utils/` 下的模块用 `require('../lang')`。这条不受「统一 window.i18n.t」约束。
+主进程没有 `window`，走 `src/main.ts:21` 的 `const { t } = require('./lang')`（i18next），`utils/` 下的模块用 `require('../lang')`。这条不受「统一 window.i18n.t」约束。
 
-**渲染层底层已是 i18next**（`src/renderer/js/i18n.js` 只是薄适配层）。`index.html` 用 `<script src="lib/i18next.min.js">` 引入 UMD 全局 —— 注意这个 UMD 是**手工 vendored 到 `src/renderer/lib/i18next.min.js` 的一份拷贝**（不是 node_modules；pdf-viewer.html / settings/backup.html / settings/compiler.html 等也各自加载它），沿用 monaco `loader.js` / xterm 的既有先例。vendored 换版的既定程序见 `fd30211`：重新拷贝一份，并与 npm tarball **字节核对一致**，提交信息里写清版本。资源经 IPC `get-language-file` 拉原始 JSON 后 `addResourceBundle(code,'translation',data)` 灌入 —— **语言包文件形状不要改**，它同时是 i18next 的 translation bundle。DOM 层（`_applyToDOM` / `enableAutoTranslate` / `onChange`）仍是手写，因为 `data-i18n-args`、`<html lang>` 这些是本项目特有契约，且 `i18next.on()` 返回值不能当 unsubscribe 用。
+**渲染层底层已是 i18next**（`src/renderer/js/i18n.ts` 只是薄适配层）。`index.html` 用 `<script src="lib/i18next.min.js">` 引入 UMD 全局 —— 注意这个 UMD 是**手工 vendored 到 `src/renderer/lib/i18next.min.js` 的一份拷贝**（不是 node_modules；pdf-viewer.html / settings/backup.html / settings/compiler.html 等也各自加载它），沿用 monaco `loader.js` / xterm 的既有先例。vendored 换版的既定程序见 `fd30211`：重新拷贝一份，并与 npm tarball **字节核对一致**，提交信息里写清版本。资源经 IPC `get-language-file` 拉原始 JSON 后 `addResourceBundle(code,'translation',data)` 灌入 —— **语言包文件形状不要改**，它同时是 i18next 的 translation bundle。DOM 层（`_applyToDOM` / `enableAutoTranslate` / `onChange`）仍是手写，因为 `data-i18n-args`、`<html lang>` 这些是本项目特有契约，且 `i18next.on()` 返回值不能当 unsubscribe 用。
 
 改渲染层 i18n 后，`tests/i18n-renderer-runtime.test.js` 是运行时行为守卫（vm 里跑真实 i18next UMD + 真实语言包，断言界面实际看到什么），`tests/i18n.test.js` 是契约守卫。两者都要跑。
 
-**⚠️ UMD 的位置有硬约束：必须落在 `index.html` 里「define 为空」的窗口内。** UMD 头是三分支，`"function"==typeof define && define.amd ? define(t) : globalThis.i18next=t()` —— 只要执行的那一刻 `window.define` 是 monaco 的 AMD loader，就会走 `define(t)` 分支**永不挂全局**，`t()` 随即抛 `ReferenceError: i18next is not defined`，全站裸 key。而此时脚本**加载成功、无 console 错误、不过 CSP**，静态检查和 vm 测试全都看不见（vm 里没有 monaco loader.js）。`index.html` 已为 xterm 造好这个窗口：`window.define = undefined` 之后、恢复 `__oicppAmdDefine` 之前。移动该 `<script>` 时**只要求「在 `js/i18n.js` 之前」是不够的**（真实踩过：放在全部 app 脚本之后 → 整站失效）。`tests/i18n-renderer-runtime.test.js` 的 0c 组锁死了这个窗口。
+**⚠️ UMD 的位置有硬约束：必须落在 `index.html` 里「define 为空」的窗口内。** UMD 头是三分支，`"function"==typeof define && define.amd ? define(t) : globalThis.i18next=t()` —— 只要执行的那一刻 `window.define` 是 monaco 的 AMD loader，就会走 `define(t)` 分支**永不挂全局**，`t()` 随即抛 `ReferenceError: i18next is not defined`，全站裸 key。而此时脚本**加载成功、无 console 错误、不过 CSP**，静态检查和 vm 测试全都看不见（vm 里没有 monaco loader.js）。`index.html` 已为 xterm 造好这个窗口：`window.define = undefined` 之后、恢复 `__oicppAmdDefine` 之前。移动该 `<script>` 时**只要求「在 `js/i18n.ts` 之前」是不够的**（真实踩过：放在全部 app 脚本之后 → 整站失效）。`tests/i18n-renderer-runtime.test.js` 的 0c 组锁死了这个窗口。
 
 **改 UMD/`index.html` 脚本顺序后必须真实 Electron 实测**（这是唯一能抓到上一条的手段）：
 ```bash
@@ -105,16 +89,16 @@ xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-san
 
 | 入口 | 形参 | 说明 |
 |------|------|------|
-| `window.i18n.t(key, params)`（`src/renderer/js/i18n.js:163`） | **2** | **唯一入口** |
+| `window.i18n.t(key, params)`（`src/renderer/js/i18n.ts:178`） | **2** | **唯一入口** |
 | 局部 `const t = ...` 别名 | 按自己定义 | 允许，但形参数必须与调用处一致 |
-| `t(key, params)`（`src/main.js:20`） | 2 | 主进程，长期保留 |
+| `t(key, params)`（`src/main.ts:21`） | 2 | 主进程，长期保留 |
 
-`this.t` 与 `window.__` 已全部清理完毕，不要再用（`window.__` 的定义点 `i18n.js` 旧 318 行随 i18next 迁移一并删除，唯一消费 `browser-manager.js` 已改为 `window.i18n?.t?.(k) || k`）。
-注意 `src/main.js`（主进程）和 `src/renderer/js/main.js`（渲染层）是两个同名文件，行号别看串。
+`this.t` 与 `window.__` 已全部清理完毕，不要再用（`window.__` 的定义点随 i18next 迁移一并删除，唯一消费 `browser-manager.ts` 已改为 `window.i18n?.t?.(k) || k`）。
+注意 `src/main.ts`（主进程）和 `src/renderer/js/main.ts`（渲染层）是两个同名文件，行号别看串。
 
-HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` / `data-i18n-aria-label`（另支持 `data-i18n-args` 传插值参数），由 `src/renderer/js/i18n.js:242 _applyToDOM` 统一覆盖。**行内中文只是 JS 加载前的默认值，保留即可**，I8 不计入这类行。
+HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` / `data-i18n-aria-label`（另支持 `data-i18n-args` 传插值参数），由 `src/renderer/js/i18n.ts:283 _applyToDOM` 统一覆盖。**行内中文只是 JS 加载前的默认值，保留即可**，I8 不计入这类行。
 
-主进程语言切换：启动时 `src/main.js:2960`（`createWindow` 内）`setLanguage`、设置变更时统一走 `applyLanguageChange()`（`src/main.js:8576`，内部 `await setLanguage` → `createMenuBar()` → 广播 `language-changed`），无状态，`t()` 直接调即可。**任何改动 `settings.language` 的入口都必须调用它**（`update-settings` handler、`updateSettings()`、`resetSettings()`、`importSettings()`、云端同步），否则语言只在下次开窗口时生效。
+主进程语言切换：启动时 `src/main.ts:3481`（`createWindow` 内）`setLanguage`、设置变更时统一走 `applyLanguageChange()`（`src/main.ts:9539`，内部 `await setLanguage` → `createMenuBar()` → 广播 `language-changed`），无状态，`t()` 直接调即可。**任何改动 `settings.language` 的入口都必须调用它**（`update-settings` handler、`updateSettings()`、`resetSettings()`、`importSettings()`、云端同步），否则语言只在下次开窗口时生效。
 
 改完必须跑 `pnpm run ci`（I1~I8 + 回归测试）。
 
@@ -126,7 +110,7 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 
 **坑：**
 
-- 取消/失败这类**要被代码识别**的状态，不要拿文案匹配。改用错误码：下载器已改为 `error.code = 'DOWNLOAD_CANCELLED'` + 导出的 `isCancelledError`（`utils/multi-thread-downloader.js`），别退回 `error.message.includes(...)`。
+- 取消/失败这类**要被代码识别**的状态，不要拿文案匹配。改用错误码：下载器已改为 `error.code = 'DOWNLOAD_CANCELLED'` + 导出的 `isCancelledError`（`utils/multi-thread-downloader.ts`），别退回 `error.message.includes(...)`。
 - I8 拦硬编码 CJK（baseline 0）；**I8b 拦用户可见行上的硬编码英文散文（baseline 0）** —— 默认语言是 zh-cn，硬编码英文同样会原样显示给用户，只是 I8 的 CJK 判定看不见。I8b 依赖三条豁免把误报压到 0：`throw new Error`/`new Error(` 视为开发者诊断、`writeJson(`/`res.end(`/`code:`/`invalidField:` 视为给 SampleTester 与浏览器扩展的机器可读载荷、判别字段（`type`/`code`/…）向上回看 6 行以覆盖分行书写的对象字面量。**任何一条被放宽，检查会从零容忍退化成几乎不查，而 PASS 看起来一模一样** —— `tests/i18n.test.js` 尾部已锁死这三条 + baseline 0，并对 `looksLikeProse` 做真实行为断言（4 条散文应命中 / 9 条标识符、路径、URL、MIME、枚举、format token 不应命中）。散文识别要求 **≥2 个 ≥3 字母的完整词**，这一条是把标识符和 CSS 类名挡在外面的关键。写新豁免前先想清楚它会不会顺手放过真阳性。
 - **I8/I8b 都是按行判定的，静态 HTML 整类漏**。`userVisibleRe` 要命中 `innerHTML`/`label:`/`title:` 这类 sink 关键字才算用户可见，于是 `<div class="unit">0 表示不限制</div>` 这种「纯文本、无关键字」的行一条都不查 —— 而这恰恰是界面上最直接的文字。同理它认 `title:` 和 `.title =` 却不认 HTML 的 `title="…"`，认 `label:` 却不认 `aria-label="…"`。`tests/static-html-i18n.test.js` 补这个洞，三条不变量：A「含 CJK 却整条祖先链没有 `data-i18n` 的可见文本必须为 0」、B「挂了 `data-i18n` 的元素，其直接内联文本要逐字等于该键的 zh-cn 值」（B 抓的是"同屏换话"：默认值一句、JS 落地另一句）、C「`title` / `aria-label` / `placeholder` 属性必须挂上对应的 `data-i18n-*`，且属性默认值 == 键的 zh-cn 值」。上锁是**逐文件、逐指标**的：`ENFORCED` 里每个文件带一个 `metrics` 字符串（如 `"ABC"`），只锁已清干净的那几条 —— 整体进出会让已经干净的指标退回不检查。**不要为了少改文件放宽 A/B/C 或把指标从 `metrics` 里摘掉**；正确做法是清一条开一条。两个已知的坑：B 条**不能**套 CJK 门槛（`data-i18n="menu.browse"` 配英文默认值 `Browse` 同样是不符，index.html 里这类占大头，套上后 35 条只报得出 5 条）；带 `{token}` 的键不参与逐字比较（默认值写的是示例值）。C 条用「≥2 个 ≥3 字母完整词」把 `SPJ`/`MB`/`Ctrl+P` 这类语言中性值挡在外面。
 - **主进程也有同类盲区，且出口更多**：`userVisibleRe` 里有 `title:`/`message:`/`detail:`/`label:`，**却没有 `buttons:`（原生对话框按钮）、`name:`（文件对话框过滤器）、`updateProgress(...)`、写入临时 HTML 再 `loadFile` 的窗口模板**。这曾造成一种半迁移状态：同一个 `showMessageBox` 里 title/message/detail 都 `t()` 了，只有 `buttons:` 留硬编码中文；下载窗整个窗口零 i18n。2026-10-30 起这些出口已全部接完，由下述守卫锁死。守卫见 `tests/main-process-i18n.test.js`，锁法与 static-html 守卫一致（六个出口全部零容忍：buttons、过滤器 name、updateProgress、下载窗 HTML、IPC error 文本、**发去外部终端的 shell 命令字符串**）。第六个是 2026-11-02 补的：`printf '\n程序执行完成，按回车键继续...\n'` 这类写在 `bashCmd` 数组元素里的中文，I8 按行看不见（那一行没有任何 sink 关键字），而它是用户在终端窗口里直接看到的字。顺手把这句话整段过一遍 `quoteForBash` —— 原来单引号硬写在模板里，译文里出现撇号就会把整条 bash 命令截断。两个必须知道的口径细节：
@@ -138,7 +122,7 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
   2. 同一句键可能同时喂 HTML 和 `textContent`（下载窗的 `main.downloadingCompiler`：h3 要转义、`updateProgress` 绝不能转义），所以别把它做成全局行为。
   3. 接主进程译文时一律做「与原硬编码 byte-equal」比对 —— 转义残渣、以及往 JSON 里写 `\n` 结果落成字面反斜杠+n，这两类都只有逐字比对抓得到。
   `tests/i18n-main-process.test.js` 锁住两处配置与四个 HTML 出口；`tests/i18n-renderer-runtime.test.js` 用真实 UMD 断言插值不再被转义。注意别用 `/\{[^}]*\}/` 去框 `interpolation` 配置对象 —— `suffix: '}'` 里那个花括号会让它提前截断（本条第一版就假红了）。
-- I7 拦孤儿键（baseline 0，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`；2026-11-02 一次退役 186 个从未接线/随功能一起停用的键，判定分「引用面 / git 来源 / I6 回归」三层，缺任何一层都不许清仓，理由写在那常量的注释里）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.js:3772` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。最后 1 个（`compileOutput.analysisEmpty`）也在同日第二批清掉：它是台账 L10 的断言对象、曾被当作「不许删」的理由，查清它跟 `panel.noParseContent` 是同一句话而界面只用后者之后，断言改指活键、死键退役 —— **拿一条挂在死键上的守卫当保留理由，等于把守卫的失责固化成常量**。
+- I7 拦孤儿键（baseline 0，常量 `I18N_ORPHAN_KEY_BASELINE`，见 `scripts/ci-check.js`；2026-11-02 一次退役 186 个从未接线/随功能一起停用的键，判定分「引用面 / git 来源 / I6 回归」三层，缺任何一层都不许清仓，理由写在那常量的注释里）—— 语言包里有、源码里查不到引用的键，存量只锁死不许增长，每清一批降一档。往语言包加键后若报孤儿键超标，说明没接上（反向也一样：`settings/editor.html` 曾有 6 个键早就躺在语言包里却没挂 `data-i18n`，主进程 `validateFileName` 一直在手写中文而 `dialog.nameRequired`/`invalidFileNameChars`/`invalidFileNameCharsUnix`/`reservedFileName`/`fileNameEndDot` 五个键零引用 —— 接线即各降一档）。判定口径同时认字符串字面量和**属性访问**（`main.ts:4630` 读语言列表用的是 `content.meta.code`，只认引号会把 `meta.code/name/nameEn` 误判成孤儿）。最后 1 个（`compileOutput.analysisEmpty`）也在同日第二批清掉：它是台账 L10 的断言对象、曾被当作「不许删」的理由，查清它跟 `panel.noParseContent` 是同一句话而界面只用后者之后，断言改指活键、死键退役 —— **拿一条挂在死键上的守卫当保留理由，等于把守卫的失责固化成常量**。
 - 「一句话一个键」由 **[I10] 与 [I11]** 拦，唯一实现是 `scripts/i18n-duplicate.js`（豁免表 `DUPLICATE_EXEMPTIONS`/`DRIFT_EXEMPTIONS` 也在那儿，CI 与 `tests/i18n-duplicate-value.test.js` 取同一份，别在测试里重抄一张表）：
   * I10 —— **同一个父对象内**不许两句中文逐字相同。新建键之前先搜值；跨命名空间的同句（`menu.delete` 与 `cloud.delete`）是常态，不报。
   * I11 —— 同一句中文的英文不许各自演化。比较**忽略大小写**，因为 `menu.*`/`keybinding.*` 走 Title Case 而 `main.*Title` 走句首大写是表面约定；比的是用词。
@@ -150,7 +134,7 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 - **[I12] 拦「中文被存进变量」**（判据与白名单 `LOG_ONLY_CJK_VARS` 在 `scripts/ci-check.js`，真跑守卫在 `tests/i18n-cjk-in-variable.test.js`）。I8 按行找 sink，所以 `const msg = \`[样例测试器] ${brief}\`; manager.appendOutput(msg)` 这种一行存变量、下一行上屏的写法它一条都不报 —— 实测代价是编译输出面板的前缀在英文界面下仍然是中文。判据只认「等号右边紧跟引号且闭合前含中文」这一种形状，白名单是**行为约束**：登记的变量每一次使用都必须落在 `logX(` 里，被塞进 `showMessage` 就红。两条已知代价写在检查项注释里：`const x = 前缀 + '中文'` 的拼接形状看不见（别为了多抓这一形把 `.*` 加回来，那会让行尾注释里的中文全部假阳——真踩过）；流向仍然要靠人。
 - **I8 与 I4 各有一档「看着像存量、其实是判据误报」的 baseline，已经查清并降到 0，别再往回抬**：
   * I8 的 `userVisibleRe` 里 `message:` / `label:` / `title:` / `detail:` 是**标签** sink，但
-    `e instanceof Error ? e.message : String(e)` 里的三元冒号长得一模一样，于是 `src/utils/logger.js`
+    `e instanceof Error ? e.message : String(e)` 里的三元冒号长得一模一样，于是 `src/utils/logger.ts:53`
     的一条 stderr 自诊断被当成用户可见文案，ratchet 一直挂着 1。正解是给这四个候选加 `(?<![.\w])`
     —— 属性访问不算标签。判据现在叫 `USER_VISIBLE_RE`，**I8 与 I8b 共用这一份**（两处各写一条正则时，
     改一处忘另一处会让中文与英文散文的覆盖面悄悄分叉）。
@@ -190,7 +174,7 @@ HTML 静态文案挂 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` /
 只写 `window.oicppKeybindings?.…`。加一个 `labelKey` 时记得两份语言包里都有对应的 `keybinding.*` 键。
 
 ```bash
-npx tsc -p tsconfig.build.json     # 重新 emit（keybindings.js 是 <script> 加载的产物）
+pnpm exec tsc -p tsconfig.build.json     # 重新 emit（keybindings.ts 是 <script> 加载的产物）
 node tests/keybindings-single-source.test.js
 xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-sandbox   # 看那行 [INFO] 冻结清单
 ```
@@ -243,17 +227,17 @@ xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-san
 ### 迁移 .js → .ts（TypeScript 路线甲）
 **`.ts` 是唯一手写源，`.js` 由 `tsc -p tsconfig.build.json` 就地 emit 出来**（`rootDir`/`outDir` 同为 `src`），所以 `.js` 不许手改。`tsconfig.json` 负责全量 typecheck；`tsconfig.build.json` 带 `noCheck: true` 且 `include: ["src/**/*.ts", "src/**/*.d.ts"]` —— 全量 emit，**没有白名单要登记**，新增 `.ts` 直接会被编译。`.d.ts` 只进程序不出 JS。
 
-**提交前必须先编译一次**：`npx tsc -p tsconfig.build.json`，然后 `git diff --stat -- src` —— 输出非空就是漂移，两种成因：改了 `.ts` 没编译，或者有人手改了 `.js` 产物。漂移不会让 `tsc --noEmit` 报错（两边各自都合法），所以只能靠这一步兜住。历史上这里靠 `files` 白名单兜，代价是「`.ts` 漏登记 → 它的 `.js` 静默不再重生成」，实测已踩到（`gdb-mi-debugger.ts` 只因为被 `gdb-debugger.ts` 的 `import = require` 传递进程序才没漂），白名单已因此取消。
+**提交前必须先编译一次**：`pnpm exec tsc -p tsconfig.build.json`，然后 `git diff --stat -- src` —— 输出非空就是漂移，两种成因：改了 `.ts` 没编译，或者有人手改了 `.js` 产物。漂移不会让 `tsc --noEmit` 报错（两边各自都合法），所以只能靠这一步兜住。历史上这里靠 `files` 白名单兜，代价是「`.ts` 漏登记 → 它的 `.js` 静默不再重生成」，实测已踩到（`gdb-mi-debugger.ts` 只因为被 `gdb-debugger.ts` 的 `import = require` 传递进程序才没漂），白名单已因此取消。
 
 `.js` ↔ `.ts` 的对应关系仍然成立：`src/` 下每个 `.js` 都有同名 `.ts`。
 
 正确命令序列：
 ```bash
-npx tsc -p tsconfig.build.json   # 重新生成 .js（注意：会用 emit 结果覆盖工作区里的 .js）
+pnpm exec tsc -p tsconfig.build.json   # 重新生成 .js（注意：会用 emit 结果覆盖工作区里的 .js）
 git diff --stat -- src           # 提交前必查：非空 = 产物漂移（漏编译或手改了 .js）
 node tests/run-tests.js          # 快速回归，定位断言失败
-pnpm run ci                      # 完整校验（75 项检查 + 35 个回归测试）
-npx tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
+pnpm run ci                      # 完整校验（A/E/I/T 共 34 项静态检查 + 66 个回归测试文件）
+pnpm exec tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
 ```
 迁移完必须把新文件自身的 error 清到 0，再把 `scripts/ci-check.js` 里的 `TS_ERROR_BASELINE` **往下压到实测总数**（ratchet 只减不增，每清一批降一档）。
 
@@ -272,15 +256,13 @@ npx tsc --noEmit -p tsconfig.json # 单独数本文件的 tsc error
 - 字段声明（`settings: T;`）在 es2022 目标下会 emit 成真实 class field（`settings;`），构造赋值之前先置 `undefined`；字段**只声明不初始化**，赋值全留在构造函数里，否则顺序会覆盖。
 
 ## CI / Verification
-No lint/typecheck scripts. Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.) plus a `[T1]` regression-test step: auto-discovers `tests/*.test.js` via `tests/run-tests.js` (add a new `*.test.js` file to extend the suite; failing test → CI FAIL). CI modes via runtime args: `pnpm run ci:tests` (T1 only), `ci:fast` (skip T1), `ci:strict` (WARN counts as FAIL), `ci:verbose`. No automated Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes) —— 但 `tests/smoke-electron.js` 是**存在且必须手动跑**的真机冒烟，跑法见 i18n 一节。
+Only CI is `pnpm run ci` — runs `scripts/ci-check.js` which does static analysis (JS syntax, CSS brace matching, HTML DOCTYPE, file reference resolution, IPC channels, DOM selectors, CSP, secrets/eval scanning, dependency audit, etc.) plus a `[T1]` regression-test step: auto-discovers `tests/*.test.js` via `tests/run-tests.js` (add a new `*.test.js` file to extend the suite; failing test → CI FAIL). CI modes via runtime args: `pnpm run ci:tests` (T1 only), `ci:fast` (skip T1), `ci:strict` (WARN counts as FAIL), `ci:verbose`. There is also `pnpm run typecheck` (`tsc --noEmit`) for pure type-checking. No automated Electron smoke test (the old `ci-local.ps1` was removed; its smoke test leaked orphan electron.exe processes) —— 但 `tests/smoke-electron.js` 是**存在且必须手动跑**的真机冒烟，跑法见 i18n 一节。
 
-**`ci:strict` 为什么现在不能用**：26 条 WARN 里没有一条是「待修的缺陷」，它们是三类设计上的告知项 ——
-①体量/写法统计（`main.js 12543 行`、`tabs.js 5460 行`、`file://` 计数、`spawn/execSync` 计数、
-CSP `unsafe-eval`、`sandbox:false`、shell exec review）；②需要人工核对的匹配表（`electronAPI` 里
-无精确对应 handler 的方法、main 里从未被渲染层引用的 handler）；③结构性缺失（没有
-`build.electronFuses`、没有 `event.senderFrame.origin` 校验）。前两类只会随重构漂移数字、
-永远不会归零，把它们判成失败等于让 strict 恒红 —— 而恒红的 strict 和没有 strict 一样没人用。
-要开 strict，先给这些检查各自加 baseline（同 `TS_ERROR_BASELINE` 只减不增的口径），不要直接切。
+**`ci:strict` 为什么现在不能用**：WARN 条目里没有一条是「待修的缺陷」，它们是三类设计上的告知项 —— ①体量/写法统计（`main.js` 行数、`tabs.js` 行数、`file://` 计数、`spawn/execSync` 计数、CSP `unsafe-eval`、`sandbox:false`、shell exec review）；②需要人工核对的匹配表（`electronAPI` 里无精确对应 handler 的方法、main 里从未被渲染层引用的 handler）；③结构性缺失（没有 `build.electronFuses`、没有 `event.senderFrame.origin` 校验）。前两类只会随重构漂移数字、永远不会归零，把它们判成失败等于让 strict 恒红。要开 strict，先给这些检查各自加 baseline（同 `TS_ERROR_BASELINE` 只减不增的口径），不要直接切。
+
+仓库内不预置 `.github/workflows/`（推上去没有自动 CI 替你验），`pnpm run ci` 必须本地跑完。没有 GitLab CI / Docker。
+
+**已知问题 M59**：`pnpm run ci:tests` 恒红，不修不可用。成因是 `scripts/ci-check.js:102` 在 `REGRESSION_TEST_BUDGET_MS` 常量声明之前就调用了 `runRegressionTests()`，触发 TDZ 抛错被 `try/catch` 吞掉，退化成 `fail('regression tests failed')`，摘要显示 Passed: 0。由 `d073dd9` 引入，登记为 M59（只登记不修）。跑静态检查用 `pnpm run ci:fast`；跑回归测试直接 `node tests/run-tests.js` 绕过 ci-check。
 
 ## Structure
 ```
@@ -292,29 +274,26 @@ src/
     index.html
     css/
     js/
-  lang/                — language definitions
-  utils/               — utilities
+  lang/                — language definitions (zh-cn.json, en.json)
+  utils/               — utilities (keybindings.ts, data-root.ts, …)
+tsconfig.json          — full typecheck
+tsconfig.build.json    — emit .js from .ts (noCheck)
 scripts/
   ci-check.js          — CI checks
 tests/
-  run-tests.js         — regression test runner (auto-discovers *.test.js)
+  run-tests.js         — regression test runner (auto-discovers *.test.js, 66 files)
   preload.test.js      — IPC whitelist / event unwrap / markdown render
   downloader.test.js   — multi-thread downloader md5/cancel/failure restore
+  … (i18n, keybindings, security, lsp, compiler, …)
 ```
 
 ## Key dependencies
-- electron ^37.x
-- monaco-editor, xterm, node-pty
-- markdown-it, katex, highlight.js
-- axios, iconv-lite, winreg
-- electron-builder (dev)
+- electron >=37.0.0 <46.0.0
+- typescript 7.0.2, i18next ^26.7.1, monaco-editor >=0.30.0 <1.0.0, node-pty >=1.0.0 <2.0.0
+- markdown-it, katex, highlight.js, axios, iconv-lite, winreg, pdfjs-dist, turndown, node-stream-zip, 7zip-bin, extract-zip
+- electron-builder, webpack, html-webpack-plugin, monaco-editor-webpack-plugin, sharp, icojs (dev)
 
 ## Conventions
-- Regression tests = plain Node scripts in `tests/` (`pnpm run ci:tests`), no external test framework.
+- Regression tests = plain Node scripts in `tests/` (`pnpm run ci:tests`), no external test framework. 当前 66 个 `.test.js` 文件，由 `tests/run-tests.js` 并发自动发现。
 - CI check = `pnpm run ci` only.
 - CSP allows `unsafe-eval` (Monaco needs it).
-- 有 GitHub Actions，但**没有一条 push/PR 触发的流水线**：`build.yml` 只在 tag `v*-plus.<后缀>` 或
-  `workflow_dispatch` 时跑，`build-deb-test` / `build-dmg-test` / `build-windows-test` 全是纯手动。
-  也就是说推上去没人替你验，`pnpm run ci` 必须本地跑完。（这条原来写成「No GitHub Actions」，
-  与本文「打安装包」一节自己引用的那个 workflow 行号自相矛盾 —— 行号也顺手核过并更正了。）
-  没有 GitLab CI / Docker。
