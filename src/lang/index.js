@@ -37,7 +37,7 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const zhCN = JSON.parse(fs.readFileSync(path.join(__dirname, 'zh-cn.json'), 'utf8'));
 const en = JSON.parse(fs.readFileSync(path.join(__dirname, 'en.json'), 'utf8'));
-i18next.init({
+const i18nInitOptions = {
     lng: 'zh-cn',
     fallbackLng: 'zh-cn',
     // i18next 对带连字符的语言码走 Intl.getCanonicalLocales 规范化（zh-cn → zh-CN），
@@ -52,10 +52,13 @@ i18next.init({
     // （showMessageBox 的 title/message/detail/buttons）和菜单标签，不是 HTML，
     // 转义只会把路径变成 &#x2F; 残渣。唯一喂 HTML 的下载窗模板由调用点自行处理。
     interpolation: { prefix: '{', suffix: '}', escape: (value) => String(value) },
+    // v27 默认 strictInterpolationChecks: true，缺少 params 时 {token} 会原样渲染为 {{token}}。
+    strictInterpolationChecks: false,
     returnNull: false,
     returnEmptyString: false,
     parseMissingKeyHandler: (key) => key
-});
+};
+i18next.init(i18nInitOptions);
 const i18nextInstance = i18next;
 const instance = {
     t: (key, params) => i18nextInstance.t(key, params),
