@@ -1,4 +1,38 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, webContents } = require('electron');
+
+// IPC sender 来源校验（E14）：所有进入主进程的 IPC 消息必须经过来源验证，
+// 防止跨源伪造。preload 脚本内部调用 senderFrame 为 null 或 origin 为 'null'，视为可信。
+function isTrustedIpcSender(event: { senderFrame?: { origin?: string | null } | null }): boolean {
+    const senderFrame = event.senderFrame;
+    if (!senderFrame) return true;
+    const origin = senderFrame.origin;
+    if (!origin || origin === 'null') return true;
+    return origin.startsWith('electron:') || origin === 'file://';
+}
+
+const _origIpcMainHandle = ipcMain.handle.bind(ipcMain);
+const _origIpcMainOn = ipcMain.on.bind(ipcMain);
+
+ipcMain.handle = function(channel: string, listener: any) {
+    return _origIpcMainHandle(channel, (event: any, ...args: any[]) => {
+        if (!isTrustedIpcSender(event)) {
+            logWarn('IPC 来自不信任来源，已拒绝:', String(channel));
+            return;
+        }
+        return listener(event, ...args);
+    });
+};
+
+ipcMain.on = function(channel: string, listener: any) {
+    return _origIpcMainOn(channel, (event: any, ...args: any[]) => {
+        if (!isTrustedIpcSender(event)) {
+            logWarn('IPC 来自不信任来源，已拒绝:', String(channel));
+            return;
+        }
+        listener(event, ...args);
+    });
+};
+
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
