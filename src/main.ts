@@ -3524,7 +3524,7 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false, // 出于安全原因，建议禁用
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true,
             webviewTag: true,
             devTools: process.argv.includes('--dev')
@@ -8779,7 +8779,7 @@ function openCompilerSettings() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.compilerSettingsTitle'),
@@ -8821,7 +8821,7 @@ function openEditorSettings() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.editorSettingsTitle'),
@@ -8869,7 +8869,7 @@ function openCodeTemplates() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.templateSettingsTitle'),
@@ -8908,7 +8908,7 @@ function openBackupSettings() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.backupSettingsTitle'),
