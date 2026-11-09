@@ -1,6 +1,37 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, webContents } = require('electron');
+// IPC sender 来源校验（E14）：所有进入主进程的 IPC 消息必须经过来源验证，
+// 防止跨源伪造。preload 脚本内部调用 senderFrame 为 null 或 origin 为 'null'，视为可信。
+function isTrustedIpcSender(event) {
+    const senderFrame = event.senderFrame;
+    if (!senderFrame)
+        return true;
+    const origin = senderFrame.origin;
+    if (!origin || origin === 'null')
+        return true;
+    return origin.startsWith('electron:') || origin === 'file://';
+}
+const _origIpcMainHandle = ipcMain.handle.bind(ipcMain);
+const _origIpcMainOn = ipcMain.on.bind(ipcMain);
+ipcMain.handle = function (channel, listener) {
+    return _origIpcMainHandle(channel, (event, ...args) => {
+        if (!isTrustedIpcSender(event)) {
+            logWarn('IPC 来自不信任来源，已拒绝:', String(channel));
+            return;
+        }
+        return listener(event, ...args);
+    });
+};
+ipcMain.on = function (channel, listener) {
+    return _origIpcMainOn(channel, (event, ...args) => {
+        if (!isTrustedIpcSender(event)) {
+            logWarn('IPC 来自不信任来源，已拒绝:', String(channel));
+            return;
+        }
+        listener(event, ...args);
+    });
+};
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
@@ -3234,7 +3265,7 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false, // 出于安全原因，建议禁用
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true,
             webviewTag: true,
             devTools: process.argv.includes('--dev')
@@ -8370,7 +8401,7 @@ function openCompilerSettings() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.compilerSettingsTitle'),
@@ -8406,7 +8437,7 @@ function openEditorSettings() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.editorSettingsTitle'),
@@ -8447,7 +8478,7 @@ function openCodeTemplates() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.templateSettingsTitle'),
@@ -8481,7 +8512,7 @@ function openBackupSettings() {
             preload: path.join(__dirname, 'preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true
         },
         title: t('main.backupSettingsTitle'),
