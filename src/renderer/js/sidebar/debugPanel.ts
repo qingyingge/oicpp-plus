@@ -337,7 +337,6 @@ class DebugPanel {
     }
 
     _renderVariables(v: OicppVariableSnapshot | null): void {
-        console.log('[DebugPanel] _renderVariables:', v);
         if (!this.root) return;
         this.loadingMore.clear();
         this.variableCache = {
@@ -767,7 +766,6 @@ class DebugPanel {
     }
 
     _ipcSend(channel: string, ...args: unknown[]): void {
-        console.log(`[DebugPanel] Sending IPC: ${channel}`, args);
         try {
             const { ipcRenderer } = require('electron');
             ipcRenderer.send(channel, ...args);

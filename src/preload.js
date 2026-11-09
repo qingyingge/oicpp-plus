@@ -977,18 +977,6 @@ const safeSendLog = (level, args) => {
             scheduleLogFlush();
     }
     catch (_) { }
-    // 仅在开发模式或显式开启时输出到控制台
-    if (process.env['NODE_ENV'] === 'development' || process.env['OICPP_CONSOLE_LOG'] === '1') {
-        try {
-            if (level === 'warn')
-                console.warn(...args);
-            else if (level === 'error')
-                console.error(...args);
-            else
-                console.log(...args);
-        }
-        catch (_) { }
-    }
 };
 contextBridge.exposeInMainWorld('logInfo', (...args) => safeSendLog('info', args));
 contextBridge.exposeInMainWorld('logWarn', (...args) => safeSendLog('warn', args));

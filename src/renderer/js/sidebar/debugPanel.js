@@ -327,7 +327,6 @@ class DebugPanel {
         this._renderVariableGroup('#watch-variables', this.variableCache.watches, 'watch');
     }
     _renderVariables(v) {
-        console.log('[DebugPanel] _renderVariables:', v);
         if (!this.root)
             return;
         this.loadingMore.clear();
@@ -766,7 +765,6 @@ class DebugPanel {
         });
     }
     _ipcSend(channel, ...args) {
-        console.log(`[DebugPanel] Sending IPC: ${channel}`, args);
         try {
             const { ipcRenderer } = require('electron');
             ipcRenderer.send(channel, ...args);

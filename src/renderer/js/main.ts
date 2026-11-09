@@ -2174,7 +2174,7 @@ class OICPPApp {
             return;
         }
         if (window.electronAPI) return window.electronAPI.openFolder();
-        alert(window.i18n.t('message.openFolderElectronRequired'));
+        this.showMessage(window.i18n.t('message.openFolderElectronRequired'), 'error');
     }
 
     setWorkspace(path: string) {
@@ -3945,11 +3945,11 @@ class OICPPApp {
                 } else if (typeof window.open === 'function') {
                     window.open(url, '_blank');
                 } else {
-                    alert(window.i18n.t('feedback.externalLinkFailed', { url }));
+                    this.showMessage(window.i18n.t('feedback.externalLinkFailed', { url }), 'error');
             }
             } catch (error) {
                 logError('[主进程] 打开GitHub Issues时出错:', error || {});
-                alert(window.i18n.t('feedback.externalLinkFailed', { url }));
+                this.showMessage(window.i18n.t('feedback.externalLinkFailed', { url }), 'error');
             }
             dialog.remove();
         });
@@ -4220,11 +4220,11 @@ class OICPPApp {
                 this.showUpdateCheckingDialog();
             } catch (error) {
                 logError('[渲染进程] 检查更新失败:', error);
-                alert(window.i18n?.t?.('message.updateUnavailable'));
+                this.showMessage(window.i18n?.t?.('message.updateUnavailable') || '', 'error');
             }
         } else {
             logWarn('[渲染进程] Electron环境不可用，无法检查更新');
-            alert(window.i18n?.t?.('message.updateElectronOnly'));
+            this.showMessage(window.i18n?.t?.('message.updateElectronOnly') || '', 'error');
         }
     }
 
