@@ -34,6 +34,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@electron/fuses": "^2.1.3",
     "@types/node": "^26.6.6",
     "electron": "^45.2.3",
     "electron-builder": "^26.18.0",
@@ -75,6 +76,23 @@
     },
     "electronDist": "node_modules/electron/dist",
     "compression": "maximum",
+    "electronFuses": {
+      "version": "^1.0.0",
+      "selected": [
+        {
+          "fuse": "runAsNode",
+          "enabled": false
+        },
+        {
+          "fuse": "nodeCliInspect",
+          "enabled": false
+        },
+        {
+          "fuse": "nodeEmbedded",
+          "enabled": true
+        }
+      ]
+    },
     "files": [
       "src/**/*",
       "src/lang/**/*",
