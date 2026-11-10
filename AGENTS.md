@@ -42,6 +42,7 @@ pnpm run prebuild:icons        # 生成图标
 pnpm run prebuild:native       # Windows 上是 no-op（仅 POSIX 需要 fastspawn）
 pnpm run prebuild:clangd       # 目标已存在则自动跳过下载
 pnpm run prebuild:clang-format # 同上
+pnpm exec tsc -p tsconfig.build.json   # 编译 .ts → .js（打包前必须编译，否则 dist 里缺渲染层 .js）
 pnpm exec electron-builder --win dir     # 产出 dist\win-unpacked
 & "C:\Program Files (x86)\NSIS\makensis.exe" "/DPRODUCT_VERSION=1.5.4" installer.nsi
 ```
@@ -227,7 +228,7 @@ xvfb-run -a node_modules/electron/dist/electron tests/smoke-electron.js --no-san
 ### 迁移 .js → .ts（TypeScript 路线甲）
 **`.ts` 是唯一手写源，`.js` 由 `tsc -p tsconfig.build.json` 就地 emit 出来**（`rootDir`/`outDir` 同为 `src`），所以 `.js` 不许手改。`tsconfig.json` 负责全量 typecheck；`tsconfig.build.json` 带 `noCheck: true` 且 `include: ["src/**/*.ts", "src/**/*.d.ts"]` —— 全量 emit，**没有白名单要登记**，新增 `.ts` 直接会被编译。`.d.ts` 只进程序不出 JS。
 
-**提交前必须先编译一次**：`pnpm exec tsc -p tsconfig.build.json`，然后 `git diff --stat -- src` —— 输出非空就是漂移，两种成因：改了 `.ts` 没编译，或者有人手改了 `.js` 产物。漂移不会让 `tsc --noEmit` 报错（两边各自都合法），所以只能靠这一步兜住。历史上这里靠 `files` 白名单兜，代价是「`.ts` 漏登记 → 它的 `.js` 静默不再重生成」，实测已踩到（`gdb-mi-debugger.ts` 只因为被 `gdb-debugger.ts` 的 `import = require` 传递进程序才没漂），白名单已因此取消。
+**修改完立刻编译**：改了 `.ts` 后立即跑 `pnpm exec tsc -p tsconfig.build.json`，再 `git diff --stat -- src` —— 输出非空就是漂移，两种成因：改了 `.ts` 没编译，或者有人手改了 `.js` 产物。不要攒到提交前才编译。漂移不会让 `tsc --noEmit` 报错（两边各自都合法），所以只能靠这一步兜住。历史上这里靠 `files` 白名单兜，代价是「`.ts` 漏登记 → 它的 `.js` 静默不再重生成」，实测已踩到（`gdb-mi-debugger.ts` 只因为被 `gdb-debugger.ts` 的 `import = require` 传递进程序才没漂），白名单已因此取消。
 
 `.js` ↔ `.ts` 的对应关系仍然成立：`src/` 下每个 `.js` 都有同名 `.ts`。
 

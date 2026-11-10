@@ -9,6 +9,11 @@ out/
 *.log
 assets/
 
+# TypeScript 编译产物：src 下每个 .ts 都会被 tsc emit 出同名 .js，不许手改，不许入库
+# 例外：src/renderer/lib/i18next.min.js 是 vendored UMD，非编译产物，保留
+/src/**/*.js
+!src/renderer/lib/i18next.min.js
+
 # 运行时下载的 clangd 压缩包
 build/clangd/_download/
 
