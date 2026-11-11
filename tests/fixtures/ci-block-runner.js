@@ -40,13 +40,26 @@ const runCiBlock = (blockSrc, files, opts = {}) => {
     const fails = [];
     const oks = [];
     const infos = [];
+    const root = opts.root || '/proj';
+    const srcDir = opts.srcDir || path.join(root, 'src');
     const ctx = vm.createContext({
         Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Symbol,
         isNaN, parseInt, parseFloat, Infinity, NaN, console, path,
-        root: opts.root || '/proj',
+        root,
         jsFiles: Object.keys(files),
         htmlFiles: opts.htmlFiles || [],
+        // 有的检查项（I12）自己按扩展名取文件，而不是用外面算好的 jsFiles/htmlFiles。
+        // 这里同样只回虚拟文件表：块拿到的文件清单永远是测试给的那一份，不会摸到真仓库。
+        srcDir,
+        langDir: opts.langDir || path.join(srcDir, 'lang'),
+        getAllFiles: (dir, ext) => (String(ext) === '.ts' ? Object.keys(files).filter((f) => f.startsWith(dir)) : []),
         readFile: (f) => (Object.prototype.hasOwnProperty.call(files, f) ? files[f] : null),
+        // 块里的相对 require 必须按 scripts/ 解析：ci-check 自己就在那儿，而这份 require 来自
+        // tests/fixtures。不重定向的话 './i18n-duplicate' 会指到 fixtures 目录，当场
+        // MODULE_NOT_FOUND —— 红是红了，但红的原因是桩不齐，检查本身一点没跑到。
+        require: (spec) => require(spec.startsWith('.') ? path.join(ROOT, 'scripts', spec) : spec),
+        // summarize 只决定消息里列几条（截到前 8），不影响报不报，所以给的是同一份实现而非桩。
+        summarize: (list, keep = 8) => `${list.slice(0, keep).join(', ')}${list.length > keep ? `, ... (+${list.length - keep})` : ''}`,
         locales: opts.locales === undefined ? loadLocales() : opts.locales,
         I18N_HARDCODED_CJK_BASELINE: opts.baseline === undefined ? 0 : opts.baseline,
         verbose: false,

@@ -45,6 +45,7 @@ OICPP-Plus 使用了下列第三方开源软件。本文件是**清单与来源�
 
 | 组件 | 版本 | 协议 | 上游 |
 |------|------|------|------|
+| `@electron/fuses` | `2.1.3` | MIT | <https://github.com/electron/fuses> |
 | `@types/node` | `^26.6.5` | MIT | <https://github.com/DefinitelyTyped/DefinitelyTyped> |
 | `electron-builder` | `^26.15.3` | MIT | <https://github.com/electron-userland/electron-builder> |
 | `html-webpack-plugin` | `^5.6.8` | MIT | <https://github.com/jantimon/html-webpack-plugin> |
@@ -52,6 +53,7 @@ OICPP-Plus 使用了下列第三方开源软件。本文件是**清单与来源�
 | `monaco-editor-webpack-plugin` | `^7.1.1` | MIT | <https://github.com/microsoft/monaco-editor> |
 | `sharp` | `^0.35.5` | Apache-2.0 | <https://github.com/lovell/sharp> |
 | `typescript` | `7.0.2` | Apache-2.0 | <https://github.com/microsoft/TypeScript> |
+| `@electron/fuses` | `^2.1.3` | MIT | <https://github.com/electron/fuses> |
 | `webpack` | `^5.111.1` | MIT | <https://github.com/webpack/webpack> |
 | `webpack-cli` | `^7.2.3` | MIT | <https://github.com/webpack/webpack-cli> |
 

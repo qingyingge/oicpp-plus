@@ -16,6 +16,8 @@ const path = require('path');
 const vm = require('vm');
 const os = require('os');
 const { callbackBody, funcDecl, scalarConst } = require('./fixtures/source-extract');
+const { readDataDirName, makeUserDataPath } = require('./fixtures/data-root-sandbox');
+const pathIdentity = require('../src/utils/path-identity');
 
 let failures = 0;
 const check = (name, cond, extra = '') => {
@@ -44,9 +46,17 @@ const observedKeys = [];
 // 模块级可变绑定要按场景注入，共用 context 会串味。
 function makeScope(extraGlobals) {
     const calls = { logWarn: [], logInfo: [], logError: [], t: [] };
+    // 主进程的数据根由 utils/data-root 解析。沙箱默认按本场景注入的 os 替身拼 HOME，
+    // 调用方仍可用 extraGlobals.userDataPath 覆盖（例如便携模式要假装根在 exe 同级）。
+    const effectiveOs = (extraGlobals && extraGlobals.os) || os;
     const ctx = vm.createContext({
         path, os, fs, URL, Map, Set, JSON, Math, Date, RegExp, Error,
         String, Number, Boolean, Array, Object, Promise,
+        // 包含判定在 src/utils/path-identity.ts 里，沙箱用真模块而不是桩：
+        // 换成 startsWith 桩的话， realpath 那条关键差异（软链、大小写）就测不到了。
+        isInside: pathIdentity.isInside,
+        samePath: pathIdentity.samePath,
+        userDataPath: makeUserDataPath(effectiveOs.homedir()),
         logWarn: (...a) => { calls.logWarn.push(a.map(String)); },
         logInfo: (...a) => { calls.logInfo.push(a.map(String)); },
         logError: (...a) => { calls.logError.push(a.map(String)); },
@@ -178,8 +188,9 @@ function readDeclaredWhitelist(src) {
     return m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
 }
 
-// 用户数据目录名也从源码里读，测试不复制第二份配置
-const USER_DATA_DIR_NAME = (mainSource.match(/const USER_DATA_DIR_NAME\s*=\s*'([^']+)'/) || [])[1];
+// 用户数据目录名也从源码里读，测试不复制第二份配置。
+// 真源自 1.6 起在 src/utils/data-root.ts（main.js 里已不再持有这个字面量）。
+const USER_DATA_DIR_NAME = readDataDirName();
 
 // ---------------------------------------------------------------------------
 // 主流程
@@ -238,8 +249,16 @@ async function main() {
         // —— 不显式剥尾分隔符时，「/ 下的一切都在 / 内」这条会判成 false
         check('以文件系统根目录为基准时仍判得出在内',
             isPathInsideDir('/etc/passwd', '/') === true && isPathInsideDir('/', '/') === true);
-        check('大小写不同（Windows 不敏感）仍视为在内',
-            isPathInsideDir(base.toUpperCase() + path.sep + 'y', base) === true);
+        // 大小写：win32 上两侧都先经 realpath 回到卷面自己的拼法，换个大小写照样在内；
+        // 在大小写敏感的卷上 .TMP/XXX 就是另一个目录，判成「在外」才是安全方向。
+        // 原先那句无条件 toLowerCase() 在 POSIX 上也放行，那是一道被放开的安全边界。
+        if (process.platform === 'win32') {
+            check('大小写不同（Windows 不敏感）仍视为在内',
+                isPathInsideDir(base.toUpperCase() + path.sep + 'y', base) === true);
+        } else {
+            check('大小写不同在大小写敏感的卷上判为在外',
+                isPathInsideDir(base.toUpperCase() + path.sep + 'y', base) === false);
+        }
         check('null / 空输入返回 false 而不抛异常',
             isPathInsideDir(null, base) === false && isPathInsideDir(base, null) === false);
         check('非字符串输入也不抛',
@@ -453,8 +472,15 @@ async function main() {
     const siblingDenied = tryDeletable(path.join(WORKSPACE + 'Evil', 'x.cpp'));
     check('同前缀兄弟目录 workspaceEvil 被拒（startsWith 的原漏洞）',
         siblingDenied.message === 'error.outsideWorkspace');
-    check('路径大小写不同仍视为在工作区内（Windows 不敏感）',
-        tryDeletable(path.join(WORKSPACE.toUpperCase(), 'A.CPP')).threw === null);
+    // 同上：win32 由 realpath 折叠回卷面拼法，敏感卷上换大小写就是另一个目录，
+    // 必须按「工作区外」拒掉，否则用户手滑打错大小写反而多拿到一块可删区域。
+    if (process.platform === 'win32') {
+        check('路径大小写不同仍视为在工作区内（Windows 不敏感）',
+            tryDeletable(path.join(WORKSPACE.toUpperCase(), 'A.CPP')).threw === null);
+    } else {
+        check('路径大小写不同按工作区外拒绝（敏感卷）',
+            tryDeletable(path.join(WORKSPACE.toUpperCase(), 'A.CPP')).message === 'error.outsideWorkspace');
+    }
 
     env.currentExternalWorkspacePath = undefined;
     const noWs = tryDeletable(path.join(os.tmpdir(), 'whatever.cpp'));

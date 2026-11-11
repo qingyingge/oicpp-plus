@@ -40,6 +40,17 @@ function numberValue(value: unknown, fallback: number = 0): number {
     return Number.isFinite(num) ? num : fallback;
 }
 
+/**
+ * 带错误码的 Error：调试子系统的「良性状态」与「真失败」必须靠码区分，不能靠措辞。
+ *
+ * 措辞会被翻译改掉，而渲染层曾经用**裸 running 分支**匹配 message，于是
+ * "Error running target: signal SIGSEGV" 也被判成良性、连段错误都不报（#10）。
+ * 主进程的 debug-error 统一出口会把 code 一起送过 IPC，码在这里不设就永远丢在边界上。
+ */
+function codedError(code: string, message: string): Error {
+    return Object.assign(new Error(message), { code });
+}
+
 /** Pending MI request entry tracked by token. */
 interface MiPendingEntry {
     token: string;
@@ -164,7 +175,7 @@ class GDBDebugger extends EventEmitter {
      */
     _writeMi(line: string): void {
         if (!this.gdbProcess || !this.gdbProcess.stdin || this.gdbProcess.exitCode !== null) {
-            throw new Error(t('debug.gdbProcessNotRunning'));
+            throw codedError('debuggerNotRunning', t('debug.gdbProcessNotRunning'));
         }
         this.gdbProcess.stdin.write(line + '\n');
     }
@@ -551,7 +562,7 @@ class GDBDebugger extends EventEmitter {
      */
     async run(): Promise<void> {
         if (this.programExited) throw new Error(t('debug.programHasExited'));
-        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
+        if (this._inferiorRunning) throw codedError('programAlreadyRunning', t('debug.programAlreadyRunning'));
         if (this._isStarted && !this.programExited) return this.continue();
         if (process.platform === 'linux') {
             try {
@@ -576,7 +587,7 @@ class GDBDebugger extends EventEmitter {
      */
     async continue(): Promise<void> {
         if (this.programExited) throw new Error(t('debug.programHasExited'));
-        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
+        if (this._inferiorRunning) throw codedError('programAlreadyRunning', t('debug.programAlreadyRunning'));
         if (!this._isStarted) return this.run();
         this._manualBreakOnEntry = false;
         this._inferiorRunning = true;
@@ -618,7 +629,7 @@ class GDBDebugger extends EventEmitter {
      */
     async _execStep(command: string): Promise<void> {
         if (this.programExited) throw new Error(t('debug.programHasExited'));
-        if (this._inferiorRunning) throw new Error(t('debug.programAlreadyRunning'));
+        if (this._inferiorRunning) throw codedError('programAlreadyRunning', t('debug.programAlreadyRunning'));
         this._manualBreakOnEntry = false;
         this._inferiorRunning = true;
         this._programStopped = false;

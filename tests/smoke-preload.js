@@ -46,6 +46,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pathDirname: async (p) => path.dirname(p),
     readFileContent: async () => '',
     getResourcePath: () => '',
+    // 探针用：在页面里直接驱动一次「主进程广播语言变更」。
+    // 渲染层的 setLanguage() 只负责持久化，真正的切换靠 onLanguageChanged 这条回推，
+    // 没有这个钩子就没法在 smoke 里验「切语言后文案还在不在」。
+    __broadcastLanguage: (code) => {
+        current = code;
+        for (const cb of langChanged) cb(code);
+    },
 });
 
 process.on('message', (m) => {

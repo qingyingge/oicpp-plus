@@ -4,6 +4,9 @@
 // 防止批量正则替换（历史上出现过 `= ('key')` 这类静默空操作）再次悄悄破坏界面。
 
 const fs = require('fs');
+// 复数形态的归一口径必须和 scripts/ci-check.js 用的是同一份实现，
+// 否则「测试说一致、CI 说不一致」这类分歧迟早出现（本仓库已经踩过两次）。
+const plural = require('../scripts/i18n-plural');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
@@ -50,9 +53,11 @@ if (packs['zh-cn'] && packs.en) {
     const zhKeys = new Set(Object.keys(packs['zh-cn']));
 
     // --- key 对齐 ------------------------------------------------------------
-    const missingInZh = enKeys.filter((k) => !zhKeys.has(k));
-    const missingInEn = [...zhKeys].filter((k) => packs.en[k] === undefined);
-    check('en.json and zh-cn.json have identical key sets', missingInZh.length === 0 && missingInEn.length === 0,
+    const enLogical = [...plural.indexPack(packs.en).logical.keys()];
+    const zhLogical = new Set(plural.indexPack(packs['zh-cn']).logical.keys());
+    const missingInZh = enLogical.filter((k) => !zhLogical.has(k));
+    const missingInEn = [...zhLogical].filter((k) => !plural.indexPack(packs.en).logical.has(k));
+    check('en.json and zh-cn.json have identical logical key sets', missingInZh.length === 0 && missingInEn.length === 0,
         missingInZh.length + missingInEn.length ? `missing zh: ${missingInZh.slice(0, 5)} | missing en: ${missingInEn.slice(0, 5)}` : `${enKeys.length} keys`);
 
     // --- placeholder 对齐 ----------------------------------------------------
@@ -401,7 +406,9 @@ if (packs['zh-cn'] && packs.en) {
     for (const m of corpus.matchAll(/\.([a-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)/g)) mentioned.add(m[1]);
 
     const zhFlat2 = packs['zh-cn'];
-    const orphans = Object.keys(zhFlat2).filter((k) => !mentioned.has(k));
+    // 与 I7 同口径：按逻辑键统计，复数形态的一支被引用即算整键被引用
+    const mentionedLogical = plural.mentionedLogical(mentioned);
+    const orphans = [...plural.indexPack(zhFlat2).logical.keys()].filter((k) => !mentionedLogical.has(k));
 
     const ciSource2 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
     const baselineMatch = /const I18N_ORPHAN_KEY_BASELINE = (\d+);/.exec(ciSource2);
@@ -442,7 +449,10 @@ if (packs['zh-cn'] && packs.en) {
     check('the source tree actually references translation keys', referenced.size > 0, `${referenced.size} keys`);
 
     for (const [code, pack] of Object.entries(packs)) {
-        const missing = [...referenced].filter((k) => pack[k] === undefined);
+        // 必须用复数感知的解析：源码写 t('compare.completedText', {count})，而 zh 包里
+        // 只有 _other —— 拿 pack[k] 直查会把已归一的复数键全报成缺失。
+        const index = plural.indexPack(pack);
+        const missing = [...referenced].filter((k) => !plural.resolvesKey(index, k));
         check(`all ${referenced.size} referenced keys resolve in ${code}.json`, missing.length === 0, missing.slice(0, 8).join(', '));
     }
 }
@@ -459,7 +469,10 @@ if (packs['zh-cn'] && packs.en) {
     // 契约：渲染层已接 i18next，且配置与主进程 lang/index.js 保持一致
     check('renderer delegates lookup to i18next', i18nSource.includes('i18next.t('));
     check('renderer configures the {token} placeholder syntax',
-        /interpolation:\s*\{\s*prefix:\s*'\{',\s*suffix:\s*'\}'\s*\}/.test(i18nSource));
+        // 只看 prefix/suffix 这两个键在不在，不管后面还挂了别的配置项。
+        // 不能用 /\{[^}]*\}/ 去框整个对象：suffix 的值就是 '}'，非配平正则会在它这里
+        // 截断，于是加了 escape 之后这条会假红（实测踩过）。lookahead 限定窗口最稳。
+        /interpolation:\s*\{(?=[\s\S]{0,160}prefix:\s*'\{')(?=[\s\S]{0,160}suffix:\s*'\}')/.test(i18nSource));
     check('renderer loads the current language over IPC',
         i18nSource.includes('getLanguageFile') && i18nSource.includes('addResourceBundle'));
     // 兜底语言交给 i18next 的 fallbackLng，不再自持 _fallbackMessages
@@ -524,6 +537,47 @@ if (packs['zh-cn'] && packs.en) {
     check('application menu is rebuilt when keybindings change', keybindingGate, `${rebuildTriggers.length} call site(s)`);
 }
 
+// ---- I4 的「中文标点」判据：弯引号不是中文标点 --------------------------------
+// 这条判据原先把 U+201C/201D/2018/2019 也算中文标点，于是 en.json 里那句
+// “字体未找到” 的英文文案被冤枉成违规，ratchet 一直挂着 1 这个没人解释的档位。
+// 降回 0 的前提是去掉这四个码位之后判别力没丢 —— 下面正反两组用例就是钉这个的。
+{
+    const ciSrc4 = fs.readFileSync(path.join(root, 'scripts', 'ci-check.js'), 'utf8');
+    const punctDecl = /const cnPunctRe = (\/[^;]+\/);/.exec(ciSrc4);
+    check('I4 的中文标点判据能抽出来（抽不到下面全是空转）', !!punctDecl, punctDecl && punctDecl[1].slice(0, 70));
+    if (punctDecl) {
+        const cnPunctRe = new Function('return ' + punctDecl[1])();
+        const mustFlag = [
+            '端口已被占用，请换一个',     // 全角逗号
+            '字体「宋体」不存在',         // 直角引号
+            '第（1）项',                 // 全角括号
+            '状态：空闲',                 // 全角冒号
+            '一、二、三',                 // 顿号
+            '保存失败。请重试',           // 全角句号
+        ];
+        const mustNotFlag = [
+            'The font \u201c{font}\u201d was not found and has been replaced with \u201c{fallback}\u201d',
+            'It\u2019s already running',
+            'Delete \u201ca.cpp\u201d now?',
+            'Truncated\u2026 see log',   // 省略号本来就豁免
+        ];
+        for (const probe of mustFlag) {
+            check('I4 中文标点仍能判出 ' + JSON.stringify(probe).slice(0, 24), cnPunctRe.test(probe) === true, probe);
+        }
+        for (const probe of mustNotFlag) {
+            check('I4 不误判英文排版引号/省略号：' + JSON.stringify(probe).slice(0, 26), cnPunctRe.test(probe) === false, probe);
+        }
+        // 真 en 包必须一处都不剩 —— baseline 0 不是喊出来的
+        const enHits = Object.entries(packs.en).filter(([, v]) => cnPunctRe.test(String(v)));
+        check('en.json 真包里中文标点为 0（这才允许 baseline 降到 0）',
+            enHits.length === 0, enHits.map(([k]) => k).join(','));
+        // 汉字本身由另一条 enCjk 兜住，所以去掉弯引号不会放过混中文的条目
+        const ideographRe = /[\u4e00-\u9fff]/;
+        check('混了汉字的 en 文案仍被「不许有汉字」那条抓住（判据分工没漏）',
+            ideographRe.test('字体 “宋体” 未找到') === true, '');
+    }
+}
+
 // --- I8b（硬编码英文）不得被悄悄放宽 -----------------------------------------
 // I8b 与 I8 一样是 ratchet：baseline 0，含义是「现在一处都不许有」。它比 I8 更依赖
 // 一串豁免规则（开发者诊断、机器可读载荷、判别字段回看）—— 任何一条被无意删掉或
@@ -583,6 +637,162 @@ if (packs['zh-cn'] && packs.en) {
             }
         }
     }
+}
+
+// ---- 复数归一口径自身必须能咬（否则 I2 那句 PASS 是空集上的假绿）----------
+{
+    const issuesOf = (code, flat) => plural.pluralIssues(code, plural.indexPack(flat));
+    check('非复数包不产生任何复数问题（对照组）',
+        issuesOf('en', { 'a.one': 'x', 'b.two': 'y' }).length === 0,
+        JSON.stringify(issuesOf('en', { 'a.one': 'x', 'b.two': 'y' })));
+    // en 的 PluralRules 要 one+other；只给 other 就是漏译
+    const enMissing = issuesOf('en', { 'x_other': 'x' });
+    check('en 缺 _one 被判为漏译', enMissing.some((m) => /缺少必需的复数类别 _one/.test(m)), JSON.stringify(enMissing));
+    // zh 只有 other，多写 _one 是永远取不到的死键
+    const zhExtra = issuesOf('zh-cn', { 'x_other': 'x', 'x_one': 'x' });
+    check('zh 多写 _one 被判为死键', zhExtra.some((m) => /多余的复数类别 _one/.test(m)), JSON.stringify(zhExtra));
+    // 裸基名与复数形态并存时运行时取值不明
+    const ambiguous = issuesOf('en', { x: 'plain', x_one: 'a', x_other: 'b' });
+    check('基名与复数形态并存被判为取值不明', ambiguous.some((m) => /并存/.test(m)), JSON.stringify(ambiguous));
+    // 逻辑键归一：en 的 _one/_other 折回同一个 x，才能和 zh 的 _other 对齐
+    const enIdx = plural.indexPack({ x_one: '1 file', x_other: '{count} files' });
+    const zhIdx = plural.indexPack({ x_other: '{count} 个文件' });
+    check('复数形态折回同一逻辑键，两包逻辑键集因此仍然一致',
+        JSON.stringify([...enIdx.logical.keys()]) === JSON.stringify([...zhIdx.logical.keys()]),
+        JSON.stringify([...enIdx.logical.keys()]) + ' vs ' + JSON.stringify([...zhIdx.logical.keys()]));
+    // I6 等价：源码引用基名，包里只有带后缀形态，必须算可解析
+    check('I6 口径：引用基名而包里只有 _one/_other 时不算缺键',
+        plural.resolvesKey(enIdx, 'x') === true && plural.resolvesKey(enIdx, 'y') === false,
+        JSON.stringify([...enIdx.logical.keys()]));
+    // 归一口径必须跟 i18next 一致，而不是自创更宽的特例：引擎本来就按叶子的
+    // _one/_two/_few/_many/_other/_zero 后缀识别复数形态，所以以一个复数类别词
+    // 结尾的键**就是**复数形态。这条不是「别误折」的保护，而是一条命名约束：
+    // 不许拿 foo_other 这种名字当普通文案键用（引擎会按复数去找 foo_one）。
+    check('叶子以复数类别词结尾即视为复数形态（与 i18next 同口径）',
+        plural.splitPlural('a.other_two').category === 'two'
+            && plural.splitPlural('a.other_two').base === 'a.other'
+            && plural.splitPlural('a.count').category === null,
+        JSON.stringify(plural.splitPlural('a.other_two')));
+}
+
+// ---- 复数支的 {token} 只能少不能多：这条也必须能咬 -----------------------
+// 真 packs 已由 CI 的 I2 覆盖，这里守的是判定函数本身 —— 它一旦写反方向
+// （把「少用 token」也判成错），改文案时会一片红而没人知道为什么。
+{
+    const idx = (o) => plural.indexPack(o);
+    const tokensOf = (indexes) => plural.pluralTokenIssues(indexes);
+    check('正常复数键（各支 token 一致）不算问题（对照组）',
+        tokensOf({
+            'zh-cn': idx({ x_other: '有 {count} 个' }),
+            en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+        }).length === 0,
+        JSON.stringify(tokensOf({
+            'zh-cn': idx({ x_other: '有 {count} 个' }),
+            en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+        })));
+    // 单数句丢掉 {count} 是合法写法（"Delete this item?"），不许报
+    const dropped = tokensOf({
+        'zh-cn': idx({ x_other: '确定删除这 {count} 项吗？{preview}' }),
+        en: idx({ x_one: 'Delete this item? {preview}', x_other: 'Delete these {count} items? {preview}' }),
+    });
+    check('复数支少用 token 不判错（只查「多出来」这个方向）',
+        dropped.length === 0, JSON.stringify(dropped));
+    // 反过来：单数句引入 zh 的 _other 没有的 token，调用点不会传它 → 屏上留 {name}
+    const invented = tokensOf({
+        'zh-cn': idx({ x_other: '有 {count} 个' }),
+        en: idx({ x_one: 'Only {name} left', x_other: '{count} items left' }),
+    });
+    check('复数支引入默认语言没有的 token 被判错',
+        invented.some((m) => m.includes('x_one') && m.includes('{name}')), JSON.stringify(invented));
+    // 非复数键的 token 对齐归 I3 逐字面键管，这条不许把它们也扫进来
+    check('非复数键不由这条负责（对照组）',
+        tokensOf({ 'zh-cn': idx({ 'a.b': '{one}' }), en: idx({ 'a.b': '{two}' }) }).length === 0,
+        JSON.stringify(tokensOf({ 'zh-cn': idx({ 'a.b': '{one}' }), en: idx({ 'a.b': '{two}' }) })));
+    // 默认语言里没有参照 _other 时只能跳过，不能崩、也不能瞎报
+    check('默认语言缺该键时静默让位（缺键由 I2 报，不重复报）',
+        tokensOf({ 'zh-cn': idx({ unrelated: 'x' }), en: idx({ x_one: '{name}', x_other: '{count}' }) }).length === 0,
+        JSON.stringify(tokensOf({ 'zh-cn': idx({ unrelated: 'x' }), en: idx({ x_one: '{name}', x_other: '{count}' }) })));
+    const realIndexes = {};
+    for (const [code, flat] of Object.entries(packs)) if (flat) realIndexes[code] = idx(flat);
+    const realTokens = tokensOf(realIndexes);
+    check(`真语言包通过复数 {token} 方向检查（${Object.keys(realIndexes).length} 份）`,
+        realTokens.length === 0, realTokens.join(' | '));
+}
+
+// ---- 半转换必须抓得到：只改一份包会让上面两条守卫同时失明 ----------------
+{
+    const idx = (o) => plural.indexPack(o);
+    const consist = (indexes) => plural.pluralConsistencyIssues(indexes);
+    const both = {
+        'zh-cn': idx({ x_other: '有 {count} 个' }),
+        en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+    };
+    check('两份都正确复数化 → 无半转换（对照组）', consist(both).length === 0, JSON.stringify(consist(both)));
+    check('两份都还是裸基名（压根没复数化）→ 不归这条管', consist({
+        'zh-cn': idx({ x: '有 {count} 个' }),
+        en: idx({ x: '{count} items' }),
+    }).length === 0, JSON.stringify(consist({ 'zh-cn': idx({ x: 'x' }), en: idx({ x: 'x' }) })));
+
+    const half = {
+        'zh-cn': idx({ x: '有 {count} 个' }),
+        en: idx({ x_one: '{count} item', x_other: '{count} items' }),
+    };
+    const halfIssues = consist(half);
+    check('只转换了 en、zh 留裸基名 → 判半转换', halfIssues.some((m) => m.includes('x')), JSON.stringify(halfIssues));
+    // 这条是新增守卫存在的全部理由：把「旧守卫看不见」这件事本身钉成断言，
+    // 否则下一个人会以为 pluralTokenIssues 已经覆盖了这一形状。
+    check('并且证明旧守卫对这个形状确实是瞎的（所以这条必须存在）',
+        plural.pluralTokenIssues(half).length === 0
+            && plural.pluralIssues('zh-cn', half['zh-cn']).length === 0,
+        JSON.stringify({ tokens: plural.pluralTokenIssues(half), zhIssues: plural.pluralIssues('zh-cn', half['zh-cn']) }));
+    // token 校验被跳过的实际代价：单数句里塞一个非法 token 也报不出来
+    const halfSneaky = {
+        'zh-cn': idx({ x: '有 {count} 个' }),
+        en: idx({ x_one: 'Only {name} left', x_other: '{count} items' }),
+    };
+    check('半转换时非法 token 能从 pluralTokenIssues 脚下滑过去（记录盲区，不是新守卫的）',
+        plural.pluralTokenIssues(halfSneaky).length === 0
+            && consist(halfSneaky).length > 0,
+        JSON.stringify({ tokens: plural.pluralTokenIssues(halfSneaky), consist: consist(halfSneaky) }));
+    check('反向半转换同样判（zh 拆了、en 留裸基名）', consist({
+        'zh-cn': idx({ x_other: '有 {count} 个' }),
+        en: idx({ x: '{count} items' }),
+    }).length > 0);
+    // 整键在一边完全没有 → I2 缺键检查负责，这里不许重复报
+    check('整键缺失由 I2 报，这条不重复报', consist({
+        'zh-cn': idx({ unrelated: 'x' }),
+        en: idx({ x_one: 'a', x_other: 'b' }),
+    }).length === 0, JSON.stringify(consist({ 'zh-cn': idx({ unrelated: 'x' }), en: idx({ x_one: 'a', x_other: 'b' }) })));
+    const realPacks = {};
+    for (const [code, flat] of Object.entries(packs)) if (flat) realPacks[code] = idx(flat);
+    const realConsist = consist(realPacks);
+    check('真语言包没有半转换的键', realConsist.length === 0, realConsist.join(' | '));
+}
+
+// ---- I9 的判定函数：复数键 + 调用点不传 count = 裸键上屏 ------------------
+// 扫文件的部分在 ci-check.js（那边已实测能咬：把 t('tabs.closeAllConfirm', {count}) 改成
+// {total} 就报出 file:line）。这里守的是判定函数本身与它的两种出口文案。
+{
+    const idx = (o) => plural.indexPack(o);
+    const indexes = {
+        'zh-cn': idx({ x_other: '有 {count} 个', plain: '普通文案' }),
+        en: idx({ x_one: '{count} item', x_other: '{count} items', plain: 'plain' }),
+    };
+    const refs = (list) => plural.pluralCountIssues(indexes, list);
+    check('复数键传了 count → 不报', refs([
+        { key: 'x', kind: 't', hasCount: true, file: 'a.ts', line: 1 },
+    ]).length === 0, JSON.stringify(refs([{ key: 'x', kind: 't', hasCount: true, file: 'a.ts', line: 1 }])));
+    const missed = refs([{ key: 'x', kind: 't', hasCount: false, file: 'a.ts', line: 7 }]);
+    check('复数键没传 count → 报，且带上 file:line 与键名（否则没法定位）',
+        missed.length === 1 && missed[0].includes('a.ts:7') && missed[0].includes('x'),
+        JSON.stringify(missed));
+    check('非复数键不归这条管（对照组）', refs([
+        { key: 'plain', kind: 't', hasCount: false, file: 'a.ts', line: 2 },
+    ]).length === 0, JSON.stringify(refs([{ key: 'plain', kind: 't', hasCount: false, file: 'a.ts', line: 2 }])));
+    const attrIssue = refs([{ key: 'x', kind: 'attr', hasCount: false, file: 'p.html', line: 3 }]);
+    check('data-i18n 挂复数键时给的是 DOM 路径的修法（要 data-i18n-args，不是补 count:）',
+        attrIssue.length === 1 && attrIssue[0].includes('data-i18n-args') && !attrIssue[0].includes('补 count:'),
+        JSON.stringify(attrIssue));
 }
 
 console.log(`i18n tests completed: ${failures ? failures + ' failure(s)' : 'all checks passed'}`);

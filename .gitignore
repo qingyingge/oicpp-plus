@@ -9,6 +9,11 @@ out/
 *.log
 assets/
 
+# TypeScript 编译产物：src 下每个 .ts 都会被 tsc emit 出同名 .js，不许手改，不许入库
+# 例外：src/renderer/lib/i18next.min.js 是 vendored UMD，非编译产物，保留
+/src/**/*.js
+!src/renderer/lib/i18next.min.js
+
 # 运行时下载的 clangd 压缩包
 build/clangd/_download/
 
@@ -29,14 +34,24 @@ binding.posix.gyp
 # 本地编译的 native 模块（平台相关，勿提交）
 fastspawn.node
 
-# 对拍基准：工具日志、基准程序与编译产物均为本地内容（跑法见 docs/PERFORMANCE.md）
-/benchmark/
+# 对拍基准：工具日志、基准程序与编译产物均为本地内容（跑法见 docs/PERFORMANCE.md）。
+# 用 /* 而不是整个目录排除：目录一旦本身被忽略，里面的文件再想入库就得每次 -f，
+# 结果就是基准脚本静默留在本地、文档里的数字没人能重跑。js 一律放行。
+/benchmark/*
+!/benchmark/*.js
 /compare-benchmark/
 
 # opencode 工具配置
 .opencode/
+# CLI 会话状态（含 workflow 运行记录），与 .opencode/ 同类
+.qoder/
 AGENTS.local.md
 opencode-rag.json
+
+# 本机开发/对比基准目录（同上：忽略内容而不是忽略目录，基准脚本要能入库）
+benchmark/*
+!benchmark/*.js
+compare-benchmark/
 
 # 操作系统/编辑器
 .DS_Store

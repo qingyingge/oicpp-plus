@@ -762,6 +762,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     getPlatform: () => safeIpcRenderer.invoke('get-platform'),
     getUserHome: () => safeIpcRenderer.invoke('get-user-home'),
+    // 应用自有状态目录（codeTemp / compare / sampleTester ...）一律向主进程要，
+    // 不要拿 getUserHome 自己拼：便携模式下数据根不在家目录。
+    getUserDataPath: (segments: string[]) => safeIpcRenderer.invoke('get-user-data-path', segments),
     getUserIconPath: () => safeIpcRenderer.invoke('get-user-icon-path'),
     getBuildInfo: () => safeIpcRenderer.invoke('get-build-info'),
     readThirdPartyLicense: (name: string) => safeIpcRenderer.invoke('read-third-party-license', name),
@@ -1022,14 +1025,6 @@ const safeSendLog = (level: string, args: unknown[]): void => {
         if (logQueue.length >= LOG_BATCH_MAX) flushLogQueue();
         else scheduleLogFlush();
     } catch (_) { }
-    // 仅在开发模式或显式开启时输出到控制台
-    if (process.env['NODE_ENV'] === 'development' || process.env['OICPP_CONSOLE_LOG'] === '1') {
-        try {
-            if (level === 'warn') console.warn(...args);
-            else if (level === 'error') console.error(...args);
-            else console.log(...args);
-        } catch (_) { }
-    }
 };
 
 contextBridge.exposeInMainWorld('logInfo', (...args: unknown[]) => safeSendLog('info', args));

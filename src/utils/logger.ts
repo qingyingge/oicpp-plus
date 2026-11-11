@@ -2,7 +2,7 @@ type ErrorLike = Record<string, unknown> & { cause?: unknown; data?: unknown; er
 
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
+import { userDataPath } from './data-root';
 
 const SENSITIVE_KEY_RE = /token|password|passwd|secret|authorization|cookie|credential|apikey|api_key/i;
 // 裸字符串里的敏感键值：键名可以带引号（两边必须配平）、分隔符除 : = 外还认 "token is xxx"
@@ -13,15 +13,18 @@ const BEARER_RE = /(Bearer\s+)[A-Za-z0-9._\-]+/gi;
 
 export class Logger {
     initialized = false;
-    logDir: string;
     logFile: string | null = null;
     private _buffer: string[] = [];
     private _batchSize = 200;
     private _maxBufferLines = 5000;
     private _flushScheduled = false;
+    private _logDir: string | null = null;
 
-    constructor() {
-        this.logDir = path.join(os.homedir(), '.oicpp-plus', 'logs');
+    // 目录延迟到第一次真正要用时才解析：main.js 第 19 行就 require 本模块，
+    // 在构造期把路径固化会让便携模式的日志永远写在系统盘。
+    get logDir(): string {
+        if (this._logDir === null) this._logDir = userDataPath('logs');
+        return this._logDir;
     }
 
     _scheduleFlush(): void {

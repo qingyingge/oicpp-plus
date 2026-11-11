@@ -15,13 +15,13 @@ const check = (name, condition, extra = '') => {
     if (!condition) failures++;
 };
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'main-process', 'sample-tester-server.js'), 'utf8');
 
 function sliceBetween(startMarker, endMarker) {
     const start = source.indexOf(startMarker);
     const end = source.indexOf(endMarker, start);
     if (start < 0 || end < 0) {
-        console.log(`[FAIL] main.js section not found: ${startMarker}`);
+        console.log(`[FAIL] sample-tester-server.js section not found: ${startMarker}`);
         process.exit(1);
     }
     return source.slice(start, end);
@@ -29,7 +29,7 @@ function sliceBetween(startMarker, endMarker) {
 
 const sections = [
     sliceBetween('function normalizeCompetitiveCompanionPayload(', 'function createCompetitiveCompanionServer('),
-    sliceBetween('function validateSampleTesterPayload(', "app.on('before-quit'")
+    sliceBetween('function validateSampleTesterPayload(', 'function sendCreateProblem(')
 ].join('\n');
 
 const context = vm.createContext({ URL, console });

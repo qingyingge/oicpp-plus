@@ -195,8 +195,13 @@ importers:
         specifier: ^11.12.0
         version: 11.12.0
       i18next:
+<<<<<<< HEAD
         specifier: ^26.7.1
         version: 26.7.1(typescript@7.0.2)
+=======
+        specifier: ^27.0.1
+        version: 27.0.1(typescript@7.0.2)
+>>>>>>> main
       iconv-lite:
         specifier: ^0.7.3
         version: 0.7.3
@@ -225,18 +230,26 @@ importers:
         specifier: 6.5.438
         version: 6.5.438
       turndown:
-        specifier: ^7.2.4
-        version: 7.2.4
+        specifier: ^7.2.5
+        version: 7.2.5
       winreg:
         specifier: ~1.2.5
         version: 1.2.5
     devDependencies:
+      '@electron/fuses':
+        specifier: ^2.1.3
+        version: 2.1.3
       '@types/node':
         specifier: ^26.6.6
         version: 26.6.6
       electron:
+<<<<<<< HEAD
         specifier: '>=37.0.0 <46.0.0'
         version: 45.2.1(supports-color@8.1.1)
+=======
+        specifier: ^45.2.3
+        version: 45.2.3(supports-color@8.1.1)
+>>>>>>> main
       electron-builder:
         specifier: ^26.18.0
         version: 26.18.0(electron-builder-squirrel-windows@26.18.0)(supports-color@8.1.1)
@@ -288,6 +301,11 @@ packages:
 
   '@electron/fuses@1.8.0':
     resolution: {integrity: sha512-zx0EIq78WlY/lBb1uXlziZmDZI4ubcCXIMJ4uGjXzZW0nS19TjSPeXPAjzzTmKQlJUZm0SbmZhPKP7tuQ1SsEw==}
+    hasBin: true
+
+  '@electron/fuses@2.1.3':
+    resolution: {integrity: sha512-LoKJUXNiJ4JM8IIrUltSHI+8pkogaGj5wmJx81jE/Wk3g2w1/kfMbTEKNoY5kitGE8hiC12h32R/1SlywFtxXg==}
+    engines: {node: '>=22.12.0'}
     hasBin: true
 
   '@electron/get@5.1.0':
@@ -1163,8 +1181,13 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
+<<<<<<< HEAD
   electron@45.2.1:
     resolution: {integrity: sha512-t433yuo8Kh8WG/mTStnPRT/NtpWw8A+caNLJgeU0tS/FlfOkeNEntFsac4ViLgDxZOmDe7BeSkOANVqrqNHhDA==}
+=======
+  electron@45.2.3:
+    resolution: {integrity: sha512-Vurzu5UOA5nTGT4LqIwXD16QFGrOZdiXxF+1UP4KNsAOo/YtDcT3/u0jhP4WSwNJ0iLrLDi85hzBJ0arnGDhyw==}
+>>>>>>> main
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -1395,8 +1418,14 @@ packages:
     resolution: {integrity: sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==}
     engines: {node: '>= 14'}
 
+<<<<<<< HEAD
   i18next@26.7.1:
     resolution: {integrity: sha512-cX+3RRVczel/V2kCMTACckSGSpqgtWYEA6beXNYVms7dOQiHojdPYHD26lT4IKimNeoGWrLvtPgjftbRvmZJVw==}
+=======
+  i18next@27.0.1:
+    resolution: {integrity: sha512-KaE5ozP8UUeVpOJIwMVbbnpRKpyYQuxd9ZbseJoDzezE3nvLnZZQn20pkzyIJwPI2Uet/Qs3WzPTG812f6F/Eg==}
+    engines: {node: '>=22'}
+>>>>>>> main
     peerDependencies:
       typescript: ^5 || ^6 || ^7
     peerDependenciesMeta:
@@ -1987,8 +2016,8 @@ packages:
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
-  turndown@7.2.4:
-    resolution: {integrity: sha512-I8yFsfRzmzK0WV1pNNOA4A7y4RDfFxPRxb3t+e3ui14qSGOxGtiSP6GjeX+Y6CHb7HYaFj7ECUD7VE5kQMZWGQ==}
+  turndown@7.2.5:
+    resolution: {integrity: sha512-EKZvCCFHh8sWttpAMs10U6niZFJ2cpz8LkCPlylxoG4JcHF50J7EHnnBW3AY1qXtUMu7kDjCp7dnggB1sIbqEQ==}
     engines: {node: '>=18', npm: '>=9'}
 
   typescript@7.0.2:
@@ -2175,6 +2204,8 @@ snapshots:
       chalk: 4.1.2
       fs-extra: 9.1.0
       minimist: 1.2.8
+
+  '@electron/fuses@2.1.3': {}
 
   '@electron/get@5.1.0(supports-color@8.1.1)':
     dependencies:
@@ -3068,7 +3099,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+<<<<<<< HEAD
   electron@45.2.1(supports-color@8.1.1):
+=======
+  electron@45.2.3(supports-color@8.1.1):
+>>>>>>> main
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0(supports-color@8.1.1)
@@ -3313,7 +3348,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+<<<<<<< HEAD
   i18next@26.7.1(typescript@7.0.2):
+=======
+  i18next@27.0.1(typescript@7.0.2):
+>>>>>>> main
     optionalDependencies:
       typescript: 7.0.2
 
@@ -3862,7 +3901,7 @@ snapshots:
 
   tslib@2.8.1: {}
 
-  turndown@7.2.4:
+  turndown@7.2.5:
     dependencies:
       '@mixmark-io/domino': 2.2.0
 

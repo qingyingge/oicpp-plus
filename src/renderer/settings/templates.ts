@@ -409,7 +409,7 @@ class TemplatesSettings {
         const titleEl = (document.getElementById('snippet-dialog-title'));
         const confirmBtn = (document.getElementById('confirm-snippet-btn'));
         if (titleEl) {
-            titleEl.textContent = window.i18n.t(isEditing ? 'templates.snippetDialogEditTitle' : 'templates.snippetDialogTitle');
+            titleEl.textContent = window.i18n.t(isEditing ? 'templates.snippetDialogEditTitle' : 'templates.addSnippet');
         }
         if (confirmBtn) {
             confirmBtn.textContent = window.i18n.t(isEditing ? 'templates.snippetConfirmEdit' : 'templates.snippetConfirm');

@@ -64,7 +64,21 @@ interface Errorish {
     message?: string;
 }
 
+/**
+ * 「不是失败、只是当前状态」的调试错误码 —— 只有出现在这里的行为良性。
+ *
+ * 生产者侧的同名码写在 src/main.ts（codedDebugError）与 src/gdb-mi-debugger.ts
+ * （codedError），三处必须对齐；tests/debug-error-classification.test.js 双向核对：
+ * 生产侧新增一个良性码而这里没登记 → 红；这里登记了而没人发 → 也红。
+ * 方向是安全的：不在集合里的码一律按真错误弹出去，宁可多报也不静默吞失败。
+ */
+const BENIGN_DEBUG_CODES = new Set(['debuggerNotRunning', 'programAlreadyRunning']);
+
 interface ErrorPayload {
+    // 定性只看 code（AGENTS.md M57 / #10）：措辞是译文，拿它当语义状态用，改一次译文
+    // 就可能静默翻转判定方向 —— 之前那条正则里裸的 running 分支连 SIGSEGV 都判成良性。
+    // 主进程 src/main.ts 的 debugErrorPayload 负责把码送过 IPC 边界。
+    code?: string;
     detail?: ErrorPayload | string | null;
     error?: ErrorPayload | string | null;
     message?: string;
@@ -186,7 +200,6 @@ class OICPPApp {
     };
     supportedDropTextExtensions: Set<string>;
     _isWindowsPlatform: boolean | undefined;
-    _isMacPlatform: boolean | undefined;
     _origUpdateStatusBar: (() => void) | null | undefined;
 
     constructor() {
@@ -244,12 +257,18 @@ class OICPPApp {
     };
     this.supportedDropTextExtensions = new Set(['cpp', 'c', 'cc', 'cxx', 'h', 'hpp', 'hh', 'txt', 'in', 'out', 'ans', 'md', 'json']);
         this._isWindowsPlatform = undefined;
-        this._isMacPlatform = undefined;
     }
 
     async init() {
         try {
             logInfo('开始初始化 OICPP-Plus App...');
+            // 让「@shortcut:keybinding:*」这类引用能解析到**用户改过的**组合键：keybindings 模块
+            // 不认得 settings 的形状，也不该反向依赖 app 实例，所以在这里注入一个取值函数。
+            // 注入是惰性的（绘制时才调），所以 settings 还没加载完也没关系。
+            window.oicppKeybindings?.setUserComboSource((key: string) => {
+                const value = this.settings?.keybindings?.[key];
+                return typeof value === 'string' ? value : '';
+            });
             if (typeof MonacoEditorManager !== 'undefined') {
                 this.editorManager = new MonacoEditorManager();
                 window.editorManager = this.editorManager;
@@ -339,9 +358,17 @@ class OICPPApp {
     refreshDebugButtonTranslations() {
         const continueBtn = document.getElementById('debug-continue');
         if (!continueBtn) return;
+        // 标题里的键名以前焊在文案里（「继续执行 (F6)」），现在走 {keys}：
+        // 于是它跟着用户的改键和当前平台显示，而不是永远印着 F6。
+        const keys = { keys: this.shortcutText('keybinding:debugContinue') };
         continueBtn.title = continueBtn.style.animation
-            ? window.i18n.t('debug.clickToStartRun')
-            : window.i18n.t('debug.continueTitle');
+            ? window.i18n.t('debug.clickToStartRun', keys)
+            : window.i18n.t('debug.continueTitle', keys);
+    }
+
+    /** 界面上要显示某个动作的键名时走这里（来源写法与 HTML 里的 @shortcut: 引用同一套）。 */
+    shortcutText(source: string) {
+        return window.oicppKeybindings?.formattedComboFor(source) ?? '';
     }
 
     setupEventListeners() {
@@ -1064,59 +1091,33 @@ class OICPPApp {
     }
 
     getDefaultKeybindings(): KeybindingMap {
-        const compileAndRunShortcut = this.isMacPlatform() ? 'Ctrl+F11' : 'F11';
-        return {
-            formatCode: 'Alt+Shift+S',
-            showFunctionPicker: 'Ctrl+Shift+G',
-            markdownPreview: 'Ctrl+Shift+V',
-            renameSymbol: 'F2',
-            deleteLine: 'Ctrl+D',
-            duplicateLine: 'Ctrl+E',
-            moveLineUp: 'Ctrl+Shift+Up',
-            moveLineDown: 'Ctrl+Shift+Down',
-            copy: 'Ctrl+C',
-            paste: 'Ctrl+V',
-            cut: 'Ctrl+X',
-            compileCode: 'F9',
-            runCode: 'F10',
-            compileAndRun: compileAndRunShortcut,
-            toggleDebug: 'F5',
-            debugContinue: 'F6',
-            debugStepOver: 'F7',
-            debugStepInto: 'F8',
-            debugStepOut: 'Shift+F8',
-            cloudCompile: 'F12',
-            openTerminal: 'Ctrl+`',
-            runAllSamples: this.isMacPlatform() ? 'Ctrl+Shift+F11' : 'Ctrl+F11'
-        };
+        // 表在 src/utils/keybindings.ts。这一份以前是第四遍抄写（0291982 修 #235 时加的），
+        // 缺它时按「没有默认键」处理：菜单提示会是空的，可见但不可致命，与旧 catch 同向。
+        return window.oicppKeybindings?.defaultKeybindings() || {};
     }
 
-    resolveShortcutLabel(keybindingKey: string) {
-        const defaults = this.getDefaultKeybindings();
-        const fromSettings = this.settings?.keybindings?.[keybindingKey];
-        if (typeof fromSettings === 'string' && fromSettings.trim()) {
-            return fromSettings.trim();
-        }
-        return defaults[keybindingKey] || '';
+    // 一个 .menu-shortcut 的文本从哪来，由 span 自己声明：
+    //   data-keybinding → 可在设置页改的动作，值走 settings.keybindings，缺省回默认表；
+    //   data-accel      → 不可改的动作，值走 MENU_ACCELERATORS（主进程菜单模板用的是同一份）。
+    // 以前这里是一份手写 7 项映射表，13 个 span 只覆盖 7 个：剩下 6 个（恰好全是主修饰键那几个）
+    // 永远是 HTML 里抄的字面量，于是 #235 那类「改了键、或换了平台，提示不动」只被修掉了一半。
+    // 屏幕上那行字 = 存的 combo 经**平台格式化**之后的结果；存的值本身不动（改键要用规范写法）。
+    // 语义要点（见 keybindings.ts 头部）：存的 `Ctrl` 是主修饰键，所以 mac 上必须显示 ⌘；
+    // 显示顺序按 Apple HIG（⌃⌥⇧⌘，Command 在最后），不是 VS Code 那条（⌃⇧⌥⌘）。
+    // 「用户改过的键优先、否则回默认表」这条规则现在只在 rawComboFor 里有一份 ——
+    // 这里以前自己写了一遍，那是同一件事的第五处表述。
+    resolveShortcutLabel(source: Element) {
+        const keybindingKey = source.getAttribute('data-keybinding') || '';
+        const accelId = source.getAttribute('data-accel') || '';
+        const spec = keybindingKey ? `keybinding:${keybindingKey}`
+            : (accelId ? `accel:${accelId}` : '');
+        if (!spec) return '';
+        return window.oicppKeybindings?.formattedComboFor(spec) ?? '';
     }
 
     updateMenuShortcutHints() {
-        const mappings = [
-            { action: 'cloud-compile', key: 'cloudCompile' },
-            { action: 'open-terminal', key: 'openTerminal' },
-            { action: 'format-code', key: 'formatCode' },
-            { action: 'compile', key: 'compileCode' },
-            { action: 'run', key: 'runCode' },
-            { action: 'compile-run', key: 'compileAndRun' },
-            { action: 'debug', key: 'toggleDebug' }
-        ];
-
-        mappings.forEach((item) => {
-            const node = document.querySelector(`.menu-dropdown-item[data-action="${item.action}"] .menu-shortcut`);
-            if (!node) {
-                return;
-            }
-            node.textContent = this.resolveShortcutLabel(item.key);
+        document.querySelectorAll('.menu-dropdown-item .menu-shortcut').forEach((node) => {
+            node.textContent = this.resolveShortcutLabel(node);
         });
     }
     
@@ -1936,16 +1937,9 @@ class OICPPApp {
     }
 
     isMacPlatform() {
-        if (this._isMacPlatform !== undefined) {
-            return this._isMacPlatform;
-        }
-        try {
-            const platform = (window.process?.platform || navigator?.platform || '').toLowerCase();
-            this._isMacPlatform = platform.includes('darwin') || platform.includes('mac');
-        } catch (_) {
-            this._isMacPlatform = false;
-        }
-        return this._isMacPlatform;
+        // 平台判定的单一来源（这一份嗅探来自 48b2065「适配 macOS」，同期还长出了另外三份）。
+        // 拿不到模块时按「不是 mac」处理，与旧实现的 catch 分支同向。
+        return window.oicppKeybindings?.isMacPlatform() ?? false;
     }
 
     normalizeFilePathCandidate(candidate: unknown) {
@@ -2180,7 +2174,7 @@ class OICPPApp {
             return;
         }
         if (window.electronAPI) return window.electronAPI.openFolder();
-        alert(window.i18n.t('message.openFolderElectronRequired'));
+        this.showMessage(window.i18n.t('message.openFolderElectronRequired'), 'error');
     }
 
     setWorkspace(path: string) {
@@ -3142,7 +3136,14 @@ class OICPPApp {
                              : window.i18n.t('debug.pausedGeneric');
 
         this.updateDebugStatus(`${prettyReason}${where}`);
-        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint')}`);
+        // 那四个键名以前焊在 debugContinueHint 的文案里，现在走插值：值来自 keybinding:* ，
+        // 于是它跟着用户的改键和当前平台变（mac 上 ⇧⌘F8，而不是永远印着 Shift+F8）。
+        this.showDebugInfo(`${prettyReason}${where}${window.i18n.t('debug.debugContinueHint', {
+            continue: this.shortcutText('keybinding:debugContinue'),
+            over: this.shortcutText('keybinding:debugStepOver'),
+            into: this.shortcutText('keybinding:debugStepInto'),
+            out: this.shortcutText('keybinding:debugStepOut')
+        })}`);
 
         if (file && line) {
             try { this.highlightCurrentLine(file, line); } catch (_) {}
@@ -3254,11 +3255,17 @@ class OICPPApp {
 
     onDebugError(error: ErrorPayload | string | null) {
         const msg = this.stringifyError(error) || '';
-        const lower = msg.toLowerCase();
-    if (/running|not\s*stopped|already\s*running|already\s*started|target\s+is\s+executing|debugger\s+not\s+running|调试器未运行/.test(lower)) {
+        // 只看码。原来这里挂着一条文本正则，裸的 running / executing 分支会**吞掉真错误**：
+        //   "Error running target: signal SIGSEGV"     → 判成良性，不弹错，状态显示「运行中」
+        //   "Not running: cannot attach, process vanished" → 同样被吞
+        //   "target is executing but faulted at 0x0"       → 同样被吞
+        // 兜底之所以存在，是因为主进程那十几处 `reply('debug-error', error.message)` 把码丢在
+        // 了 IPC 边界上；现在统一走 debugErrorPayload，生产者有码就用码，没码就按真错误报出去。
+        const code = (error && typeof error === 'object') ? error.code : undefined;
+        if (code !== undefined && BENIGN_DEBUG_CODES.has(code)) {
             logInfo('收到良性调试提示:', msg);
             this.updateDebugStatus(window.i18n.t('debug.programRunningStatus'));
-        return;
+            return;
         }
         this.unbindDebugTerminalBridge();
         logError('调试错误:', error);
@@ -3938,11 +3945,11 @@ class OICPPApp {
                 } else if (typeof window.open === 'function') {
                     window.open(url, '_blank');
                 } else {
-                    alert(window.i18n.t('feedback.externalLinkFailed', { url }));
+                    this.showMessage(window.i18n.t('feedback.externalLinkFailed', { url }), 'error');
             }
             } catch (error) {
                 logError('[主进程] 打开GitHub Issues时出错:', error || {});
-                alert(window.i18n.t('feedback.externalLinkFailed', { url }));
+                this.showMessage(window.i18n.t('feedback.externalLinkFailed', { url }), 'error');
             }
             dialog.remove();
         });
@@ -4213,11 +4220,11 @@ class OICPPApp {
                 this.showUpdateCheckingDialog();
             } catch (error) {
                 logError('[渲染进程] 检查更新失败:', error);
-                alert(window.i18n?.t?.('message.updateUnavailable'));
+                this.showMessage(window.i18n?.t?.('message.updateUnavailable'), 'error');
             }
         } else {
             logWarn('[渲染进程] Electron环境不可用，无法检查更新');
-            alert(window.i18n?.t?.('message.updateElectronOnly'));
+            this.showMessage(window.i18n?.t?.('message.updateElectronOnly'), 'error');
         }
     }
 
@@ -4780,9 +4787,11 @@ class OICPPApp {
             const diffDay = Math.floor(diffMs / 86400000);
 
             if (diffMin < 1) return window.i18n.t('app.justNow');
-            if (diffMin < 60) return window.i18n.t('app.minutesAgo', { n: diffMin });
-            if (diffHour < 24) return window.i18n.t('app.hoursAgo', { n: diffHour });
-            if (diffDay < 7) return window.i18n.t('app.daysAgo', { n: diffDay });
+            // count 是 i18next 选复数后缀的唯一依据（{n} 只是文案里的占位），
+            // 少了它 app.*Ago 的 _one 永远取不到，界面会直接显示裸键名 —— CI 的 I9 钉这条。
+            if (diffMin < 60) return window.i18n.t('app.minutesAgo', { n: diffMin, count: diffMin });
+            if (diffHour < 24) return window.i18n.t('app.hoursAgo', { n: diffHour, count: diffHour });
+            if (diffDay < 7) return window.i18n.t('app.daysAgo', { n: diffDay, count: diffDay });
 
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');

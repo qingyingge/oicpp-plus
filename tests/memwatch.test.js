@@ -93,16 +93,17 @@ check('the interactive path stops polling tasklist when memwatch is attached',
 
 // ---------------------------------------------------------------- 上报协议解析
 
-const parseContext = {
-    module: { exports: {} },
-    require
-};
-const parseSource = mainSource.slice(
-    mainSource.indexOf('function parseMemWatchReport('),
-    mainSource.indexOf('function startMemWatch(')
-);
-vm.runInNewContext(`${parseSource}\nthis.parseMemWatchReport = parseMemWatchReport;`, parseContext);
-const parseMemWatchReport = parseContext.parseMemWatchReport;
+// parseMemWatchReport 已经从 main.js 移到 src/utils/memory-limit.js（worker 端的
+// cases 模式要用同一份读数与解析）。这里改成 require 真实模块，而不是再从
+// main.js 源码里切函数体 —— 切法一旦函数搬家就切出空串，vm 里抛的错和「解析错了」
+// 长得一模一样，很难查。
+const memoryLimitModule = require(path.join(__dirname, '..', 'src', 'utils', 'memory-limit.js'));
+const memoryLimitSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'utils', 'memory-limit.js'), 'utf8');
+const parseMemWatchReport = memoryLimitModule.parseMemWatchReport;
+
+check('解析函数由 utils/memory-limit 导出（main.js 里不再有第二份实现）',
+    typeof parseMemWatchReport === 'function' && !mainSource.includes('function parseMemWatchReport'),
+    `typeof=${typeof parseMemWatchReport}`);
 
 const parsed = parseMemWatchReport('125116416 77824 1 1');
 check('a well-formed report yields byte counts and the exceeded flag',
@@ -125,13 +126,24 @@ check('empty and garbage output parse to null',
 
 // ---------------------------------------------------------------- 兜底与限额
 
+// tasklist 兜底读数已经搬进 utils/memory-limit.js（main.js 里那份 run-program 用的
+// 内联实现、以及 run-interactive 的第二份拷贝都并过去了）。这条锁的是「兜底还在」，
+// 不是「它在 main.js 里」—— 所以按新家去查，同时要求 main.js 确实接了过去。
 check('tasklist sampling is retained as the fallback when memwatch is missing',
-    mainSource.includes('readMemoryBytes') && mainSource.includes("spawn('tasklist'"));
+    mainSource.includes('readMemoryBytes')
+    && memoryLimitSource.includes("'tasklist'") && memoryLimitSource.includes("'/FO', 'CSV'")
+    && mainSource.includes('readProcessMemoryBytes'),
+    `main=${mainSource.includes('readMemoryBytes')} util=${memoryLimitSource.includes("'tasklist'")}`);
 check('the fallback polling interval constants are still defined',
     mainSource.includes('MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT') &&
     mainSource.includes('MEMORY_SAMPLE_INTERVAL_MS_PLAIN'));
+// 限时收报告的实现已经搬进 utils/memory-limit.js。锁的是「有兜底、且被 unref」，
+// 不是「这段代码在 main.js 里」。
 check('the memwatch report wait is bounded so close cannot hang',
-    mainSource.includes('MEMWATCH_REPORT_TIMEOUT_MS'));
+    memoryLimitSource.includes('MEMWATCH_REPORT_TIMEOUT_MS')
+    && /setTimeout\(finish, MEMWATCH_REPORT_TIMEOUT_MS\)/.test(memoryLimitSource)
+    && memoryLimitSource.includes("timer.unref"),
+    `bounded=${memoryLimitSource.includes('MEMWATCH_REPORT_TIMEOUT_MS')}`);
 check('i18n keys exist for both memwatch build failures',
     read('src', 'lang', 'zh-cn.json').includes('memWatchBuildFailed') &&
     read('src', 'lang', 'en.json').includes('memWatchBuildFailed') &&

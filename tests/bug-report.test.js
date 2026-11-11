@@ -95,12 +95,27 @@ if (report) {
         check('L8 .message-toast.warning has no textarea styles', !leaked && body.includes('background-color: #ffc107'));
     }
 
-    // L10: en.json analysisEmpty 为英文
+    // L10: 「分析面板空态」这句在 en 侧必须是英文。
+    // 断言对象从 compileOutput.analysisEmpty 换到 panel.noParseContent —— 不是为了让孤儿键归零
+    // 而挪动测试，是因为查出来这两键的 zh 值**逐字相同**，而真正上屏的那句一直是后者
+    // （compile-manager 的空态 div 从 74f1397 起就渲染 panel.noParseContent）；
+    // L10 当年修的是冗余孪生键，界面症状并没有因此消失。孪生键已退役，这里改指活的那句。
     const l10 = report.find((i) => i.id === 'L10');
     if (l10) {
         const enPack = JSON.parse(enJson);
-        const value = enPack.compileOutput && enPack.compileOutput.analysisEmpty;
-        check('L10 en.json compileOutput.analysisEmpty is English', typeof value === 'string' && !/[\u4e00-\u9fff]/.test(value), value || '');
+        const zhPack = JSON.parse(read('src/lang/zh-cn.json'));
+        const value = enPack.panel && enPack.panel.noParseContent;
+        check('L10 en.json panel.noParseContent is English', typeof value === 'string' && !/[\u4e00-\u9fff]/.test(value), value || '');
+        check('L10 zh 侧同一键有中文（防止断言退化成一侧恒真）',
+            /[\u4e00-\u9fff]/.test(String(zhPack.panel && zhPack.panel.noParseContent || '')));
+        // 这条才是 L10 这次的真正落点：断言必须指着**代码实际取用**的键，
+        // 否则下次再有人加一个同句孪生键、把断言挂回死键，这条台账会重新变成空壳。
+        const compileManagerSrc = read('src/renderer/js/compile-manager.ts');
+        check('L10 断言对象确实是渲染中的那句（compile-manager 引用 panel.noParseContent）',
+            compileManagerSrc.includes('panel.noParseContent'));
+        check('L10 的冗余孪生键已退役（不许再往 compileOutput 里加同句键）',
+            enPack.compileOutput && enPack.compileOutput.analysisEmpty === undefined,
+            `实际=${JSON.stringify(enPack.compileOutput && enPack.compileOutput.analysisEmpty)}`);
     }
 
     // L25: editor.js 回退默认设置均含 fontLigaturesEnabled
@@ -235,6 +250,13 @@ if (report) {
             setTimeout: (fn) => { fn(); },
             JSON, Math, Number, String, Boolean, Array, Object, Error, RegExp, Map, Set
         });
+        // showPanel 现在从模块级 CLOUD_LOCKED_PANELS 取标签键（此前它把 'samples' 这种内部 id
+        // 直接当 {feature} 插进句子，屏幕上出现的是键名）。假 DOM 的 vm 里没有这张表，
+        // 方法体会当场 ReferenceError —— 但**不在测试里抄一份**：把源码里那段 const 声明
+        // 原样灌进同一个 context，表哪天改键名、增删面板，测试跟着真表走。
+        const mapDecl = /const CLOUD_LOCKED_PANELS[\s\S]*?\n\};/.exec(sidebarSource);
+        check('CLOUD_LOCKED_PANELS 的声明从源码抽到了（守卫不抄第二份表）', !!mapDecl, String(!!mapDecl));
+        if (mapDecl) vm.runInContext(mapDecl[0], sidebarCtx);
         const showPanel = compileMethod(sidebarCtx, classMethod(sidebarSource, 'showPanel'));
         check('方法体抽取成功: SidebarManager.showPanel', showPanel !== null);
         if (showPanel) {
@@ -353,9 +375,13 @@ if (report) {
         const methods = {
             testTestlib: classMethod(compilerSource, 'testTestlib'),
             setTestlibPath: classMethod(compilerSource, 'setTestlibPath'),
-            updateUI: classMethod(compilerSource, 'updateUI')
+            updateUI: classMethod(compilerSource, 'updateUI'),
+            // #9 之后 updateUI 不再内联写运行方式提示，改为委派这个幂等方法。
+            // 桩里必须也把它抽出来挂到 self 上，否则 updateUI 跑的只是残缺的一份，
+            // 「五个元素都在时各归各位」那条就退化成只验四个。
+            refreshRunModeHint: classMethod(compilerSource, 'refreshRunModeHint')
         };
-        check('L28 三个方法体整段抽取成功（真跑的必须是源码里那三段）',
+        check('L28 四个方法体整段抽取成功（真跑的必须是源码里那四段）',
             Object.values(methods).every((m) => m.length > 150),
             JSON.stringify(Object.fromEntries(Object.entries(methods).map(([k, m]) => [k, m.length]))));
 
@@ -414,7 +440,8 @@ if (report) {
                         compilerPath: '/usr/bin/g++', pythonInterpreterPath: '/usr/bin/python3',
                         compilerArgs: '-O2', runMode: 'popup', testlibPath: '/from-settings.txt'
                     },
-                    isIntegratedOnlyPlatform: false
+                    isIntegratedOnlyPlatform: false,
+                    refreshRunModeHint: ctx.__fns.refreshRunModeHint
                 };
                 await ctx.__fns[name].apply(self, args);
                 return {

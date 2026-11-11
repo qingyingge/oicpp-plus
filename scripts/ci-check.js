@@ -3,6 +3,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  indexPack, pluralIssues, pluralTokenIssues, pluralConsistencyIssues, pluralCountIssues, resolvesKey, mentionedLogical,
+} = require('./i18n-plural');
 const os = require('os');
 const { execSync } = require('child_process');
 
@@ -66,6 +69,12 @@ function finish() {
 
 // Global timeout: force exit after 120 seconds
 const GLOBAL_TIMEOUT = 120000;
+// Regression test budget: child process must finish within this ms.
+// 300000 = 3× 实测套件总耗时（perf/compare-engine-v20 实测 91.9s），留余量防
+// 被机器负载截断而伪装成断言失败。
+// 放在文件顶部常量区：runRegressionTests() 在 --only tests 分支中被提前调用，
+// const 必须在调用前完成初始化，否则触发 TDZ 抛 ReferenceError（M59）。
+const REGRESSION_TEST_BUDGET_MS = 300000;
 const globalTimer = setTimeout(() => {
   console.log(`\n${RD}${B}CI TIMEOUT: exceeded ${GLOBAL_TIMEOUT/1000}s limit${R}`);
   process.exit(1);
@@ -262,16 +271,29 @@ if (nsiContent) {
 // ============================================================
 
 // C1: JS syntax check
+// 一次进程内用 V8 解析器校验全部 JS 文件：每个文件单独 spawn `node -c` 要起几十个
+// Node 进程（实测 51 个文件 ~6.4s），vm.Script 编译用的正是同一个 V8 解析器，
+// 不执行任何代码，语法错误会抛 SyntaxError —— 语义等价且只占约 0.6s。
+// 不能塞进 `node -e`：经 JSON.stringify 后行内换行会变成字面 \n，Node 直接当
+// 非法 JS 抛 SyntaxError，报出整段脚本。独立脚本文件是唯一可靠形态。
 console.log(`\n${Y}[C1] JS syntax${R}`);
 const srcDir = path.join(root, 'src');
 const jsFiles = getAllFiles(srcDir, '.js');
 let syntaxErrors = 0;
-for (const f of jsFiles) {
-  const rel = path.relative(root, f);
-  const result = exec(`node -c "${f}"`, 10000);
-  if (result === null) {
-    fail(`syntax: ${rel}`);
-    syntaxErrors++;
+{
+  let syntaxOut = null;
+  try {
+    syntaxOut = execSync('node scripts/check-js-syntax.js', { encoding: 'utf8', timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'], cwd: root }).trim();
+  } catch (err) {
+    syntaxOut = `${err.stdout || ''}${err.stderr || ''}`;
+  }
+  // 有语法错误时 stderr 里是 "path: message" 行
+  for (const line of String(syntaxOut).split(/\r?\n/)) {
+    const colon = line.indexOf(': ');
+    if (colon > 0) {
+      fail(`syntax: ${path.relative(root, line.slice(0, colon))}`);
+      syntaxErrors++;
+    }
   }
 }
 if (syntaxErrors === 0) ok(`all ${jsFiles.length} JS files OK`);
@@ -361,6 +383,7 @@ if (indexHtmlContent) {
   for (const m of indexHtmlContent.matchAll(/id="([^"]+)"/g)) htmlIds.push(m[1]);
 }
 const jsSelectorFiles = ['src/renderer/js/main.js', 'src/renderer/js/tabs.js', 'src/renderer/js/init.js', 'src/renderer/js/monaco-editor-manager.js'];
+let domMismatchCount = 0;
 for (const f of jsSelectorFiles) {
   const fp = path.join(root, f);
   if (!fileExists(fp)) continue;
@@ -370,6 +393,7 @@ for (const f of jsSelectorFiles) {
     const id = m[1];
     if (!htmlIds.includes(id) && !/^group-/.test(id) && !/^tab-/.test(id) && !/monaco/.test(id)) {
       if (verbose) warn(`${f} -> #${id} not in HTML (may be dynamic)`);
+      domMismatchCount++;
     }
   }
   for (const m of content.matchAll(/querySelector\(['"]\.([^'"]+)['"]\)/g)) {
@@ -381,10 +405,14 @@ for (const f of jsSelectorFiles) {
     }
     if (!cssFound && !/monaco/.test(cls) && !/^tab-/.test(cls)) {
       if (verbose) warn(`${f} -> .${cls} not in CSS (may be dynamic)`);
+      domMismatchCount++;
     }
   }
 }
-ok('DOM selectors checked');
+// 逐条明细只在 --verbose 下打（这些 selector 多为动态创建，常态全打会刷屏）；
+// 但汇总行必须是真信号：有未匹配就 WARN，而不是无条件 ok()。
+if (domMismatchCount === 0) ok('DOM selectors checked');
+else warn(`${domMismatchCount} selector(s) not statically matched (may be dynamic — use --verbose for details)`);
 
 // D4: IPC channel consistency
 console.log(`\n${Y}[D4] IPC channel consistency${R}`);
@@ -641,12 +669,33 @@ for (const f of jsFiles) {
   const rel = path.relative(root, f);
   const content = readFile(f);
   if (!content) continue;
-  const childProcessImport = /require\s*\(\s*['"]child_process['"]\s*\)/.test(content);
-  const execCount = childProcessImport ? (content.match(/child_process\.exec\(/g) || []).length : 0;
-  const execSyncCount = childProcessImport ? (content.match(/child_process\.execSync\(/g) || []).length : 0;
+  // 别只匹配全限定 `child_process.exec(`：源码里是解构引入（`const { execSync } = require('child_process')`）
+  // 或 TS emit 出的 `child_process_1.` 命名空间别名，全限定写法根本不会出现，
+  // 会让本检查恒为 [OK]（见 E6 修复）。所以要认裸调用形式。
+  const childProcessImport = /require\s*\(\s*['"]child_process['"]\s*\)/.test(content)
+    || /child_process_1\./.test(content);
+  // 认裸调用形式（解构 `const { execSync } = require('child_process')` 或 TS emit 的
+  // child_process_1. 别名），但排除 .exec(/ .match(/ 这类**正则方法调用**——前面的
+  // 点号或标识符会让它不是 child_process 的 exec/spawn。负向环视 (?!<[.\w]) 挡掉。
+  const bareFnRe = /(?<![.\w])([A-Za-z_$][\w$]*)(?:\s*\()/g;
+  let execCount = 0;
+  let execSyncCount = 0;
+  let spawnCount = 0;
+  let spawnSyncCount = 0;
+  if (childProcessImport) {
+    for (const m of content.matchAll(bareFnRe)) {
+      const name = m[1];
+      if (name === 'exec') execCount++;
+      else if (name === 'execSync') execSyncCount++;
+      else if (name === 'spawn') spawnCount++;
+      else if (name === 'spawnSync') spawnSyncCount++;
+    }
+  }
   const spawnShellCount = (content.match(/spawn\([^)]*shell\s*:\s*true/g) || []).length;
   if (execCount > 0) { warn(`${rel} has ${execCount}x exec()`); shellExecFound += execCount; }
   if (execSyncCount > 0) { warn(`${rel} has ${execSyncCount}x execSync()`); shellExecFound += execSyncCount; }
+  if (spawnCount > 0) { warn(`${rel} has ${spawnCount}x spawn()`); shellExecFound += spawnCount; }
+  if (spawnSyncCount > 0) { warn(`${rel} has ${spawnSyncCount}x spawnSync()`); shellExecFound += spawnSyncCount; }
   if (spawnShellCount > 0) { warn(`${rel} has spawn with shell:true`); shellExecFound += spawnShellCount; }
 }
 if (shellExecFound === 0) ok('no shell execution found'); else warn(`${shellExecFound} shell exec calls (review for safety)`);
@@ -847,7 +896,8 @@ if (lsResult !== null) {
     ok('dependency tree clean');
   }
 } else {
-  info('pnpm ls timed out after 60s (inconclusive)');
+  // exec() 在非零退出或超时时返回 null —— 这不能静默放行，否则 pnpm 坏了也会过
+  warn('pnpm ls failed or timed out — dependency tree not verifiable');
 }
 
 // F3: Third-party license coverage
@@ -991,7 +1041,9 @@ if (mainJsContent) {
   if (/render-process-gone/.test(mainJsContent)) ok('render-process-gone handler'); else fail('no render-process-gone handler');
   if (/uncaughtException/.test(mainJsContent)) ok('uncaughtException handler'); else fail('no uncaughtException handler');
   if (/unhandledRejection/.test(mainJsContent)) ok('unhandledRejection handler'); else fail('no unhandledRejection handler');
-  if (/process\.on/.test(mainJsContent)) ok('process exit handler'); else fail('no process exit handler');
+  // 泛化的 /process\.on/ 会被上面 uncaughtException/unhandledRejection 的 process.on 调用满足，
+  // 是假信号。要认一个真正独立的退出路径处理（process.on('exit') 或 app 的 quit 钩子）。
+  if (/process\.on\(\s*['"]exit['"]|before-quit|will-quit/.test(mainJsContent)) ok('process exit handler'); else fail('no process exit handler');
 } else {
   fail('main.js not found for crash handler check');
 }
@@ -1048,8 +1100,18 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
     electronVer = declared;
     majorVer = parseInt(declared.split('.')[0], 10);
   }
+  // legacy 渠道（Electron 22 = 最后一个支持 Windows 7/8/8.1 的大版本）是显式构建目标，
+  // 不是意外回退。主渠道的「老 Electron = 安全事故」判断对它同样成立，但那次失败是已
+  // 知且已声明的代价，所以用 OICPP_LEGACY_ELECTRON=1 显式声明时降为 WARN —— 仍然说出来，
+  // 只是不再阻塞。不设这个变量的任何版本回退照旧是 FAIL。
+  const legacyChannel = String(process.env.OICPP_LEGACY_ELECTRON || '') === '1';
   if (majorVer < 35) {
-    fail(`Electron ${electronVer} is too old (security risk)`);
+    const tooOld = `Electron ${electronVer} is too old (security risk)`;
+    if (legacyChannel) {
+      warn(`legacy 渠道（OICPP_LEGACY_ELECTRON=1）放行：${tooOld}`);
+    } else {
+      fail(tooOld);
+    }
   } else if (majorVer < 39) {
     warn(`Electron ${electronVer} -- check for security patches at electronjs.org`);
   } else {
@@ -1066,8 +1128,20 @@ if (pkg && pkg.devDependencies && pkg.devDependencies.electron) {
 // Ratcheting baselines. Lower these whenever a migration batch lands.
 // Exceeding one means new regressions were introduced, not that the
 // remaining backlog grew — that is a FAIL.
-const I18N_HARDCODED_CJK_BASELINE = 1;
-const I18N_EN_PUNCT_BASELINE = 1;
+// 降到 0 的那一档（本批）：原先挂在 1 是 userVisibleRe 把三元表达式里的 `e.message :`
+// 当成 `message:` 标签造成的**误报**（src/utils/logger.js 的 stderr 自诊断），不是存量。
+// 判据修好后这一档归零，含义回到「一处都不许有」；不许再用「反正还有一条」当理由。
+const I18N_HARDCODED_CJK_BASELINE = 0;
+// 这一档不是「还有活的没迁」，是一条**判据形状上的误报**，留着而不是放宽：
+// src/utils/logger.js:83 `console.error('[Logger] 写入日志失败:', ...)` —— 日志文件写不进去
+// 时的自我诊断，走的是主进程 stderr，不进任何界面（渲染层 logInfo 也是 IPC 到日志文件）。
+// 没有把它豁免掉，因为「豁免 console.*」会顺手放过未来真阳性；也没有翻译它，
+// 因为给一条只出现在终端的自诊断建键，等于给语言包加一条没人看的死文案。
+// 想清零的话，正确做法是让 I8 的 userVisibleRe 认得出「主进程 console 不是界面」这件事，
+// 并把这条连同理由一起摘掉 —— 不要直接改成 0。
+// 降到 0 的那一档（本批）：原先挂在 1 是上面那条正则把英文弯引号当成中文标点造成的
+// **误报**，不是存量。清零以后含义回到「en.json 里一处中文标点都不许有」。
+const I18N_EN_PUNCT_BASELINE = 0;
 // 存量「用户可见行上的硬编码英文散文」。I8 只查 CJK，而项目默认语言是 zh-cn
 // —— 硬编码英文同样会原样显示给用户，只是查不出来（tabs.js 的
 // 'Markdown API not available' 就是这样长期存活的）。
@@ -1082,8 +1156,44 @@ const I18N_HARDCODED_EN_BASELINE = 0;
 // 2026-10-19：退役永无加载入口的 compile-output.js（L37）时，把它独占的 11 个
 // compileOutput.* 键从两个语言包同步摘掉，删除一增一减正好抵平，仍是 202 ——
 // 只删文件不摘键会涨到 213 撞破基线。所以这一档不是「还可以再降」的空间。
+// 2026-10-29：settings/editor.html 里 6 个界面文字一直有键却没挂 data-i18n
+// （settings.indentCaseLabels / sortIncludes / alignAssignments / alignDeclarations /
+// rawText / columnLimitDesc），属于「先加键后接线、接线那步漏了」的存量。挂上后
+// 全部转为已引用，201 → 195。这一档由 tests/static-html-i18n.test.js 的 A 条守住：
+// 该文件再出现「有中文没挂 data-i18n」就直接红，不许靠调高 baseline 消化。
 // 取 tests/i18n.test.js 的口径（更严格：只扫 src，键名全字符类）算出的值。
-const I18N_ORPHAN_KEY_BASELINE = 202;
+// 2026-10-30：index.html 收尾。grader/SPJ 两个「删除」链接一直没接线，挂上后
+// menu.delete_spj 转为已引用；同时退役两个从没被正确使用的键 —— tester.noSamples
+// （被 4 个不同句子共用，属挂错键，已拆成 tester.noCppFileTitle/Hint 与
+// tester.noSampleGroupTitle/Hint）与 tester.importPreview（与 dialog.importPreview
+// 逐字重复）。195 → 193。这一档由 tests/static-html-i18n.test.js 的 A/B/C 三条守住。
+// 2026-10-30（同日第二批）：主进程开始接线后又降 5 —— validateFileName 一直在手写
+// 中文，而 dialog.nameRequired / invalidFileNameChars / invalidFileNameCharsUnix /
+// reservedFileName / fileNameEndDot 五个键早就躺在包里零引用。同批接线还吃掉了
+// main.exitCode（退出码: {status}）这个原本站着的孤儿。193 → 188。
+// 2026-11-01（#7 复数批）：退役 compare.compareComplete（188 → 187）。判定不是「grep 不到
+// t('字面量')」—— 全仓 .ts/.js/.html/tests/scripts/docs 都搜过，连动态形状也查了：本仓唯一
+// 动态拼键的地方是 codeComparer.getEngineErrorMessage 的 {code: 'compare.xxx'} 码表，值全是
+// 2026-11-02（孤儿键清仓）：187 → 1。一次退役 186 个逻辑键，判定分三层，缺任何一层都不许动手：
+//   · 引用面：I7 的口径只看 src/**/*.js 与 *.html 里的字面量与属性链；本仓唯一的动态取键是
+//     codeComparer.getEngineErrorMessage 的 {code: 'compare.xxx'} 码表，值全是字面量，拼不出新键。
+//     全仓（含 tests/docs/scripts）再搜一遍键名字面量，零命中。
+//   · 来源：每个键 git log -S（排除 src/lang，否则「加进包」那次提交自己会命中）查曾否被引用。
+//     绝大多数从未接线；有历史的那几个里，cloudCompile.* 与 message.cloudCompileCppOnly 随 c7e0ea2
+//     整块停用云编译一起消失（菜单项是 disabled 桩），app.qqGroup 随关于页那一行删掉，
+//     tester.runSingle 是 b93bab1 纠正「添加样例组按钮挂错键」后留下的空键 —— 都是有意删除，不是误伤。
+//     tester.ac/re/wa/tle/ce/mle/ole 存的是 "AC"/"RE" 这类判题代码，代码后来直接印字面量
+//     （sampleTester 的 overallLabel = 'AC'），这是对的：判题代码本来就不该按语言变，
+//     那几个键是早期把判题代码当文案的残留。
+//   · 回归：CI 的 I6「被引用的键必须存在于包里」是硬安全网 —— 删错任何一条在用的键它会立刻红；
+//     80 项检查 / 58 个回归测试文件全绿。
+// 2026-11-02（同日第二批）：1 → 0。最后这 1 个是 compileOutput.analysisEmpty，
+// 曾为台账 L10 的断言对象而故意保留。查历史发现它跟 panel.noParseContent 是**同一句话**
+// （zh 侧逐字相同），而界面实际渲染的一直是后者 —— 也就是说 L10 当年修的是没在用的那个键，
+// 症状从没真正消失过。现在孪生键退役，台账断言改指活键，并锁一条「断言对象必须等于代码
+// 实际引用的键」，所以这不是为了让数字归零而挪测试，是把守卫对准了真正上屏的那句。
+// 同句不同键这一整类是这次的根因，改由 [I10] 负责拦，不再靠人眼。
+const I18N_ORPHAN_KEY_BASELINE = 0;
 
 const langDir = path.join(root, 'src', 'lang');
 const flattenI18n = (obj, prefix = '', out = {}) => {
@@ -1133,18 +1243,35 @@ console.log(`\n${Y}[I2] Locale key alignment${R}`);
 const localeCodes = Object.keys(locales);
 if (localeCodes.length >= 2) {
   const base = localeCodes[0];
-  const baseKeys = Object.keys(locales[base]);
-  const baseSet = new Set(baseKeys);
   let aligned = true;
+  // 用逻辑键集比较：复数后缀本来就随语言不同（见 scripts/i18n-plural.js）
+  const baseLogical = indexPack(locales[base]).logical;
+  const baseSet = new Set(baseLogical.keys());
   for (const code of localeCodes.slice(1)) {
-    const other = Object.keys(locales[code]);
+    const otherIndex = indexPack(locales[code]);
+    const other = [...otherIndex.logical.keys()];
     const otherSet = new Set(other);
-    const missing = baseKeys.filter((k) => !otherSet.has(k));
+    const missing = [...baseSet].filter((k) => !otherSet.has(k));
     const extra = other.filter((k) => !baseSet.has(k));
     if (missing.length > 0) { fail(`${code}.json missing ${missing.length} key(s) in ${base}.json: ${summarize(missing)}`); aligned = false; }
     if (extra.length > 0) { fail(`${code}.json has ${extra.length} key(s) absent from ${base}.json: ${summarize(extra)}`); aligned = false; }
   }
-  if (aligned) ok(`all ${localeCodes.length} locales share the same ${baseKeys.length} keys`);
+  if (aligned) ok(`all ${localeCodes.length} locales share the same ${baseLogical.size} logical keys`);
+  // 复数形态按 Intl.PluralRules 逐语言校验：zh 只要 _other，en 要 _one+_other。
+  // 少一支是漏译，多一支是永远取不到的死键，两者都算失败 —— 这不是放宽，
+  // 是把「两份包不许漂移」从字面键名改成逻辑键之后，必须补上的等价约束。
+  let pluralOk = true;
+  const pluralIndexes = {};
+  for (const [code, flat] of Object.entries(locales)) pluralIndexes[code] = indexPack(flat);
+  for (const [code, index] of Object.entries(pluralIndexes)) {
+    for (const msg of pluralIssues(code, index)) { fail(`I2 plural: ${msg}`); pluralOk = false; }
+  }
+  // 复数各支不许引入默认语言 _other 没有的 {token}：调用点只传一份 params，
+  // 多出来的 token 会在单数句里原样印上屏（少用 token 是安全的，所以只查这个方向）
+  for (const msg of pluralTokenIssues(pluralIndexes)) { fail(`I2 plural tokens: ${msg}`); pluralOk = false; }
+  // 只转换了一半（一份包拆了后缀、另一份留裸基名）会让上面两条一起失明，必须单独判
+  for (const msg of pluralConsistencyIssues(pluralIndexes)) { fail(`I2 plural half-converted: ${msg}`); pluralOk = false; }
+  if (pluralOk) ok(`plural forms match each locale's Intl.PluralRules (${localeCodes.join(', ')})`);
 } else {
   warn('fewer than 2 locales parsed — cannot cross-check key alignment');
 }
@@ -1153,6 +1280,9 @@ if (localeCodes.length >= 2) {
 console.log(`\n${Y}[I3] Placeholder alignment${R}`);
 if (localeCodes.length >= 2) {
   const base = localeCodes[0];
+  // 这里故意用字面键集：复数类别只对「两种语言都有该后缀」的组合才有可比性 ——
+  // zh 只有 _other，en 的 _one 没有对照物。逐类配对后，_other 与所有非复数键
+  // 照常校验，落空的 _one 由 I2 的 pluralIssues 保证它是 en 必需而非乱加。
   const baseSet = new Set(Object.keys(locales[base]));
   let phOk = true;
   let phChecked = 0;
@@ -1182,9 +1312,12 @@ if (locales.en) {
   } else {
     ok('en.json has no CJK ideographs');
   }
-  // Fullwidth forms, ideographic comma and CJK brackets/quotes are unambiguous;
-  // U+2026 / U+2014 are legitimate English typography and must not be flagged.
-  const cnPunctRe = /[\uff0c\u3002\uff1b\uff1a\u3001\uff08\uff09\u300c\u300d\u3010\u3011\u201c\u201d\u2018\u2019]/;
+  // 只列**中文专属**的标点：全角逗号/句号/分号/冒号/顿号、全角括号、直角引号、书名号。
+  // 弯引号 U+201C-201D / U+2019 以前也在这一串里 —— 那是错的：它们是标准英文排版引号
+  //（en.json 的 settings.fontUnavailableMessage 用 “ {font} ” 被冤枉成「中文标点」，
+  // 于是这条 ratchet 一直挂着 1 这个没人解释的档位）。中文里出现的弯引号一定伴随汉字，
+  // 由上面的 enCjk（不许有汉字）负责，所以去掉这四个码位不损失判别力。
+  const cnPunctRe = /[\uff0c\u3002\uff1b\uff1a\u3001\uff08\uff09\u300c\u300d\u3010\u3011]/;
   const enPunct = Object.entries(locales.en).filter(([, v]) => cnPunctRe.test(String(v)));
   if (enPunct.length > I18N_EN_PUNCT_BASELINE) {
     fail(`en.json has CJK punctuation in ${enPunct.length} key(s) (baseline ${I18N_EN_PUNCT_BASELINE}): ${summarize(enPunct.map(([k]) => k))}`);
@@ -1258,7 +1391,10 @@ console.log(`\n${Y}[I6] Referenced key resolution${R}`);
   } else {
     let refOk = true;
     for (const [code, flat] of Object.entries(locales)) {
-      const missing = [...refKeys].filter((k) => flat[k] === undefined);
+      // 复数化后源码仍引用基名，包里只有 _one/_other —— 用归一口径判可解析，
+      // 否则 I6 会对每个复数键误报「键不存在」
+      const i6Index = indexPack(flat);
+      const missing = [...refKeys].filter((k) => !resolvesKey(i6Index, k));
       if (missing.length > 0) {
         fail(`${code}.json is missing ${missing.length} referenced key(s): ${summarize(missing)}`);
         refOk = false;
@@ -1282,8 +1418,9 @@ if (localeCodes.length >= 1) {
     for (const m of content.matchAll(callRe)) refKeys.add(m.groups.key);
     for (const re of [bareCallRe, attrRe]) for (const m of content.matchAll(re)) refKeys.add(m[1]);
   }
-  const unused = Object.keys(base).filter((k) => !refKeys.has(k));
-  info(`${unused.length} of ${Object.keys(base).length} keys are not statically referenced (dynamic lookups are not detected)`);
+  const i7Logical = [...indexPack(base).logical.keys()];
+  const unused = i7Logical.filter((k) => !refKeys.has(k));
+  info(`${unused.length} of ${i7Logical.length} logical keys are not statically referenced (dynamic lookups are not detected)`);
 
   // --- 孤儿键 ratchet ---------------------------------------------------------
   // 口径比上面的 refKeys 宽：源码任意位置出现过的 dotted 字符串字面量都算引用，
@@ -1299,7 +1436,10 @@ if (localeCodes.length >= 1) {
     for (const m of content.matchAll(anyLiteralRe)) mentioned.add(m[1]);
     for (const m of content.matchAll(anyPropChainRe)) mentioned.add(m[1]);
   }
-  const orphans = Object.keys(base).filter((k) => !mentioned.has(k));
+  // 复数形态的任意一支被引用，整个逻辑键就算被引用；统计单位也换成逻辑键，
+  // 否则一个复数键会被数成 2-3 个孤儿，ratchet 数字失去可比性
+  const mentionedFinal = mentionedLogical(mentioned);
+  const orphans = i7Logical.filter((k) => !mentionedFinal.has(k));
   if (orphans.length > I18N_ORPHAN_KEY_BASELINE) {
     fail(`${orphans.length} orphaned i18n keys (baseline ${I18N_ORPHAN_KEY_BASELINE}, +${orphans.length - I18N_ORPHAN_KEY_BASELINE}) — every new key must be referenced: ${summarize(orphans)}`);
   } else if (orphans.length === 0) {
@@ -1310,12 +1450,226 @@ if (localeCodes.length >= 1) {
   }
 }
 
+// I9: 复数键的调用侧契约 —— 包里只剩 _one/_other 之后，调用点不传 count 就是裸键上屏
+console.log(`\n${Y}[I9] Plural call sites pass count${R}`);
+{
+  const i9Indexes = {};
+  for (const [code, flat] of Object.entries(locales)) i9Indexes[code] = indexPack(flat);
+  const pluralizedAny = new Set();
+  for (const index of Object.values(i9Indexes)) {
+    for (const [base, forms] of index.logical) {
+      if ([...forms].some((f) => f !== '')) pluralizedAny.add(base);
+    }
+  }
+  if (pluralizedAny.size === 0) {
+    warn('没有任何复数形态键 —— I9 无从检查');
+  } else {
+    // 从 t('k' 之后扫到与本层调用括号配对的位置，那段就是实参。
+    // 判 count 要按「顶层实参里的 count:」而不是整段里有没有 count 这个字 ——
+    // 嵌套对象里也可能出现 count，但那不是传给这一键的，宁可放过也别误报，
+    // 于是这里只在整段找不到 count 时才判失败（存在即放过）。
+    const argSpan = (src, from) => {
+      let depth = 1;
+      for (let i = from; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === '(' || ch === '{' || ch === '[') depth++;
+        else if (ch === ')' || ch === '}' || ch === ']') {
+          depth--;
+          if (depth === 0) return src.slice(from, i);
+        } else if (ch === ';' && depth === 1) break;   // 明显越界，别一路扫到文件尾
+      }
+      return src.slice(from, from + 4000);
+    };
+    const refs = [];
+    const callRe = /\b(?:i18n|i18next|__|this)\s*(?:\?\s*\.\s*|\.\s*)t\s*(?:\?\s*\.\s*)?\(\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+    const bareRe = /(?<![.\w])t\s*\(\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+    const attrRe = /data-i18n(?:-[a-z-]+)?\s*=\s*['"](?<key>[A-Za-z][\w]*(?:\.[A-Za-z][\w]*)+)['"]/g;
+    for (const f of [...jsFiles, ...htmlFiles].filter((x) => !x.startsWith(langDir))) {
+      const content = readFile(f);
+      if (!content) continue;
+      const rel = path.relative(root, f);
+      const lineAt = (i) => content.slice(0, i).split('\n').length;
+      for (const re of [callRe, bareRe]) {
+        for (const m of content.matchAll(re)) {
+          if (!pluralizedAny.has(m.groups.key)) continue;
+          const after = (m.index + m[0].length);
+          refs.push({ key: m.groups.key, kind: 't', file: rel, line: lineAt(m.index),
+            hasCount: /(^|[,{\s])count\s*:/.test(argSpan(content, after)) || /\.\.\./.test(argSpan(content, after)) });
+        }
+      }
+      for (const m of content.matchAll(attrRe)) {
+        if (!pluralizedAny.has(m.groups.key)) continue;
+        // 元素上的 data-i18n-args 才是 DOM 路径的 params 来源
+        const tagStart = content.lastIndexOf('<', m.index);
+        const tagEnd = content.indexOf('>', m.index);
+        const tag = tagStart >= 0 && tagEnd > tagStart ? content.slice(tagStart, tagEnd + 1) : '';
+        refs.push({ key: m.groups.key, kind: 'attr', file: rel, line: lineAt(m.index),
+          hasCount: /data-i18n-args\s*=\s*['"][^'"]*\bcount\b/.test(tag) });
+      }
+    }
+    const i9Issues = pluralCountIssues(i9Indexes, refs);
+    if (i9Issues.length) {
+      for (const msg of i9Issues) fail(`I9: ${msg}`);
+    } else {
+      ok(`${pluralizedAny.size} pluralized keys, all ${refs.length} static reference(s) pass count`);
+    }
+  }
+}
+
+// 「用户可见出口」的行判据 —— I8 与 I8b 共用一份。两处各写一条正则时，改一处忘另一处
+// 会让中文与英文散文的覆盖面悄悄分叉。
+//
+// label:/message:/title:/detail: 是原生对话框与 IPC 载荷的文案出口，但必须限定
+// 「前面不是点或词字符」：`e instanceof Error ? e.message : String(e)` 里那个三元冒号
+// 会被当成 `message:` 标签，于是 logger 的一条 stderr 自诊断被计成用户可见文案 ——
+// I8 那条挂了许久的 baseline 1 就是这么来的，不是存量。加 (?<![.\w]) 之后
+// `{ message: '中文' }` 照样命中，`x.message : y` 不再误判。
+const USER_VISIBLE_RE = /(?:showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|(?<![.\w])label\s*:|(?<![.\w])message\s*:|(?<![.\w])title\s*:|(?<![.\w])detail\s*:|new Error\(|throw Error)/;
+
+// I10: 同一个父对象里的重复文案 —— 台账 L10 那一类的机器守卫
+console.log(`\n${Y}[I10] Same-parent duplicate values${R}`);
+{
+  // 为什么必须有这一条、以及为什么范围只到「同一个父对象内」，写在 scripts/i18n-duplicate.js 的
+  // 头注释里（那里也记了 L10 的实际死法：一个从未接线的孪生键被当成在用的键去修）。
+  //
+  // 判定语言**必须是 zh-cn**，不能拿 localeCodes[0]（那是 en，I10 第一版就是这么跑红的）：
+  // 源语言里两个键的值不同，就说明它们本来就是两个概念，译文书面撞车只是翻译粗略。实测两类：
+  //   · settings.spaceBeforeParensAlways「始终」 vs settings.useTabAlways「始终使用 Tab」
+  //     —— zh 分得开，en 都塌成 "Always"。这是两个下拉框各自的选项，合并才是错。
+  //   · settings.language「界面语言」 vs settings.languageLabel「语言」，en 同为 "Language"，同理。
+  // 反过来在 zh-cn 上跑，整个包里只剩 1 组（已登记），没有一条是误报。
+  //
+  // 豁免表在 scripts/i18n-duplicate.js 里（DUPLICATE_EXEMPTIONS），与
+  // tests/i18n-duplicate-value.test.js 取的是同一份 —— 测试里再抄一张表就会和真语言包脱节。
+  const { DUPLICATE_EXEMPTIONS, sameParentDuplicates, partitionGroups } = require('./i18n-duplicate');
+  const i10Base = locales['zh-cn'];
+  if (!i10Base) {
+    fail('I10 跑不了：locales 里没有 zh-cn —— 这条判据只在源语言上成立，不许退回 localeCodes[0]');
+  } else {
+    const i10Dupes = sameParentDuplicates(i10Base);
+    const { violations, stale } = partitionGroups(i10Dupes, DUPLICATE_EXEMPTIONS);
+    if (violations.length > 0) {
+      fail(`${violations.length} group(s) of same-parent duplicate i18n text in zh-cn — 一句话一个键，复用已有的那个，别新建: ${summarize(violations.map((d) => `${d.parent}: ${d.bases.join(' / ')} = 「${[...d.value].length > 20 ? [...d.value].slice(0, 20).join('') + '…' : d.value}」`))}`);
+    }
+    if (stale.length > 0) {
+      fail(`${stale.length} i18n duplicate exemption(s) no longer match any duplicate — 那条重复已经不成立了，把登记划掉: ${summarize(stale.map((s) => `${s.keys.join(' / ')} (${s.reason})`))}`);
+    }
+    if (violations.length === 0 && stale.length === 0) {
+      ok(`${i10Dupes.length} same-parent duplicate group(s) in zh-cn, all ${DUPLICATE_EXEMPTIONS.length} registered and still accurate`);
+    }
+    // 跨父对象的同句只做信息输出：那是常态且合理（menu.delete 与 cloud.delete 各自合适），
+    // 但它同时是「译文各自漂移」的温床，报个数给后续批次当分母，不设门槛。
+    const crossSameValue = new Map();
+    for (const value of Object.values(i10Base)) {
+      const text = String(value === undefined || value === null ? '' : value).trim();
+      if (!text) continue;
+      crossSameValue.set(text, (crossSameValue.get(text) || 0) + 1);
+    }
+    const dupValues = [...crossSameValue.values()].filter((n) => n > 1).length;
+    info(`${dupValues} 句 zh 文案挂在 2 个以上逻辑键上（跨命名空间，仅信息，需人判是否同一概念）`);
+  }
+}
+
+// I11: 同一句中文的两种英文 —— 译文分叉守卫
+console.log(`\n${Y}[I11] One source sentence, one translation${R}`);
+{
+  // 这是 I10 的另一半，也是台账 L10 真正的死法：同句话挂两个键本身不会立刻出问题，
+  // 出问题的是它们**各自演化**之后 —— 「编译失败」五支键里同时存在过 "Compilation failed"
+  // 与 "Compilation Failed"，「标准错误:」有 "Stderr:" 与 "Standard error:" 两种。
+  // 到那时「这句上屏走哪个键」就得靠 git 考古，而 L10 正是考古考出来的（5 次提交）。
+  //
+  // 比较忽略大小写：本仓 menu./keybinding./sidebar. 是控件标签走 Title Case，
+  // main.*Title 是对话框标题走句首大写，同一个「另存为」分别写成 "Save As" 与 "Save as"
+  // 是表面约定，不是漂移。判据细节与复数键为什么被排除，在 scripts/i18n-duplicate.js。
+  const { DRIFT_EXEMPTIONS, translationDriftGroups, partitionGroups } = require('./i18n-duplicate');
+  if (!locales['zh-cn'] || !locales['en']) {
+    fail('I11 跑不了：需要 zh-cn 与 en 两份包（zh 定「是不是同一句话」，en 看有没有分叉）');
+  } else {
+    const i11Drift = translationDriftGroups(locales['zh-cn'], locales['en']);
+    const { violations, stale } = partitionGroups(i11Drift, DRIFT_EXEMPTIONS);
+    if (violations.length > 0) {
+      fail(`${violations.length} group(s) share one zh sentence but disagree in en — 同一句话要么并键、要么把译文统一: ${summarize(violations.map((d) => `「${[...d.value].length > 16 ? [...d.value].slice(0, 16).join('') + '…' : d.value}」 ${d.bases.map((b, i) => `${b}=${JSON.stringify(d.translations[i])}`).join(' | ')}`))}`);
+    }
+    if (stale.length > 0) {
+      fail(`${stale.length} i18n drift exemption(s) no longer match any drifted group — 那条分叉已经不存在了，把登记划掉: ${summarize(stale.map((s) => `${s.keys.join(' / ')} (${s.reason})`))}`);
+    }
+    if (violations.length === 0 && stale.length === 0) {
+      ok(`${i11Drift.length} drifted group(s) in en, all ${DRIFT_EXEMPTIONS.length} registered with a reason`);
+    }
+  }
+}
+
+// I12: 含中文的字面量被赋给变量 —— I8 按行找 sink，这个形状它是瞎的
+console.log(`\n${Y}[I12] CJK string assigned to a variable${R}`);
+{
+  // I8 的判据要求同一行上出现用户可见 sink 关键字（textContent/label:/message:/…）。
+  // 于是 `const msg = '[样例测试器] …'` 先把中文存进变量、下一行再塞进 appendOutput
+  // 的写法一条都不报 —— 这是 AGENTS.md 里记着的盲区（主进程同形：const msg='中文';
+  // return { error: msg }）。真实代价：sampleTester.notifyCompileCacheHit 的前缀
+  // 一直是硬编码中文，切到英文界面后编译输出面板里仍然显示「[样例测试器]」。
+  //
+  // 「这个变量最终去了哪」机械化不了，所以这里只认一种形状并配一张白名单：
+  // 白名单里的变量必须**每一次使用都落在 logX( 里** —— 日志是开发者可见的，允许硬编码。
+  // 白名单不是名字清单而是行为约束：哪天有人把 logLine 塞进 showMessage，这条立刻红。
+  const LOG_ONLY_CJK_VARS = [
+    { file: 'src/main.ts', name: 'logLine' },   // LSP 失败诊断，只进 logError
+  ];
+  const tsFiles = getAllFiles(srcDir, '.ts').filter((f) => !f.endsWith('.d.ts') && !f.startsWith(langDir));
+  // 中文判定沿用本仓统一的 [\u4e00-\u9fff]（I8/I4 都是这个范围）。**不要**换成 \p{Han}：
+  // 本机 node（V8 的 unicode 属性表在这里缺项）会对 /…\p{Han}/u 抛
+  // "Invalid regular expression: Invalid property name"，整个 ci-check 直接起不来。
+  const assignRe = new RegExp(`(?:const|let)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*['"\`]([^'"\`\\n]*[\\u4e00-\\u9fff])`);
+  // 只认「字面量直接赋给变量」：等号右边第一个字符就是开引号，且闭合前含中文。
+  // 别把 `.*` 加回去 —— 那样 `let currentTheme = 'dark'; // 默认深色主题` 里的**闭合引号**
+  // 会被当成开引号，注释里的中文也算命中（monaco-editor-manager.ts:4743/4745 就是这么假阳的）。
+  // 代价是 `const x = prefix + '中文'` 这种拼接形状看不见；宁缺毋滥，误报会把守卫挤成噪声。
+  const hits = [];
+  const usedNames = new Set();
+  for (const f of tsFiles) {
+    const content = readFile(f);
+    if (!content) continue;
+    const rel = path.relative(root, f).split(path.sep).join('/');
+    content.split('\n').forEach((line, i) => {
+      const m = assignRe.exec(line);
+      if (!m) return;
+      // 注释里的「代码样子」不算：整行以 // * /* 开头，或赋值点之前已出现 //
+      if (/^\s*(?:\/\/|\*|\/\*)/.test(line) || line.slice(0, m.index).includes('//')) return;
+      const key = `${rel}#${m[1]}`;
+      usedNames.add(key);
+      if (!LOG_ONLY_CJK_VARS.some((e) => e.file === rel && e.name === m[1])) {
+        hits.push(`${rel}:${i + 1} ${m[1]} —— 中文存进变量后 I8 就看不见它了，挂 data-i18n/t() 或登记进 LOG_ONLY_CJK_VARS`);
+      }
+    });
+  }
+  // 白名单逐条复跑：每个使用点都必须在 logX 调用里
+  for (const entry of LOG_ONLY_CJK_VARS) {
+    const content = readFile(path.join(root, entry.file));
+    if (!content) { fail(`I12 白名单指向的文件不存在: ${entry.file}`); continue; }
+    if (!usedNames.has(`${entry.file}#${entry.name}`)) {
+      fail(`I12 白名单条目已失效：${entry.file} 里再没有「${entry.name} = <含中文的字面量>」，划掉它`);
+      continue;
+    }
+    const bad = [];
+    content.split('\n').forEach((line, i) => {
+      if (!new RegExp(`\\b${entry.name}\\b`).test(line)) return;
+      if (assignRe.test(line)) return;                        // 声明那一行本身
+      if (!/log(?:Error|Warn|Info|Debug)\s*\(/.test(line)) bad.push(`${entry.file}:${i + 1} ${line.trim().slice(0, 70)}`);
+    });
+    if (bad.length > 0) {
+      fail(`${entry.file} 的 ${entry.name} 被用在日志之外（白名单的前提是「只进 logX」）: ${summarize(bad)}`);
+    }
+  }
+  if (hits.length === 0) {
+    ok(`no CJK literals captured into variables (${tsFiles.length} .ts files, ${LOG_ONLY_CJK_VARS.length} log-only exemption(s) verified)`);
+  } else {
+    fail(`${hits.length} CJK literal(s) assigned to a variable — I8 的按行 sink 判据看不见这种: ${summarize(hits)}`);
+  }
+}
+
 // I8: Hardcoded CJK ratchet
 console.log(`\n${Y}[I8] Hardcoded CJK ratchet${R}`);
 {
-  // message:/title:/detail: 是原生 dialog 与 IPC 载荷的用户可见文案出口，
-  // innerText 同理；漏掉它们会让「I8 baseline 0」虚高
-  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|message\s*:|title\s*:|detail\s*:|new Error\(|throw Error)/;
+  const userVisibleRe = USER_VISIBLE_RE;
   // A line carrying a data-i18n-* attribute is already wired for translation; the inline
   // CJK is only the pre-JS default that _applyToDOM overwrites. Counting it would keep the
   // ratchet permanently stuck on a backlog that no migration batch can ever clear.
@@ -1397,7 +1751,7 @@ console.log(`\n${Y}[I8b] Hardcoded English prose ratchet${R}`);
   //   1. 必须含 ≥2 个 ≥3 字母的完整词 —— 标识符、属性名、枚举值都过不了这一关
   //   2. 排除路径 / URL / 文件名 / MIME / CSS 类名
   //   3. 只在 I8 的 userVisibleRe 命中后才判定
-  const userVisibleRe = /(showError|showWarning|showMessage|showInfo|showConfirm|dialogManager|innerHTML|innerText|textContent|\.title\s*=|placeholder|alert\(|confirm\(|label:|message\s*:|title\s*:|detail\s*:|new Error\(|throw Error)/;
+  const userVisibleRe = USER_VISIBLE_RE;
   const alreadyMigratedRe = /data-i18n(-[a-z]+)?\s*=/;
   const stripTFallback = (line) => line
     .replace(/\b(?:window\s*\.\s*)?(?:i18n|i18next|__|this)\s*(?:\?\.|\.)\s*t\s*(?:\?\.|\.)?\s*\((?:[^()]|\([^()]*\))*\)(?:\s*\|\|\s*(?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`|\([^()]*\)|[A-Za-z_$][\w.$]*))?/g, 't()')
@@ -1415,7 +1769,7 @@ console.log(`\n${Y}[I8b] Hardcoded English prose ratchet${R}`);
   const payloadRe = /(writeJson\(|res\.end\(|res\.writeHead\(|\bcode\s*:|invalidField\s*:|\btype\s*:\s*['"][a-z_]+['"])/;
   // 判别字段与 message 经常分行书写（对象字面量换行），只看本行会漏。
   // 命中散文后向上回看 6 行，落在同一对象字面量里的判别字段即视为协议载荷。
-  // 例：compare-engine-v2 的 { type, code, message } 三行，UI 侧 codeComparer.js
+  // 例：compare-engine 的 { type, code, message } 三行，UI 侧 codeComparer.js
   // 按 type 查表翻译、根本不读 message —— 这里的英文 message 是诊断细节。
   const DISCRIMINATOR_LOOKBACK = 6;
   const discriminatorRe = /(^\s*|[{,]\s*)(type|code|errType|errorType|invalidField|testNumber|testMs)\s*[:=]/;
@@ -1481,18 +1835,27 @@ console.log(`\n${Y}[I8b] Hardcoded English prose ratchet${R}`);
 }
 
 // T1: Regression tests (tests/*.test.js, auto-discovered by tests/run-tests.js)
+// 预算常量 REGRESSION_TEST_BUDGET_MS 已在文件顶部常量区声明（避免 TDZ，见 M59）。
 function runRegressionTests() {
   console.log(`\n${Y}[T1] Regression tests${R}`);
   const testRunnerPath = path.join(root, 'tests', 'run-tests.js');
   if (fileExists(testRunnerPath)) {
     try {
-      const testOut = execSync(`node "${testRunnerPath}"`, { encoding: 'utf8', timeout: 90000, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+      const testOut = execSync(`node "${testRunnerPath}"`, { encoding: 'utf8', timeout: REGRESSION_TEST_BUDGET_MS, cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
       testOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${GR}  ${line}${R}`));
       ok('all regression tests passed');
     } catch (err) {
       const testErrOut = `${err.stdout || ''}${err.stderr || ''}`;
       testErrOut.split(/\r?\n/).filter(Boolean).forEach((line) => console.log(`  ${RD}  ${line}${R}`));
-      fail('regression tests failed');
+      // 守卫自身炸了（子进程根本没启动，err.stdout === undefined）与真正的断言失败区分开：
+      // 前者是 ci-check.js 自身的 Bug（如 TDZ），后者才是要去修的测试用例。
+      if (err.stdout === undefined) {
+        fail(`regression test guard itself crashed — child process never started (${err instanceof ReferenceError ? 'TDZ: constant used before declaration' : err.message})`);
+      } else if (err.killed || err.signal === 'SIGTERM' || /ETIMEDOUT/.test(String(err.code))) {
+        fail(`regression tests did not finish within ${REGRESSION_TEST_BUDGET_MS / 1000}s (killed by budget — 不是断言失败；先确认套件总耗时与机器负载)`);
+      } else {
+        fail('regression tests failed');
+      }
     }
   } else {
     fail('tests/run-tests.js not found');

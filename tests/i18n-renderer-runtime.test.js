@@ -289,7 +289,27 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                 !/\{\w+\}/.test(full), full);
         }
 
-        // --- 3. 缺 key 返回 key 本身（而非 undefined / 空串）---
+        // --- 2b. 复数形态：zh 只有 _other，count 取任何值都必须照样命中 ---
+        // 语言包归一成 i18next 复数形态后，基名（compare.completedText）在包里没有对应
+        // 条目了。zh 若没有正确的解析行为，界面会直接显示裸键名 —— 这一条就是挡这个的。
+        {
+            const PK = 'compare.completedText';
+            const fill = (s, p) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in p ? String(p[k]) : m));
+            check('zh: 基名已不在包里（复数化确实落地了，不是名义上的）',
+                flatZh[PK] === undefined && flatZh[`${PK}_other`] !== undefined,
+                JSON.stringify({ base: flatZh[PK], other: flatZh[`${PK}_other`] }));
+            const z1 = i18n.t(PK, { count: 1 });
+            const z5 = i18n.t(PK, { count: 5 });
+            check('zh: count=1/5 都解析到 _other 且都不吐裸键',
+                z1 === fill(flatZh[`${PK}_other`], { count: 1 })
+                    && z5 === fill(flatZh[`${PK}_other`], { count: 5 })
+                    && !z1.includes(PK) && !z5.includes(PK),
+                JSON.stringify({ z1, z5 }));
+            check('zh: zh-cn.json 里没有多余的 _one（该语言用不到，属死键）',
+                flatZh[`${PK}_one`] === undefined, String(flatZh[`${PK}_one`]));
+        }
+
+        // --- 4. 缺 key 返回 key 本身（而非 undefined / 空串）---
         check('unknown key falls back to the key itself',
             i18n.t('no.such.key.here') === 'no.such.key.here');
 
@@ -354,6 +374,24 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                 '[data-i18n-aria-label]': [ariaTarget],
             }[sel] || []);
 
+            // @shortcut: 引用要向 keybindings 模块取值 —— 注入**真模块**，不在测试里抄一份表。
+            // linux CI 上格式化结果是 Ctrl+… 写法；mac 分支用注入点真跑，见下面 6b。
+            s2.window.oicppKeybindings = require('../src/utils/keybindings.js');
+            const SHORTCUT_TITLE_KEY = 'panel.quickOpenPlaceholder';
+            const SHORTCUT_ARIA_KEY = 'debug.stepOut';
+            const shortcutTitle = createElement();
+            shortcutTitle.setAttribute('data-i18n-title', SHORTCUT_TITLE_KEY);
+            shortcutTitle.setAttribute('data-i18n-args', JSON.stringify({ keys: '@shortcut:builtin:quickOpen' }));
+            const shortcutAria = createElement();
+            shortcutAria.setAttribute('data-i18n-aria-label', SHORTCUT_ARIA_KEY);
+            shortcutAria.setAttribute('data-i18n-args', JSON.stringify({ keys: '@shortcut:keybinding:debugStepOut' }));
+            d2.querySelectorAll = (sel) => ({
+                '[data-i18n]': [target, containerEl],
+                '[data-i18n-placeholder]': [phTarget],
+                '[data-i18n-title]': [titleTarget, shortcutTitle],
+                '[data-i18n-aria-label]': [ariaTarget, shortcutAria],
+            }[sel] || []);
+
             return s2.window.i18n.init().then(() => {
                 s2.window.i18n._applyToDOM();
                 check('data-i18n-args params reach the translation',
@@ -386,6 +424,49 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                             && bare.childNodes[0] === kid
                             && bare.childNodes[1].nodeValue === flatZh[KEY_TITLE];
                     })(), '');
+                // --- 6b. {keys} 插值 + @shortcut 引用：args 现在 title/aria 也吃，且绘制时才取值 ---
+                check('6b 探针键在两份包里都带 {keys}（否则这组断言是空转）',
+                    String(flatZh[SHORTCUT_TITLE_KEY]).includes('{keys}')
+                        && String(flatZh[SHORTCUT_ARIA_KEY]).includes('{keys}'),
+                    `${flatZh[SHORTCUT_TITLE_KEY]} / ${flatZh[SHORTCUT_ARIA_KEY]}`);
+                check('data-i18n-title 也吃 args（以前只有 [data-i18n] 读，title 上是裸 t(key)）',
+                    shortcutTitle.title === '快速打开 (Ctrl+P)', shortcutTitle.title);
+                check('data-i18n-aria-label 也吃 args',
+                    shortcutAria.getAttribute('aria-label') === '步出(Shift+F8)',
+                    String(shortcutAria.getAttribute('aria-label')));
+                check('界面上不留裸 {keys} 占位符',
+                    !shortcutTitle.title.includes('{keys}')
+                        && !String(shortcutAria.getAttribute('aria-label')).includes('{keys}'));
+
+                const kbMod = s2.window.oicppKeybindings;
+                // 上面那个「空容器补文本节点」的探针把 querySelectorAll 换成了只认 [data-i18n] 的版本，
+                // 不换回来这里就是「没重绘」而不是「重绘成旧值」—— 断言会假绿。
+                const useLists = () => {
+                    d2.querySelectorAll = (sel) => ({
+                        '[data-i18n]': [target, containerEl],
+                        '[data-i18n-placeholder]': [phTarget],
+                        '[data-i18n-title]': [titleTarget, shortcutTitle],
+                        '[data-i18n-aria-label]': [ariaTarget, shortcutAria],
+                    }[sel] || []);
+                };
+                kbMod.setPlatformOverride('mac');
+                kbMod.setUserComboSource((key) => (key === 'debugStepOut' ? 'Ctrl+Alt+F8' : ''));
+                useLists();
+                s2.window.i18n._applyToDOM();
+                check('换平台后重绘就跟着变：⌘P 而不是 Ctrl+P',
+                    shortcutTitle.title === '快速打开 (⌘P)', shortcutTitle.title);
+                // Apple 顺序 ⌃⌥⇧⌘：Ctrl 在这里是主修饰键落 ⌘ 槽，⌥ 排在 ⌘ 前
+                check('用户改过的键优先于默认表（宿主注入的取值函数生效）',
+                    shortcutAria.getAttribute('aria-label') === '步出(⌥⌘F8)',
+                    String(shortcutAria.getAttribute('aria-label')));
+                kbMod.setPlatformOverride(null);
+                kbMod.setUserComboSource(null);
+                s2.window.i18n._applyToDOM();
+                check('注入点用完必须还原（探针不许留残余状态）',
+                    shortcutTitle.title === '快速打开 (Ctrl+P)'
+                        && shortcutAria.getAttribute('aria-label') === '步出(Shift+F8)',
+                    `${shortcutTitle.title} / ${shortcutAria.getAttribute('aria-label')}`);
+
                 d2.querySelectorAll = (sel) => ({
                     '[data-i18n]': [target, containerEl],
                     '[data-i18n-placeholder]': [phTarget],
@@ -407,6 +488,32 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                         langs2.length === 1 && langs2[0] === 'en', JSON.stringify(langs2));
                     check('getCurrentLanguage follows the switch',
                         s2.window.i18n.getCurrentLanguage() === 'en');
+
+                    // i18next 默认对插值做 HTML 转义，而本项目绝大多数消息的终点是
+                    // textContent / toast / 原生对话框 —— 转义只会把路径与带引号的
+                    // 错误原文变成 &#x2F; &#39; 残渣（#11）。两处 init 已显式关掉
+                    // escape，这里用真实 UMD 验它真的关掉了：以后谁删掉那行，
+                    // 这条会在 CI 里变红，而不是等用户在 toast 里看到残渣。
+                    const escProbe = s2.window.i18n.t('debug.error', { error: "open '/tmp/a.cpp' & <b>" });
+                    check('插值不被 HTML 转义（#11：消息终点是 textContent / 原生对话框）',
+                        escProbe.includes("/tmp/a.cpp") && escProbe.includes("& <b>")
+                            && !/&#x2F;|&#39;|&amp;|&lt;|&gt;/.test(escProbe),
+                        escProbe);
+
+                    // --- 7b. en 的复数分支必须由真实 i18next 选对 ---
+                    // 只测 zh 是不够的：en 有 _one/_other 两支，选错支是静默的语法错误
+                    //（"Completed 1 tests"），界面照样有字、CI 照样绿。
+                    {
+                        const PK = 'compare.completedText';
+                        const fill = (s, p) => String(s).replace(/\{(\w+)\}/g, (m, k) => (k in p ? String(p[k]) : m));
+                        const e1 = s2.window.i18n.t(PK, { count: 1 });
+                        const e5 = s2.window.i18n.t(PK, { count: 5 });
+                        check('en: count=1 取 _one、count=5 取 _other，两支是不同文案且都不是裸键',
+                            e1 === fill(flatEn[`${PK}_one`], { count: 1 })
+                                && e5 === fill(flatEn[`${PK}_other`], { count: 5 })
+                                && e1 !== e5 && !e1.includes(PK) && !e5.includes(PK),
+                            JSON.stringify({ e1, e5 }));
+                    }
 
                     // --- 8. i18n-language-changed DOM 事件 ---
                     let evtLang = null;
@@ -436,16 +543,21 @@ function bootRenderer({ lang = 'zh-cn' } = {}) {
                                         langs3.length === 1, JSON.stringify(langs3));
 
                                     // --- 11. enableAutoTranslate 不炸且幂等 ---
+                                    // 实现里二次调用因 this._observer 已存在会提前 return，
+                                    // 所以 observer 实例必须保持同一个，不能重复创建。
                                     s2.window.i18n.enableAutoTranslate();
+                                    const obs1 = s2.window.i18n._observer;
                                     s2.window.i18n.enableAutoTranslate();
-                                    check('enableAutoTranslate is idempotent and observer-safe', true);
+                                    check('enableAutoTranslate creates exactly one observer (idempotent)',
+                                        !!obs1 && s2.window.i18n._observer === obs1);
 
                                     // --- 12. onChange 返回 unsubscribe ---
-                                    const off = s2.window.i18n.onChange(() => { throw new Error('should be off'); });
+                                    let unsubFired = 0;
+                                    const off = s2.window.i18n.onChange(() => { unsubFired++; });
                                     check('onChange hands back a callable unsubscribe', typeof off === 'function');
                                     off();
                                     return ipcSubs.languageChanged[0]('en').then(() => {
-                                        check('after unsubscribe that listener is not called', true);
+                                        check('after unsubscribe that listener is not called', unsubFired === 0, `fired ${unsubFired}×`);
                                     });
                                 });
                         });

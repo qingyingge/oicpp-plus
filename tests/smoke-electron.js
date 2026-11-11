@@ -160,6 +160,28 @@ app.whenReady().then(async () => {
             out.tNested = window.i18n.t('settings.language');
         }
         out.htmlLang = document.documentElement.lang;
+        // 快捷键单一来源（src/utils/keybindings.ts）在真实页面里的接线：
+        // 它是 <script> 加载的全局，缺席会让菜单提示静默变空 —— 静态检查看不见，只能在这里核。
+        out.hasKeybindingsModule = !!(window.oicppKeybindings
+            && typeof window.oicppKeybindings.defaultKeybindings === 'function');
+        out.kbDefaultCount = out.hasKeybindingsModule
+            ? Object.keys(window.oicppKeybindings.defaultKeybindings()).length : -1;
+        const defaults = out.hasKeybindingsModule ? window.oicppKeybindings.defaultKeybindings() : {};
+        out.menuShortcuts = Array.prototype.slice.call(document.querySelectorAll('.menu-dropdown-item'))
+            .filter((el) => el.querySelector('.menu-shortcut'))
+            .map((el) => {
+                const node = el.querySelector('.menu-shortcut');
+                const shown = (node.textContent || '').trim();
+                const kbKey = node.getAttribute('data-keybinding') || '';
+                const accelId = node.getAttribute('data-accel') || '';
+                const want = kbKey
+                    ? String((out.hasKeybindingsModule ? defaults[kbKey] : undefined) || '')
+                        : (out.hasKeybindingsModule ? window.oicppKeybindings.menuAccelerator(accelId) : '');
+                // DOM 上是**格式化之后**的写法，所以比较也要走同一个格式化函数 ——
+                // 直接比原始 combo（CmdOrCtrl+N）会永远不符，这条第一版就踩了。
+                const display = out.hasKeybindingsModule ? window.oicppKeybindings.formatShortcutLabel(want) : want;
+                return { action: el.getAttribute('data-action') || '', shown, want: display, kbKey, accelId };
+            });
         const els = Array.prototype.slice.call(document.querySelectorAll('[data-i18n]')).slice(0, 8);
         out.domSamples = els.map((e) => ({ key: e.getAttribute('data-i18n'), text: (e.textContent || '').trim().slice(0, 24) }));
         out.domTotal = document.querySelectorAll('[data-i18n]').length;
@@ -189,6 +211,77 @@ app.whenReady().then(async () => {
     const bareKey = probe.domSamples.filter((s) => s.text === s.key);
     check('index.html: DOM 元素无裸 key 残留', bareKey.length === 0, bareKey.map((b) => b.key).join(', '));
     check('index.html: <html lang> 已设置', !!probe.htmlLang, String(probe.htmlLang));
+
+    // 单一来源模块的接线（缺席 = 菜单提示静默变空，而 CI 全绿）
+    check('index.html: window.oicppKeybindings 已加载（<script> 顺序与 CSP 都对）',
+        probe.hasKeybindingsModule === true, String(probe.hasKeybindingsModule));
+    check('index.html: 默认键表 22 条（与 keybindings.ts 的 DEFS 同数）',
+        probe.kbDefaultCount === 22, String(probe.kbDefaultCount));
+    const blankHints = (probe.menuShortcuts || []).filter((s) => !s.shown);
+    check('index.html: 每个 .menu-shortcut 都有内容（没有一个被静默清空）',
+        (probe.menuShortcuts || []).length >= 13 && blankHints.length === 0,
+        `共 ${(probe.menuShortcuts || []).length} 个，空的 ${blankHints.length} 个`);
+    const hintMismatch = (probe.menuShortcuts || [])
+        .filter((s) => s.want && s.shown !== s.want);
+    check('index.html: 13 项菜单提示全部等于自己声明的那个来源（默认表 / accelerator 表）',
+        hintMismatch.length === 0 && (probe.menuShortcuts || []).length === 13,
+        `共 ${(probe.menuShortcuts || []).length} 项，不符: ${hintMismatch.map((m) => `${m.action}=${m.shown}≠${m.want}`).join(' | ')}`);
+    const noSource = (probe.menuShortcuts || []).filter((s) => !s.kbKey && !s.accelId);
+    check('index.html: 没有 span 还停留在「没声明来源」的手抄字面量上',
+        noSource.length === 0, noSource.map((s) => `${s.action}=${s.shown}`).join(', '));
+
+    // {keys} 插值 + @shortcut 引用在真实页面里的效果：标题栏的「快速打开 (Ctrl+P)」
+    // 以前是焊在文案里的，现在由 keybindings.ts 的 BUILTIN_ACCELERATORS 供值。
+    // 写成「未被调用的箭头函数源码」，好让下面 macProbe 里能当函数体插进去复用。
+    const READ_SINKS_SRC = `() => {
+        const t = document.getElementById('titlebar-quickopen');
+        const ph = document.querySelector('.qo-placeholder');
+        return { title: t ? (t.getAttribute('title') || '') : null,
+                 placeholder: ph ? (ph.textContent || '').trim() : null };
+    }`;
+    const linuxShortcuts = await win.webContents.executeJavaScript(`(${READ_SINKS_SRC})()`, true);
+    check('index.html: 标题栏快速打开显示的是来源值而不是 {keys} 占位符',
+        linuxShortcuts.title === '快速打开 (Ctrl+P)' && linuxShortcuts.placeholder === '搜索文件 (Ctrl+P)',
+        JSON.stringify(linuxShortcuts));
+
+    // mac 分支的端到端证明：这台 CI 是 linux，靠 keybindings.ts 的注入点把平台临时改成 mac，
+    // 让 app 重算一遍提示再读 DOM —— 只测纯函数的话，「DOM 真被写成 ⌘N」这件事永远没验过。
+    const macProbe = await win.webContents.executeJavaScript(`(() => {
+      try {
+        if (!window.oicppKeybindings || !window.oicppApp) return { __skip: '缺 oicppKeybindings 或 oicppApp' };
+        const read = () => Array.prototype.slice.call(document.querySelectorAll('.menu-dropdown-item .menu-shortcut'))
+            .map((n) => (n.textContent || '').trim());
+        const readSinks = ${READ_SINKS_SRC};
+        window.oicppKeybindings.setPlatformOverride('mac');
+        window.oicppApp.updateMenuShortcutHints();
+        window.i18n._applyToDOM();
+        const shown = read();
+        const shortcuts = readSinks();
+        window.oicppKeybindings.setPlatformOverride(null);
+        window.oicppApp.updateMenuShortcutHints();
+        window.i18n._applyToDOM();
+        return { shown, restored: read(), shortcuts, restoredShortcuts: readSinks() };
+      } catch (err) { return { __error: String(err && err.stack || err) }; }
+    })()`, true);
+    if (macProbe.__skip || macProbe.__error) {
+        check('index.html: mac 注入端到端探针跑起来了', false, String(macProbe.__skip || macProbe.__error));
+    } else {
+        check('index.html: 注入 mac 后菜单提示真的变成 ⌘ 写法（第一项 ⌘N）',
+            macProbe.shown[0] === '⌘N' && macProbe.shown.some((t) => t.includes('⌘')),
+            JSON.stringify(macProbe.shown));
+        check('index.html: mac 写法里一个 Ctrl 都没有',
+            macProbe.shown.filter((t) => /Ctrl/.test(t)).length === 0,
+            JSON.stringify(macProbe.shown.filter((t) => /Ctrl/.test(t))));
+        check('index.html: 注入 mac 后 {keys} 也跟着变成 ⌘P（标题栏两处）',
+            macProbe.shortcuts.title === '快速打开 (⌘P)'
+                && macProbe.shortcuts.placeholder === '搜索文件 (⌘P)',
+            JSON.stringify(macProbe.shortcuts));
+        const baseline = (probe.menuShortcuts || []).map((s) => s.shown);
+        check('index.html: 撤掉注入后提示还原（探针不留残余状态）',
+            JSON.stringify(macProbe.restored) === JSON.stringify(baseline)
+                && JSON.stringify(macProbe.restoredShortcuts) === JSON.stringify(linuxShortcuts),
+            JSON.stringify({ restored: macProbe.restoredShortcuts, baseline: linuxShortcuts }));
+    }
 
     check('无 CSP/资源加载阻断', blocked.length === 0, blocked.slice(0, 3).join(' | '));
 
@@ -222,6 +315,171 @@ app.whenReady().then(async () => {
         const newErrs = consoleErrors.slice(before);
         check(`${w.file}: 无渲染层 console 错误`, newErrs.length === 0, newErrs.slice(0, 2).join(' | '));
         w2.destroy();
+    }
+
+    // ---- 改键设置页：显示跟随平台，存储仍是规范写法 ------------------------------------
+    // 往返不变量（format⇄parse 180 次全等）在 tests/keybindings-single-source.test.js 里测，
+    // 这一段验的是另一件事：真实渲染路径确实把格式化后的值放进了输入框。
+    // 注意 read() 每次都要重新查 DOM —— renderKeybindingsUI() 会清空容器重建行，
+    // 缓存下来的节点会变成游离片，读到的还是旧值（那样这条断言就是假绿）。
+    {
+        const w4 = new BrowserWindow({
+            width: 1000, height: 700, show: false,
+            webPreferences: {
+                preload: path.join(__dirname, 'smoke-preload.js'),
+                contextIsolation: true, nodeIntegration: false, sandbox: false,
+            },
+        });
+        attach(w4, 'settings-editor-shortcut');
+        try {
+            await w4.loadFile(path.join(RENDERER, 'settings', 'editor.html'));
+            await new Promise((r) => setTimeout(r, 2500));
+            const kbProbe = await w4.webContents.executeJavaScript(`(() => {
+                const read = () => Array.prototype.slice.call(document.querySelectorAll('.keybinding-row'))
+                    .map((row) => ({
+                        key: row.getAttribute('data-keybinding-key') || '',
+                        value: (row.querySelector('.keybinding-input') || {}).value || ''
+                    }));
+                if (!window.editorSettings || !window.oicppKeybindings) {
+                    return { __skip: '缺 window.editorSettings 或 window.oicppKeybindings', rows: read() };
+                }
+                const linux = read();
+                window.oicppKeybindings.setPlatformOverride('mac');
+                window.editorSettings.renderKeybindingsUI();
+                const mac = read();
+                window.oicppKeybindings.setPlatformOverride(null);
+                window.editorSettings.renderKeybindingsUI();
+                return { linux, mac, restored: read() };
+            })()`, true);
+            if (kbProbe.__skip) {
+                check('settings/editor.html: 快捷键显示探针跑起来了', false, kbProbe.__skip);
+            } else {
+                check('settings/editor.html: 非 mac 下输入框是规范写法（Alt+Shift+S 在场）',
+                    kbProbe.linux.some((r) => r.value === 'Alt+Shift+S'),
+                    JSON.stringify(kbProbe.linux.slice(0, 2)));
+                check('settings/editor.html: 注入 mac 后同一行显示 ⌥⇧S（显示跟随平台）',
+                    kbProbe.mac.some((r) => r.value === '⌥⇧S'),
+                    JSON.stringify(kbProbe.mac.slice(0, 2)));
+                check('settings/editor.html: 撤掉注入后逐行还原，且没有一行变空',
+                    JSON.stringify(kbProbe.restored) === JSON.stringify(kbProbe.linux)
+                        && kbProbe.restored.every((r) => r.value.length > 0),
+                    JSON.stringify(kbProbe.restored.slice(0, 2)));
+
+                // 冲突提示的行为证明：把 runCode 改成与 compileCode 同键，两行都要立刻出声，
+                // 改回去之后提示要消失 —— 只测纯函数的话，「输入即提示」这条链没人验过。
+                const conflict = await w4.webContents.executeJavaScript(`(() => {
+                    const rowOf = (key) => document.querySelector('.keybinding-row[data-keybinding-key="' + key + '"]');
+                    const a = rowOf('compileCode'), b = rowOf('runCode');
+                    if (!a || !b) return { __skip: '找不到 compileCode / runCode 行' };
+                    const warn = (row) => {
+                        const w = row.querySelector('.keybinding-warning');
+                        return { text: w ? (w.textContent || '') : null, flagged: row.classList.contains('keybinding-conflict') };
+                    };
+                    const bInput = b.querySelector('.keybinding-input');
+                    const original = bInput.value;
+                    const before = { a: warn(a), b: warn(b) };
+                    bInput.value = a.querySelector('.keybinding-input').value;
+                    bInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    const during = { a: warn(a), b: warn(b) };
+                    bInput.value = original;
+                    bInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    const after = { a: warn(a), b: warn(b) };
+                    return { before, during, after };
+                })()`, true);
+                if (conflict.__skip) {
+                    check('settings/editor.html: 冲突探针找到目标行', false, conflict.__skip);
+                } else {
+                    check('settings/editor.html: 初始没有任何行被标成冲突（默认表是干净的）',
+                        conflict.before.a.text === '' && conflict.before.b.text === '' && !conflict.before.b.flagged,
+                        JSON.stringify(conflict.before));
+                    check('settings/editor.html: 改成同一个键后两行都出提示并带上对方名字',
+                        conflict.during.a.text.includes('运行') && conflict.during.b.text.includes('编译')
+                            && conflict.during.b.flagged === true,
+                        JSON.stringify(conflict.during));
+                    check('settings/editor.html: 改回去提示消失（不留陈旧警告）',
+                        conflict.after.a.text === '' && conflict.after.b.text === '' && !conflict.after.b.flagged,
+                        JSON.stringify(conflict.after));
+                }
+            }
+        } catch (e) {
+            check('settings/editor.html: 快捷键显示探针未抛错', false, e && e.message);
+        }
+        w4.destroy();
+    }
+
+    // ---- #9：切一次语言后，JS 按平台覆写的文案还在不在 ------------------------------------
+    // tests/i18n-dom-owner-conflict.test.js 能静态扫出「同一元素同一属性被两套机制写不同键」，
+    // 但「谁后跑」是运行期时序：i18n 先 _notifyListeners() 再同步跑 _applyToDOM()，补偿方要
+    // 延后一拍才盖得回去。vm 里看不见这个顺序，所以这里真起一个窗口、真切一次语言。
+    // smoke-preload 的 getPlatform 固定返回 'linux'，因此本段验的是「非 Windows」那条分支；
+    // Windows 分支写的就是静态默认值，与 _applyToDOM 同值，本无冲突。
+    {
+        const before = consoleErrors.length;
+        const w3 = new BrowserWindow({
+            width: 1000, height: 700, show: false,
+            webPreferences: {
+                preload: path.join(__dirname, 'smoke-preload.js'),
+                contextIsolation: true, nodeIntegration: false, sandbox: false,
+            },
+        });
+        attach(w3, 'settings-compiler-langswitch');
+        await w3.loadFile(path.join(RENDERER, 'settings', 'compiler.html'));
+        await new Promise((r) => setTimeout(r, 3000));
+
+        const READ_I18N_CLASH = `(function(){
+            const sel = document.getElementById('run-mode');
+            const hint = sel && sel.parentElement ? sel.parentElement.querySelector('.hint') : null;
+            const btn = document.getElementById('install-compiler');
+            const popup = sel ? sel.querySelector('option[value="popup"]') : null;
+            return {
+                lang: window.i18n.getCurrentLanguage(),
+                popupDisabled: popup ? popup.disabled : null,
+                hint: hint ? hint.textContent : null,
+                btnText: btn ? btn.textContent : null,
+                btnDisabled: btn ? btn.disabled : null,
+                vGeneric: window.i18n.t('compiler.runModeDesc'),
+                vPlatformHint: window.i18n.t('compiler.integratedOnlyHint'),
+                vBtnDisabled: window.i18n.t('compiler.downloadDisabled'),
+                vBtnDefault: window.i18n.t('compiler.installOnline')
+            };
+        })()`;
+        const zh9 = await w3.webContents.executeJavaScript(READ_I18N_CLASH, true);
+        check('settings/compiler.html: #9 探针取到的是译文而不是裸键',
+            !!zh9.hint && zh9.hint !== 'compiler.runModeDesc' && zh9.vPlatformHint !== 'compiler.integratedOnlyHint',
+            JSON.stringify({ hint: zh9.hint, lang: zh9.lang }));
+        // 两条候选文案必须真的不同，否则下面的判等在「平台条 == 通用条」的语种里是真空通过
+        check('settings/compiler.html: #9 的两条候选文案确实不同（探针不空转）',
+            zh9.vGeneric !== zh9.vPlatformHint && zh9.vBtnDisabled !== zh9.vBtnDefault,
+            JSON.stringify({ generic: zh9.vGeneric, platform: zh9.vPlatformHint }));
+
+        await w3.webContents.executeJavaScript(`window.electronAPI.__broadcastLanguage('en')`, true);
+        await new Promise((r) => setTimeout(r, 1500));
+        const en9 = await w3.webContents.executeJavaScript(READ_I18N_CLASH, true);
+        check('settings/compiler.html: 语言确实切到了 en',
+            en9.lang === 'en' && en9.vPlatformHint !== zh9.vPlatformHint,
+            JSON.stringify({ lang: en9.lang, platform: en9.vPlatformHint }));
+        check('settings/compiler.html: 切语言后「运行方式提示」仍是平台专属那条（#9 主案）',
+            en9.popupDisabled === true
+                ? (en9.hint === en9.vPlatformHint && en9.hint !== en9.vGeneric)
+                : (en9.hint === en9.vGeneric),
+            `hint="${en9.hint}" 平台条="${en9.vPlatformHint}" 通用条="${en9.vGeneric}" popupDisabled=${en9.popupDisabled}`);
+        check('settings/compiler.html: 切语言后安装按钮仍是「已禁用」那条（同一个洞的第二处）',
+            en9.popupDisabled === true
+                ? (en9.btnText === en9.vBtnDisabled && en9.btnText !== en9.vBtnDefault && en9.btnDisabled === true)
+                : true,
+            `text="${en9.btnText}" 禁用条="${en9.vBtnDisabled}" 默认条="${en9.vBtnDefault}" disabled=${en9.btnDisabled}`);
+
+        await w3.webContents.executeJavaScript(`window.electronAPI.__broadcastLanguage('zh-cn')`, true);
+        await new Promise((r) => setTimeout(r, 1500));
+        const back9 = await w3.webContents.executeJavaScript(READ_I18N_CLASH, true);
+        check('settings/compiler.html: 切回 zh-cn 两条仍成立（双向都验，单向通过说明不了补偿在跑）',
+            back9.hint === back9.vPlatformHint && back9.hint !== back9.vGeneric
+                && back9.btnText === back9.vBtnDisabled,
+            `hint="${back9.hint}" btn="${back9.btnText}"`);
+        const newErrs9 = consoleErrors.slice(before);
+        check('settings/compiler.html: #9 语言切换过程无渲染层 console 错误',
+            newErrs9.length === 0, newErrs9.slice(0, 2).join(' | '));
+        w3.destroy();
     }
 
     if (pageErrors.length) {

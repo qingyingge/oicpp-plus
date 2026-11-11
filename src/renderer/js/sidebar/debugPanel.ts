@@ -57,22 +57,22 @@ class DebugPanel {
                         <path fill="currentColor" d="M5 3.5v9l7-4.5z"/>
                     </svg>
                 </button>
-                <button id="dbg-continue" class="icon-btn" data-i18n-title="debug.continue" aria-label="继续(F6)" data-i18n-aria-label="debug.continue">
+                <button id="dbg-continue" class="icon-btn" data-i18n-title="debug.continue" data-i18n-args='{"keys":"@shortcut:keybinding:debugContinue"}' aria-label="继续(F6)" data-i18n-aria-label="debug.continue">
                     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
                         <path fill="currentColor" d="M3 3h2v10H3V3zm4.5 0 6 5-6 5V3z"/>
                     </svg>
                 </button>
-                <button id="dbg-step-over" class="icon-btn" data-i18n-title="debug.stepOver" aria-label="步过(F7)" data-i18n-aria-label="debug.stepOver">
+                <button id="dbg-step-over" class="icon-btn" data-i18n-title="debug.stepOver" data-i18n-args='{"keys":"@shortcut:keybinding:debugStepOver"}' aria-label="步过(F7)" data-i18n-aria-label="debug.stepOver">
                     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
                         <path fill="currentColor" d="M2 3h1.4v10H2V3zm2.8 5 6.6-3.8v7.6L4.8 8z"/>
                     </svg>
                 </button>
-                <button id="dbg-step-into" class="icon-btn" data-i18n-title="debug.stepInto" aria-label="步入(F8)" data-i18n-aria-label="debug.stepInto">
+                <button id="dbg-step-into" class="icon-btn" data-i18n-title="debug.stepInto" data-i18n-args='{"keys":"@shortcut:keybinding:debugStepInto"}' aria-label="步入(F8)" data-i18n-aria-label="debug.stepInto">
                     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
                         <path fill="currentColor" d="M8 2v5H5l3 5 3-5H8V2zM3 13h10v1.5H3z"/>
                     </svg>
                 </button>
-                <button id="dbg-step-out" class="icon-btn" data-i18n-title="debug.stepOut" aria-label="步出(Shift+F8)" data-i18n-aria-label="debug.stepOut">
+                <button id="dbg-step-out" class="icon-btn" data-i18n-title="debug.stepOut" data-i18n-args='{"keys":"@shortcut:keybinding:debugStepOut"}' aria-label="步出(Shift+F8)" data-i18n-aria-label="debug.stepOut">
                     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false">
                         <path fill="currentColor" d="M8 14V9h3L8 4l-3 5h3v5zM3 2h10V3.5H3z"/>
                     </svg>
@@ -337,7 +337,6 @@ class DebugPanel {
     }
 
     _renderVariables(v: OicppVariableSnapshot | null): void {
-        console.log('[DebugPanel] _renderVariables:', v);
         if (!this.root) return;
         this.loadingMore.clear();
         this.variableCache = {
@@ -767,7 +766,6 @@ class DebugPanel {
     }
 
     _ipcSend(channel: string, ...args: unknown[]): void {
-        console.log(`[DebugPanel] Sending IPC: ${channel}`, args);
         try {
             const { ipcRenderer } = require('electron');
             ipcRenderer.send(channel, ...args);
@@ -824,7 +822,7 @@ class DebugPanel {
         }
         if (data['isArray'] || data['isContainer']) {
             const cnt = data.elementCount != null ? data.elementCount : '?';
-            const typeLabel = data['isArray'] ? window.i18n.t('debug.array') : window.i18n.t('debug.container');
+            const typeLabel = data['isArray'] ? window.i18n.t('debug.typeArray') : window.i18n.t('debug.typeContainer');
             display = `${typeLabel}[${cnt}] ${display}`;
         }
         if (display.length > 60) display = display.slice(0, 57) + '...';

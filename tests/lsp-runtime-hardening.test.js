@@ -21,6 +21,7 @@ const check = (name, condition, extra = '') => {
 };
 
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+const sampleTesterSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main-process', 'sample-tester-server.js'), 'utf8');
 
 // Extract ClangdLspManager with recording loggers so we can assert on severity.
 function loadManagerClass(records) {
@@ -121,13 +122,13 @@ const settle = (promise) => promise.then(
 
     // --- SampleTesterAPI: server.listen() EADDRINUSE is async and escapes try/catch ---
     {
-        const start = mainSource.indexOf('function startSampleTesterServer()');
-        const end = mainSource.indexOf('\nfunction startCompetitiveCompanionServer()', start);
-        check('runtime: startSampleTesterServer is present for inspection', start > 0 && end > start);
-        const body = mainSource.slice(start, end);
+        const start = sampleTesterSource.indexOf('function createSampleTesterServer()');
+        const end = sampleTesterSource.indexOf('\nfunction createCompetitiveCompanionServer(', start);
+        check('runtime: createSampleTesterServer is present for inspection', start > 0 && end > start);
+        const body = sampleTesterSource.slice(start, end);
 
-        const errorHandlerIndex = body.indexOf("sampleTesterServer.on('error'");
-        const listenIndex = body.indexOf('sampleTesterServer.listen(');
+        const errorHandlerIndex = body.indexOf("server.on('error'");
+        const listenIndex = body.indexOf('server.listen(');
         check('runtime: SampleTesterAPI registers an async error handler before listen()',
             errorHandlerIndex > 0 && listenIndex > 0 && errorHandlerIndex < listenIndex,
             `errorAt=${errorHandlerIndex} listenAt=${listenIndex}`);
@@ -135,8 +136,8 @@ const settle = (promise) => promise.then(
             /EADDRINUSE/.test(body.slice(errorHandlerIndex, listenIndex)));
 
         // The CompetitiveCompanion server already had this guard; keep the two in sync.
-        const companionStart = mainSource.indexOf('function createCompetitiveCompanionServer(');
-        const companionBody = mainSource.slice(companionStart, companionStart + 4000);
+        const companionStart = sampleTesterSource.indexOf('function createCompetitiveCompanionServer(');
+        const companionBody = sampleTesterSource.slice(companionStart, companionStart + 4000);
         check('runtime: CompetitiveCompanion server keeps its EADDRINUSE guard',
             /server\.on\('error'/.test(companionBody) && /EADDRINUSE/.test(companionBody));
     }

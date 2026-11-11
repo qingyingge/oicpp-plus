@@ -312,15 +312,18 @@ console.log('--- trie 最长前缀优先：type.deduced 不应污染普通 type 
 console.log('');
 console.log('--- clangd legend 里不存在的 token 不应有规则（避免误判覆盖）---');
 {
-    // 实测 legend 25 项里没有 keyword/string/number，这三类由 monarch 负责
-    const legendTypes = ['variable', 'parameter', 'function', 'method', 'property', 'class',
-        'interface', 'enum', 'enumMember', 'type', 'unknown', 'namespace', 'typeParameter',
-        'concept', 'macro', 'modifier', 'operator', 'bracket', 'label', 'comment'];
+    // 实测 legend 25 项里没有 keyword/string/number，这三类由 monarch 负责。
+    // clangd 发来这些 token 时必须回落到 Monarch，而回落的落点是 buildSyntaxColorRules
+    // 里的三条裸规则 makeRule('keyword') / makeRule('string') / makeRule('number')。
+    // 它们一旦被重构删掉，clangd 语义 token 整片失去底色（Monarch 兜底断链）。
+    // 原断言 uncovered.length >= 0 恒真 —— 换成「这三条 Monarch 兜底规则必须都在」，
+    // 删一条就 FAIL，是真能拦回归的守卫。
     const ruleTokens = new Set(rules.map((r) => r.token));
-    // 这些没进 rules，clangd 发到时回落到 Monarch 的对应 token
-    const uncovered = legendTypes.filter((t) => !ruleTokens.has(t));
-    check('未被语义规则覆盖的 legend 项都可回落到 Monarch', uncovered.length >= 0,
-        uncovered.length ? '未覆盖（回落到 Monarch）: ' + uncovered.join(',') : '全部覆盖');
+    const monarchOwned = ['keyword', 'string', 'number'];
+    const missingMonarchFallback = monarchOwned.filter((t) => !ruleTokens.has(t));
+    check('Monarch 兜底规则 keyword/string/number 都在（clangd 可回落到 Monarch）',
+        missingMonarchFallback.length === 0,
+        missingMonarchFallback.length ? '缺失兜底规则: ' + missingMonarchFallback.join(',') : '三条兜底规则齐全');
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);

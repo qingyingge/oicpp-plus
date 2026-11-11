@@ -25,7 +25,7 @@ const check = (name, condition, extra = '') => {
 const root = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(root, ...p), 'utf8');
 const comparerSource = read('src', 'renderer', 'js', 'sidebar', 'codeComparer.js');
-const workerSource = read('src', 'main-process', 'compare-worker-v6.js');
+const workerSource = read('src', 'main-process', 'compare-worker.js');
 const mainSource = read('src', 'main.js');
 const preloadSource = read('src', 'preload.js');
 const htmlSource = read('src', 'renderer', 'index.html');
@@ -287,11 +287,25 @@ const called = (calls, name) => calls.some((c) => c.name === name);
     check('stopped=true 的提示用 stoppedText 且带上同一个计数',
         s.named('compare-complete').children['.complete-info span'].innerHTML.startsWith('compare.stoppedText|{"count":7}'),
         s.named('compare-complete').children['.complete-info span'].innerHTML);
-    const s2 = comparerHarness(['showComplete', 'hideStatus', 'hideError']);
+    // escapeHtml 真实实现走的是 div.textContent → div.innerHTML，在 vm 替身里没有 DOM
+    // 语义可依赖；这里注入一个可辨识的桩，锁的是「warning 确实经过转义才进
+    // t()/innerHTML」这件事本身，而不是转义函数的正确性。
+    // 模板 compare.completedWithWarning 的 {warning} 外面包着 <span style=…>，
+    // 所以整串不能转义 —— 只能转义插进去的那个值（i18next 的插值转义已全局关掉，
+    // 见 #11，HTML 出口现在自负转义）。
+    const escapeStub = (t) => `ESC(${t})`;
+    const s2 = comparerHarness(['showComplete', 'hideStatus', 'hideError'], { escapeHtml: escapeStub });
     s2.real.showComplete.call(s2.self, 5, 'WARN');
-    check('带 warningMessage 时改用 completedWithWarning，count 与 warning 都传下去',
-        s2.seen.t.some(([k, p]) => k === 'compare.completedWithWarning' && p.count === 5 && p.warning === 'WARN'),
+    check('带 warningMessage 时改用 completedWithWarning，count 原样、warning 经 escapeHtml 传下去',
+        s2.seen.t.some(([k, p]) => k === 'compare.completedWithWarning'
+            && p.count === 5 && p.warning === 'ESC(WARN)'),
         JSON.stringify(s2.seen.t));
+    const s2b = comparerHarness(['showComplete', 'hideStatus', 'hideError'], { escapeHtml: escapeStub });
+    s2b.real.showComplete.call(s2b.self, 5, '<img src=x onerror=y>');
+    const warned = s2b.seen.t.find(([k]) => k === 'compare.completedWithWarning');
+    check('含标签的告警文本不会被原样拼进 innerHTML',
+        !!warned && warned[1].warning === 'ESC(<img src=x onerror=y>)',
+        warned ? JSON.stringify(warned[1].warning) : '没有 recorded t() 调用');
     const s3 = comparerHarness(['showComplete']);
     s3.real.showComplete.call(s3.self, 3);
     check('无告警、未停止时用 completedText，并收起状态区与错误区',
@@ -322,7 +336,7 @@ const called = (calls, name) => calls.some((c) => c.name === name);
 // 把 completedTests 写成 totalTests、或者只累加内部计数不回写任务，那行字照样匹配。
 
 // 引擎事件载荷（complete / stopped / incomplete_run）改成真跑：
-// fixtures/fake-compare-engine.js 用 vm 注入假 Worker，跑 compare-engine-v2.js 的本体，
+// fixtures/fake-compare-engine.js 用 vm 注入假 Worker，跑 compare-engine.js 的本体，
 // 按 worker 真实上报的 progress/error 消息收事件。原先锁的是
 // `/emit\('complete', \{ total: this\._total, completed: this\._completed/` 这类字面量 ——
 // 载荷少一个字段、或者把英文告警串拼回 message 里，正则都照样绿；
@@ -1277,8 +1291,8 @@ check('只出 MB 的旧尺寸助手确实不在这张表里', !declaredNames.has
 
 // ---- 引擎事件载荷：跑真引擎 + 假 Worker ----
 //
-// 断言对象是 CompareEngineV2 处理 worker 消息后**实际发出的事件**，
-// 不是 compare-engine-v2.js 里的字面量。放在末尾异步段里跑。
+// 断言对象是 CompareEngine 处理 worker 消息后**实际发出的事件**，
+// 不是 compare-engine.js 里的字面量。放在末尾异步段里跑。
 
 const engineBehaviour = async () => {
     const run = await runEngine({
@@ -1406,7 +1420,7 @@ const workerBehaviour = async () => {
         'const fail = ' + failSrc,
         'this.__fail = fail;',
         'this.__caps = { input: MAX_CAPTURED_INPUT_BYTES, output: MAX_CAPTURED_OUTPUT_BYTES };'
-    ].join('\n'), ctx, { filename: 'compare-worker-v6.js' });
+    ].join('\n'), ctx, { filename: 'compare-worker.js' });
     const caps = ctx.__caps;
     const fail = (...args) => { ctx.posts.length = 0; ctx.__fail(...args); return ctx.posts[0] || {}; };
 

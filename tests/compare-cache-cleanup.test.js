@@ -23,6 +23,9 @@ const check = (name, condition, extra = '') => {
 const root = path.join(__dirname, '..');
 const { callStatement, classMethod, compileMethod, ifStatement } = require('./fixtures/source-extract');
 const { loadLocales } = require('./fixtures/ci-block-runner');
+const plural = require('../scripts/i18n-plural');
+const { makeUserDataPath } = require('./fixtures/data-root-sandbox');
+const pathIdentity = require('../src/utils/path-identity');
 const mainSource = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
 const comparerSource = fs.readFileSync(path.join(root, 'src', 'renderer', 'js', 'sidebar', 'codeComparer.js'), 'utf8');
 
@@ -37,7 +40,14 @@ let isPathInsideTempRoots = null;
 let tempRoots = null;
 try {
     const snippet = mainSource.slice(helperStart, helperEnd);
-    const context = vm.createContext({ os, path, USER_DATA_DIR_NAME: '.oicpp-plus' });
+    // isInside / samePath 用真模块：白名单判定的关键差异（软链指向根外、大小写）
+    // 恰好只在 realpath 之后才显形，桩函数会把这条守卫测成空守卫。
+    const context = vm.createContext({
+        os, path,
+        isInside: pathIdentity.isInside,
+        samePath: pathIdentity.samePath,
+        userDataPath: makeUserDataPath(os.homedir())
+    });
     vm.runInContext(`${snippet}\nthis.check = isPathInsideTempRoots; this.roots = TEMP_DELETE_ROOTS;`, context);
     isPathInsideTempRoots = context.check;
     tempRoots = context.roots;
@@ -297,7 +307,7 @@ const runCache = (opts = {}) => {
     };
     const ctx = vm.createContext({
         Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Promise,
-        path, os: { homedir: () => HOME }, USER_DATA_DIR_NAME: '.oicpp-plus',
+        path, os: { homedir: () => HOME }, userDataPath: makeUserDataPath(HOME),
         crypto: require('crypto'), process: { platform: o.platform, cwd: () => HOME },
         fs: fsStub,
         logInfo: (...a) => { logs.info.push(a.map((x) => String(x)).join(' ')); },
@@ -530,7 +540,24 @@ const fill = (text, params) => String(text).replace(/\{(\w+)\}/g, (m, k) =>
     Object.prototype.hasOwnProperty.call(params || {}, k) ? String(params[k]) : m);
 
 // 假 i18n：键查不到就吐键名，于是「裸键上屏」会被下面的“不许出现键名”抓到。
-const makeWindow = (pack, api) => ({ i18n: { t: (key, params) => fill(pack[key] === undefined ? key : pack[key], params) }, electronAPI: api });
+// 复数取值必须和真引擎同一份实现（scripts/i18n-plural），否则语言包一旦归一成
+// _one/_other，这个桩就会静默退化成「一律返回裸键名」—— 而它守的正是那条。
+const makeWindow = (code, api) => ({
+    i18n: { t: (key, params) => fill(plural.lookupFlat(packs[code], code, key, params), params) },
+    electronAPI: api
+});
+{
+    const zh = makeWindow('zh-cn', {}).i18n.t;
+    const en = makeWindow('en', {}).i18n.t;
+    check('桩会解析复数后缀（否则后面的“不出现裸键名”全是假绿）',
+        zh('compare.genFailedWarning', { count: 3 }) === fill(packs['zh-cn']['compare.genFailedWarning_other'], { count: 3 })
+            && en('compare.genFailedWarning', { count: 1 }) === fill(packs['en']['compare.genFailedWarning_one'], { count: 1 })
+            && en('compare.genFailedWarning', { count: 2 }) === fill(packs['en']['compare.genFailedWarning_other'], { count: 2 }),
+        JSON.stringify({ zh3: zh('compare.genFailedWarning', { count: 3 }), en1: en('compare.genFailedWarning', { count: 1 }), en2: en('compare.genFailedWarning', { count: 2 }) }));
+    check('zh 只有 _other：count=1 也必须解析成功而不是吐裸键',
+        !zh('compare.genFailedWarning', { count: 1 }).includes('compare.genFailedWarning'),
+        zh('compare.genFailedWarning', { count: 1 }));
+}
 
 const runCleanup = ({ executables, failAt = -1, throwStyle = 'reject' }) => {
     const trace = [];
@@ -541,7 +568,7 @@ const runCleanup = ({ executables, failAt = -1, throwStyle = 'reject' }) => {
         logInfo: (...a) => { logs.info.push(a.map((x) => String(x)).join(' ')); },
         logWarn: (...a) => { logs.warn.push(a.map((x) => String(x)).join(' ')); },
         logError: (...a) => { logs.error.push(a.map((x) => String(x)).join(' ')); },
-        window: makeWindow(packs['zh-cn'], {
+        window: makeWindow('zh-cn', {
             deleteTempFile: (p) => {
                 trace.push(['call', p]);
                 const shouldFail = failAt === trace.filter((t) => t[0] === 'call').length - 1;
@@ -617,7 +644,7 @@ const runComplete = ({ mode, result, lang = 'zh-cn', state = {} }) => {
         logInfo: (...a) => { calls.logInfo.push(a.map((x) => String(x)).join(' ')); },
         logWarn: (...a) => { calls.logInfo.push('[warn]' + a.map((x) => String(x)).join(' ')); },
         logError: (...a) => { calls.logInfo.push('[error]' + a.map((x) => String(x)).join(' ')); },
-        window: makeWindow(packs[lang], {
+        window: makeWindow(lang, {
             onCompareComplete: (cb) => { holder.cb = cb; return () => { }; }
         })
     });
@@ -732,9 +759,9 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
     add('用户中止（result.stopped）：转 stopped、写 warningMessage，并把停止文案递给状态栏',
         stoppedByUser.task.state.mode === 'stopped' && stoppedByUser.task.state.stopped === true
             && stoppedByUser.task.state.failedTests === 3
-            && stoppedByUser.task.state.warningMessage === fill(packs['zh-cn']['compare.genFailedWarning'], { count: 3 })
+            && stoppedByUser.task.state.warningMessage === fill(packs['zh-cn']['compare.genFailedWarning_other'], { count: 3 })
             && stoppedByUser.calls.updateTaskStatus.length === 1
-            && stoppedByUser.calls.updateTaskStatus[0] === fill(packs['zh-cn']['compare.compareStopped'], { completed: 8, failed: 3 }),
+            && stoppedByUser.calls.updateTaskStatus[0] === fill(packs['zh-cn']['compare.compareStopped_other'], { completed: 8, failed: 3 }),
         stoppedByUser.task.state);
     const stoppedClean = await runComplete({ mode: 'running', result: { stopped: true, completed: 8, failed: 0 } });
     add('中止但一组都没失败：不留假警告（warningMessage 归 null）',
@@ -746,11 +773,18 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
             && NaNed.task.state.failedTests === 0, NaNed.task.state);
     const enDone = await runComplete({ mode: 'running', result: { stopped: true, completed: 6, failed: 2 }, lang: 'en' });
     add('换 en 语言包：这两句状态文案跟着换成英文，且屏幕上不出现裸键名',
-        enDone.calls.updateTaskStatus[0] === fill(packs['en']['compare.compareStopped'], { completed: 6, failed: 2 })
-            && enDone.task.state.warningMessage === fill(packs['en']['compare.genFailedWarning'], { count: 2 })
+        enDone.calls.updateTaskStatus[0] === fill(packs['en']['compare.compareStopped_other'], { completed: 6, failed: 2 })
+            // 复数形态在这里显式写死 _other：断言的是「count=2 落到哪一支」这个预期行为，
+            // 不是拿同一个解析函数算两遍自证
+            && enDone.task.state.warningMessage === fill(packs['en']['compare.genFailedWarning_other'], { count: 2 })
             && !JSON.stringify(enDone.calls.updateTaskStatus).includes('compare.compareStopped')
             && !String(enDone.task.state.warningMessage).includes('compare.genFailedWarning'),
         { status: enDone.calls.updateTaskStatus, warning: enDone.task.state.warningMessage });
+    const enOne = await runComplete({ mode: 'running', result: { stopped: true, completed: 6, failed: 1 }, lang: 'en' });
+    add('en 下只失败 1 组：走 _one（英文单数句），且不是裸键、也不是复数句',
+        enOne.task.state.warningMessage === fill(packs['en']['compare.genFailedWarning_one'], { count: 1 })
+            && enOne.task.state.warningMessage !== fill(packs['en']['compare.genFailedWarning_other'], { count: 1 }),
+        enOne.task.state.warningMessage);
 
     return rows;
 })()]).then(([a, b]) => [...a, ...b]);

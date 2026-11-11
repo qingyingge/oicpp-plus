@@ -1173,7 +1173,7 @@ class SampleTester {
             <div class="summary-left">
                 <span class="summary-label">${window.i18n.t('tester.overview')}</span>
                 <span class="status-badge ${overallClass}">${overallLabel}</span>
-                <span class="summary-label">${window.i18n.t('tester.totalGroups', { total })}</span>
+                <span class="summary-label">${window.i18n.t('tester.totalGroups', { total, count: total })}</span>
             </div>
             <div class="summary-right">
                 ${badges}
@@ -1222,11 +1222,6 @@ class SampleTester {
             const id = (group instanceof HTMLElement ? group.dataset['sampleId'] : '') || '';
             el.textContent = t('tester.testGroup', { i: id });
         });
-        document.querySelectorAll('.sample-run-btn').forEach((el) => {
-            if (!(el instanceof HTMLElement)) return;
-            el.textContent = t('tester.run');
-            el.title = t('tester.runSample');
-        });
         document.querySelectorAll('.sample-delete-btn').forEach((el) => {
             if (el instanceof HTMLElement) el.title = t('tester.deleteSample');
         });
@@ -1243,13 +1238,6 @@ class SampleTester {
             const key = el.classList.contains('switch-btn') ? 'tester.manualInput' : 'tester.readFromFile';
             el.textContent = t(key, null);
             el.title = t(key, null);
-        });
-        document.querySelectorAll('.export-output-btn').forEach((el) => {
-            if (el.classList.contains('expand-output-btn')) {
-                el.textContent = t('tester.expand');
-            } else {
-                el.textContent = t('tester.export');
-            }
         });
     }
 
@@ -1284,7 +1272,7 @@ class SampleTester {
                     ${statusBadge}
                 </div>
                 <div class="sample-controls" onclick="event.stopPropagation()">
-                    <button class="sample-run-btn" id="run-btn-${sample.id}" onclick="sampleTester.runSample(${sample.id})" data-i18n-title="tester.runSample" title="运行此样例">
+                    <button class="sample-run-btn" id="run-btn-${sample.id}" onclick="sampleTester.runSample(${sample.id})" data-i18n="tester.run" data-i18n-title="tester.runSample" title="运行此样例">
                         运行
                     </button>
                     <button class="sample-delete-btn" onclick="sampleTester.deleteSample(${sample.id}).catch(logError)" data-i18n-title="tester.deleteSample" title="删除样例">
@@ -1326,7 +1314,7 @@ class SampleTester {
                             <span class="diff-info" id="diff-info-${sample.id}" style="display: none;"></span>
                             <div class="output-controls" style="display: ${sample.result?.output ? 'flex' : 'none'};">
                                 <button class="export-output-btn expand-output-btn" style="display: ${outputIsTruncated ? 'inline-flex' : 'none'};" onclick="sampleTester.toggleExpandOutput(${sample.id})" title="${outputIsExpanded ? window.i18n.t('tester.collapseOutput') : window.i18n.t('tester.expandFullOutput')}">${outputIsExpanded ? window.i18n.t('tester.collapse') : window.i18n.t('tester.expand')}</button>
-                                <button class="export-output-btn" onclick="sampleTester.exportSampleOutput(${sample.id})" data-i18n-title="tester.export" title="导出输出到文件">
+                                <button class="export-output-btn" onclick="sampleTester.exportSampleOutput(${sample.id})" data-i18n="tester.export" data-i18n-title="tester.exportOutput" title="导出样例输出">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                                         <polyline points="7,10 12,15 17,10"></polyline>
@@ -2045,8 +2033,7 @@ class SampleTester {
             };
         }
 
-        const userHome = await window.electronAPI.getUserHome();
-        const baseDir = await window.electronAPI.pathJoin(userHome, '.oicpp-plus', 'sampleTester', 'freopen_runs');
+        const baseDir = await window.electronAPI.getUserDataPath(['sampleTester', 'freopen_runs']);
         const runDirName = `sample_${sample?.id || 'x'}`;
         const runDir = await window.electronAPI.pathJoin(baseDir, runDirName);
 
@@ -3060,7 +3047,9 @@ class SampleTester {
 
     notifyCompileCacheHit(targetName: string) {
         const brief = (window.i18n.t('tester.compileCacheHit', {target: targetName}));
-        const msg = `[样例测试器] ${brief}`;
+        // msg 会进 appendOutput（编译输出面板是用户可见的），所以前缀那个面板名也必须走译文；
+        // 原来这里写死 [样例测试器]，切到英文界面后仍然是一串中文。
+        const msg = `[${window.i18n.t('tester.title')}] ${brief}`;
         try { logInfo(msg); } catch (_) { }
 
         try {
@@ -3174,7 +3163,7 @@ class SampleTester {
         }
 
         const currentFilePathInfo = await window.electronAPI.getPathInfo(this.currentFile);
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        const tempDir = await window.electronAPI.getUserDataPath(['codeTemp']);
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(tempDir, cachedExeName);
 
@@ -3711,7 +3700,7 @@ class SampleTester {
         }
 
         const isWin2 = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        const tempDir = await window.electronAPI.getUserDataPath(['codeTemp']);
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(tempDir, `spj_${cacheKey}${isWin2 ? '.exe' : ''}`);
         const spjPathInfo = await window.electronAPI.getPathInfo(spjPath);
@@ -3815,7 +3804,7 @@ class SampleTester {
         }
 
         const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
-        const tempDir = await window.electronAPI.pathJoin(await window.electronAPI.getUserHome(), '.oicpp-plus', 'codeTemp');
+        const tempDir = await window.electronAPI.getUserDataPath(['codeTemp']);
         await window.electronAPI.ensureDirectory(tempDir);
         const executableFile = await window.electronAPI.pathJoin(
             tempDir,

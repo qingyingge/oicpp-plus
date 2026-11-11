@@ -264,7 +264,7 @@ Range       1.0 TPS                8.2 TPS                     8.2x
 g++ -O2 -fPIC -shared -I$NODE_HEADERS/include/node -o fastspawn.node fastspawn.cc
 ```
 
-worker (`compare-worker-v6.js`) 加载失败时自动回退到纯 Node spawn 实现。
+worker (`compare-worker-v6.js`，2026-11-03 起名为 `compare-worker.js`) 加载失败时自动回退到纯 Node spawn 实现。
 
 架构变更：
 ```

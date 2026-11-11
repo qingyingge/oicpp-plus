@@ -19,12 +19,15 @@ const mainSource = read('src/main.js');
 const installerSource = read('installer.nsi');
 
 const getUserToolsRoot = /function getUserToolsRoot\(\) \{[\s\S]*?\n\}/.exec(mainSource);
-check('user tools root is ~/.oicpp-plus/bin',
+// 数据根自 1.6 起由 src/utils/data-root.ts 解析（家目录，或命中便携标记后的 exe 同级目录），
+// 所以这里锁的是「经 userDataPath 落到数据根之下」，而不是字面的 ~/.oicpp-plus。
+check('user tools root is <dataRoot>/.oicpp-plus/bin',
     !!getUserToolsRoot &&
-    getUserToolsRoot[0].includes("USER_DATA_DIR_NAME, 'bin'") &&
-    !getUserToolsRoot[0].includes("'LSP'"));
+    getUserToolsRoot[0].includes("userDataPath('bin')") &&
+    !getUserToolsRoot[0].includes("'LSP'") &&
+    !/os\.homedir\(\)/.test(getUserToolsRoot[0]));
 check('the legacy LSP root is only kept for migration',
-    mainSource.includes("USER_DATA_DIR_NAME, 'LSP', 'bin'") &&
+    mainSource.includes("userDataPath('LSP', 'bin')") &&
     /getLegacyUserToolsRoot/.test(mainSource));
 check('the old LSP root is no longer the new install target',
     !/return path\.join\(os\.homedir\(\), USER_DATA_DIR_NAME, 'LSP'\)/.test(mainSource) &&

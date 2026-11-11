@@ -769,7 +769,7 @@ class CompilerManager {
     }
 
     formatByteSize(bytes: number) {
-        if (bytes < 1024) return window.i18n?.t?.('cloudCompile.formatBytes', { bytes });
+        if (bytes < 1024) return window.i18n?.t?.('cloudCompile.formatBytes', { bytes, count: bytes });
         const kb = bytes / 1024;
         if (kb < 1024) {
             return kb >= 100 ? `${Math.round(kb)} KB` : `${kb.toFixed(2)} KB`;

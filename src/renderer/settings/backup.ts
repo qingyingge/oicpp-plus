@@ -262,7 +262,7 @@ class BackupSettings {
             }
         } catch (error) {
             logError('保存备份设置失败:', error);
-            this.showMessage(window.i18n.t('backup.saveFailSimple', { error: (error as Error).message }), 'error');
+            this.showMessage(window.i18n.t('backup.saveFail', { error: (error as Error).message }), 'error');
         } finally {
             this._saving = false;
         }
