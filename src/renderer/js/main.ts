@@ -4220,11 +4220,11 @@ class OICPPApp {
                 this.showUpdateCheckingDialog();
             } catch (error) {
                 logError('[渲染进程] 检查更新失败:', error);
-                this.showMessage(window.i18n?.t?.('message.updateUnavailable') || '', 'error');
+                this.showMessage(window.i18n?.t?.('message.updateUnavailable'), 'error');
             }
         } else {
             logWarn('[渲染进程] Electron环境不可用，无法检查更新');
-            this.showMessage(window.i18n?.t?.('message.updateElectronOnly') || '', 'error');
+            this.showMessage(window.i18n?.t?.('message.updateElectronOnly'), 'error');
         }
     }
 

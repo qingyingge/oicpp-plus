@@ -420,9 +420,30 @@ const workerRows = (() => {
     const spawnSrc = funcDecl(workerSource, 'spawnProcess');
     const normSrc = funcDecl(workerSource, 'normalizeOutput');
     const equalSrc = funcDecl(workerSource, 'outputsEqual');
+    // outputsEqual 多了一个字节级快路（equalNormalizedBytes）。它必须一起抽进来跑：
+    // 少注入一个就是 ReferenceError，而这三条断言会集体变成 [0,"exception","exception"]
+    // —— 那种红是对的，但别以为判等本身坏了。
+    // 反过来，把它注进来了才真正加了一档覆盖：快路与字符串终裁必须在同一批数据上
+    // 给同一个结论，否则「只差行尾空白不算差异」这条会在 MB 级输出上悄悄翻掉。
+    const normEqSrc = funcDecl(workerSource, 'equalNormalizedBytes');
+    // 判定阶梯合并成一套后，「native 的 -3 折算成 timeout」「截断标志取自 native 回传」
+    // 这两件事搬进了 outcomeFromFast / runFastPair。桩必须退到 native 边界上（喂原生
+    // 形状的数据、跑真函数），否则 -3 那条断言就变成在测测试自己写的映射。
+    const fastOutcomeSrc = funcDecl(workerSource, 'outcomeFromFast');
+    const jsOutcomeSrc = funcDecl(workerSource, 'outcomeFromJs');
+    // 判定阶梯拆成「事实 + 优先级」两层后，verdictForProgram 依赖 factsOfProgram；
+    // 只注入前者会在真跑时炸出 ReferenceError，所以两个都抽。
+    const factsSrc = funcDecl(workerSource, 'factsOfProgram');
+    const verdictSrc = funcDecl(workerSource, 'verdictForProgram');
+    const runFastPairSrc = funcDecl(workerSource, 'runFastPair');
+    const effTimeoutSrc = funcDecl(workerSource, 'effectiveRunTimeout');
+    const unlimitedSrc = scalarConst(workerSource, 'UNLIMITED_RUN_FALLBACK_MS');
+    // freopen 的结果回收也是判定链的一环（循环每轮都无条件调它），所以抽真实现进来跑，
+    // 而不是在测试里放个同名假函数 —— 那样它就永远不参与断言。
+    const slotReadSrc = funcDecl(workerSource, 'readSlotOutput');
     const loopSrc = forStatement(workerSource, /^\s*for \(let i = startIdx; i < startIdx \+ count && running;/m);
     const stopSrc = ifStatement(workerSource, /^\s*else if \(msg\.type === 'stop'\)/m).replace(/^else\s+/, '');
-    const parts = { budgetSrc, activeSrc, spawnSrc, normSrc, equalSrc, loopSrc, stopSrc };
+    const parts = { budgetSrc, activeSrc, spawnSrc, normSrc, equalSrc, normEqSrc, fastOutcomeSrc, jsOutcomeSrc, factsSrc, verdictSrc, runFastPairSrc, effTimeoutSrc, unlimitedSrc, slotReadSrc, loopSrc, stopSrc };
     push('worker 关键片段抽取成功', Object.values(parts).every((s) => s.length > 0),
         JSON.stringify(Object.entries(parts).map(([k, s]) => [k, s.slice(0, 14)])));
     if (!Object.values(parts).every((s) => s.length > 0)) return Promise.resolve(rows);
@@ -450,27 +471,28 @@ const workerRows = (() => {
         });
         vm.runInContext([
             budgetSrc.replace(/^const\s/, 'let '),
-            activeSrc, normSrc, equalSrc, spawnSrc,
+            activeSrc, normSrc, equalSrc, normEqSrc, spawnSrc,
             'this.__setBudget = (n) => { MAX_WORKER_OUTPUT_BYTES = n; };',
             'this.__peek = () => ({ budget: MAX_WORKER_OUTPUT_BYTES, size: activeProcesses.size });'
         ].join('\n'), ctx);
         return { ctx, seen };
     };
     const eqCtx = vm.createContext({ Buffer, String, Number });
-    vm.runInContext(`${normSrc}\n${equalSrc};`, eqCtx);
+    vm.runInContext(`${normSrc}\n${normEqSrc}\n${equalSrc};`, eqCtx);
     const eq = (a, b) => vm.runInContext(`outputsEqual(${JSON.stringify(a)}, ${JSON.stringify(b)})`, eqCtx);
 
     // 把真循环体整条搬进 vm 跑：stop 从哪个 await 后面生效，只看 trace 里各计数器停在哪。
     const runLoop = ({ useFast = false, flipAt = '', stopBefore = false, pairMode = 'ok', jsMode = 'same' } = {}) => {
-        const trace = { gen: 0, js: 0, pair: 0, fails: [], posts: [] };
-        const lctx = vm.createContext({ Buffer, Number, String, Object, Array, Error, JSON, Math, Promise, trace });
+        const trace = { gen: 0, js: 0, pair: 0, spj: 0, fails: [], posts: [] };
+        const lctx = vm.createContext({ Buffer, Number, String, Object, Array, Error, JSON, Math, Promise, Date, trace });
         const jsFlip = flipAt === 'js1' ? 'if (trace.js === 1) running = false;'
             : flipAt === 'js2' ? 'if (trace.js === 2) running = false;' : '';
+        // 原生 runPair 的出参形状（code/out/truncated/signal1|2），截断是一个总标志
         const PAIR = {
-            ok: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated1: false, truncated2: false }",
-            truncated: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated1: true, truncated2: false }",
-            mismatch: "{ code1: 0, code2: 0, ms: 5, out1: Buffer.from('a'), out2: Buffer.from('b'), truncated1: false, truncated2: false }",
-            stdtle: '{ code1: -3, code2: 0, ms: 5, out1: Buffer.from(\'\'), out2: Buffer.from(\'\'), truncated1: false, truncated2: false }'
+            ok: "{ code1: 0, code2: 0, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated: false, signal1: 0, signal2: 0 }",
+            truncated: "{ code1: 0, code2: 0, out1: Buffer.from('same'), out2: Buffer.from('same'), truncated: true, signal1: 0, signal2: 0 }",
+            mismatch: "{ code1: 0, code2: 0, out1: Buffer.from('a'), out2: Buffer.from('b'), truncated: false, signal1: 0, signal2: 0 }",
+            stdtle: '{ code1: -3, code2: 0, out1: Buffer.from(\'\'), out2: Buffer.from(\'\'), truncated: false, signal1: 0, signal2: 0 }'
         }[pairMode];
         // 非 fastpath 的两个程序各调一次 runJs：按奇偶次返回不同输出，
         // 用来验「差异判定走的是同一套 normalizeOutput」而不是裸比字节。
@@ -480,15 +502,24 @@ const workerRows = (() => {
                 ? "(trace.js % 2 ? okRun : { code: 0, ms: 5, output: Buffer.from('same\\r\\n') })"
                 : 'okRun';
         vm.runInContext([
-            normSrc, equalSrc,
+            normSrc, normEqSrc, equalSrc,
+            // 判定阶梯的真实实现：从 worker 源码里抽出来跑，不在测试里重抄一遍
+            unlimitedSrc, effTimeoutSrc, fastOutcomeSrc, jsOutcomeSrc, factsSrc, verdictSrc, runFastPairSrc, slotReadSrc,
+            `const fast = { runPair: () => { trace.pair++; return ${PAIR}; } };`,
             `let running = ${stopBefore ? 'false' : 'true'};`,
             'let lastGenMs = 0, lastStdMs = 0, lastTestMs = 0;',
             "const startIdx = 0, count = 3, gen = 'gen.exe', genTimeout = 0, stdPath = 'std.exe', testPath = 'test.exe', timeout = 1000;",
+            // 这一组断言跑的是「没 checker、没 freopen」的默认形态，两个空串就是「未启用」。
+            // SPJ 与 freopen 分别由 tests/compare-spj-checker.test.js、
+            // tests/compare-freopen-engine.test.js 用真引擎覆盖；judgeWithChecker 在这里
+            // 是哨兵（被叫到就说明未启用的东西被偷偷启用了），slots=null 让
+            // readSlotOutput 走早退分支，chkSlots=null 让 checker 分支根本不进。
+            "const spjPath = '', scratchDir = '', freopenInput = '', slots = null, chkSlots = null;",
+            'const judgeWithChecker = () => { trace.spj++; return Promise.resolve(null); };',
             `const useFast = ${useFast};`,
             'const okRun = { code: 0, ms: 5, output: Buffer.from(\'same\') };',
             `const runGenerator = async () => { trace.gen++; ${flipAt === 'gen' ? 'running = false;' : ''} return okRun; };`,
             `const runJs = async () => { trace.js++; ${jsFlip} return ${jsReturn}; };`,
-            `const runFastPair = () => { trace.pair++; return ${PAIR}; };`,
             'const fail = (i, kind, code) => { trace.fails.push([i, kind, code]); };',
             "const worker_threads_1 = { parentPort: { postMessage: (m) => trace.posts.push(m.type) } };",
             // 回退路径预取开关在 worker 里是模块级 const，循环体引用它；
@@ -601,6 +632,12 @@ const workerRows = (() => {
         push('fastpath 同样按 count 跑满 3 组',
             fastClean.pair === 3 && fastClean.posts.length === 3 && fastClean.fails.length === 0,
             JSON.stringify({ pair: fastClean.pair, posts: fastClean.posts }));
+        // harness 里的 judgeWithChecker 是哨兵：spjPath 为空时它必须一次都没被叫到。
+        // 没有这条断言，那个计数器就只是个装饰，而「默认路径悄悄去跑 checker」
+        // 正是把没配 SPJ 的对拍全变成假 WA 的那类错误。
+        push('未配 checker 时两条路径都不许调用 checker（哨兵恒为 0）',
+            clean.spj === 0 && fastClean.spj === 0,
+            JSON.stringify({ js: clean.spj, fast: fastClean.spj }));
         const fastTrunc = await runLoop({ useFast: true, pairMode: 'truncated' });
         push('fastpath 输出超限逐组报 output_limit，且一条 progress 都不发',
             fastTrunc.fails.length === 3 && fastTrunc.fails.every((f) => f[1] === 'output_limit' && f[2] === 'output_limit')
@@ -622,19 +659,26 @@ const workerRows = (() => {
             slowDiff.fails.length === 3 && slowDiff.fails.every((f) => f[1] === 'mismatch')
             && slowDiff.posts.length === 0, JSON.stringify(slowDiff.fails[0]));
 
+        // native 异步起的子进程不在 activeProcesses 里（由 libuv 线程池等），
+        // 所以 stop 必须另外调 cancelAll —— 少了它，异步版就把「停止能中途杀掉」
+        // 这件事从 child_process 那套搬进了一个没人管的死角。
         const stopCtx = vm.createContext({ Set, String, JSON });
         vm.runInContext([
             'let running = true;',
             "const activeProcesses = new Set([{ tag: 'a' }, { tag: 'b' }]);",
             'const killed = [];',
             'const killProc = (p) => { killed.push(p.tag); };',
+            'const cancelled = [];',
+            'const fast = { cancelAll: () => { cancelled.push(1); } };',
             "const msg = { type: 'stop' };",
             stopSrc,
-            'this.__out = { running, killed: killed.join(","), size: activeProcesses.size };'
+            'this.__out = { running, killed: killed.join(","), size: activeProcesses.size, cancelled: cancelled.length };'
         ].join('\n'), stopCtx);
         push('stop 消息把每个在点子进程都杀掉并清空登记表（漏 clear 就永远赖着不放）',
             stopCtx.__out.running === false && stopCtx.__out.killed === 'a,b' && stopCtx.__out.size === 0,
             JSON.stringify(stopCtx.__out));
+        push('stop 同时叫 addon 收掉 native 异步起的进程组（那批不在 activeProcesses 里）',
+            stopCtx.__out.cancelled === 1, JSON.stringify(stopCtx.__out));
         return rows;
     })().catch((e) => [{ name: 'worker 守卫自身跑通', cond: false, extra: String((e && e.stack) || e) }]);
 })();

@@ -68,7 +68,9 @@ const {
     SETTINGS_WRITABLE_KEYS
 } = require('./utils/settings-schema');
 const { getResourceLimitedSpawn, terminateProcessTree } = require('./utils/process-supervisor');
+const { readProcessMemoryBytes, parseMemWatchReport, startMemWatch: startMemWatchAt, resolveMemWatchReport, killAllMemWatch } = require('./utils/memory-limit');
 const clangdCompileFlags = require('./utils/clangd-compile-flags');
+const { startSampleTesterServers, stopSampleTesterServers } = require('./main-process/sample-tester-server');
 const { filterGccPrivateIncludes } = require('./utils/compiler-paths');
 
 const GDBDebugger = require('./gdb-debugger');
@@ -295,9 +297,6 @@ const LSP_DIAGNOSTICS_THROTTLE_MS = 60;
 // 产生几十次进程创建，8 worker 并行时更甚。
 const MEMORY_SAMPLE_INTERVAL_MS_WITH_LIMIT = 500;
 const MEMORY_SAMPLE_INTERVAL_MS_PLAIN = 2000;
-// memwatch 上报结果的最长等待：目标进程退出后 watcher 最多再轮询一个周期，
-// 但目标卡在不可终止状态时需要兜底，避免 close 事件被拖死。
-const MEMWATCH_REPORT_TIMEOUT_MS = 3000;
 // 环境里是否存在 objdump：不存在时后续调试启动可完全跳过调试信息检查
 let objdumpAvailable = true;
 // 语言包在进程生命周期内只读盘解析一次：切换语言时主进程与渲染层会各请求一次，
@@ -1656,8 +1655,7 @@ const clangdLspManager = new ClangdLspManager();
 let mainWindow: import('electron').BrowserWindow | null;
 let pendingSaveAllClose: PendingSaveAllWatch | null = null;
 const detachedRunProcesses = new Set();
-let sampleTesterServer: import('http').Server | null = null; // HTTP 服务实例
-let competitiveCompanionServer: import('http').Server | null = null; // Competitive Companion
+
 const terminalManager = new IntegratedTerminalManager({
     sendToRenderer: (channel: string, payload: unknown) => {
         if (!mainWindow || mainWindow.isDestroyed()) {
@@ -3141,14 +3139,13 @@ async function ensureMemWatchExecutable(compilerPath: string) {
 }
 
 // ---------------------------------------------------------------- memwatch
-// memwatch 附着到已在运行的进程上，不接管 stdio、不参与进程生命周期，
-// 因此目标的启动路径完全不变；这里只多一个兄弟进程负责读峰值。
+// 附着读峰值、限时收报告、退出时清场，这些都在 utils/memory-limit 里 —— worker 端
+// 的样例判定要用同一套，留在这里就还得再抄一份。本文件只负责把 electron 特有的
+// 「memwatch.exe 在哪」解析出来注给共享模块。
 type MemWatchChild = import('child_process').ChildProcess;
 interface MemWatchHandle { child: MemWatchChild; report: Promise<string> }
-interface MemWatchReport { peakBytes: number; privateBytes: number; exceeded: boolean }
 
 let memWatchBuildPromise: Promise<string | null> | null = null;
-const activeMemWatchProcesses = new Set<MemWatchChild>();
 
 function findMemWatch() {
     const memWatchPath = getMemWatchTargetPath();
@@ -3179,101 +3176,8 @@ function warmUpMemWatch() {
     return memWatchBuildPromise;
 }
 
-function parseMemWatchReport(text: string): MemWatchReport | null {
-    const raw = String(text || '').trim();
-    if (!raw || raw.startsWith('attach-failed')) {
-        return null;
-    }
-    const parts = raw.split(/\s+/);
-    if (parts.length < 4) {
-        return null;
-    }
-    const peakBytes = Number(parts[0]);
-    const privateBytes = Number(parts[1]);
-    const ok = Number(parts[3]) === 1;
-    if (!ok || !Number.isFinite(peakBytes) || !Number.isFinite(privateBytes)) {
-        return null;
-    }
-    return {
-        peakBytes,
-        privateBytes,
-        exceeded: Number(parts[2]) === 1
-    };
-}
-
 function startMemWatch(pid: number | undefined, limitBytes = 0): MemWatchHandle | null {
-    if (process.platform !== 'win32' || !pid) {
-        return null;
-    }
-    const memWatchPath = findMemWatch();
-    if (!memWatchPath) {
-        return null;
-    }
-
-    const { spawn } = require('child_process');
-    const limit = Math.max(0, Math.floor(Number(limitBytes) || 0));
-
-    let child: MemWatchChild;
-    try {
-        child = spawn(memWatchPath, [String(pid), String(limit)], {
-            windowsHide: true,
-            stdio: ['ignore', 'pipe', 'ignore'],
-            shell: false
-        });
-    } catch (_) {
-        return null;
-    }
-
-    const chunks: Buffer[] = [];
-    child.stdout?.on('data', (data: Buffer) => {
-        chunks.push(Buffer.isBuffer(data) ? data : Buffer.from(data));
-    });
-
-    const report = new Promise<string>((resolve) => {
-        let settled = false;
-        const finish = () => {
-            if (settled) return;
-            settled = true;
-            resolve(Buffer.concat(chunks).toString('utf8'));
-        };
-        const timer = setTimeout(finish, MEMWATCH_REPORT_TIMEOUT_MS);
-        if (typeof timer.unref === 'function') timer.unref();
-        child.on('close', () => {
-            clearTimeout(timer);
-            finish();
-        });
-        child.on('error', () => {
-            clearTimeout(timer);
-            finish();
-        });
-    });
-
-    activeMemWatchProcesses.add(child);
-    const forget = () => activeMemWatchProcesses.delete(child);
-    child.on('close', forget);
-    child.on('error', forget);
-
-    return { child, report };
-}
-
-async function resolveMemWatchReport(handle: MemWatchHandle | null): Promise<MemWatchReport | null> {
-    if (!handle) {
-        return null;
-    }
-    try {
-        return parseMemWatchReport(await handle.report);
-    } catch (_) {
-        return null;
-    }
-}
-
-function killAllMemWatch() {
-    for (const child of activeMemWatchProcesses) {
-        try {
-            child.kill();
-        } catch (_) { }
-    }
-    activeMemWatchProcesses.clear();
+    return startMemWatchAt(pid, limitBytes, findMemWatch() || '');
 }
 
 function findCompilerExecutable(baseDir: string) {
@@ -3795,7 +3699,7 @@ function createWindow() {
         });
     });
 
-    startSampleTesterServer();
+    startSampleTesterServers(mainWindow);
 }
 
 
@@ -4024,349 +3928,6 @@ function createMenuBar() {
     refreshNativeUpdateMenuState();
 }
 
-// 本地 HTTP 接口（SampleTester/CompetitiveCompanion）只接受本机页面与浏览器扩展的跨域请求，
-// 任意网站 Origin（含沙箱 iframe 的 "null"）一律 403，防止恶意页面向 127.0.0.1 注入题目数据（H5）
-function isTrustedLocalOrigin(req: import('http').IncomingMessage) {
-    const origin = req.headers && req.headers.origin;
-    if (origin === undefined) {
-        const remote = String(req.socket?.remoteAddress || '');
-        return remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
-    }
-    if (/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(origin)) return true;
-    if (/^(chrome|moz)-extension:\/\//.test(origin)) return true;
-    return false;
-}
-
-function rejectUntrustedOrigin(req: import('http').IncomingMessage, res: import('http').ServerResponse) {
-    if (isTrustedLocalOrigin(req)) return false;
-    res.writeHead(403, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ code: 403, message: 'Forbidden origin' }));
-    return true;
-}
-
-function writeJson(res: import('http').ServerResponse, statusCode: number, payload: unknown) {
-    const origin = res.req?.headers?.origin;
-    const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Vary': 'Origin'
-    };
-    if (origin) headers['Access-Control-Allow-Origin'] = origin;
-    res.writeHead(statusCode, headers);
-    res.end(JSON.stringify(payload));
-}
-
-function getRequestPath(req: import('http').IncomingMessage) {
-    try {
-        const url = new URL(req.url || '/', 'http://127.0.0.1');
-        let pathname = url.pathname || '/';
-        if (pathname.length > 1 && pathname.endsWith('/')) {
-            pathname = pathname.slice(0, -1);
-        }
-        return pathname || '/';
-    } catch (_) {
-        return req.url || '/';
-    }
-}
-
-function readJsonBody(req: import('http').IncomingMessage, res: import('http').ServerResponse, callback: (data: SampleTesterPayloadInput) => void) {
-    const MAX_BODY_BYTES = 2 * 1024 * 1024;
-    // 逐块 chunk→string 拼接会在多字节字符横跨两个 chunk 时静默产生 U+FFFD
-    // （中文注释/题面最常见的就是这种断法）。攒 Buffer，最后一次性按 utf8 解。
-    const chunks: Buffer[] = [];
-    let receivedBytes = 0;
-    let settled = false;
-
-    const rejectTooLarge = () => {
-        if (settled) return;
-        settled = true;
-        try { req.pause(); } catch (_) { }
-        try { writeJson(res, 413, { code: 413, message: 'Request body too large' }); } catch (_) { }
-        try { res.once('finish', () => { try { req.destroy(); } catch (_) { } }); } catch (_) { }
-    };
-
-    req.on('data', (chunk: unknown) => {
-        if (settled) return;
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-        receivedBytes += buf.length;
-        if (receivedBytes > MAX_BODY_BYTES) {
-            rejectTooLarge();
-            return;
-        }
-        chunks.push(buf);
-    });
-    // 客户端中途断开时不抛未捕获异常
-    req.on('error', () => { settled = true; });
-    req.on('end', () => {
-        if (settled) return;
-        settled = true;
-        const body = Buffer.concat(chunks).toString('utf8');
-        let data = null;
-        try { data = JSON.parse(body || '{}'); } catch (_) { }
-        if (!data || typeof data !== 'object') {
-            return writeJson(res, 400, { code: 400, message: 'Invalid JSON body' });
-        }
-        callback(data as SampleTesterPayloadInput);
-    });
-}
-
-interface SampleTestCaseInput {
-    id: number;
-    input: string;
-    output: string;
-    timeLimit?: number;
-    memoryLimit?: number;
-}
-
-interface SampleTesterPayloadInput {
-    title?: unknown;
-    name?: unknown;
-    group?: unknown;
-    source?: unknown;
-    url?: unknown;
-    timeLimit?: unknown;
-    memoryLimit?: unknown;
-    problemName?: unknown;
-    tests?: SampleTestCaseInput[];
-    samples?: SampleTestCaseInput[];
-}
-
-type CompanionNormalizeResult = { ok: false; message: string; invalidField: string; payload?: undefined }
-    | { ok: true; message?: undefined; invalidField?: undefined; payload: SampleTesterPayloadInput };
-
-function normalizeCompetitiveCompanionPayload(data: SampleTesterPayloadInput | null | undefined): CompanionNormalizeResult {
-    if (!data || typeof data !== 'object') {
-        return { ok: false, message: 'body must be JSON object', invalidField: 'body' };
-    }
-
-    const titleRaw = (typeof data.title === 'string' && data.title.trim())
-        ? data.title.trim()
-        : (typeof data.name === 'string' && data.name.trim())
-            ? data.name.trim()
-            : (typeof data.problemName === 'string' && data.problemName.trim())
-                ? data.problemName.trim()
-                : '';
-
-    if (!titleRaw) {
-        return { ok: false, message: 'problem title missing', invalidField: 'title' };
-    }
-
-    if (!Array.isArray(data.tests) || data.tests.length === 0) {
-        return { ok: false, message: 'tests must not be empty', invalidField: 'tests' };
-    }
-
-    let ojName = 'Competitive Companion';
-    if (typeof data.group === 'string' && data.group.trim()) {
-        ojName = data.group.trim();
-    } else if (typeof data.source === 'string' && data.source.trim()) {
-        ojName = data.source.trim();
-    } else if (typeof data.url === 'string' && data.url.trim()) {
-        try {
-            const host = new URL(data.url.trim()).hostname;
-            if (host) ojName = host;
-        } catch (_) { }
-    }
-
-    let timeLimitMs: number;
-    if (typeof data.timeLimit === 'number' && Number.isFinite(data.timeLimit) && data.timeLimit > 0) {
-        timeLimitMs = data.timeLimit <= 50 ? Math.round(data.timeLimit * 1000) : Math.round(data.timeLimit);
-    }
-
-    // 空间限制（MB）。Competitive Companion 约定单位为 MB（TaskBuilder.setMemoryLimit 已统一取整，
-    // 其 140+ 个 OJ parser 见到 KB/kB 都显式换算、见到 GB 都乘 1024），实测不会出现字节量级。
-    // 上限仅作兜底：超出视为脏数据丢弃（解析失败序列化成 null、显式 0、字节量级等），
-    // 由渲染端回退到样例测试器的全局默认内存限制，避免把离谱值写进样例文件。
-    let memoryLimitMb: number | undefined;
-    if (typeof data.memoryLimit === 'number' && Number.isFinite(data.memoryLimit)
-        && data.memoryLimit > 0 && data.memoryLimit <= 65536) {
-        memoryLimitMb = Math.round(data.memoryLimit * 100) / 100;
-    }
-
-    const rawSamples = data.tests.map((t: SampleTestCaseInput) => ({
-        input: typeof t?.input === 'string' ? t.input : '',
-        output: typeof t?.output === 'string' ? t.output : '',
-        timeLimit: timeLimitMs,
-        memoryLimit: memoryLimitMb
-    }));
-
-    // 过滤掉「见附件中的 zoo/zoo3.in」这类附件引用样例：
-    // 它们只是指向附件的占位文本，并没有真正的输入/输出，导入后无法运行。
-    const filteredSamples = rawSamples.filter((s) => !isPlaceholderCompanionSample(s.input, s.output));
-    const usableSamples = filteredSamples.length > 0 ? filteredSamples : rawSamples;
-    if (usableSamples.length !== rawSamples.length) {
-        try { logger.logInfo(`[CompetitiveCompanion] 已自动过滤 ${rawSamples.length - usableSamples.length} 个附件引用占位样例`); } catch (_) { }
-    }
-
-    const samples = usableSamples.map((s, idx: number) => ({
-        id: idx + 1,
-        input: s.input,
-        output: s.output,
-        timeLimit: s.timeLimit,
-        memoryLimit: s.memoryLimit
-    }));
-
-    const payload = {
-        OJ: ojName,
-        problemName: titleRaw,
-        samples
-    };
-
-    return { ok: true, payload };
-}
-
-// 部分 OJ（如某些中文题库）会把样例写成「见附件中的 zoo/zoo3.in」，
-// Competitive Companion 会把这段说明当作样例内容抓取下来。这里识别这类附件引用占位样例。
-const PLACEHOLDER_SAMPLE_PATTERN = /(?:见|参见|参阅)\s*附\s*件|附\s*件\s*中|see\s+(?:the\s+)?attach|refer(?:s|red)?\s+to\s+(?:the\s+)?attach/i;
-
-function isPlaceholderCompanionSample(input: string, output: string) {
-    const text = `${input || ''}\n${output || ''}`;
-    return PLACEHOLDER_SAMPLE_PATTERN.test(text);
-}
-
-function createCompetitiveCompanionServer(port: number, tagLabel: string) {
-    const label = tagLabel || 'CompetitiveCompanion';
-    const server = http.createServer(async (req: import('http').IncomingMessage, res: import('http').ServerResponse) => {
-        const requestPath = getRequestPath(req);
-        if (rejectUntrustedOrigin(req, res)) return;
-        const acceptPaths = new Set(['/', '/competitive-companion', '/add', '/receive', '/companion']);
-        if (req.method === 'OPTIONS') {
-            return writeJson(res, 204, { code: 204, message: 'No Content' });
-        }
-        if (req.method === 'POST' && acceptPaths.has(requestPath)) {
-            readJsonBody(req, res, (data: SampleTesterPayloadInput) => {
-                const normalized = normalizeCompetitiveCompanionPayload(data);
-                if (!normalized.ok) {
-                    const resp = { code: 400, message: 'Invalid parameters: ' + normalized.message, invalidField: normalized.invalidField };
-                    return writeJson(res, 400, resp);
-                }
-
-                const result = validateSampleTesterPayload(normalized.payload);
-                if (!result.valid) {
-                    const resp = { code: 400, message: 'Invalid parameters: ' + result.message, invalidField: result.invalidField };
-                    return writeJson(res, 400, resp);
-                }
-
-                try {
-                    logger.logInfo(`[${label}] 收到题目:`, normalized.payload.problemName, '样例数:', normalized.payload.samples?.length || 0);
-                    if (mainWindow && !mainWindow.isDestroyed()) {
-                        mainWindow.webContents.send('sample-tester-create-problem', normalized.payload);
-                    }
-                } catch (e) { logger.logerror(`发送 ${label} 样例创建事件失败`, e); }
-
-                return writeJson(res, 200, { code: 200, message: 'Problem created successfully' });
-            });
-            return;
-        }
-        return writeJson(res, 404, { code: 404, message: 'Not Found' });
-    });
-
-    server.on('request', (req: import('http').IncomingMessage) => {
-        try {
-            const requestPath = getRequestPath(req);
-            logger.logInfo(`[${label}] 请求:`, req.method, requestPath, '来自', req.socket?.remoteAddress || 'unknown');
-        } catch (_) { }
-    });
-
-    server.on('error', (err: OicppError) => {
-        if (err && err.code === 'EADDRINUSE') {
-            try { logWarn(`[${label}] 端口 ${port} 被占用，可能被其他工具占用（如 cph）。可在 Competitive Companion 中添加 http://127.0.0.1:${port}/ 作为自定义端口。`); } catch (_) { }
-            return;
-        }
-        try { logger.logerror(`[${label}] 服务出错`, err); } catch (_) { }
-    });
-
-    server.listen(port, '127.0.0.1', () => {
-        logger.logInfo(`[${label}] 服务已启动 http://127.0.0.1:${port}`);
-    });
-
-    return server;
-}
-
-function startSampleTesterServer() {
-    try {
-        if (sampleTesterServer) return; // 已启动
-        const PORT = 20030;
-        sampleTesterServer = http.createServer(async (req: import('http').IncomingMessage, res: import('http').ServerResponse) => {
-            const requestPath = getRequestPath(req);
-            if (rejectUntrustedOrigin(req, res)) return;
-            if (req.method === 'OPTIONS') {
-                return writeJson(res, 204, { code: 204, message: 'No Content' });
-            }
-            if (req.method === 'POST' && requestPath === '/createNewProblem') {
-                readJsonBody(req, res, (data: SampleTesterPayloadInput) => {
-                    const result = validateSampleTesterPayload(data);
-                    if (!result.valid) {
-                        const resp = { code: 400, message: 'Invalid parameters: ' + result.message, invalidField: result.invalidField };
-                        return writeJson(res, 400, resp);
-                    }
-                    try {
-                        logger.logInfo('[SampleTesterAPI] 收到题目:', data.problemName, '样例数:', data.samples?.length || 0);
-                        if (mainWindow && !mainWindow.isDestroyed()) {
-                            mainWindow.webContents.send('sample-tester-create-problem', data);
-                        }
-                    } catch (e) { logger.logerror('发送样例创建事件失败', e); }
-                    return writeJson(res, 200, { code: 200, message: 'Problem created successfully' });
-                });
-                return;
-            }
-            return writeJson(res, 404, { code: 404, message: 'Not Found' });
-        });
-        (sampleTesterServer as import('http').Server).on('request', (req: import('http').IncomingMessage) => {
-            try {
-                const requestPath = getRequestPath(req);
-                logger.logInfo('[SampleTesterAPI] 请求:', req.method, requestPath, '来自', req.socket?.remoteAddress || 'unknown');
-            } catch (_) { }
-        });
-        (sampleTesterServer as import('http').Server).on('error', (err: OicppError) => {
-            // server.listen() 的 EADDRINUSE 是异步 'error' 事件，外层 try/catch 抓不到。
-            // 不挂监听会冒泡成 uncaughtException；这里降级为警告，样例测试器不可用但主功能不受影响。
-            if (err && err.code === 'EADDRINUSE') {
-                try { logWarn(`[SampleTesterAPI] 端口 ${PORT} 被占用，样例测试器导入功能不可用。可关闭占用进程后重启应用。`); } catch (_) { }
-                return;
-            }
-            try { logger.logerror('[SampleTesterAPI] 服务出错', err); } catch (_) { }
-        });
-        (sampleTesterServer as import('http').Server).listen(PORT, '127.0.0.1', () => {
-            logger.logInfo(`[SampleTesterAPI] 服务已启动 http://127.0.0.1:${PORT}`);
-        });
-    } catch (err) {
-        try { logger.logerror('[SampleTesterAPI] 启动失败', err); } catch (_) { }
-    }
-
-    startCompetitiveCompanionServer();
-}
-
-function startCompetitiveCompanionServer() {
-    try {
-        if (competitiveCompanionServer) return; // 已启动
-        competitiveCompanionServer = createCompetitiveCompanionServer(10043, 'CompetitiveCompanion');
-    } catch (err) {
-        try { logger.logerror('[CompetitiveCompanion] 启动失败', err); } catch (_) { }
-    }
-}
-
-function validateSampleTesterPayload(data: SampleTesterPayloadInput | null | undefined) {
-    if (!data || typeof data !== 'object') return { valid: false, message: 'body must be JSON object', invalidField: 'body' };
-    if (!data.problemName || typeof data.problemName !== 'string') return { valid: false, message: 'problemName missing.', invalidField: 'problemName' };
-    if (!Array.isArray(data.samples) || data.samples.length === 0) return { valid: false, message: 'samples must not be empty.', invalidField: 'samples' };
-    if (data.samples.length > 2000) return { valid: false, message: 'too many samples (maximum 2000).', invalidField: 'samples' };
-    const ids = new Set();
-    for (const s of data.samples) {
-        if (!s || typeof s !== 'object') return { valid: false, message: 'sample must be object', invalidField: 'samples' };
-        if (!Number.isInteger(s.id) || s.id <= 0) return { valid: false, message: 'sample id invalid', invalidField: 'id' };
-        if (ids.has(s.id)) return { valid: false, message: 'duplicate sample id', invalidField: 'id' };
-        ids.add(s.id);
-        if (typeof s.input !== 'string') return { valid: false, message: 'input must be string', invalidField: 'input' };
-        if (s.input.length > 1024 * 1024) return { valid: false, message: 'input is too large', invalidField: 'input' };
-        if (typeof s.output !== 'string') return { valid: false, message: 'output must be string', invalidField: 'output' };
-        if (s.output.length > 1024 * 1024) return { valid: false, message: 'output is too large', invalidField: 'output' };
-        if (s.timeLimit !== undefined && (!Number.isInteger(s.timeLimit) || s.timeLimit <= 0)) return { valid: false, message: 'timeLimit must be positive integer', invalidField: 'timeLimit' };
-        if (s.memoryLimit !== undefined && (!Number.isFinite(s.memoryLimit) || s.memoryLimit < 0)) return { valid: false, message: 'memoryLimit must be non-negative number', invalidField: 'memoryLimit' };
-    }
-    return { valid: true };
-}
-
 app.on('before-quit', (event: Electron.IpcMainEvent) => {
     const shouldPromptForInstallQuit = process.platform === 'win32'
         && hasPendingUpdateToInstall()
@@ -4396,8 +3957,7 @@ function runQuitCleanup() {
     detachedRunProcesses.clear();
     try { terminalManager.disposeAll(); } catch (_) { }
     try { clangdLspManager.stop(); } catch (_) { }
-    try { if (sampleTesterServer) { sampleTesterServer.close(); sampleTesterServer = null; } } catch (_) { }
-    try { if (competitiveCompanionServer) { competitiveCompanionServer.close(); competitiveCompanionServer = null; } } catch (_) { }
+    stopSampleTesterServers();
     try {
         const tempDir = userDataPath('codeTemp');
         assertDeletableUnderDataRoot(tempDir, 'codeTemp');
@@ -6392,6 +5952,56 @@ function setupIPC() {
         const spawnArguments = limitedSpawn?.args || normalizedArgs;
         const hardMemoryLimitApplied = !!limitedSpawn;
 
+        // ---- fastspawn 快路径：与对拍引擎共用 native 后端，避免 Node spawn 固定开销 ----
+        // 仅在未设内存限制时启用（fastspawn 不走 prlimit，内存限制保留 child_process 路径）。
+        let fast: any = null;
+        try {
+            const fsCandidates = [
+                path.resolve(__dirname, '..', '..', 'fastspawn.node'),
+            ];
+            if (process.resourcesPath) {
+                fsCandidates.push(path.join(process.resourcesPath, 'app.asar.unpacked', 'fastspawn.node'));
+            }
+            for (const fsCandidate of fsCandidates) {
+                if (!fs.existsSync(fsCandidate)) continue;
+                fast = require(fsCandidate);
+                break;
+            }
+        } catch (_) { }
+
+        const nativeTimeoutMs = (Number.isFinite(timeLimit) && timeLimit > 0 ? timeLimit : 60 * 1000);
+        if (fast && typeof fast.runAsync === 'function' && !memoryLimit) {
+            const t0 = Date.now();
+            try {
+                const r = await fast.runAsync(normalizedExecutable, input, nativeTimeoutMs, workingDirectory || undefined, normalizedArgs);
+                const outBuf = Buffer.isBuffer(r.output) ? r.output : Buffer.from(r.output || '');
+                const errBuf = Buffer.isBuffer(r.stderr) ? r.stderr : Buffer.from(r.stderr || '');
+                const outputText = decodeBufferAuto(outBuf);
+                const stderrText = decodeBufferAuto(errBuf);
+                const timedOut = r.code === -3 || (typeof r.signal === 'number' && r.signal > 0);
+                const exitCode = (r.code === -3 || r.code === -2 || r.code === -4) ? -1 : r.code;
+                return {
+                    output: outputText,
+                    time: Math.round(Date.now() - t0),
+                    timeout: timedOut,
+                    exitCode: exitCode,
+                    stdout: outputText,
+                    stderr: stderrText,
+                    outputLimitExceeded: !!r.truncated,
+                    memoryLimitExceeded: false,
+                    memoryLimitBytes: 0,
+                    hardMemoryLimitApplied: false,
+                    memoryBytes: 0,
+                    outputLimitBytes: 8 * 1024 * 1024,
+                    capturedOutputBytes: Buffer.byteLength(outputText, 'utf8'),
+                    observedOutputBytes: Buffer.byteLength(outputText, 'utf8')
+                };
+            } catch (_) {
+                // fastspawn 异常，回落到下面的 child_process 路径
+            }
+        }
+        // ----
+
         return new Promise((resolve) => {
             let childProcess = spawn(spawnCommand, spawnArguments, {
                 stdio: ['pipe', 'pipe', 'pipe'],
@@ -6429,41 +6039,15 @@ function setupIPC() {
             // 它在位时不再启动 tasklist 轮询（那套采样既慢又会漏掉短命进程的峰值）。
             const memWatchHandle = startMemWatch(childProcess.pid, memoryLimitBytes);
 
-            const readMemoryBytes = () => new Promise<number>((resolve) => {
-                const pid = childProcess?.pid;
-                if (!pid) return resolve(0);
-                if (process.platform === 'linux') {
-                    fs.readFile(`/proc/${pid}/status`, 'utf8', (error: Error, content: string) => {
-                        if (error) return resolve(0);
-                        const match = content.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-                        resolve(match ? Number(match[1]) * 1024 : 0);
-                    });
-                    return;
-                }
-                if (process.platform === 'win32') {
-                    const tasklist = spawn('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { windowsHide: true });
-                    let output = '';
-                    tasklist.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-                    tasklist.on('close', () => {
-                        const match = output.match(/"([\d,.]+)\s*K"/i);
-                        resolve(match ? Number((match[1] as string).replace(/[^\d]/g, '')) * 1024 : 0);
-                    });
-                    tasklist.on('error', () => resolve(0));
-                    return;
-                }
-                const ps = spawn('ps', ['-o', 'rss=', '-p', String(pid)]);
-                let output = '';
-                ps.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-                ps.on('close', () => resolve((Number(output.trim()) || 0) * 1024));
-                ps.on('error', () => resolve(0));
-            });
+            // 读数本身在 utils/memory-limit 里，worker 端的 cases 模式用的是同一份
+            const readMemoryBytes = () => readProcessMemoryBytes(childProcess?.pid);
 
             const sampleMemory = () => {
                 if (memorySamplePromise) {
                     return memorySamplePromise;
                 }
                 memorySamplePromise = readMemoryBytes()
-                    .then((bytes) => {
+                    .then((bytes: number) => {
                         peakMemoryBytes = Math.max(peakMemoryBytes, bytes);
                         if (memoryLimitBytes > 0 && bytes > memoryLimitBytes && !memoryLimitTriggered) {
                             memoryLimitTriggered = true;
@@ -6894,33 +6478,10 @@ function setupIPC() {
                 killTimer = null;
             };
 
-            const readPidMemory = (pid: number) => new Promise<number>((done) => {
-                if (!pid) return done(0);
-                if (process.platform === 'linux') {
-                    fs.readFile('/proc/' + pid + '/status', 'utf8', (error: Error, content: string) => {
-                        if (error) return done(0);
-                        const match = content.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-                        done(match ? Number(match[1]) * 1024 : 0);
-                    });
-                    return;
-                }
-                if (process.platform === 'win32') {
-                    const tasklist = spawn('tasklist', ['/FI', 'PID eq ' + pid, '/FO', 'CSV', '/NH'], { windowsHide: true });
-                    let output = '';
-                    tasklist.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-                    tasklist.on('close', () => {
-                        const match = output.match(/([\d,.]+)\s*K/i);
-                        done(match ? Number((match[1] as string).replace(/[^\d]/g, '')) * 1024 : 0);
-                    });
-                    tasklist.on('error', () => done(0));
-                    return;
-                }
-                const ps = spawn('ps', ['-o', 'rss=', '-p', String(pid)]);
-                let output = '';
-                ps.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
-                ps.on('close', () => done((Number(output.trim()) || 0) * 1024));
-                ps.on('error', () => done(0));
-            });
+            // 与 run-program 共用 utils/memory-limit 的同一份读数：这里以前是它的
+            // 第二份拷贝，连 tasklist 的正都和另一处不一样（一个要求引号、一个不要求），
+            // 同一个程序在两个面板上可能报出不同的内存数。
+            const readPidMemory = (pid: number) => readProcessMemoryBytes(pid);
             const readMemory = async () => {
                 const [contestantMemory, graderMemory] = await Promise.all([
                     readPidMemory(contestant?.pid),

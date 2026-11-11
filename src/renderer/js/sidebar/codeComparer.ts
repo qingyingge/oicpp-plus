@@ -81,6 +81,10 @@ type FreopenContext = {
     cleanupFiles: string[];
 };
 
+// runProgram 的返回形状，供「跑过了」与「没跑」两条路共用同一个类型，
+// 免得占位对象与真结果在 strict 下各是一个匿名结构、在分支处合成 never
+type ProgramRunOutput = Awaited<ReturnType<CodeComparer['runProgram']>>;
+
 type EngineError = {
     code?: string;
     // worker 被信号杀死时 IPC 过来的就是 null，不是缺省
@@ -695,12 +699,25 @@ class CodeComparer {
     /**
      * startComparison 的正文：调用前入口已经占好 starting 位，这里只管往下走。
      */
+    // SPJ 下正解可选，而不是无用：checker 分两类 —— 只验性质（「这是不是合法的最优解」）
+    // 不需要基准，最优化/计分那类要拿正解输出当 answer。填了正解就跑它并当基准，
+    // 没填就整个跳过（answer 传空文件，状态与文案由 checker 自己定）。
+    isSpjActive(task: CompareTask) {
+        return !!(task.config.useTestlib && task.config.spjPath);
+    }
+
+    // 正解「必须填」的唯一情形是没有 checker 可依赖（文本判等要两份输出相比）。
+    // SPJ 下不要求正解：新引擎跳过它的运行，checker 的 answer 用空文件顶上。
+    requiresStandardProgram(task: CompareTask) {
+        return !this.isSpjActive(task);
+    }
+
     private async startComparisonBody(task: CompareTask): Promise<void> {
         await this.autoSaveCurrentFile();
 
         this.syncInstanceConfigToTask(task);
 
-        if (!task.config.standardCodePath || !task.config.testCodePath || !task.config.generatorPath) {
+        if ((this.requiresStandardProgram(task) && !task.config.standardCodePath) || !task.config.testCodePath || !task.config.generatorPath) {
             this.showTaskCompileError(task, 'general', window.i18n.t('compare.selectAllFilesFirst'));
             return;
         }
@@ -791,15 +808,12 @@ class CodeComparer {
                 return;
             }
 
-            // 新引擎（compare-engine/compare-worker）不实现 useTestlib(SPJ) 与 freopen 文件IO，
-            // 检测到这些配置时回退到旧引擎 runComparison（完整支持 prepareFreopenContext/judgeWithSpj/首错即停/错误带 input）
-            if (task.config.useTestlib || task.config.freopenInputFile || task.config.freopenOutputFile) {
-                logInfo('[对拍器] 检测到 useTestlib/freopen 配置，回退到旧引擎 runComparison');
-                await this.runComparison(task, compiledPrograms, effectiveTimeLimit, workerCount, maxParallel);
-                await this.finishCompareTask(task);
-                return;
-            }
-
+            // 新引擎（compare-engine/compare-worker）已实现 SPJ 与 freopen：
+            //   · checker 作为第 4 个进程跑在 worker 里（gen → std∥test → checker）
+            //   · freopen 靠「每 worker × 每角色」一个固定复用的工作目录隔离，
+            //     输入落文件、输出从文件回收，走的是 native 的 cwd 通道
+            // 到这里为止旧引擎已经没有调用方（runComparison 等暂留待后期删除，
+            // 别把它们当活代码改）。
             logInfo('所有程序编译成功，启动 HPC 对拍引擎');
 
             const config = {
@@ -852,6 +866,9 @@ class CodeComparer {
                     testOutputTruncated: !!error.testOutputTruncated,
                     errorType: error.type,
                     errorCode: error.code || '',
+                    // spj_* 说明这一组的结论来自 checker，双栏视图就不该再去算「第一个
+                    // 不同的行列」——checker 的判等口径（分词/精度/自定义）跟文本差没关系
+                    usedSpj: String(error.type || '').indexOf('spj_') === 0,
                     errorMessage: this.getEngineErrorMessage(error),
                     rawErrorMessage: error.message || ''
                 } as unknown as CompareErrorResult;
@@ -935,25 +952,32 @@ class CodeComparer {
             const timestamp = Date.now();
             const isWin = (typeof window !== 'undefined' && window.process && window.process.platform === 'win32');
             const exeSuffix = isWin ? '.exe' : '';
-            const stdExe = await window.electronAPI.pathJoin(tempDir, `std_${timestamp}${exeSuffix}`);
+            // 正解栏空着（SPJ 下合法）就不编它：省一次编译，也避免「正解编不过」卡死
+            // 一个只需要 checker 的对拍。填了则照编，它的输出会作为 checker 的 answer。
+            // 下面两条清理路径各自按「不加入 / filter(Boolean)」跳过空 stdExe。
+            const compileStd = !!task.config.standardCodePath;
+            const stdExe = compileStd ? await window.electronAPI.pathJoin(tempDir, `std_${timestamp}${exeSuffix}`) : '';
             const testExe = await window.electronAPI.pathJoin(tempDir, `test_${timestamp}${exeSuffix}`);
             let generatorExe = null;
             let generatorRunTarget = null;
-            generatedFiles.push(stdExe, testExe);
+            if (compileStd) generatedFiles.push(stdExe);
+            generatedFiles.push(testExe);
 
-            this.updateTaskStatus(task, window.i18n.t('compare.compileStd'));
-            const stdResult = await window.electronAPI.compileFile({
-                inputFile: task.config.standardCodePath,
-                outputFile: stdExe,
-                compilerPath: compilerPath,
-                compilerArgs: compilerArgs,
-                workingDirectory: await window.electronAPI.pathDirname(task.config.standardCodePath)
-            });
+            if (compileStd) {
+                this.updateTaskStatus(task, window.i18n.t('compare.compileStd'));
+                const stdResult = await window.electronAPI.compileFile({
+                    inputFile: task.config.standardCodePath,
+                    outputFile: stdExe,
+                    compilerPath: compilerPath,
+                    compilerArgs: compilerArgs,
+                    workingDirectory: await window.electronAPI.pathDirname(task.config.standardCodePath)
+                });
 
-            if (!stdResult!.success) {
-                this.showTaskCompileError(task, 'standard', stdResult!.stderr || stdResult!.stdout || window.i18n.t('compare.compileFail'));
-                await cleanupPartialCompiles();
-                return null;
+                if (!stdResult!.success) {
+                    this.showTaskCompileError(task, 'standard', stdResult!.stderr || stdResult!.stdout || window.i18n.t('compare.compileFail'));
+                    await cleanupPartialCompiles();
+                    return null;
+                }
             }
 
             this.updateTaskStatus(task, window.i18n.t('compare.compileTest'));
@@ -1075,6 +1099,38 @@ class CodeComparer {
         }
     }
 
+    // SPJ 没填正解时的占位结果。下面每一处「正解是否出错」的判据都必须原样放行，
+    // 所以它是一条「什么都没发生」的记录，而不是 null —— 拿 null 参与判断会把
+    // 「正解没跑」误报成「正解失败」。
+    private notRunProgramOutput(): ProgramRunOutput {
+        return {
+            output: '',
+            error: '',
+            timeout: false,
+            time: 0,
+            exitCode: 0,
+            outputLimitExceeded: false,
+            outputLimitBytes: 0,
+            capturedOutputBytes: 0,
+            observedOutputBytes: 0
+        } as ProgramRunOutput;
+    }
+
+    // 旧引擎（freopen 回退路径）里跑一遍正解：freopen 目录、投递输入、从文件回收输出
+    private async runStandardProgram(task: CompareTask, stdExe: string, caseIndex: number, inputData: string): Promise<ProgramRunOutput> {
+        const stdFreopenContext = await this.prepareFreopenContext(task, 'std', caseIndex, inputData);
+        try {
+            const stdRunOptions = stdFreopenContext.workingDirectory
+                ? { executablePath: stdExe, workingDirectory: stdFreopenContext.workingDirectory }
+                : stdExe;
+            const stdOutput = await this.runProgram(stdRunOptions, stdFreopenContext.runInput, 0);
+            stdOutput.output = await this.resolveProgramOutput(stdOutput.output, stdFreopenContext);
+            return stdOutput;
+        } finally {
+            await this.cleanupFreopenContext(stdFreopenContext);
+        }
+    }
+
     async runComparison(task: CompareTask, programs: CompareExecutableSet, timeLimit: number, workerCountFromConfig = 1, maxParallelFromStart = 1) {
         const { stdExe, testExe, generatorExe, generatorRunTarget, spjExe } = programs;
         let failedGenerations = 0;
@@ -1135,17 +1191,12 @@ class CodeComparer {
 
                     const inputData = generation.input;
 
-                    const stdFreopenContext = await this.prepareFreopenContext(task, 'std', i, inputData!);
-                    let stdOutput;
-                    try {
-                        const stdRunOptions = stdFreopenContext.workingDirectory
-                            ? { executablePath: stdExe, workingDirectory: stdFreopenContext.workingDirectory }
-                            : stdExe;
-                        stdOutput = await this.runProgram(stdRunOptions, stdFreopenContext.runInput, 0);
-                        stdOutput.output = await this.resolveProgramOutput(stdOutput.output, stdFreopenContext);
-                    } finally {
-                        await this.cleanupFreopenContext(stdFreopenContext);
-                    }
+                    // SPJ 下正解可选（answer 用空文件填）。没编正解就不建 std 的 freopen
+                    // 目录、不起进程；占位结果让下面每条「正解是否出错」的判据原样放行，
+                    // 它的空 output 只流向 checker 的 answer 与错误面板里该藏掉的那一节。
+                    const stdOutput = stdExe
+                        ? await this.runStandardProgram(task, stdExe, i, inputData!)
+                        : this.notRunProgramOutput();
                     if (stdOutput.outputLimitExceeded || stdOutput.timeout || stdOutput.error || stdOutput.exitCode !== 0) {
                         const limitMbStd = Math.max(1, Math.floor((stdOutput.outputLimitBytes || 0) / (1024 * 1024)));
                         const errorMsg = stdOutput.outputLimitExceeded ? window.i18n.t('compare.stdOle', { limit: limitMbStd }) :
@@ -1772,6 +1823,14 @@ class CodeComparer {
                     : shown;
             }
 
+            // SPJ 不跑正解，没有「标准程序输出」可展示。留一个空面板比不展示更糟 ——
+            // 它读起来像「正解跑了但没输出」。整节藏掉；每条错误都重设一次 display，
+            // 不让上一条的隐藏状态漏到下一条。
+            const stdDiffSection = stdOutputDiff ? stdOutputDiff.parentElement : null;
+            if (stdDiffSection) {
+                stdDiffSection.style.display = (errorResult.usedSpj && !errorResult.stdOutput) ? 'none' : '';
+            }
+
             if (stdOutputDiff) {
                 const errType = errorResult.errorType;
                 if (errType === 'compile_error') {
@@ -1891,8 +1950,11 @@ class CodeComparer {
     }
 
     // 'output_limit' 之前不在列表里，会掉进 else 分支被当成 WA 渲染
+    // spj_wa / spj_pe / spj_partial 故意不在这个列表里：它们是 checker 对**被测程序**
+    // 的判定，属于「结果不同」，要走双栏输出视图；而 spj_error / spj_tle / spj_fail 是
+    // 评测器自己出了问题，跟被测程序无关，必须与引擎错误同样处理。
     isEngineErrorType(errType: string) {
-        return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'output_limit', 'worker_crash', 'engine', 'exception', 'fastspawn_fallback', 'incomplete_run'].includes(errType);
+        return ['generator', 'std_tle', 'std_re', 'test_tle', 'test_re', 'output_limit', 'worker_crash', 'engine', 'exception', 'fastspawn_fallback', 'incomplete_run', 'spj_error', 'spj_tle'].includes(errType);
     }
 
     getEngineErrorLabel(errType: string, panel: string) {
@@ -1908,6 +1970,9 @@ class CodeComparer {
         }
         if (errType === 'test_tle' || errType === 'test_re') {
             return window.i18n.t(isStd ? 'compare.errorStdTestOutput' : 'compare.errorTestOutput');
+        }
+        if (errType === 'spj_error' || errType === 'spj_tle') {
+            return window.i18n.t('compare.errorSpjOutput');
         }
         return window.i18n.t('compare.engineError');
     }
@@ -1954,6 +2019,14 @@ class CodeComparer {
             test_error: 'compare.testRe',
             output_limit: 'compare.errorOutputLimitDetail',
             mismatch: 'compare.foundDiff',
+            // checker 的判词（testlib quitf 的第二参数）在引擎侧就是 message，这里透传，
+            // 否则用户只看到「答案错误」而拿不到「第几个 token 不对」这种关键信息
+            spj_wa: 'compare.spjWa',
+            spj_pe: 'compare.spjPe',
+            spj_partial: 'compare.spjPartial',
+            spj_timeout: 'compare.spjTimeout',
+            spj_fail: 'compare.spjFail',
+            spj_error: 'compare.spjError',
             exception: 'compare.engineError',
             engine_start: 'compare.engineError',
             worker_crash: 'compare.engineError',

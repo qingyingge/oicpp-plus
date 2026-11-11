@@ -70,8 +70,15 @@ write('node_api.h', `
 extern "C" {
 #endif
 typedef struct napi_env__* napi_env;
+// 真头文件里 NAPI_AUTO_LENGTH 就是 SIZE_MAX；桩必须给同一个值，否则
+// 「传了长度而不是 NAPI_AUTO_LENGTH」这类真错在这台机器上编不出来也查不出来。
+#ifndef NAPI_AUTO_LENGTH
+#define NAPI_AUTO_LENGTH ((size_t)-1)
+#endif
 typedef struct napi_value__* napi_value;
 typedef struct napi_callback_info__* napi_callback_info;
+typedef struct napi_deferred__* napi_deferred;
+typedef struct napi_async_work__* napi_async_work;
 typedef struct napi_deprecated__* napi_deprecated;
 typedef napi_value (*napi_callback)(napi_env, napi_callback_info);
 typedef enum { napi_ok = 0 } napi_status;
@@ -103,6 +110,21 @@ napi_status napi_create_function(napi_env, const char*, size_t, napi_callback, v
 napi_status napi_create_string_utf8(napi_env, const char*, size_t, napi_value*);
 napi_status napi_get_undefined(napi_env, napi_value*);
 napi_status napi_module_register(napi_env, napi_deprecated*);
+// 异步入口（runAsync）用的那一组：真头文件里它们在 NAPI_VERSION >= 1 之下，
+// 而本桩的职责是「不管哪个 node 版本都要有」，所以直接声明。缺了它们，CI 的 T2
+// 会在 Windows 上报 'napi_deferred does not name a type' —— 而这份代码在 POSIX 上
+// 是**真能编过并能跑对**的，即检查本身失效，正是最坏的那种红。
+napi_status napi_is_array(napi_env, napi_value, bool*);
+napi_status napi_get_array_length(napi_env, napi_value, uint32_t*);
+napi_status napi_get_element(napi_env, napi_value, size_t, napi_value*);
+napi_status napi_create_promise(napi_env, napi_deferred*, napi_value*);
+napi_status napi_resolve_deferred(napi_env, napi_deferred, napi_value);
+napi_status napi_reject_deferred(napi_env, napi_deferred, napi_value);
+napi_status napi_create_async_work(napi_env, napi_value, napi_value,
+    void (*)(napi_env, void*), void (*)(napi_env, napi_status, void*),
+    void*, napi_async_work*);
+napi_status napi_queue_async_work(napi_env, napi_async_work);
+napi_status napi_delete_async_work(napi_env, napi_async_work);
 #define NAPI_MODULE(modname, regfunc) extern "C" napi_value __napi_##regfunc(napi_env, napi_value);
 #ifdef __cplusplus
 }

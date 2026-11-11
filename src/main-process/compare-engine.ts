@@ -24,6 +24,12 @@ interface CompareConfig {
     generator: string | { executablePath?: string; path?: string; exe?: string };
     stdExe: string | { executablePath?: string; path?: string };
     testExe: string | { executablePath?: string; path?: string };
+    // SPJ：checker 可执行文件。useTestlib 与 spjExe 同时成立才启用，
+    // 与旧引擎 runComparison 的判据逐字一致（`useTestlib && spjExe`）。
+    spjExe?: string | { executablePath?: string; path?: string };
+    useTestlib?: boolean;
+    // freopen：程序自己 fopen 的相对文件名（渲染层已经在发这两个字段）
+    freopen?: { inputFile?: string | null; outputFile?: string | null } | null;
 }
 
 interface WorkerMessageProgress {
@@ -131,11 +137,24 @@ export class CompareEngine extends EventEmitter {
             const gen = config.generator;
             const stdPath = resolvePath(config.stdExe);
             const testPath = resolvePath(config.testExe);
+            const spjPath = (config.useTestlib && config.spjExe) ? resolvePath(config.spjExe) : '';
+            // useTestlib 而没有 spjExe 是合法组合（只用 testlib 生成器、不带 checker），
+            // 此时按文本判等继续跑，与旧引擎的 `useTestlib && spjExe` 判据一致。
+            // 「checker 编不出来」到不了这里 —— compilePrograms 编译失败会先中止整轮。
+            // spjPath 非空时 stdPath 允许为空：用户没填正解就整个不跑它，checker 的
+            // answer 传空文件；填了照跑，正解输出就是 answer（最优化/计分类 checker 要基准）。
+            // freopen 的文件名在渲染层清洗过一次，这里再洗一次：worker 有真实 fs 权限，
+            // 带路径分隔符的名字会把输入写到 slot 外面去，边界上的信任要自己收回来。
+            const safeName = (value: unknown): string => String(value == null ? '' : value)
+                .trim().replace(/[\\/]/g, '').replace(/[<>:"|?*]/g, '').trim();
+            const freopenInput = safeName(config.freopen && config.freopen.inputFile);
+            const freopenOutput = safeName(config.freopen && config.freopen.outputFile);
+            const freopenSpec = (freopenInput || freopenOutput) ? { inputFile: freopenInput, outputFile: freopenOutput } : null;
             const hasGen = typeof gen === 'string'
                 ? gen.trim().length > 0
                 : !!(gen && (gen.executablePath || gen.path || gen.exe));
 
-            if (!hasGen || !stdPath || !testPath) {
+            if (!hasGen || !testPath || (!stdPath && !spjPath)) {
                 const genDesc = typeof gen === 'string' ? gen : ((gen && gen.executablePath) || '');
                 throw new Error('Missing executable paths: gen=' + genDesc + ' std=' + stdPath + ' test=' + testPath);
             }
@@ -147,9 +166,14 @@ export class CompareEngine extends EventEmitter {
             // postMessage('stop') 不会被处理，terminate() 也打不断，
             // Promise.all 于是永不 settle —— UI 永远转圈，worker 与被测程序一起泄漏。
             // 这里给整轮兜一个墙钟上限：到点后主动收束，让本轮一定结束。
+            // 一份时限预算对应一轮里最坏可能串行的一段：文本判等是 std∥test 并发
+            // （实测占不满两份，留成三份是既有口径），SPJ 是「被测程序 + checker」
+            // 串行，同样吃两份 runTimeout 再加生成器 —— 3 份对两种模式都够。
+            // 不限时（runTimeout=0）时每个程序各拿 UNLIMITED_TEST_BUDGET_MS 兜底，
+            // SPJ 多出串行的 checker 那一段，所以给它两份。
             const perTestBudget = runTimeout > 0
                 ? (runTimeout * 3 + genTimeout)
-                : UNLIMITED_TEST_BUDGET_MS;
+                : (spjPath ? UNLIMITED_TEST_BUDGET_MS * 2 : UNLIMITED_TEST_BUDGET_MS);
             const rounds = Math.ceil(totalTests / threadCount);
             const watchdogMs = Math.min(rounds * perTestBudget + WATCHDOG_SLACK_MS, WATCHDOG_HARD_CAP_MS);
             watchdog = setTimeout(() => {
@@ -243,7 +267,9 @@ export class CompareEngine extends EventEmitter {
                     startIdx, count,
                     gen, stdPath, testPath,
                     timeout: runTimeout,
-                    generatorTimeout: genTimeout
+                    generatorTimeout: genTimeout,
+                    spjPath,
+                    freopen: freopenSpec
                 });
             }
 
