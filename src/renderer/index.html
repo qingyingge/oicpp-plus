@@ -394,6 +394,7 @@
                                 <button class="cmp-block-head" type="button" aria-expanded="true" aria-controls="cmp-block-files-body">
                                     <span class="cmp-block-caret" aria-hidden="true"></span>
                                     <span class="cmp-block-title" data-i18n="compare.blockPrograms">程序与生成器</span>
+                                    <span class="cmp-block-badge" id="cmp-files-badge"></span>
                                 </button>
                                 <div class="cmp-block-body" id="cmp-block-files-body">
                                     <div class="cmp-field">
@@ -520,9 +521,22 @@
                                         <span class="result-subtitle" id="error-test-num"></span>
                                     </div>
                                     <button class="export-btn" id="export-btn" data-i18n="compare.export">导出数据</button>
+                                    <button class="compare-repro-btn" id="compare-reproduce-btn" data-i18n="compare.reproduce">复现这组</button>
                                 </div>
                                 
                                 <div class="result-diff">
+                                    <div id="diff-host"></div>
+                                    <div class="diff-meta-wrap" id="diff-meta-wrap" style="display:none;">
+                                        <div class="diff-meta" id="diff-meta">
+                                            <span id="diff-position"></span>
+                                            <span class="diff-sep">·</span>
+                                            <span id="diff-input-size"></span>
+                                            <span class="diff-sep">·</span>
+                                            <span id="diff-std-size"></span>
+                                            <span class="diff-sep">·</span>
+                                            <span id="diff-test-size"></span>
+                                        </div>
+                                    </div>
                                     <div class="diff-section">
                                         <div class="diff-header diff-header-with-action">
                                             <span id="input-diff-label" data-i18n="compare.inputData">输入数据</span>
@@ -558,7 +572,7 @@
                                 </div>
                                 <div class="complete-text" data-i18n="compare.complete">对拍完成</div>
                                 <div class="complete-info">
-                                    <span>Completed <span id="completed-tests">0</span> tests, no differences found</span>
+                                    <span id="completed-tests">0</span>
                                 </div>
                             </div>
                         </div>
@@ -746,5 +760,487 @@
     <script src="js/quick-open.js"></script>
     <script src="js/i18n.js"></script>
     <script src="js/init.js"></script>
+    <script>
+    // ── 裸浏览器独立交互脚本（Electron 环境下不启用） ──
+    // 提供与 docs/compare-ui-concept.html 一致的交互：块展开/收起、运行按钮状态循环、
+    // 统计条、三种差异显示模式、模拟数据。window.electronAPI 存在时不加载。
+    (function () {
+        if (window.electronAPI) return;
+
+        const I18N = {
+            zh: {
+                'compare.title': '代码对拍器',
+                'compare.blockPrograms': '程序与生成器',
+                'compare.blockRunParams': '运行参数',
+                'compare.blockJudgeIO': '文件 IO 与 SPJ',
+                'menu.standardCode': '标准/暴力代码',
+                'menu.testCode': '要对拍的代码',
+                'menu.generator': '数据生成器',
+                'menu.browse': '浏览',
+                'menu.compareCount': '对拍组数：',
+                'menu.parallelThreads': '并行线程：',
+                'menu.timeLimit': '时间限制：',
+                'menu.fileIO_label': '文件IO：',
+                'menu.useTestlib_label': '使用 testlib',
+                'menu.importantNotice': '默认使用标准输入输出(stdin/stdout)；如代码使用了 freopen，请在下方设置输入/输出文件名。',
+                'dialog.note': '注意：',
+                'compare.threadHint': '上限 = CPU 线程数 × 0.6',
+                'compare.threadsAutoPlaceholder': '留空自动',
+                'compare.spjLabel': 'Special Judge',
+                'compare.start': '开始对拍',
+                'compare.stop': '停止',
+                'compare.clear': '清空',
+                'compare.reproduce': '复现这组',
+                'compare.statusTitle': '对拍状态',
+                'compare.ready': '准备中',
+                'compare.running': '对拍中',
+                'compare.export': '导出数据',
+                'compare.foundDiff': '发现差异',
+                'compare.complete': '对拍完成',
+                'compare.errorGroup': '第 {number} 组',
+                'compare.progressGroup': '已完成 {current}/{total} 组',
+                'compare.completedText': '已完成 {count} 组测试，未发现差异',
+                'compare.stoppedText': '已完成 {count} 组测试（已手动停止）',
+                'compare.statsTps': 'TPS {value}',
+                'compare.statsElapsed': '用时 {value}',
+                'compare.statsSlowest': '最慢 第{number}组 {value}',
+                'compare.statsSlowestNone': '最慢 —',
+                'compare.statsDataSize': '数据 {size}',
+                'compare.statsWatchdogWarn': '看门狗超时：仅完成 {completed}/{total} 组',
+                'compare.statsFastspawnWarn': 'fastspawn 不可用，已退回较慢的进程路径',
+                'compare.inputData': '输入数据',
+                'compare.errorStandardOutput': '标准程序输出',
+                'compare.errorTestOutput': '待测程序输出',
+                'compare.diffPosition': '第 {line} 行第 {char} 字符有差异',
+                'compare.jumpToDiff': '跳到差异',
+                'compare.diffModeInline': '行内',
+                'compare.diffModeSide': '并排',
+                'compare.expand': '展开',
+                'compare.memNote': '配置已记住',
+                'compare.ui.theme': '主题',
+                'compare.ui.language': '语言',
+                'compare.ui.state': '状态',
+                'compare.theme.dark': 'dark',
+                'compare.theme.light': 'light',
+                'compare.theme.dracula': 'dracula',
+                'compare.lang.zh': '中文',
+                'compare.lang.en': 'EN',
+                'compare.state.idle': '空闲',
+                'compare.state.running': '对拍中',
+                'compare.state.error': '异常',
+                'compare.state.complete': '全部通过',
+                'compare.diff.a': 'A 三段面板',
+                'compare.diff.b': 'B 行内对比',
+                'compare.diff.c': 'C 并排对比'
+            },
+            en: {
+                'compare.title': 'Code Comparer',
+                'compare.blockPrograms': 'Programs & Generator',
+                'compare.blockRunParams': 'Run Settings',
+                'compare.blockJudgeIO': 'File I/O & SPJ',
+                'menu.standardCode': 'Standard/Brute Force Code',
+                'menu.testCode': 'Code to Compare',
+                'menu.generator': 'Data Generator',
+                'menu.browse': 'Browse',
+                'menu.compareCount': 'Comparison Count:',
+                'menu.parallelThreads': 'Parallel Threads:',
+                'menu.timeLimit': 'Time Limit:',
+                'menu.fileIO_label': 'File I/O:',
+                'menu.useTestlib_label': 'Use Testlib',
+                'menu.importantNotice': 'Uses stdin/stdout by default. If your code uses freopen, configure the I/O filenames below.',
+                'dialog.note': 'Note: ',
+                'compare.threadHint': 'Max = CPU threads x 0.6',
+                'compare.threadsAutoPlaceholder': 'blank = auto',
+                'compare.spjLabel': 'Special Judge',
+                'compare.start': 'Start Comparison',
+                'compare.stop': 'Stop',
+                'compare.clear': 'Clear',
+                'compare.reproduce': 'Reproduce',
+                'compare.statusTitle': 'Comparison Status',
+                'compare.ready': 'Ready',
+                'compare.running': 'Running',
+                'compare.export': 'Export Data',
+                'compare.foundDiff': 'Difference Found',
+                'compare.complete': 'Comparison Complete',
+                'compare.errorGroup': 'Group {number}',
+                'compare.progressGroup': 'Completed {current}/{total}',
+                'compare.completedText': 'Completed {count} tests, no differences found',
+                'compare.stoppedText': 'Completed {count} tests (stopped manually)',
+                'compare.statsTps': 'TPS {value}',
+                'compare.statsElapsed': 'Elapsed {value}',
+                'compare.statsSlowest': 'Slowest #{number} {value}',
+                'compare.statsSlowestNone': 'Slowest —',
+                'compare.statsDataSize': 'Data {size}',
+                'compare.statsWatchdogWarn': 'Watchdog stopped the run: {completed}/{total} groups done',
+                'compare.statsFastspawnWarn': 'fastspawn unavailable; using the slower process path',
+                'compare.inputData': 'Input Data',
+                'compare.errorStandardOutput': 'Standard Program Output',
+                'compare.errorTestOutput': 'Test Program Output',
+                'compare.diffPosition': 'differs at line {line}, char {char}',
+                'compare.jumpToDiff': 'Jump to diff',
+                'compare.diffModeInline': 'Inline',
+                'compare.diffModeSide': 'Side by side',
+                'compare.expand': 'Expand',
+                'compare.memNote': 'Settings remembered',
+                'compare.ui.theme': 'Theme',
+                'compare.ui.language': 'Language',
+                'compare.ui.state': 'State',
+                'compare.theme.dark': 'dark',
+                'compare.theme.light': 'light',
+                'compare.theme.dracula': 'dracula',
+                'compare.lang.zh': 'Chinese',
+                'compare.lang.en': 'EN',
+                'compare.state.idle': 'Idle',
+                'compare.state.running': 'Running',
+                'compare.state.error': 'Error',
+                'compare.state.complete': 'All Passed',
+                'compare.diff.a': 'A Three-Panel',
+                'compare.diff.b': 'B Inline Diff',
+                'compare.diff.c': 'C Side-by-Side'
+            }
+        };
+        let lang = 'zh';
+        const t = (key, params) => {
+            let s = (I18N[lang] && I18N[lang][key]) || key;
+            if (params) Object.keys(params).forEach((k) => { s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), params[k]); });
+            return s;
+        };
+        const $ = (id) => document.getElementById(id);
+        const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+
+        const MOCK = {
+            paths: {
+                std: '/Users/admin/Desktop/C++/b3637 最长上升子序列_暴力解法.cpp',
+                test: '/Users/admin/Desktop/C++/b3637 最长上升子序列.cpp',
+                gen: '/Users/admin/Desktop/C++/gen_random.cpp'
+            },
+            input: '12 5\n5 2 9 1 7 3 8 6 4 10 2\n2 7 1 4 3 9 6 5 8 10 11 12\n3 1 2 3 4 5 6 7 8 9 10 11\n4 6 1 3 2 5 8 7 9 12 10 11\n5 11 1 2 3 4 5 6 7 8 9 10\n',
+            stdOut: '3 1 4 1 5 9 2 6 5 3 5\n7 1 3 5 2 8 4 6 7 9 1\n6 2 7 1 8 2 8 1 8 2 8\n',
+            testOut: '3 1 4 1 5 9 2 6 5 3 5\n7 1 3 5 2 8 4 6 7 9 0\n6 2 7 1 8 2 8 1 8 2 8\n'
+        };
+
+        const state = { mode: 'idle', diffVariant: 'b', warn: 'none', groups: 0, total: 300, slowest: null, elapsed: 0, startedAt: 0 };
+
+        function renderStaticText() {
+            document.querySelectorAll('[data-i18n]').forEach((n) => {
+                const k = n.getAttribute('data-i18n');
+                if (I18N[lang][k] !== undefined) n.textContent = I18N[lang][k];
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach((n) => {
+                const k = n.getAttribute('data-i18n-placeholder');
+                if (I18N[lang][k] !== undefined) n.placeholder = I18N[lang][k];
+            });
+            $('test-code-path').textContent = MOCK.paths.test;
+            $('test-code-path').title = MOCK.paths.test;
+            $('std-code-path').textContent = MOCK.paths.std;
+            $('std-code-path').title = MOCK.paths.std;
+            $('generator-path').textContent = MOCK.paths.gen;
+            $('generator-path').title = MOCK.paths.gen;
+            const filled = [MOCK.paths.std, MOCK.paths.test, MOCK.paths.gen].filter(Boolean).length;
+            const badge = $('cmp-files-badge');
+            if (badge) badge.textContent = filled + '/3';
+        }
+
+        function fmtMs(ms) {
+            if (!Number.isFinite(ms) || ms < 0) return '—';
+            if (ms < 1000) return Math.round(ms) + 'ms';
+            return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + 's';
+        }
+        function fmtBytes(b) {
+            if (!Number.isFinite(b) || b <= 0) return '0 B';
+            if (b < 1024) return b + ' B';
+            if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+            return (b / 1048576).toFixed(2) + ' MB';
+        }
+
+        function elapsedOf() {
+            return state.mode === 'running' && state.startedAt ? performance.now() - state.startedAt : state.elapsed;
+        }
+
+        function renderStats() {
+            const box = $('compare-stats');
+            if (state.mode === 'idle') { box.classList.add('hidden'); box.textContent = ''; return; }
+            box.classList.remove('hidden');
+            box.textContent = '';
+            const grid = el('div', 'cmp-stats-grid');
+            const tps = state.groups < 2 ? null : (state.groups * 1000 / Math.max(elapsedOf(), 1));
+            [
+                [t('compare.statsTps', { value: tps === null ? '—' : tps.toFixed(1) }), true],
+                [t('compare.statsElapsed', { value: fmtMs(elapsedOf()) }), false],
+                state.slowest
+                    ? [t('compare.statsSlowest', { number: state.slowest.n, value: fmtMs(state.slowest.ms) }), false]
+                    : [t('compare.statsSlowestNone'), false],
+                [t('compare.statsDataSize', { size: state.slowest ? fmtBytes(state.slowest.len) : '—' }), false]
+            ].forEach(([text, strong]) => grid.appendChild(el('span', strong ? 'cmp-stat cmp-stat-strong' : 'cmp-stat', text)));
+            box.appendChild(grid);
+            if (state.warn === 'watchdog') {
+                box.appendChild(el('div', 'cmp-stats-warn', t('compare.statsWatchdogWarn', { completed: 120, total: 300 })));
+            } else if (state.warn === 'fastspawn') {
+                box.appendChild(el('div', 'cmp-stats-warn', t('compare.statsFastspawnWarn')));
+            }
+        }
+
+        function firstDiff(a, b) {
+            const al = a.split('\n'), bl = b.split('\n');
+            const n = Math.max(al.length, bl.length);
+            for (let i = 0; i < n; i++) {
+                const x = (al[i] || '').replace(/[ \t]+$/, '');
+                const y = (bl[i] || '').replace(/[ \t]+$/, '');
+                if (x !== y) {
+                    let j = 0;
+                    while (j < x.length && j < y.length && x[j] === y[j]) j++;
+                    return { line: i, char: j };
+                }
+            }
+            return { line: 0, char: 0 };
+        }
+        const DIFF = firstDiff(MOCK.stdOut, MOCK.testOut);
+        const stdLines = MOCK.stdOut.split('\n');
+        const testLines = MOCK.testOut.split('\n');
+        const windowStart = Math.max(0, DIFF.line - 2);
+        const windowEnd = Math.min(stdLines.length, DIFF.line + 3);
+
+        function paintLine(text, fromChar, highlight) {
+            const span = el('span');
+            if (!highlight) { span.textContent = text; return span; }
+            span.textContent = text.slice(0, fromChar);
+            if (text.slice(fromChar)) span.appendChild(el('span', 'ch diff-highlight', text.slice(fromChar)));
+            return span;
+        }
+
+        function buildDiffA(host) {
+            const section = (label, lines, isDiffSide) => {
+                const s = el('div', 'diff-section');
+                const h = el('div', 'diff-header diff-header-with-action');
+                const labelSpan = el('span', null, label);
+                if (isDiffSide) labelSpan.appendChild(el('span', 'diff-info',
+                    ' (' + t('compare.diffPosition', { line: DIFF.line + 1, char: DIFF.char + 1 }) + ')'));
+                h.appendChild(labelSpan);
+                h.appendChild(el('button', 'export-btn diff-expand-btn', t('compare.expand')));
+                s.appendChild(h);
+                const pre = el('pre', 'diff-content');
+                lines.slice(0, 6).forEach((line, idx) => {
+                    pre.appendChild(el('span', 'diff-line-num', String(idx + 1).padStart(4) + ' '));
+                    pre.appendChild(paintLine(line, DIFF.char, isDiffSide && idx === DIFF.line));
+                    pre.appendChild(document.createTextNode('\n'));
+                });
+                s.appendChild(pre);
+                return s;
+            };
+            host.appendChild(section(t('compare.inputData'), MOCK.input.split('\n'), false));
+            host.appendChild(section(t('compare.errorStandardOutput'), stdLines, true));
+            host.appendChild(section(t('compare.errorTestOutput'), testLines, true));
+        }
+
+        function buildDiffB(host) {
+            const box = el('div', 'diff-inline');
+            const inputSummary = el('div', 'dl same');
+            inputSummary.appendChild(el('span', 'ln', '#'));
+            inputSummary.appendChild(el('span', null, t('compare.inputData') + ': ' + MOCK.input.split('\n').length + ' ' + (lang === 'en' ? 'lines' : '行') + ' · ' + fmtBytes(MOCK.input.length)));
+            box.appendChild(inputSummary);
+            for (let i = windowStart; i < windowEnd; i++) {
+                if (i === DIFF.line) {
+                    [['del', stdLines], ['ins', testLines]].forEach(([cls, src]) => {
+                        const row = el('div', 'dl ' + cls);
+                        row.appendChild(el('span', 'ln', String(i + 1)));
+                        row.appendChild(paintLine(src[i] || '', DIFF.char, true));
+                        box.appendChild(row);
+                    });
+                } else {
+                    const row = el('div', 'dl same');
+                    row.appendChild(el('span', 'ln', String(i + 1)));
+                    row.appendChild(el('span', null, stdLines[i] || ''));
+                    box.appendChild(row);
+                }
+            }
+            host.appendChild(box);
+        }
+
+        function buildDiffC(host) {
+            const grid = el('div', 'diff-side');
+            grid.appendChild(el('div', 'head', t('compare.errorStandardOutput')));
+            grid.appendChild(el('div', 'head', t('compare.errorTestOutput')));
+            for (let i = windowStart; i < windowEnd; i++) {
+                const isDiff = i === DIFF.line;
+                const left = el('div');
+                if (isDiff) { left.className = ''; left.appendChild(paintLine(stdLines[i] || '', DIFF.char, true)); left.style.background = 'var(--error-bg)'; }
+                else left.textContent = stdLines[i] || '';
+                const right = el('div');
+                if (isDiff) { right.appendChild(paintLine(testLines[i] || '', DIFF.char, true)); right.style.background = 'var(--success-bg)'; }
+                else right.textContent = testLines[i] || '';
+                grid.appendChild(left); grid.appendChild(right);
+            }
+            host.appendChild(grid);
+        }
+
+        function renderDiff() {
+            const host = $('diff-host');
+            host.textContent = '';
+            if (state.diffVariant === 'a') buildDiffA(host);
+            else if (state.diffVariant === 'b') buildDiffB(host);
+            else buildDiffC(host);
+            const meta = $('diff-meta');
+            const metaWrap = $('diff-meta-wrap');
+            meta.textContent = '';
+            metaWrap.style.display = state.diffVariant !== 'a' ? '' : 'none';
+            [
+                t('compare.diffPosition', { line: DIFF.line + 1, char: DIFF.char + 1 }),
+                t('compare.inputData') + ': ' + fmtBytes(MOCK.input.length),
+                t('compare.errorStandardOutput') + ': ' + fmtBytes(MOCK.stdOut.length),
+                t('compare.errorTestOutput') + ': ' + fmtBytes(MOCK.testOut.length)
+            ].forEach((s) => meta.appendChild(el('span', null, s)));
+        }
+
+        function render() {
+            renderStaticText();
+            renderStats();
+            const running = state.mode === 'running' || state.mode === 'stopping';
+            const hasTrace = state.mode !== 'idle' || state.groups > 0 || state.startedAt > 0;
+            const action = running ? 'stop' : (hasTrace ? 'clear' : 'start');
+            const runBtn = $('compare-run-btn');
+            runBtn.dataset.cmpState = action;
+            runBtn.disabled = action === 'stop' && state.mode === 'stopping';
+            const runLabel = $('compare-run-label');
+            const actionKey = 'compare.' + (action === 'stop' ? 'stop' : action === 'clear' ? 'clear' : 'start');
+            runLabel.setAttribute('data-i18n', actionKey);
+            runLabel.textContent = t(actionKey);
+            runBtn.title = runLabel.textContent;
+
+            // 更新三个图标的显示状态
+            runBtn.querySelectorAll('.cmp-ico').forEach((ico) => ico.style.display = 'none');
+            const activeIco = runBtn.querySelector('.cmp-ico-' + action);
+            if (activeIco) activeIco.style.display = 'block';
+
+            $('compare-status').classList.toggle('hidden', !running && !hasTrace);
+            $('compare-result').classList.toggle('hidden', state.mode !== 'error');
+            $('compare-complete').classList.toggle('hidden', !(state.mode === 'complete' || state.mode === 'stopped'));
+            $('compare-reproduce-btn').classList.toggle('hidden', state.mode !== 'error');
+            const diffToggle = document.querySelector('.diff-mode-toggle');
+            if (diffToggle) diffToggle.style.display = state.mode === 'error' ? '' : 'none';
+
+            if (running) {
+                $('current-test').textContent = t('compare.progressGroup', { current: state.groups, total: state.total });
+                $('status-text').textContent = t('compare.running');
+                $('progress-fill').style.width = Math.min(100, state.groups / state.total * 100).toFixed(1) + '%';
+            }
+            if (state.mode === 'error') {
+                $('error-test-num').textContent = t('compare.errorGroup', { number: 43 });
+                renderDiff();
+            }
+            if (state.mode === 'complete') $('completed-tests').textContent = state.total;
+            if (state.mode === 'stopped') $('completed-tests').textContent = state.groups;
+        }
+
+        let dataTimer = null, clockTimer = null;
+        function stopTimers() {
+            if (dataTimer) { clearInterval(dataTimer); dataTimer = null; }
+            if (clockTimer) { clearInterval(clockTimer); clockTimer = null; }
+        }
+        function startRun() {
+            stopTimers();
+            state.mode = 'running'; state.groups = 0; state.startedAt = performance.now(); state.elapsed = 0;
+            state.slowest = null; state.warn = 'none';
+            dataTimer = setInterval(() => {
+                const batch = 3 + Math.floor(Math.random() * 6);
+                for (let i = 0; i < batch && state.groups < state.total; i++) {
+                    state.groups++;
+                    const ms = 40 + Math.random() * 220;
+                    if (!state.slowest || ms > state.slowest.ms) state.slowest = { n: state.groups, ms, len: 1200 + Math.floor(Math.random() * 2600) };
+                }
+                renderStats();
+                $('current-test').textContent = t('compare.progressGroup', { current: state.groups, total: state.total });
+                $('progress-fill').style.width = Math.min(100, state.groups / state.total * 100).toFixed(1) + '%';
+                if (state.groups >= state.total) { stopTimers(); state.mode = 'complete'; state.elapsed = performance.now() - state.startedAt; render(); }
+            }, 240);
+            clockTimer = setInterval(() => { renderStats(); }, 200);
+            render();
+        }
+
+        $('compare-run-btn').addEventListener('click', () => {
+            const action = $('compare-run-btn').dataset.cmpState;
+            if (action === 'stop') {
+                stopTimers();
+                if (state.startedAt) state.elapsed = performance.now() - state.startedAt;
+                state.mode = 'stopped';
+                render();
+                return;
+            }
+            if (action === 'clear') {
+                stopTimers();
+                state.mode = 'idle'; state.groups = 0; state.elapsed = 0; state.startedAt = 0; state.slowest = null;
+                $('progress-fill').style.width = '0%';
+                $('current-test').textContent = '';
+                document.querySelector('#status-text').textContent = t('compare.ready');
+                render();
+                return;
+            }
+            startRun();
+        });
+
+        document.querySelectorAll('.cmp-block-head').forEach((head) => {
+            head.addEventListener('click', () => {
+                const block = head.closest('.cmp-block');
+                const collapsed = !block.classList.contains('collapsed');
+                block.classList.toggle('collapsed', collapsed);
+                head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            });
+        });
+
+        // 颜色/语言/状态切换控制条 + diff 模式切换（仅在裸浏览器下显示）
+        const ctrlBar = el('div', 'concept-bar');
+        ctrlBar.innerHTML = `
+            <span><b>${t('compare.ui.theme')}</b>
+                <button data-theme-btn="dark">${t('compare.theme.dark')}</button>
+                <button data-theme-btn="light">${t('compare.theme.light')}</button>
+                <button data-theme-btn="dracula">${t('compare.theme.dracula')}</button>
+            </span>
+            <span><b>${t('compare.ui.language')}</b>
+                <button data-lang-btn="zh">${t('compare.lang.zh')}</button>
+                <button data-lang-btn="en">${t('compare.lang.en')}</button>
+            </span>
+            <span><b>${t('compare.ui.state')}</b>
+                <button data-state-btn="idle">${t('compare.state.idle')}</button>
+                <button data-state-btn="running">${t('compare.state.running')}</button>
+                <button data-state-btn="error">${t('compare.state.error')}</button>
+                <button data-state-btn="complete">${t('compare.state.complete')}</button>
+            </span>
+        `;
+        document.querySelector('#compare-panel .panel-header').appendChild(ctrlBar);
+
+        const diffToggle = el('div', 'diff-mode-toggle');
+        diffToggle.innerHTML = `
+            <button data-diff-btn="a" class="diff-mode-btn" aria-pressed="false">${t('compare.diff.a')}</button>
+            <button data-diff-btn="b" class="diff-mode-btn" aria-pressed="true">${t('compare.diff.b')}</button>
+            <button data-diff-btn="c" class="diff-mode-btn" aria-pressed="false">${t('compare.diff.c')}</button>
+        `;
+        document.querySelector('#compare-panel .cmp-panel-body').appendChild(diffToggle);
+
+        const pressGroup = (attr, value) => {
+            document.querySelectorAll('[' + attr + ']').forEach((b) => b.setAttribute('aria-pressed', String(b.getAttribute(attr) === value)));
+        };
+        document.querySelectorAll('[data-theme-btn]').forEach((b) => b.addEventListener('click', () => {
+            document.body.setAttribute('data-theme', b.dataset.themeBtn); pressGroup('data-theme-btn', b.dataset.themeBtn);
+        }));
+        document.querySelectorAll('[data-lang-btn]').forEach((b) => b.addEventListener('click', () => {
+            lang = b.dataset.langBtn; pressGroup('data-lang-btn', b.dataset.langBtn); render();
+        }));
+        document.querySelectorAll('[data-state-btn]').forEach((b) => b.addEventListener('click', () => {
+            stopTimers(); state.startedAt = 0;
+            state.mode = b.dataset.stateBtn;
+            if (state.mode === 'running') { state.groups = 128; state.elapsed = 3400; state.startedAt = performance.now() - 3400; state.slowest = { n: 41, ms: 244, len: 2048 }; state.total = 300; }
+            if (state.mode === 'complete') { state.groups = 300; state.elapsed = 5400; state.slowest = { n: 97, ms: 246, len: 1980 }; }
+            if (state.mode === 'error') { state.groups = 42; state.elapsed = 1200; state.slowest = { n: 12, ms: 238, len: 1536 }; }
+            pressGroup('data-state-btn', b.dataset.stateBtn); render();
+            const target = state.mode === 'error' ? 'compare-result' : state.mode === 'complete' ? 'compare-complete' : 'compare-stats';
+            $(target).scrollIntoView({ block: 'nearest' });
+        }));
+        document.querySelectorAll('[data-diff-btn]').forEach((b) => b.addEventListener('click', () => {
+            state.diffVariant = b.dataset.diffBtn; pressGroup('data-diff-btn', state.diffVariant);
+            render();
+        }));
+
+        render();
+    })();
+    </script>
 </body>
 </html>

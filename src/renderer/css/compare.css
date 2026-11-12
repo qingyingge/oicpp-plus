@@ -138,6 +138,13 @@
     white-space: nowrap;
 }
 
+.cmp-block-badge {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--text-muted);
+    flex: 0 0 auto;
+}
+
 .cmp-block-body {
     display: flex;
     flex-direction: column;
@@ -241,8 +248,8 @@
 }
 
 .file-browse-btn {
-    height: 24px;
-    padding: 4px 8px;
+    height: 22px;
+    padding: 3px 8px;
     border: none;
     background-color: var(--primary-color);
     color: white;
@@ -732,4 +739,165 @@ body[data-theme="solarized-light"] .notice-text {
 
 body[data-theme="solarized-light"] .notice-text strong {
     color: #b58900;
+}
+
+/* ── diff 元数据行（差异位置、字节大小等） ── */
+.diff-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    background-color: var(--hover-bg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* diff 显示模式：B 单栏行内 */
+.diff-inline {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.dl {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.4;
+}
+.dl .ln {
+    flex: 0 0 auto;
+    width: 28px;
+    color: var(--text-muted);
+    text-align: right;
+    user-select: none;
+}
+.dl.same { color: var(--text-secondary); }
+.dl.del { color: var(--error-fg); background-color: var(--error-bg); }
+.dl.ins { color: var(--success-fg); background-color: var(--success-bg); }
+.dl span:not(.ln) { white-space: pre; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.dl .ch { font-weight: 600; }
+
+/* diff 显示模式：C 并排 */
+.diff-side {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    font-family: Consolas, monospace;
+    font-size: 11px;
+}
+.diff-side > .head {
+    display: flex;
+    align-items: center;
+    padding: 4px 6px;
+    font-weight: 600;
+    color: var(--text-color);
+    border-bottom: 1px solid var(--border-color);
+}
+.diff-side > div { padding: 4px 6px; line-height: 1.4; overflow: hidden; }
+.diff-side > div:not(.head) { white-space: pre; text-overflow: ellipsis; }
+
+/* 差异字符内联高亮（B 模式行内、C 模式并排都用） */
+.diff-highlight {
+    background-color: var(--error-bg);
+    color: var(--error-fg);
+    padding: 0 1px;
+    border-radius: 2px;
+}
+
+/* hidden 通用类（概念版有，实装用于状态面板切换） */
+.hidden { display: none !important; }
+
+/* 复现按钮 */
+.compare-repro-btn {
+    height: 22px;
+    padding: 3px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+/* 裸浏览器控制条（概念版对齐） */
+.concept-bar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 14px;
+    padding: 6px 10px;
+    background: var(--sidebar-bg);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+.concept-bar b { color: var(--text-muted); font-weight: 600; margin-right: 4px; }
+.concept-bar button {
+    background: var(--secondary-bg);
+    color: var(--secondary-fg);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.concept-bar button[aria-pressed="true"] {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+}
+
+/* 差异模式切换条 */
+.diff-mode-toggle {
+    display: flex;
+    gap: 6px;
+    padding: 4px 8px;
+    background-color: var(--hover-bg);
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+}
+.diff-mode-btn {
+    background: var(--secondary-bg);
+    color: var(--secondary-fg);
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    flex: 0 0 auto;
+}
+.diff-mode-btn[aria-pressed="true"] {
+    background: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #fff;
+}
+
+/* diff 元数据包装器 */
+.diff-meta-wrap {
+    padding: 4px 8px;
+    background-color: var(--hover-bg);
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 8px;
+}
+
+/* diff-host 容器 */
+#diff-host {
+    margin: 8px 0;
+}
+.compare-repro-btn:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+/* 结果区 header 增加 reproduce 按钮后的布局微调 */
+.result-header {
+    align-items: center;
+    gap: 8px;
 }
