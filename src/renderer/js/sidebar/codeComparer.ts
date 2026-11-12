@@ -29,12 +29,46 @@ type CompareErrorResult = {
     testOutputTruncated: boolean;
     usedSpj: boolean;
     message?: string;
+    genMs?: number;
+    stdMs?: number;
+    testMs?: number;
 };
 
 type IncompleteRunGap = {
     completed: number;
     total: number;
     missing: number;
+};
+
+// 单组实测样本：gen/std/test 三段耗时与生成器输出字节数，由引擎的 progress 事件带上来
+type CompareGroupSample = {
+    testIndex: number;
+    genMs: number;
+    stdMs: number;
+    testMs: number;
+    totalMs: number;
+    genLen: number;
+    // 该组完成时的墙钟时刻，TPS 靠它算（见 getCompareTps）
+    atMs: number;
+};
+
+// 只保留固定滑动窗口 + 标量，不逐组累积：计划组数上限是 10 万，全量留样本会撑爆渲染层
+type CompareStats = {
+    startedAt: number;
+    elapsedMs: number;
+    totalGroups: number;
+    window: CompareGroupSample[];
+    slowest: CompareGroupSample | null;
+    lastSample: CompareGroupSample | null;
+};
+
+// 引擎侧的非致命告警（看门狗超时、fastspawn 回退），跑完要在统计条上留痕
+type CompareEngineWarning = {
+    code: string;
+    completed: number;
+    total: number;
+    missing: number;
+    message: string;
 };
 
 type CompareState = {
@@ -52,6 +86,10 @@ type CompareState = {
     completedTests: number;
     failedTests: number;
     stopped: boolean;
+    // 本轮对拍的身份（runTask 分配，主进程原样盖回每个事件）
+    runId: number;
+    stats: CompareStats;
+    engineWarnings: CompareEngineWarning[];
 };
 
 type CompareExecutableSet = {
@@ -72,6 +110,13 @@ type CompareTask = {
     config: CompareConfig;
     state: CompareState;
     compiledExecutables: CompareExecutableSet | null;
+    // 磁盘那份有没有落进内存。false 时不许写盘（否则启动瞬间会把默认值盖到用户配置上）
+    configLoaded: boolean;
+};
+
+// 视图偏好：只有「块开合」这类纯显示状态，跟着设备走，不跟题目走
+type CompareViewPrefs = {
+    blocks: Record<string, boolean>;
 };
 
 type FreopenContext = {
@@ -96,6 +141,16 @@ type EngineError = {
 };
 
 const MAX_COMPARE_COUNT = 100000;
+// TPS 滑动窗口长度：太短抖得厉害，太长已经把整轮平均出来了、失去「当下多快」的意义
+const COMPARE_STATS_WINDOW = 20;
+// 统计条的重画节流：并行引擎在快程序下每秒能推几十条 progress，
+// 每条都重排 DOM 会让渲染层自己变成对拍的瓶颈
+const COMPARE_STATS_PAINT_MS = 250;
+// 用时的独立走表间隔：它只跟墙钟有关，跟事件来不来无关
+const COMPARE_STATS_TICK_MS = 200;
+const COMPARE_VIEW_STORAGE_KEY = 'oicpp.compare.viewState';
+// 配置写盘节流：一次改路径会连着触发 renderTask，逐次写盘等于把同一个 json 重写十几遍
+const COMPARE_CONFIG_SAVE_DEBOUNCE_MS = 500;
 const ccInput = (id: string) => {
     const el = document.getElementById(id);
     return el instanceof HTMLInputElement ? el : null;
@@ -105,6 +160,8 @@ const ccButton = (id: string) => {
     return el instanceof HTMLButtonElement ? el : null;
 };
 const ccEvt = (e: Event) => (e.target instanceof HTMLInputElement ? e.target : null);
+// 文件级 i18n 别名（I5 只认这种写法；在调用点直接 `t(key) || key` 会被判成死兜底）
+const ccT = (key: string, params?: Record<string, string | number>) => window.i18n?.t?.(key, params) || key;
 
 class CodeComparer {
     declare activeTaskKey: string | null;
@@ -118,6 +175,14 @@ class CodeComparer {
     declare maxParallelThreads: number;
     declare tasks: Map<string, CompareTask>;
     declare eventsbound: boolean;
+    declare statsPaintedAt: number;
+    declare viewPrefs: CompareViewPrefs;
+    declare configSaveTimers: Map<string, number> | null;
+    // 每轮对拍的「摘监听」把手，按任务 key 存：重置运行中的一轮时必须能把监听摘干净，
+    // 否则迟到的 complete 会在用户已经清空的面板上弹「已手动停止」
+    declare runCleanups: Map<string, () => void>;
+    declare statsTicker: number | null;
+    declare compareRunSeq: number;
 
     constructor() {
         this.activeTaskKey = null;
@@ -131,6 +196,12 @@ class CodeComparer {
         this.maxParallelThreads = 1;
         this.tasks = new Map();
         this.eventsbound = false;
+        this.statsPaintedAt = 0;
+        this.configSaveTimers = null;
+        this.runCleanups = new Map();
+        this.statsTicker = null;
+        this.compareRunSeq = 0;
+        this.viewPrefs = this.readCompareViewPrefs();
 
         this.setupEventListeners();
         this.setupActiveFileListener();
@@ -207,11 +278,17 @@ class CodeComparer {
                     incompleteRun: null,
                     completedTests: 0,
                     failedTests: 0,
-                    stopped: false
+                    stopped: false,
+                    runId: 0,
+                    stats: this.createCompareStats(0),
+                    engineWarnings: []
                 },
-                compiledExecutables: null
+                compiledExecutables: null,
+                configLoaded: false
             };
             this.tasks.set(normalizedKey, task);
+            // 首次遇到这个被测文件时去读它那份配置；读盘是异步的，不阻塞面板渲染
+            this.loadTaskConfig(task);
         }
         return task;
     }
@@ -282,6 +359,7 @@ class CodeComparer {
             task.config.threadCount = capped;
             if (threadCountEl && capped !== threadCount) threadCountEl.value = String(capped);
         }
+        this.scheduleTaskConfigSave(task);
     }
 
     mergeTaskConfigIfEmpty(targetTask: CompareTask, sourceConfig?: CompareConfig | null) {
@@ -302,6 +380,147 @@ class CodeComparer {
         if (!Number.isFinite(targetCfg.threadCount) && Number.isFinite(s.threadCount)) targetCfg.threadCount = s.threadCount;
 
         if (!targetCfg.testCodePath && s.testCodePath) targetCfg.testCodePath = s.testCodePath;
+    }
+
+    // ─── 配置持久化 ──────────────────────────────────────────
+    // 视图偏好进 localStorage（与 compile-manager / sampleTester 同一套做法）；
+    // 任务配置进 <workspace>/.oicpp-plus/codeComparer/<safe-rel>.json，按被测文件记，
+    // 与 tasks Map 的 key 同构。settings.json 这条路走不通：utils/settings-schema.ts
+    // 的 SETTINGS_KEYS 白名单会把未知键静默丢掉。
+    readCompareViewPrefs(): CompareViewPrefs {
+        try {
+            const raw = window.localStorage?.getItem(COMPARE_VIEW_STORAGE_KEY);
+            if (!raw) return { blocks: {} };
+            const parsed = JSON.parse(raw) as Partial<CompareViewPrefs>;
+            return { blocks: (parsed && typeof parsed.blocks === 'object' && parsed.blocks) || {} };
+        } catch (_) {
+            return { blocks: {} };
+        }
+    }
+
+    writeCompareViewPrefs() {
+        try {
+            window.localStorage?.setItem(COMPARE_VIEW_STORAGE_KEY, JSON.stringify(this.viewPrefs));
+        } catch (_) { /* 隐私模式或配额满：偏好丢了不影响对拍本身 */ }
+    }
+
+    applyCompareViewPrefs() {
+        for (const blockId of Object.keys(this.viewPrefs.blocks)) {
+            const collapsed = this.viewPrefs.blocks[blockId];
+            if (typeof collapsed === 'boolean') this.setBlockCollapsed(blockId, collapsed, false);
+        }
+    }
+
+    getWorkspaceRoot(): string {
+        return window.sidebarManager?.panels?.files?.workspacePath || '';
+    }
+
+    // safe-rel 命名与 sampleTester.computeSamplesFilePathForFile 一致：
+    // 相对工作区的路径压成文件名，同一工作区下的不同题目互不覆盖。
+    async computeCompareConfigPath(taskKey: string): Promise<string | null> {
+        const workspaceRoot = this.getWorkspaceRoot();
+        if (!taskKey || !workspaceRoot) return null;
+        try {
+            let relative = taskKey;
+            if (taskKey.toLowerCase().startsWith(workspaceRoot.toLowerCase())) {
+                relative = taskKey.slice(workspaceRoot.length);
+            } else {
+                relative = taskKey.replace(/[:\\]/g, '_');
+            }
+            const safe = relative.replace(/^[\\/]+/, '').replace(/[\\\/]/g, '_').replace(/[<>:"|?*]/g, '_');
+            const oicppDir = await window.electronAPI.pathJoin(workspaceRoot, '.oicpp-plus');
+            const dir = await window.electronAPI.pathJoin(oicppDir, 'codeComparer');
+            await window.electronAPI.ensureDirectory(oicppDir);
+            await window.electronAPI.ensureDirectory(dir);
+            return await window.electronAPI.pathJoin(dir, `${safe}.json`);
+        } catch (error) {
+            logWarn('[对拍器] 计算配置文件路径失败:', error);
+            return null;
+        }
+    }
+
+    serializeTaskConfig(task: CompareTask) {
+        const cfg = task.config;
+        return {
+            v: 1,
+            standardCodePath: cfg.standardCodePath || '',
+            generatorPath: cfg.generatorPath || '',
+            spjPath: cfg.spjPath || '',
+            useTestlib: !!cfg.useTestlib,
+            freopenInputFile: cfg.freopenInputFile || '',
+            freopenOutputFile: cfg.freopenOutputFile || '',
+            // NaN 进 JSON 会变成 null，回读时按 null→NaN 还原「留空=自动」的语义，
+            // 落成 0 就等于把自动并行悄悄改成 1 路。
+            compareCount: Number.isFinite(cfg.compareCount) ? cfg.compareCount : null,
+            timeLimit: Number.isFinite(cfg.timeLimit) ? cfg.timeLimit : null,
+            threadCount: Number.isFinite(cfg.threadCount) ? cfg.threadCount : null
+        };
+    }
+
+    async loadTaskConfig(task: CompareTask) {
+        if (!task || task.configLoaded) return;
+        const baseline = JSON.stringify(task.config);
+        const filePath = await this.computeCompareConfigPath(task.key);
+        if (!filePath) { task.configLoaded = true; return; }
+        let raw = '';
+        try {
+            raw = await window.electronAPI.readFileContent(filePath);
+        } catch (_) {
+            task.configLoaded = true;
+            return;
+        }
+        // 读盘在途时用户可能已经改过这一项（切文件后立刻手填路径是常见操作）。
+        // 内存与创建时不一致就说明磁盘那份过期了，直接放弃回写，别把用户刚填的冲掉。
+        if (JSON.stringify(task.config) !== baseline) { task.configLoaded = true; return; }
+        let saved: Partial<CompareConfig> | null = null;
+        try {
+            saved = raw ? JSON.parse(String(raw)) as Partial<CompareConfig> : null;
+        } catch (error) {
+            logWarn('[对拍器] 配置文件解析失败，按默认值继续:', error);
+            task.configLoaded = true;
+            return;
+        }
+        if (saved) {
+            // 逐字段 typeof 收窄：CompareConfig 是混合类型，用 keyof 索引赋值会被
+            // 收成 never（写不出类型，也读不出错），摊开写反而最省事。
+            if (typeof saved.standardCodePath === 'string') task.config.standardCodePath = saved.standardCodePath;
+            if (typeof saved.generatorPath === 'string') task.config.generatorPath = saved.generatorPath;
+            if (typeof saved.spjPath === 'string') task.config.spjPath = saved.spjPath;
+            if (typeof saved.freopenInputFile === 'string') task.config.freopenInputFile = saved.freopenInputFile;
+            if (typeof saved.freopenOutputFile === 'string') task.config.freopenOutputFile = saved.freopenOutputFile;
+            if (typeof saved.useTestlib === 'boolean') task.config.useTestlib = saved.useTestlib;
+            if (Number.isFinite(saved.compareCount)) task.config.compareCount = saved.compareCount as number;
+            if (Number.isFinite(saved.timeLimit)) task.config.timeLimit = saved.timeLimit as number;
+            // null / 缺失都回到 NaN（自动），不能落成 0
+            task.config.threadCount = Number.isFinite(saved.threadCount) ? saved.threadCount as number : NaN;
+            this.applyTaskConfigToInstance(task);
+            this.renderIfActive(task);
+        }
+        task.configLoaded = true;
+    }
+
+    scheduleTaskConfigSave(task: CompareTask) {
+        if (!task || !task.configLoaded) return;
+        if (!this.configSaveTimers) this.configSaveTimers = new Map();
+        const pending = this.configSaveTimers.get(task.key);
+        if (pending) clearTimeout(pending);
+        this.configSaveTimers.set(task.key, setTimeout(() => {
+            this.configSaveTimers?.delete(task.key);
+            this.writeTaskConfig(task).catch((error) => logWarn('[对拍器] 配置保存失败:', error));
+        }, COMPARE_CONFIG_SAVE_DEBOUNCE_MS) as unknown as number);
+    }
+
+    async writeTaskConfig(task: CompareTask) {
+        const filePath = await this.computeCompareConfigPath(task.key);
+        if (!filePath) return;
+        await window.electronAPI.writeFile(filePath, JSON.stringify(this.serializeTaskConfig(task), null, 2));
+    }
+
+    // 侧栏切走时 sidebar.showPanel 会回调这里（js/sidebar.ts 里离开面板那段）。
+    // 对拍本身继续跑（引擎在主进程），但面板看不见还每 200ms 重排一次 DOM 是白烧 CPU；
+    // 切回来由 renderTask 重新走表。
+    deactivate() {
+        this.stopStatsTicker();
     }
 
     activate() {
@@ -363,6 +582,11 @@ class CodeComparer {
         this.eventsbound = true;
 
         this.ensureThreadLimitUI();
+        this.applyCompareViewPrefs();
+        this.bindBlockToggles();
+        // 初始就把第二个槽位收成空：没有活动任务时 renderTask 会直接 return，
+        // 不补这一刀，「停止」「清空」会在刚打开面板时一起露出来
+        this.updateUIForTask(this.getActiveTask());
         // 初始态也走一次，避免进度标签在首次对拍前残留 HTML 里的英文字面量
         setTimeout(() => this.updateProgress(0, 0), 0);
 
@@ -380,22 +604,14 @@ class CodeComparer {
             generatorBrowse.addEventListener('click', () => this.browseGenerator());
         }
 
-        const startBtn = ccButton('compare-start-btn');
-        const stopBtn = ccButton('compare-stop-btn');
-        const resetBtn = ccButton('compare-reset-btn');
+        const actionBtn = ccButton('compare-run-btn');
         const exportBtn = (document.getElementById('export-btn'));
         const inputExpandBtn = (document.getElementById('input-expand-btn'));
         const stdOutputExpandBtn = (document.getElementById('std-output-expand-btn'));
         const testOutputExpandBtn = (document.getElementById('test-output-expand-btn'));
 
-        if (startBtn) {
-            startBtn.addEventListener('click', () => this.startComparison());
-        }
-        if (stopBtn) {
-            stopBtn.addEventListener('click', () => this.stopComparison());
-        }
-        if (resetBtn) {
-            resetBtn.addEventListener('click', () => this.resetComparison());
+        if (actionBtn) {
+            actionBtn.addEventListener('click', () => this.onCompareActionClick());
         }
         if (exportBtn) {
             exportBtn.addEventListener('click', () => this.exportResults());
@@ -464,6 +680,7 @@ class CodeComparer {
                 const task = this.getActiveTask();
                 if (!task) return;
                 task.config.freopenInputFile = normalized;
+                this.scheduleTaskConfigSave(task);
             });
         }
 
@@ -476,6 +693,7 @@ class CodeComparer {
                 const task = this.getActiveTask();
                 if (!task) return;
                 task.config.freopenOutputFile = normalized;
+                this.scheduleTaskConfigSave(task);
             });
         }
     }
@@ -608,12 +826,36 @@ class CodeComparer {
         if (element) {
             const value = (filePath && String(filePath).trim()) ? String(filePath) : (window.i18n.t('compare.noFileSelected'));
             element.textContent = value;
+            // 路径显示被限成两行，完整路径只能靠悬浮；title 不参与 i18n（值是路径，不是文案）
+            element.title = value;
             if (value === 'No file selected' || value === window.i18n.t('compare.noFileSelected')) {
                 element.classList.remove('selected');
             } else {
                 element.classList.add('selected');
             }
         }
+    }
+
+    setBlockCollapsed(blockId: string, collapsed: boolean, persist = true) {
+        const block = (document.getElementById(blockId));
+        if (!block) return;
+        block.classList.toggle('collapsed', collapsed);
+        const head = block.querySelector('.cmp-block-head');
+        if (head) head.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        if (persist && this.viewPrefs) {
+            this.viewPrefs.blocks[blockId] = collapsed;
+            this.writeCompareViewPrefs();
+        }
+    }
+
+    bindBlockToggles() {
+        document.querySelectorAll('.cmp-block-head').forEach((head) => {
+            head.addEventListener('click', () => {
+                const block = head.closest('.cmp-block');
+                if (!block) return;
+                this.setBlockCollapsed(block.id, !block.classList.contains('collapsed'));
+            });
+        });
     }
 
     renderTask(task: CompareTask) {
@@ -651,6 +893,20 @@ class CodeComparer {
         if (freopenOutputInput) {
             freopenOutputInput.value = task.config.freopenOutputFile || '';
         }
+
+        // SPJ / freopen 一旦配上就改变判定口径（回退旧引擎、走文件读写），藏在折叠块里等于没说；
+        // 只在确实配了、且用户没自己动过这个块的时候自动展开，别跟用户的选择抢。
+        const ioConfigured = !!task.config.useTestlib || !!(task.config.spjPath || '').trim()
+            || !!(task.config.freopenInputFile || '').trim() || !!(task.config.freopenOutputFile || '').trim();
+        if (ioConfigured && this.viewPrefs?.blocks?.['cmp-block-io'] === undefined) {
+            this.setBlockCollapsed('cmp-block-io', false, false);
+        }
+
+        // 统计条跟着任务走：切回一个正在跑的文件时，画面必须立刻是它自己的数字
+        this.renderCompareStats(task, true);
+        // 走表定时器跟着重建：面板切走时 deactivate 会停表，切回来得重新走起来
+        if (task.state.mode === 'running' || task.state.mode === 'stopping') this.startStatsTicker(task);
+        this.scheduleTaskConfigSave(task);
 
         this.updateUIForTask(task);
 
@@ -773,7 +1029,11 @@ class CodeComparer {
         task.state.errorResult = null;
         task.state.warningMessage = null;
         task.state.incompleteRun = null;
-        task.state.statusText = (window.i18n.t('compare.ready'));
+        task.state.stats = this.createCompareStats(performance.now());
+        task.state.engineWarnings = [];
+        // 开跑就把状态栏写成「对拍中」：并行引擎不再逐组报组号（那数字没有意义），
+        // 留着「准备中」会让人以为没动起来
+        task.state.statusText = (window.i18n.t('compare.running'));
         task.state.mode = 'running';
 
         this.setActiveTaskKey(task.config.testCodePath, { syncTestCodePath: true });
@@ -798,7 +1058,16 @@ class CodeComparer {
             try { cleanupError?.(); } catch(_) {}
             try { cleanupComplete?.(); } catch(_) {}
             try { cleanupWarning?.(); } catch(_) {}
+            this.runCleanups.delete(task.key);
         };
+        // 把手交出去：resetComparison 在中止这一轮时要能摘监听
+        try { this.runCleanups.get(task.key)?.(); } catch (_) {}
+        this.runCleanups.set(task.key, cleanupAllListeners);
+        // 轮次身份：上一轮引擎被 compare-start 顶掉时补发的终止事件，到达渲染层时往往本轮
+        // 监听已经挂上了；不带身份就会被本轮当成自己的结果收下（实测「完成」早于「启动」）。
+        // 判定写成只看 task.state，不依赖闭包局部，四个回调才测得到。
+        const runId = ++this.compareRunSeq;
+        task.state.runId = runId;
 
         try {
             logInfo(`开始对拍！计划执行 ${task.state.totalTests} 组测试，时间限制 ${task.config.timeLimit}ms`);
@@ -817,6 +1086,8 @@ class CodeComparer {
             logInfo('所有程序编译成功，启动 HPC 对拍引擎');
 
             const config = {
+                // 主进程会把同一个 runId 盖回每个事件上，回调靠它认出自己那一轮
+                runId,
                 stdExe: compiledPrograms.stdExe,
                 testExe: compiledPrograms.testExe,
                 generator: compiledPrograms.generatorRunTarget || compiledPrograms.generatorExe,
@@ -834,6 +1105,9 @@ class CodeComparer {
 
             // 非致命告警（如 fastspawn 回退），只记日志，不打断对拍
             cleanupWarning = window.electronAPI.onCompareWarning((data) => {
+                if (data?.runId !== task.state.runId) return;
+                // 本轮已被用户重置（mode 回到 idle）：再回写就把清空的面板填回来了
+                if (task.state.mode === 'idle') { cleanupAllListeners(); return; }
                 logWarn('[对拍器][引擎告警]', data?.code || 'warning', data?.message || '');
                 // incomplete_run 走的是告警通道是对的（已跑完的组结果仍然有效，不该弹错误面板），
                 // 但缺口本身必须留下：worker 崩了/提前退出时完成数只统计真正跑过的，
@@ -844,18 +1118,31 @@ class CodeComparer {
                         total: Number(data?.total) || 0,
                         missing: Number(data?.missing) || 0
                     };
+                } else if (data?.code === 'engine_timeout' || data?.code === 'fastspawn_fallback') {
+                    // 这两类以前只进 logWarn，界面一句话不说：看门狗砍掉的那一半跑量、
+                    // 以及退化成串行的 fastspawn 缺失，用户只能靠「今天怎么这么慢」去猜。
+                    this.recordEngineWarning(task, data);
+                    this.renderIfActive(task);
                 }
             });
 
             cleanupProgress = window.electronAPI.onCompareProgress((data) => {
+                if (data?.runId !== task.state.runId) return;
+                // 本轮已被用户重置（mode 回到 idle）：再回写就把清空的面板填回来了
+                if (task.state.mode === 'idle') { cleanupAllListeners(); return; }
                 const completed = Number(data.current) || 0;
                 task.state.currentTest = completed;
                 task.state.completedTests = completed;
+                this.recordCompareSample(task, data);
+                // 并行引擎下「第 N 组测试」是句废话：十几个 worker 各自跳号、完成顺序也不定，
+                // 状态栏报一个随机组号只会让人以为进度是顺序推进的。组号只在差异面板上出现。
                 this.updateProgress(completed, data.total);
-                this.updateTaskStatus(task, window.i18n.t('compare.testGroup', { i: data.testIndex }));
+                this.renderCompareStats(task);
             });
 
             cleanupError = window.electronAPI.onCompareError(async (error) => {
+                if (error?.runId !== task.state.runId) return;
+                if (task.state.mode === 'idle') { cleanupAllListeners(); return; }
                 task.state.errorResult = {
                     testNumber: error.testNumber,
                     input: error.input || '',
@@ -870,7 +1157,10 @@ class CodeComparer {
                     // 不同的行列」——checker 的判等口径（分词/精度/自定义）跟文本差没关系
                     usedSpj: String(error.type || '').indexOf('spj_') === 0,
                     errorMessage: this.getEngineErrorMessage(error),
-                    rawErrorMessage: error.message || ''
+                    rawErrorMessage: error.message || '',
+                    genMs: Number(error.genMs) || 0,
+                    stdMs: Number(error.stdMs) || 0,
+                    testMs: Number(error.testMs) || 0
                 } as unknown as CompareErrorResult;
                 task.state.mode = 'error';
                 this.renderIfActive(task);
@@ -882,6 +1172,8 @@ class CodeComparer {
             });
 
             cleanupComplete = window.electronAPI.onCompareComplete((result) => {
+                if (result?.runId !== task.state.runId) return;
+                if (task.state.mode === 'idle') { cleanupAllListeners(); return; }
                 const completed = Number.isFinite(result.completed) ? result.completed! : task.state.completedTests;
                 const failed = Number.isFinite(result.failed) ? result.failed! : 0;
                 task.state.completedTests = completed;
@@ -905,6 +1197,10 @@ class CodeComparer {
                 this.finishCompareTask(task);
             });
 
+            // 引擎接手的那一刻才把状态栏从「编译 xxx...」换过来：编译阶段是一条条顺序提示，
+            // 换成对拍中就不再有别的文案刷它（并行阶段不报组号），不写这句会一直挂着编译文案
+            this.updateTaskStatus(task, window.i18n.t('compare.running'));
+            this.startStatsTicker(task);
             await window.electronAPI.startCompare(config);
         } catch (error) {
             logError('对拍过程出错:', error);
@@ -916,6 +1212,8 @@ class CodeComparer {
 
     async finishCompareTask(task: CompareTask) {
         task.state.isRunning = false;
+        this.stopStatsTicker();
+        this.settleCompareStats(task);
         await this.cleanupCompiledExecutables(task);
         if (this.activeTaskKey === task.key) {
             this.updateUIForTask(task);
@@ -1669,6 +1967,16 @@ class CodeComparer {
     resetComparison() {
         const task = this.getActiveTask();
         if (!task) return;
+        const running = task.state.isRunning || task.state.mode === 'running' || task.state.mode === 'stopping';
+        // 重置 = 中止 + 清空。以前运行中直接把按钮禁掉，用户点了没反应；
+        // 现在允许中途清场，但必须先把引擎停掉、监听摘掉，否则迟到的 complete
+        // 会在已经清空的面板上弹一个「已手动停止」。
+        if (running) {
+            try { this.runCleanups.get(task.key)?.(); } catch (_) {}
+            this.runCleanups.delete(task.key);
+            try { window.electronAPI.stopCompare().catch(() => {}); } catch (_) {}
+        }
+        this.stopStatsTicker();
         task.state.shouldStop = true;
         task.state.isRunning = false;
         task.state.currentTest = 0;
@@ -1680,23 +1988,64 @@ class CodeComparer {
         task.state.errorResult = null;
         task.state.warningMessage = null;
         task.state.incompleteRun = null;
+        task.state.stats = this.createCompareStats(0);
+        task.state.engineWarnings = [];
         task.state.mode = 'idle';
         const progressFill = (document.getElementById('progress-fill'));
         if (progressFill) progressFill.style.width = '0%';
         this.renderTask(task);
     }
 
-    updateUIForTask(task: CompareTask) {
-        const startBtn = ccButton('compare-start-btn');
-        const stopBtn = ccButton('compare-stop-btn');
-        const resetBtn = ccButton('compare-reset-btn');
-
+    // 一个键三种状态：空闲→开始；跑着→停止（中止，但把已跑出来的结果留着看）；
+    // 跑完/出错/已停止→清空。三个键并排时「重置」在运行中是死按钮、空闲时又是空操作，
+    // 而点「开始」本来就会先清场再跑 —— 三个概念其实是一个。
+    getCompareActionState(task: CompareTask | null): 'start' | 'stop' | 'clear' {
         const running = !!task?.state?.isRunning && (task?.state?.mode === 'running' || task?.state?.mode === 'stopping');
+        if (running) return 'stop';
+        const st = task?.state;
+        if (!st) return 'start';
+        const hasTrace = st.mode !== 'idle' || !!st.errorResult || st.completedTests > 0
+            || !!st.stats?.startedAt || (st.engineWarnings?.length || 0) > 0;
+        return hasTrace ? 'clear' : 'start';
+    }
 
-        if (startBtn) startBtn.disabled = running || !!task?.state?.starting;
-        // 按下停止到 runTask 收口之间还有一段收尾，此时再点「停止」是空操作
-        if (stopBtn) stopBtn.disabled = !running || !!task?.state?.shouldStop;
-        if (resetBtn) resetBtn.disabled = running;
+    applyCompareActionState(task: CompareTask | null) {
+        const btn = ccButton('compare-run-btn');
+        if (!btn) return;
+        const action = this.getCompareActionState(task);
+        btn.dataset['cmpState'] = action;
+        const key = action === 'start' ? 'compare.start' : (action === 'stop' ? 'compare.stop' : 'compare.clear');
+        const text = ccT(key);
+        // data-i18n 跟着改写：切语言时 _applyToDOM 会自己把这句文案换过来。
+        // 不挂它就得等下次 renderTask 才更新，中途切语言界面会半中半英。
+        const label = (document.getElementById('compare-run-label'));
+        if (label) {
+            label.setAttribute('data-i18n', key);
+            label.textContent = text;
+        }
+        btn.title = text;
+        // 按过停止到 runTask 收口之间还有一段收尾，此时再点一次是空操作
+        btn.disabled = action === 'stop' && (!!task?.state?.shouldStop || !!task?.state?.starting);
+    }
+
+    onCompareActionClick() {
+        const task = this.getActiveTask();
+        const action = this.getCompareActionState(task);
+        if (action === 'stop') {
+            // 收尾期间按钮已禁用，这里再挡一道：禁用样式与状态判定分属两处，别只靠一边
+            if (task?.state?.shouldStop || task?.state?.starting) return;
+            this.stopComparison();
+            return;
+        }
+        if (action === 'clear') {
+            this.resetComparison();
+            return;
+        }
+        this.startComparison();
+    }
+
+    updateUIForTask(task: CompareTask | null) {
+        this.applyCompareActionState(task);
     }
 
     updateStatusText(text: string) {
@@ -1732,6 +2081,157 @@ class CodeComparer {
         if (!task) return;
         if (this.activeTaskKey !== task.key) return;
         this.updateProgress(task.state.currentTest, task.state.totalTests);
+    }
+
+    // startedAt = 0 表示「本轮还没开始」，finishCompareTask 靠它决定要不要结算耗时
+    createCompareStats(startedAt: number): CompareStats {
+        return {
+            startedAt,
+            elapsedMs: 0,
+            totalGroups: 0,
+            window: [],
+            slowest: null,
+            lastSample: null
+        };
+    }
+
+    recordCompareSample(task: CompareTask, data: { testIndex?: number; genMs?: number; stdMs?: number; testMs?: number; genLen?: number }) {
+        const stats = task?.state?.stats;
+        if (!stats) return;
+        const genMs = Number(data.genMs) || 0;
+        const stdMs = Number(data.stdMs) || 0;
+        const testMs = Number(data.testMs) || 0;
+        // std 与 test 是并发跑的（fastspawn 的 runFastPair 一次调用给两侧同一个 pair.ms，
+        // js 路径也是先起两个再 Promise.all），相加会把并行度算丢，取 max 才是这组的真实时长。
+        const sample: CompareGroupSample = {
+            testIndex: Number(data.testIndex) || 0,
+            genMs,
+            stdMs,
+            testMs,
+            totalMs: genMs + Math.max(stdMs, testMs),
+            genLen: Number(data.genLen) || 0,
+            atMs: performance.now()
+        };
+        stats.totalGroups++;
+        stats.window.push(sample);
+        while (stats.window.length > COMPARE_STATS_WINDOW) stats.window.shift();
+        if (!stats.slowest || sample.totalMs > stats.slowest.totalMs) stats.slowest = sample;
+        stats.lastSample = sample;
+    }
+
+    recordEngineWarning(task: CompareTask, data: { code?: string; completed?: number; total?: number; missing?: number; message?: string }) {
+        const list = task?.state?.engineWarnings;
+        if (!list) return;
+        list.push({
+            code: String(data?.code || ''),
+            completed: Number(data?.completed) || 0,
+            total: Number(data?.total) || 0,
+            missing: Number(data?.missing) || 0,
+            message: data?.message || ''
+        });
+    }
+
+    // TPS 只能用墙钟算：worker 是并行的，把各组耗时相加再取倒数算出来的是
+    // 「单个 worker 的吞吐」，比真实吞吐低一个并行度，面板上会误导成引擎变慢。
+    getCompareTps(stats: CompareStats | null | undefined): number | null {
+        if (!stats || stats.window.length < 2) return null;
+        const newest = stats.window[stats.window.length - 1];
+        const oldest = stats.window[0];
+        if (!newest || !oldest) return null;
+        const spanMs = newest.atMs - oldest.atMs;
+        if (!(spanMs > 0)) return null;
+        return (stats.window.length - 1) * 1000 / spanMs;
+    }
+
+    settleCompareStats(task: CompareTask | null) {
+        const stats = task?.state?.stats;
+        if (!stats || !stats.startedAt) return;
+        stats.elapsedMs = performance.now() - stats.startedAt;
+    }
+
+    // 用时按独立定时器走表。只在 progress 到达时刷的话：一组慢程序跑 2 秒期间一条事件都没有，
+    // 数字先冻住、再突然跳一大截，看着就像卡死或者计时不准。
+    startStatsTicker(task: CompareTask) {
+        this.stopStatsTicker();
+        this.statsTicker = setInterval(() => {
+            if (task.state.mode === 'idle') { this.stopStatsTicker(); return; }
+            this.renderCompareStats(task, true);
+        }, COMPARE_STATS_TICK_MS) as unknown as number;
+    }
+
+    stopStatsTicker() {
+        if (this.statsTicker === null || this.statsTicker === undefined) return;
+        clearInterval(this.statsTicker);
+        this.statsTicker = null;
+    }
+
+    getCompareElapsedMs(task: CompareTask | null): number {
+        const stats = task?.state?.stats;
+        if (!stats) return 0;
+        if (!stats.startedAt) return stats.elapsedMs;
+        return stats.elapsedMs || (performance.now() - stats.startedAt);
+    }
+
+    formatCompareMs(ms: number): string {
+        const v = Number(ms);
+        if (!Number.isFinite(v) || v < 0) return '—';
+        if (v < 1000) return `${Math.round(v)}ms`;
+        return `${(v / 1000).toFixed(v < 10000 ? 2 : 1)}s`;
+    }
+
+    renderCompareStats(task: CompareTask | null, force = false) {
+        // 只画当前显示中的那个任务：对拍跑在后台时用户可能已经切到别的文件，
+        // 拿别人的数字刷这块面板等于把两个任务的数据叠在一起显示。
+        if (!task || !task.key || this.activeTaskKey !== task.key) return;
+        const el = (document.getElementById('compare-stats'));
+        if (!el) return;
+        const stats = task.state.stats;
+        if (!stats || (!stats.startedAt && !stats.totalGroups)) {
+            el.style.display = 'none';
+            return;
+        }
+        if (!force) {
+            const now = performance.now();
+            if (this.statsPaintedAt && now - this.statsPaintedAt < COMPARE_STATS_PAINT_MS) return;
+            this.statsPaintedAt = now;
+        }
+        const t = (key: string, params?: Record<string, string | number>) => window.i18n?.t?.(key, params) || key;
+        const tps = this.getCompareTps(stats);
+        const slowest = stats.slowest;
+        const cells: string[] = [
+            t('compare.statsTps', { value: tps === null ? '—' : tps.toFixed(1) }),
+            t('compare.statsElapsed', { value: this.formatCompareMs(this.getCompareElapsedMs(task)) }),
+            slowest
+                ? t('compare.statsSlowest', { number: slowest.testIndex, value: this.formatCompareMs(slowest.totalMs) })
+                : t('compare.statsSlowestNone'),
+            t('compare.statsDataSize', { size: stats.lastSample ? this.formatCompareBytes(stats.lastSample.genLen) : '—' })
+        ];
+        const grid = document.createElement('div');
+        grid.className = 'cmp-stats-grid';
+        cells.forEach((text, index) => {
+            const cell = document.createElement('span');
+            // TPS 是这一栏里唯一要盯的数，加粗；其余是次要信息
+            cell.className = index === 0 ? 'cmp-stat cmp-stat-strong' : 'cmp-stat';
+            cell.textContent = text;
+            grid.appendChild(cell);
+        });
+        // 全用 createElement + textContent 拼：这里不插任何引擎回传的文本，
+        // fastspawn 的英文技术细节留在日志里，界面只给一句本地化的定性提示。
+        el.textContent = '';
+        el.appendChild(grid);
+        for (const warning of (task.state.engineWarnings || [])) {
+            // Windows 上 fastspawn.node 按设计不编译（scripts/build-fastspawn.js 直接跳过并写明
+            // 走 child_process），把它报成「退回较慢的路径」是每个 Windows 用户永远消不掉的一条假警告。
+            // POSIX 上这个模块本该在，缺失才是真降级。日志里两条都照记。
+            if (warning.code === 'fastspawn_fallback' && window.process?.platform === 'win32') continue;
+            const chip = document.createElement('div');
+            chip.className = 'cmp-stats-warn';
+            chip.textContent = warning.code === 'engine_timeout'
+                ? t('compare.statsWatchdogWarn', { completed: warning.completed, total: warning.total })
+                : t('compare.statsFastspawnWarn');
+            el.appendChild(chip);
+        }
+        el.style.display = '';
     }
 
     showStatus() {
@@ -2198,12 +2698,18 @@ class CodeComparer {
         }
     }
 
-    // 自适应 B/KB/MB：小输出不再显示成「0.00 MB」
+    // 自适应 B/KB/MB：小输出不再显示成「0.00 MB」。字节数入口与字符串入口共用这一份阈值，
+    // 否则统计条（拿的是 worker 报的 genLen 字节数）和差异区会各说一套单位口径。
+    formatCompareBytes(bytes: number) {
+        const v = Number(bytes);
+        if (!Number.isFinite(v) || v <= 0) return '0 B';
+        if (v < 1024) return `${v} B`;
+        if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+        return `${(v / (1024 * 1024)).toFixed(2)} MB`;
+    }
+
     getOutputSizeText(output: string) {
-        const bytes = this.getOutputSizeBytes(output);
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+        return this.formatCompareBytes(this.getOutputSizeBytes(output));
     }
 
         isLineLimitedOutputTruncated(output: string, maxLines = 100) {

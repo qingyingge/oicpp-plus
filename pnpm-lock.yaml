@@ -238,7 +238,7 @@ importers:
         specifier: ^26.6.6
         version: 26.6.6
       electron:
-        specifier: ^45.2.3
+        specifier: '>=37.0.0 <46.0.0'
         version: 45.2.3(supports-color@8.1.1)
       electron-builder:
         specifier: ^26.18.0

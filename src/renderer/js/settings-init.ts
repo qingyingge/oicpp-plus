@@ -180,7 +180,7 @@ function applySettingsToUI(settings: Record<string, unknown>): void {
                 }
 
                 body.has-custom-bg .samples-content,
-                body.has-custom-bg .compare-content,
+                body.has-custom-bg .cmp-panel-body,
                 body.has-custom-bg .debug-content {
                     background-color: transparent !important;
                     background: transparent !important;

@@ -590,15 +590,27 @@ const runCleanup = ({ executables, failAt = -1, throwStyle = 'reject' }) => {
         (error) => ({ task, trace, logs, threw: String((error && error.message) || error) }));
 };
 
-const runFinish = ({ activeKey, taskKey }) => {
+// settleCompareStats 是 finishCompareTask 新收进来的协作方：把本轮墙钟冻结进
+// stats.elapsedMs，统计条的「累计耗时」从此不再跟着时钟无限涨。这里给真身而不是桩 ——
+// 桩只能证明「调了一次」，冻错基准（本轮没开始也照冻、把 elapsedMs 当 startedAt 用）
+// 全都拦不住，而这两种都会画出一个看着合理的数字。
+const FINISH_NOW_MS = 5000;
+const settleMethod = classMethod(comparerSource, 'settleCompareStats');
+check('结算方法抽取成功（抽不到下面两条 elapsedMs 断言就是真空通过）',
+    settleMethod.length > 60, settleMethod.length);
+
+const runFinish = ({ activeKey, taskKey, startedAt = 1000 }) => {
     const order = [];
-    const task = { key: taskKey, state: { isRunning: true, mode: 'running' } };
+    const task = { key: taskKey, state: { isRunning: true, mode: 'running', stats: { startedAt, elapsedMs: 0 } } };
     // finishCompareTask 里全是 this.xxx，所以这些方法得挂在被 .call 的那个 self 上，
     // 挂到 vm 全局上等于给了个不存在的 this。
     // 清理桩在「活干完」那一刻才记账：只记「调用了」的话，去掉 await 也照样是
     // cleanup→updateUI（同步前半段先跑），那条 await 就白测了。
     const self = {
         activeTaskKey: activeKey,
+        // 收尾要停掉「用时」走表定时器：给真身的话还得造 setInterval，
+        // 这里断言的就是「它被叫到了」，停表本身的行为在 compare-progress-accuracy 里真跑。
+        stopStatsTicker: () => { order.push('stopTicker'); },
         cleanupCompiledExecutables: async (t) => {
             await Promise.resolve();
             await Promise.resolve();
@@ -609,10 +621,12 @@ const runFinish = ({ activeKey, taskKey }) => {
     };
     const ctx = vm.createContext({
         Object, Array, String, Number, Boolean, Error, JSON, RegExp, Math, Set, Map, Promise,
+        performance: { now: () => FINISH_NOW_MS },
         logInfo: () => { }, logWarn: () => { }, logError: () => { }
     });
     const fn = compileMethod(ctx, finishMethod);
-    if (!fn) return Promise.resolve({ missing: 'finishCompareTask' });
+    self.settleCompareStats = compileMethod(ctx, settleMethod);
+    if (!fn || !self.settleCompareStats) return Promise.resolve({ missing: 'finishCompareTask 或 settleCompareStats' });
     return fn.call(self, task).then(() => ({ order, task }));
 };
 
@@ -702,12 +716,19 @@ deferredChecks = Promise.all([deferredChecks, (async () => {
         callsOf(syncThrow, 'call').length === 4 && syncThrow.threw === null, syncThrow);
 
     const finishActive = await runFinish({ activeKey: 't1', taskKey: 't1' });
-    add('收尾：先置 isRunning=false，产物真删完才刷新 UI（清理不是发完就不管）',
+    add('收尾：先停走表定时器、置 isRunning=false，产物真删完才刷新 UI（清理不是发完就不管）',
         finishActive.task.state.isRunning === false && finishActive.task.__cleaned === true
-            && JSON.stringify(finishActive.order) === JSON.stringify(['cleanupDone', 'updateUI']), finishActive.order);
+            && JSON.stringify(finishActive.order) === JSON.stringify(['stopTicker', 'cleanupDone', 'updateUI']), finishActive.order);
     const finishOther = await runFinish({ activeKey: 'other', taskKey: 't1' });
     add('收尾切到别的任务：仍然清产物，但不碰当前 UI',
         finishOther.task.__cleaned === true && finishOther.order.indexOf('updateUI') === -1, finishOther.order);
+
+    add('收尾冻结本轮墙钟：elapsedMs = now - startedAt（统计条的总时长到此不再涨）',
+        finishActive.task.state.stats.elapsedMs === FINISH_NOW_MS - 1000,
+        finishActive.task.state.stats);
+    const finishIdle = await runFinish({ activeKey: 't1', taskKey: 't1', startedAt: 0 });
+    add('本轮没开始（startedAt=0）就不冻结：否则空闲任务凭空显示一个假耗时',
+        finishIdle.task.state.stats.elapsedMs === 0, finishIdle.task.state.stats);
 
     const running = await runComplete({ mode: 'running', result: { completed: 12, failed: 0 } });
     add('正常完成（running）：状态转 complete、进度写真值、清监听、走收尾，各恰好一次',

@@ -91,8 +91,10 @@ const methodOf = (src, name) => {
         })().catch((e) => check('startComparison 用例整体跑通', false, String(e && e.stack)));
     }
 
-    check('停止按钮在已请求停止后禁用',
-        /stopBtn\.disabled = !running \|\| !!task\?\.state\?\.shouldStop/.test(comparerSource));
+    // 「按过停止后不给点第二次」这条原来锁的是 stopBtn.disabled = ... 这行字。
+    // 三个键并成一个键（开始/停止/清空）之后那行字不存在了，继续在源码里找一个新形状去比
+    // 只是把脆弱换个写法。改到 compare-progress-accuracy 里真跑 applyCompareActionState
+    // 断言 stopping+shouldStop 时 disabled === true，语义比字面量强。
     check('保留 fork 的 running 定义（isRunning && mode 为 running/stopping）',
         /const running = !!task\?\.state\?\.isRunning && \(task\?\.state\?\.mode === 'running' \|\| task\?\.state\?\.mode === 'stopping'\)/.test(comparerSource));
 }

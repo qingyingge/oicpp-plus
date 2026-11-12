@@ -355,18 +355,6 @@ body.glass-effect-enabled .panel-header {
     margin-top: 50px;
 }
 
-.compare-content {
-    flex: 1;
-    padding: 16px;
-    overflow-y: auto;
-}
-
-.compare-content p {
-    color: var(--text-secondary, #858585);
-    text-align: center;
-    margin-top: 50px;
-}
-
 .empty-state {
     display: flex;
     flex-direction: column;
